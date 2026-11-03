@@ -4786,7 +4786,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public AudioSource? Audio { get; set; } = default!;
@@ -10189,7 +10189,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public AudioSource? Audio { get; set; } = default!;

@@ -59,7 +59,7 @@ type Inspector interface {
 	Config() ModalityConfig
 	Providers(ctx context.Context) []Candidate
 	Resolve(ctx context.Context, target string, languageHints []string) ([]Candidate, error)
-	InRegion(ctx context.Context, target, region string) (bool, error)
+	InRegion(ctx context.Context, target, region string, languageHints []string) (bool, error)
 }
 
 // ErrVoiceNotPrepared says a customer's own voice exists but this provider was never
@@ -622,14 +622,15 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 // InRegion reports whether a request naming target could be served in region, empty being
 // pricing.DefaultRegion: whether one of the instances it resolves to runs there, as a
 // provider/model, a capability shortcut or a vendor's name in a priority list resolves. A
-// customer's own model runs in pricing.DefaultRegion alone. A target that resolves to nothing
-// in any region is the resolution's error.
-func (r *Router[P]) InRegion(ctx context.Context, target, region string) (bool, error) {
+// customer's own model runs in pricing.DefaultRegion alone. Only instances that speak every one
+// of languageHints count, as when a request carrying them is routed. A target that resolves to
+// nothing in any region is the resolution's error.
+func (r *Router[P]) InRegion(ctx context.Context, target, region string, languageHints []string) (bool, error) {
 	region = cmp.Or(region, pricing.DefaultRegion)
 	if _, own := CustomName(target); own {
 		return region == pricing.DefaultRegion, nil
 	}
-	candidates, err := r.resolveEntry(ctx, "", target, nil)
+	candidates, err := r.resolveEntry(ctx, "", target, languageHints)
 	if err != nil {
 		return false, err
 	}

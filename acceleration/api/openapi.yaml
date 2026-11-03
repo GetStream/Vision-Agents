@@ -20,7 +20,7 @@ components:
           - "true"
         type: string
     X-Stream-Cost-Micros:
-      description: 'What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user''s device. An operation that answers before its work runs, such as createResponse, sends none.'
+      description: 'What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user''s device. An operation that answers before its work runs, such as createResponse or respondSession, sends none.'
       schema:
         format: int64
         type: integer
@@ -3240,7 +3240,7 @@ components:
       properties:
         audio:
           $ref: '#/components/schemas/AudioSource'
-          description: A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+          description: A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         images:
           items:
             $ref: '#/components/schemas/ImageSource'
@@ -6964,7 +6964,7 @@ components:
       properties:
         audio:
           $ref: '#/components/schemas/AudioSource'
-          description: A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+          description: A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         client_id:
           description: The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
           pattern: ^[A-Za-z0-9_.:-]{1,128}$

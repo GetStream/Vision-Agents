@@ -35,7 +35,7 @@ pub use backend::{
     sign_for,
 };
 pub use client::{Client, segment};
-pub use dispatch::{Dispatch, InboundCall, InboundMessage};
+pub use dispatch::{Dispatch, InboundCall, InboundImage, InboundMessage};
 pub use error::{Error, Result, RouterFailure};
 pub use folder::Folder;
 pub use harness::{Harness, Sandbox, Skill, daytona};

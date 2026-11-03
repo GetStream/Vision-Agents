@@ -193,7 +193,7 @@ func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
 // asked is the requests the suite's Stream was sent whose path ends in suffix.
 func (s *TransferSuite) asked(suffix string) []string {
 	var paths []string
-	for _, request := range s.stream.Requests("test") {
+	for _, request := range s.stream.Requests(s.stream.Key) {
 		if strings.HasSuffix(request.Path, suffix) {
 			paths = append(paths, request.Method+" "+request.Path)
 		}

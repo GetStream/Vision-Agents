@@ -268,6 +268,12 @@ public sealed record InboundMessage
     /// <summary>What was written.</summary>
     public string Text { get; init; } = "";
 
+    /// <summary>
+    /// The photos sent with it, as URLs to fetch, empty when none was sent.
+    /// <see cref="Dispatch.AnswerAsync"/> shows them to the model.
+    /// </summary>
+    public IReadOnlyList<InboundImage> Images { get; init; } = [];
+
     /// <summary>The message's id.</summary>
     public string MessageId { get; init; } = "";
 
@@ -283,6 +289,11 @@ public sealed record InboundMessage
     /// <summary>When it arrived.</summary>
     public DateTimeOffset? At { get; init; }
 }
+
+/// <summary>A photo sent with an <see cref="InboundMessage"/>.</summary>
+/// <param name="Url">Where to fetch it.</param>
+/// <param name="MimeType">Its MIME type, empty when the router does not know it.</param>
+public sealed record InboundImage(string Url, string MimeType = "");
 
 /// <summary>
 /// An agent's knowledge base, as somewhere to put more of it.

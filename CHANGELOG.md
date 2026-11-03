@@ -13,6 +13,15 @@ A photo a person sends in a plain `agent` channel is now answered. A running ses
 ### A voice recording sent in an agent's chat channel is heard
 
 A voice recording (a `voiceRecording` or `audio` attachment) a person sends in a plain `agent` channel is now answered. The router transcribes it once per message, as it does a voice note sent with a question. The transcription is billed to the session that answers, or to the channel's agent and the person who sent it while no session runs. The recording then reaches the answering model or dispatch worker as text: what was typed, then what was said. A worker gets the transcript in `text` and needs no change. A recording that cannot be fetched or heard is answered with a short reply that the agent could not listen to it. Nothing is transcribed when no worker is connected to answer. A recording the agent shows on a message it wrote is never heard. In a thread channel (Slack, SMS) a recording alone is still not answered (AI-2570).
+A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. Python and JS workers read them too, into `InboundMessage.images`, and `Dispatch.answer` in each passes them on under the message's request id (AI-2649). A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
+
+### Rust and PHP dispatch workers pass a message's photos to the model
+
+A message frame's `images` reach the Rust worker as `InboundMessage.images` (`InboundImage { url, mime_type }`) and the PHP worker as `InboundMessage->images` (`InboundImage`). An entry that is not an object or has no string `url` is dropped. `Dispatch::answer` (Rust) and `Dispatch->answer()` (PHP) send them as the response's images, on the message's own request id. `create` with images still sends no request id (AI-2651).
+
+### .NET and Ruby dispatch workers show a message's photos to the model
+
+A .NET or Ruby worker reads the photos of a dispatched message (`InboundMessage.Images` in .NET, `InboundMessage#images` in Ruby, each a URL and its MIME type), and `Dispatch.AnswerAsync` / `Dispatch#answer` pass them to the model with the message's request id, as Go does. A message of text alone is answered as before, and `Responses.CreateAsync` / `responses.create` with images still send no request id (AI-2650).
 
 ### A custom connector's server instructions reach the agent
 
@@ -274,6 +283,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Respond says no cost for a voice note, as responses.create does
+
+`POST /v1/agents/sessions/{id}/respond` with a voice note answered with `X-Stream-Cost-Micros` holding only the note's transcription, while `POST /v1/agents/sessions/{id}/responses` with the same note sent no cost header. Both answer before their turn runs, so neither says a cost now; the transcription is still billed and recorded under the session. `X-Stream-Balance-Micros` is sent as before.
+
 ### A session search matches the word still being typed
 
 A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.search` in the SDKs) matched whole words only, so a search box that searched as the person typed showed nothing until a word was finished: `Lis` found no "Weekend in Lisbon". The last word now matches as the start of one. A word followed by a space, inside quotes or excluded with a minus is still matched as written (#1659).
@@ -291,7 +304,7 @@ A GPT-Live session is billed by the seconds OpenAI reports, the last of them as 
 
 ### A voice note's transcription is billed to its session and agent
 
-The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region, and refused with a retryable 503 `model_failed` when that region has no batch transcription instance; before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).
+The usage record of a voice note sent with `POST /v1/agents/sessions/{id}/responses` now carries the session's id, its agent's id, its call's id and the session's attribution, as the records of the model work that answers it do. The note is also transcribed in the agent's region. When that region has no batch transcription instance for the session's languages, the note is refused before it is fetched with a 400 `not_configured`, on `responses` and on `respond`, which a client does not retry (AI-2567); before, it was transcribed wherever the deployment's default batch model is and named neither the session nor the agent (AI-2555).
 
 ### Photos, voice notes and video clips are fetched under the router's own User-Agent
 

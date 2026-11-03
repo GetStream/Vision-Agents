@@ -209,7 +209,7 @@ func (s *ChatLogSuite) TestALimitedAppIsNotAskedAgainOnEveryTick() {
 	writer.show()
 
 	sends := 0
-	for _, asked := range chat.Requests("test") {
+	for _, asked := range chat.Requests(chat.Key) {
 		if strings.HasSuffix(asked.Path, "/message") {
 			sends++
 		}
@@ -1214,7 +1214,7 @@ func (s *ChatLogSuite) trail(chat *chattest.Server, turns ...string) []string {
 	}
 	events := chat.Events(s.log.channel)
 	var trail []string
-	for _, asked := range chat.Requests("test") {
+	for _, asked := range chat.Requests(chat.Key) {
 		switch {
 		case strings.HasSuffix(asked.Path, "/event"):
 			event := events[0]
