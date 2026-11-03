@@ -121,14 +121,15 @@ Verify after an apply, on each shard (AI-2461, AI-2464):
 
 1. The rollout finishes, and each router logs `serving the sandbox egress proxy` with `tls=true`.
 2. TLS verifies against that shard's CA: `openssl s_client -connect <address>:8091 -CAfile
-   <shard CA cert> -verify_ip <address> -verify_return_error` prints `Verification OK`.
+   <shard CA cert> -verify_ip <address> -verify_return_error` prints `Verification: OK`.
 3. A CONNECT without a credential gets `407 Proxy Authentication Required`.
-4. One `run_code` `GET api.github.com/user` through a connection with `sandbox: true` answers 200.
+4. One `run_code` `GET api.github.com/user` through a binding with `sandbox: true` answers 200.
 
 Only us-east4 has a public hostname: it is the only region behind the global load balancer
 (`accelerate_prod_regions` in `infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`). To
-test us-west1 or europe-west4, run `kubectl port-forward deploy/chat-accelerate-prod <port>:8080`
-in that shard's cluster and call the router as the app. Prod runs `authMode: proxy` with
+test us-west1 or europe-west4, run `kubectl --context <shard context> -n accelerate-prod
+port-forward deploy/chat-accelerate-prod <port>:8080` and call the router as the app. Prod runs
+`authMode: proxy` with
 `proxyDeclaresKind: true`, so send `X-Stream-App-Id: <app>` and `Stream-Auth-Type: server`
 (`acceleration/internal/auth/auth.go`, `proxied.Authenticate`). The sandbox still reaches the
 shard's proxy on its public address.
@@ -148,6 +149,9 @@ To turn the proxy off on one shard:
    `router.sandboxProxy.enabled: false`.
 2. Run `rocky accelerate up --region <region>-acceleration --env prod`.
 3. Wait for the rollout to finish. An edit alone changes nothing.
+
+With the proxy off, prod refuses a session that binds a sandbox again. The steps come from the
+AI-2461 and AI-2464 apply plan. The chart renders the hold only while `sandboxProxy.enabled` is on.
 
 ## Production
 
@@ -189,11 +193,12 @@ and check that the pods start and open an existing connection. To roll back, res
 - Never roll back below `accelerate-v0.6.135`, the first tag with f38926d2 (#1182): an older
   router ignores `require_approval` on connector bindings, so their write tools run without
   the person's approval. This floor holds in every environment.
-- Staging and every prod shard have a second, higher floor: never roll back below `accelerate-v0.6.191` (#1433). Since 2026-10-29
-  staging devrun holds the sandbox proxy port :8091 and passes it to the router as fd 4
-  (`router.overlapDeploy.holdSandboxProxy`, GetStream/chat #19810, #19840). Prod devrun does the
-  same since AI-2461 (us-east4) and AI-2464 (us-west1, europe-west4). A router older than v0.6.191 ignores that socket and retries :8091
-  until it exits: the API serves, the sandbox proxy does not. To go below it on one shard, in this order:
+- Staging and every prod shard have a second, higher floor: never roll back below
+  `accelerate-v0.6.191` (#1433). Since 2026-10-29 staging devrun holds the sandbox proxy port
+  :8091 and passes it to the router as fd 4 (`router.overlapDeploy.holdSandboxProxy`, GetStream/chat
+  #19810, #19840). Prod devrun does the same since AI-2461 (us-east4) and AI-2464 (us-west1,
+  europe-west4). A router older than v0.6.191 ignores that socket and retries :8091 until it
+  exits: the API serves, the sandbox proxy does not. To go below it on one shard, in this order:
   1. Set `router.overlapDeploy.holdSandboxProxy: false` in that shard's values file.
   2. Run `rocky accelerate up --region us-east1-acceleration --env staging`, or on prod
      `rocky accelerate up --region <region>-acceleration --env prod`.
