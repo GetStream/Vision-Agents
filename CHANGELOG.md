@@ -270,6 +270,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A typed message in a voice session is offered tools once the caller has spoken
+
+On a voice session where a speculative reply answered every spoken turn, a typed message was still treated as sent before anyone spoke, and its reply was offered no tools. It is now offered them, as after any other spoken turn. A speculative reply thrown away can no longer clear what was recorded for the answer asked for under the same turn id (AI-2543, AI-2541).
+
 ### A session search matches the word still being typed
 
 A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.search` in the SDKs) matched whole words only, so a search box that searched as the person typed showed nothing until a word was finished: `Lis` found no "Weekend in Lisbon". The last word now matches as the start of one. A word followed by a space, inside quotes or excluded with a minus is still matched as written (#1659).
