@@ -404,7 +404,7 @@ type ContactAttempt struct {
 	Attempt   int        `json:"attempt" doc:"Which attempt of the sequence, from 1."`
 	Dial      int        `json:"dial" doc:"1, or 2 for the second call of a double dial."`
 	CallId    *string    `json:"call_id,omitempty"`
-	Result    string     `json:"result" doc:"answered, unanswered, invalid_number, refused, deferred, paused, canceled or abandoned; empty while the call is happening. Only answered and unanswered placed a call that ended."`
+	Result    string     `json:"result" doc:"answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or abandoned; empty while the call is happening. Only answered, unanswered and voicemail placed a call that ended."`
 	Outcome   *string    `json:"outcome,omitempty" doc:"The outcome an answered call was read as."`
 	StartedAt time.Time  `json:"started_at"`
 	EndedAt   *time.Time `json:"ended_at,omitempty"`

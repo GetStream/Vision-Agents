@@ -518,6 +518,48 @@ func (s *RunnerSuite) TestACampaignWhoseConfigIsGonePausesWithoutUsingAnAttempt(
 	}
 }
 
+func (s *RunnerSuite) leavingAMessageWith(config store.AgentConfig, action string) store.Campaign {
+	config.CustomerID, config.Name = s.customerID, "agent-"+uuid.NewString()
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, &config))
+	sequence := s.single()
+	sequence.Steps[0].ConfigID = config.ID
+	sequence.Steps[0].Voicemail = VoicemailSetting{Action: action, Message: "Call us back."}
+	return s.launched(sequence, 1, "UTC", "+15550000001")
+}
+
+func (s *RunnerSuite) TestACampaignLeavingAMessageWithAConfigThatBecameSpeechToSpeechPausesBeforeRinging() {
+	// The phone is nil: a call placed would panic, so nobody is rung.
+	runner, err := New(Options{
+		Store: s.store, Dialer: NewPhoneDialer(nil, nil, s.store, slog.New(slog.DiscardHandler)),
+		Transcripts: s.transcripts, Classifier: s.classifier, Owner: "router-p", Now: s.clock.now, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(runner.Close)
+	campaign := s.leavingAMessageWith(store.AgentConfig{STS: "stub/stub-sts"}, VoicemailLeaveMessage)
+
+	s.tick(runner)
+
+	paused := s.campaignNow(campaign)
+	s.Equal(store.Paused, paused.State)
+	s.Equal("voicemail_needs_exact_words", paused.PausedReason)
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(0, contact.Attempt, "the attempt is unused")
+}
+
+func (s *RunnerSuite) TestASpeechToSpeechConfigThatHangsUpOnVoicemailIsDialed() {
+	campaign := s.leavingAMessageWith(store.AgentConfig{STS: "stub/stub-sts"}, VoicemailHangUp)
+	dialer := NewPhoneDialer(nil, nil, s.store, slog.New(slog.DiscardHandler))
+	contacts, err := s.store.QueryContacts(s.ctx, campaign.ID, store.ContactFilter{Limit: 1})
+	s.Require().NoError(err)
+	step, err := ParseSequence(campaign.Sequence)
+	s.Require().NoError(err)
+
+	s.Panics(func() {
+		_, _ = dialer.Dial(s.ctx, Dial{Campaign: campaign, Contact: contacts[0], Step: step.First()})
+	}, "it got as far as placing the call, which the nil phone cannot")
+}
+
 func (s *RunnerSuite) TestTheLastContactCompletesTheCampaign() {
 	s.dialer.answer("+15550000001")
 	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")

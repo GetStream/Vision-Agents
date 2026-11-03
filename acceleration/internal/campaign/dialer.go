@@ -19,6 +19,10 @@ import (
 // placed, so its contacts wait unrung for the campaign to be given another.
 const reasonConfigMissing = "config_missing"
 
+// reasonVoicemailNeedsExactWords pauses a campaign whose step leaves a voicemail message but
+// whose agent config became speech-to-speech after launch, which cannot say fixed words.
+const reasonVoicemailNeedsExactWords = "voicemail_needs_exact_words"
+
 // phoneDialer rings a contact through the phone service and puts the campaign's agent in the
 // call it rang.
 type phoneDialer struct {
@@ -42,6 +46,10 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	}
 	if err != nil {
 		return Dialed{}, err
+	}
+
+	if !dial.Step.Voicemail.hangsUp() && session.FromConfig(config).Native() {
+		return Dialed{Result: Paused, Reason: reasonVoicemailNeedsExactWords}, nil
 	}
 
 	request := placing(dial.Campaign, dial.Contact)
