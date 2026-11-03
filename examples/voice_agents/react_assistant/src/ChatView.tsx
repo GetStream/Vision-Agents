@@ -168,7 +168,9 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
 /**
  * The UI the agent writes for a reply, in place of its text: A2UI or OpenUI, with the app's own
  * trip components beside each format's own. What the person does in it is their next question,
- * in their words, carrying the action, so it shows at once like anything they ask.
+ * in their words, carrying the action, so it shows at once like anything they ask. One the screen
+ * can't send yet, while the agent still answers, fails, so the host says it was not sent rather
+ * than drop it.
  */
 function useGeneratedUI(screen: ChatScreen): AIUIHost {
   return useMemo(
@@ -176,7 +178,11 @@ function useGeneratedUI(screen: ChatScreen): AIUIHost {
       new AIUIHost({
         components: tripComponents,
         renderers: [createA2UIRenderer(), createOpenUIRenderer()],
-        send: (action) => screen.send(action.label, [], false, aiUIActionJSON(action)),
+        send: async (action) => {
+          if (!(await screen.send(action.label, [], false, aiUIActionJSON(action)))) {
+            throw new Error(`"${action.label}" was not sent: the agent is still answering`);
+          }
+        },
       }),
     [screen],
   );
