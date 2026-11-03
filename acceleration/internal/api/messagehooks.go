@@ -257,11 +257,6 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			if found.Spec().PersistConversation {
 				return true
 			}
-			// A worker not yet updated to read photos answers an empty text with an error,
-			// so a photo alone is not handed to one.
-			if found.Spec().DispatchText && event.Message.Text == "" {
-				return true
-			}
 			if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 				return settled
 			}
@@ -302,11 +297,6 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 	}
 
 	if s.store == nil || s.dispatch == nil {
-		return true
-	}
-
-	// A photo alone is not handed to a worker (see DispatchText above).
-	if event.Message.Text == "" {
 		return true
 	}
 
