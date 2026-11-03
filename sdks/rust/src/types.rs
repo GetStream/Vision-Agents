@@ -2577,7 +2577,7 @@ pub struct CampaignStep {
     pub other: CampaignRoute,
     ///What an answered call can end as. do_not_call is built in.
     pub outcomes: ::std::vec::Vec<CampaignOutcome>,
-    ///What the agent does when an answering machine picks up. Absent hangs up. Leaving a message needs an agent that is not speech-to-speech.
+    ///What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voicemail: ::std::option::Option<CampaignVoicemail>,
 }
@@ -2697,10 +2697,67 @@ impl ::std::convert::TryFrom<::std::string::String> for CampaignType {
 ///`CampaignVoicemail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct CampaignVoicemail {
-    pub action: VoicemailAction,
+    pub action: CampaignVoicemailAction,
     ///{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub message: ::std::option::Option<::std::string::String>,
+}
+/**off: the agent talks to a machine as to a person. The default.
+hang_up: end the call at once, saying nothing.
+leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CampaignVoicemailAction {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "hang_up")]
+    HangUp,
+    #[serde(rename = "leave_message")]
+    LeaveMessage,
+}
+impl ::std::fmt::Display for CampaignVoicemailAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Off => f.write_str("off"),
+            Self::HangUp => f.write_str("hang_up"),
+            Self::LeaveMessage => f.write_str("leave_message"),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignVoicemailAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "off" => Ok(Self::Off),
+            "hang_up" => Ok(Self::HangUp),
+            "leave_message" => Ok(Self::LeaveMessage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignVoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignVoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`CancelPriceChangeInput`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]

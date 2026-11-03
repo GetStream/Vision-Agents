@@ -112,6 +112,7 @@ from .campaign_time_zone import CampaignTimeZone
 from .campaign_time_zone_mode import CampaignTimeZoneMode
 from .campaign_type import CampaignType
 from .campaign_voicemail import CampaignVoicemail
+from .campaign_voicemail_action import CampaignVoicemailAction
 from .cancel_price_change_input import CancelPriceChangeInput
 from .candidate import Candidate
 from .channel_account import ChannelAccount
@@ -728,6 +729,7 @@ __all__ = (
     "CampaignTimeZoneMode",
     "CampaignType",
     "CampaignVoicemail",
+    "CampaignVoicemailAction",
     "CancelPriceChangeInput",
     "Candidate",
     "ChannelAccount",

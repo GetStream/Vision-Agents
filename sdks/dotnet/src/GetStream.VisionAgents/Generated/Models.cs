@@ -3036,7 +3036,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<CampaignOutcome> Outcomes { get; set; } = new System.Collections.Generic.List<CampaignOutcome>();
 
         /// <summary>
-        /// What the agent does when an answering machine picks up. Absent hangs up. Leaving a message needs an agent that is not speech-to-speech.
+        /// What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("voicemail")]
         public CampaignVoicemail? Voicemail { get; set; } = default!;

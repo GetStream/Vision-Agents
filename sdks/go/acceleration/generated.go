@@ -601,6 +601,27 @@ func (e CampaignType) Valid() bool {
 	}
 }
 
+// Defines values for CampaignVoicemailAction.
+const (
+	CampaignVoicemailActionHangUp       CampaignVoicemailAction = "hang_up"
+	CampaignVoicemailActionLeaveMessage CampaignVoicemailAction = "leave_message"
+	CampaignVoicemailActionOff          CampaignVoicemailAction = "off"
+)
+
+// Valid indicates whether the value is a known member of the CampaignVoicemailAction enum.
+func (e CampaignVoicemailAction) Valid() bool {
+	switch e {
+	case CampaignVoicemailActionHangUp:
+		return true
+	case CampaignVoicemailActionLeaveMessage:
+		return true
+	case CampaignVoicemailActionOff:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ChannelIdentity.
 const (
 	ChannelIdentityLink  ChannelIdentity = "link"
@@ -2991,16 +3012,16 @@ func (e VoiceBindingState) Valid() bool {
 
 // Defines values for VoicemailAction.
 const (
-	HangUp       VoicemailAction = "hang_up"
-	LeaveMessage VoicemailAction = "leave_message"
+	VoicemailActionHangUp       VoicemailAction = "hang_up"
+	VoicemailActionLeaveMessage VoicemailAction = "leave_message"
 )
 
 // Valid indicates whether the value is a known member of the VoicemailAction enum.
 func (e VoicemailAction) Valid() bool {
 	switch e {
-	case HangUp:
+	case VoicemailActionHangUp:
 		return true
-	case LeaveMessage:
+	case VoicemailActionLeaveMessage:
 		return true
 	default:
 		return false
@@ -4423,13 +4444,19 @@ type CampaignType string
 
 // CampaignVoicemail defines model for CampaignVoicemail.
 type CampaignVoicemail struct {
-	// Action hang_up: end the call at once, saying nothing.
+	// Action off: the agent talks to a machine as to a person. The default.
+	// hang_up: end the call at once, saying nothing.
 	// leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
-	Action VoicemailAction `json:"action"`
+	Action CampaignVoicemailAction `json:"action"`
 
 	// Message {{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.
 	Message *string `json:"message,omitempty"`
 }
+
+// CampaignVoicemailAction off: the agent talks to a machine as to a person. The default.
+// hang_up: end the call at once, saying nothing.
+// leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+type CampaignVoicemailAction string
 
 // CancelPriceChangeInput defines model for CancelPriceChangeInput.
 type CancelPriceChangeInput struct {

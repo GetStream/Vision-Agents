@@ -7,7 +7,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.voicemail_action import VoicemailAction
+from ..models.campaign_voicemail_action import CampaignVoicemailAction
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="CampaignVoicemail")
@@ -17,13 +17,14 @@ T = TypeVar("T", bound="CampaignVoicemail")
 class CampaignVoicemail:
     """
     Attributes:
-        action (VoicemailAction): hang_up: end the call at once, saying nothing.
+        action (CampaignVoicemailAction): off: the agent talks to a machine as to a person. The default.
+            hang_up: end the call at once, saying nothing.
             leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
         message (str | Unset): {{variable}} placeholders are filled from the contact, then it is said word for word once
             the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.
     """
 
-    action: VoicemailAction
+    action: CampaignVoicemailAction
     message: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -47,7 +48,7 @@ class CampaignVoicemail:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        action = VoicemailAction(d.pop("action"))
+        action = CampaignVoicemailAction(d.pop("action"))
 
         message = d.pop("message", UNSET)
 

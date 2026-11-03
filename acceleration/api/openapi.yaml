@@ -2020,7 +2020,7 @@ components:
           type: array
         voicemail:
           $ref: '#/components/schemas/CampaignVoicemail'
-          description: What the agent does when an answering machine picks up. Absent hangs up. Leaving a message needs an agent that is not speech-to-speech.
+          description: 'What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech.'
       required:
         - id
         - config_id
@@ -2056,7 +2056,7 @@ components:
     CampaignVoicemail:
       properties:
         action:
-          $ref: '#/components/schemas/VoicemailAction'
+          $ref: '#/components/schemas/CampaignVoicemailAction'
         message:
           description: '{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.'
           maxLength: 1000
@@ -2064,6 +2064,16 @@ components:
       required:
         - action
       type: object
+    CampaignVoicemailAction:
+      description: |-
+        off: the agent talks to a machine as to a person. The default.
+        hang_up: end the call at once, saying nothing.
+        leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+      enum:
+        - "off"
+        - hang_up
+        - leave_message
+      type: string
     CancelPriceChangeInput:
       additionalProperties: false
       properties:

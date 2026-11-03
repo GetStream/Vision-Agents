@@ -5388,7 +5388,7 @@ export type components = {
             readonly other: components["schemas"]["CampaignRoute"];
             /** @description What an answered call can end as. do_not_call is built in. */
             readonly outcomes: readonly components["schemas"]["CampaignOutcome"][];
-            /** @description What the agent does when an answering machine picks up. Absent hangs up. Leaving a message needs an agent that is not speech-to-speech. */
+            /** @description What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech. */
             readonly voicemail?: components["schemas"]["CampaignVoicemail"];
         };
         readonly CampaignTimeZone: {
@@ -5408,10 +5408,17 @@ export type components = {
          */
         readonly CampaignType: "standard" | "auto_enroll";
         readonly CampaignVoicemail: {
-            readonly action: components["schemas"]["VoicemailAction"];
+            readonly action: components["schemas"]["CampaignVoicemailAction"];
             /** @description {{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces. */
             readonly message?: string;
         };
+        /**
+         * @description off: the agent talks to a machine as to a person. The default.
+         *     hang_up: end the call at once, saying nothing.
+         *     leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+         * @enum {string}
+         */
+        readonly CampaignVoicemailAction: "off" | "hang_up" | "leave_message";
         readonly CancelPriceChangeInput: {
             /** @description Why the change is called off. */
             readonly reason: string;

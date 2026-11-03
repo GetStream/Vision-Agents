@@ -11,7 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class CampaignVoicemail
 {
     public function __construct(
-        public VoicemailAction|string $action,
+        public CampaignVoicemailAction|string $action,
         // {{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has...
         public ?string $message = null,
     ) {
@@ -23,7 +23,7 @@ final readonly class CampaignVoicemail
     public static function fromArray(array $data): self
     {
         return new self(
-            action: Json::enum($data, 'action', VoicemailAction::class),
+            action: Json::enum($data, 'action', CampaignVoicemailAction::class),
             message: array_key_exists('message', $data) && $data['message'] !== null ? Json::string($data, 'message') : null,
         );
     }
