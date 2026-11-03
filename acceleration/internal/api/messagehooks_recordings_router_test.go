@@ -5,11 +5,14 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -194,6 +197,61 @@ func (s *MessageHooksSuite) TestAVoiceRecordingToAWorkersSessionReachesItsModelA
 	s.Equal(said, s.askedOf(s.vision, asked).Content)
 	s.Equal(opened.Id, s.meteredRows(routing.STT, since, 1)[0].SessionID)
 	s.nothingReaches(s.worker, "a recording to a running session was dispatched again")
+}
+
+// A hook is taken before its voice recording is heard: hearing takes up to inlineDeadline, and
+// Stream waits on the delivery. The worker has it once it is heard.
+func (s *MessageHooksSuite) TestAHookIsTakenBeforeItsVoiceRecordingIsHeard() {
+	worker := s.workerOf(s.customerID())
+	said := "the ice machine is out " + s.utils.uuid()
+	served := make(chan struct{})
+	recording := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		<-served
+		_, _ = w.Write(wavOf(said))
+	}))
+	s.T().Cleanup(recording.Close)
+	body := s.recordedMessage(s.namesConfig(), "", s.recordingFrom(recording.URL+"/recording.aac"))
+	answered := make(chan int, 1)
+	go func() {
+		response, err := s.server.Client().Do(s.request("/v1/chat/hooks/stream", body, sign(body, suiteStreamSecret)))
+		if err != nil {
+			answered <- 0
+			return
+		}
+		_ = response.Body.Close()
+		answered <- response.StatusCode
+	}()
+
+	select {
+	case status := <-answered:
+		s.Equal(http.StatusOK, status)
+	case <-time.After(3 * settleFor):
+		s.Fail("the hook waited for its recording to be heard")
+	}
+	close(served)
+	s.Equal(said, s.handed(worker).Text)
+}
+
+// A recording sent where no session runs is heard for the config answering the channel: one
+// whose region has no batch transcriber does not hear it, and the worker is told so.
+func (s *MessageHooksSuite) TestAVoiceRecordingForAConfigInARegionThatHearsNothingIsSaidSo() {
+	worker := s.workerOf(s.customerID())
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(), Mode: "text", Region: pricing.RegionEU}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	var fetched atomic.Int32
+	recording := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		fetched.Add(1)
+		_, _ = w.Write(wavOf("hello " + s.utils.uuid()))
+	}))
+	s.T().Cleanup(recording.Close)
+	since := time.Now().UTC()
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
+		s.recordedMessage(fmt.Sprintf(`{%q: %q}`, ConfigField, config.ID), "", s.recordingFrom(recording.URL+"/recording.aac"))))
+
+	s.Equal(unheardRecording, s.handed(worker).Text)
+	s.Zero(fetched.Load(), "the recording was fetched")
+	s.Empty(s.sttRowsSince(since))
 }
 
 // recordedMessage is a signed message.new for the suite's channel with text and attachments, as
