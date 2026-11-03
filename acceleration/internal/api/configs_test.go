@@ -1887,8 +1887,9 @@ func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused()
 }
 
 // TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs: a binding under a plugin
-// entry's id, to the connector of that id, beside the entry (AI-994 F42). The session drops the entry for the binding (Spec.withoutBoundPlugins), so the
-// two never offer the same name, and the config stays editable.
+// entry's id, to the connector of that id, beside the entry (AI-994 F42). The session drops
+// the entry for the binding (Spec.withoutBoundPlugins), so the two never offer the same
+// name, and the config stays editable.
 func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs() {
 	for _, user := range []bool{false, true} {
 		created := s.createConfig(map[string]any{
