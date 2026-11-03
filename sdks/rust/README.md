@@ -164,7 +164,7 @@ out and the router pushes the work down the connection, so nothing you run has t
 reachable.
 
 ```rust
-use vision_agents::{Agent, Client, Dispatch};
+use vision_agents::{Agent, Client, Dispatch, types};
 
 let dispatch = Dispatch::with_capacity(Client::from_env()?, 4);
 
@@ -185,7 +185,19 @@ dispatch.wait_for_message(move |message| {
         let session = worker
             .get_or_create_agent(&message, async || Ok(Agent::new("support")))
             .await?;
-        session.responses.create(&message.text).await?;
+        let images: Vec<_> = message
+            .images
+            .iter()
+            .map(|image| types::ImageSource { url: image.url.clone(), ..Default::default() })
+            .collect();
+        session
+            .responses
+            .create_with(&types::CreateResponseRequest {
+                text: message.text.clone(),
+                images: (!images.is_empty()).then_some(images),
+                ..Default::default()
+            })
+            .await?;
         Ok(())
     }
 });
