@@ -242,6 +242,9 @@ A non-empty `mcp_servers:` in agent.yaml fails the folder read in the Go SDK (`a
 ### The Rust SDK refuses `plugins` and `plugin_events` in agent.yaml
 
 A non-empty `plugins:` or `plugin_events:` in the `agent.yaml` of a Rust agent folder (`Folder::load`, `Agent::from_folder`) now fails with `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as in the Go SDK. It was synced, with a warning. An empty or missing key loads as before, and `Settings::plugins` is gone (AI-2529).
+### The Ruby SDK refuses `plugins` in agent.yaml
+
+`Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
 
