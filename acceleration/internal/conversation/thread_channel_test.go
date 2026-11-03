@@ -194,6 +194,22 @@ func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsStoredText() {
 		"the reply being written is not handed over, only the stored final text")
 }
 
+// An external thread shows no UI, so a reply that wrote some is handed over as its words, as
+// push notifications show it.
+func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithoutItsUI() {
+	s.person("U1", "plan a weekend in Ohrid")
+	c, _, _, err := s.service.Open(s.routerOpens(), "customer", "", s.cid)
+	s.Require().NoError(err)
+	_, err = c.BeginFollowUp("follow-up-"+uuid.NewString(), "plan a weekend in Ohrid")
+	s.Require().NoError(err)
+
+	c.Observe(agent.ResponseDelta{Text: "A weekend in Ohrid.\n```openui-lang\nroot = Card([])\n```"})
+	c.Observe(agent.Responded{})
+
+	s.Require().Eventually(func() bool { return len(s.handedOver()) == 1 }, 5*time.Second, 10*time.Millisecond)
+	s.Equal("A weekend in Ohrid.", s.handedOver()[0].Text)
+}
+
 // T62a (AI-921): the files the agent's code made for a reply are handed over with it, so the
 // bridge sends them on; a reply without any is handed over as before (above).
 func (s *ThreadChannelSuite) TestAFinishedReplyIsHandedOverWithItsFiles() {

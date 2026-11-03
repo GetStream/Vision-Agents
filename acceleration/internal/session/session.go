@@ -705,6 +705,12 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // alone. asked is what the caller wants changed about this reply alone. notes are voice
 // notes sent with it, shown on the person's message; text already holds what they said.
 func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
+	return s.RespondCommandWithAction(ctx, id, text, clientID, images, asked, nil, notes...)
+}
+
+// RespondCommandWithAction is RespondCommand for a person's message that says what they did in
+// a reply's UI. Their message carries the action, and the model is told it after their words.
+func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, action map[string]any, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
@@ -729,7 +735,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if handedOn {
 		return s.followUp(ctx, id, text, images, asked, true)
 	}
-	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
+	receipt, err := s.persisted.BeginCommandWithAction(id, text, clientID, action, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}
@@ -745,7 +751,11 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, images, asked)
+	told := text
+	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
+		told += "\n\n" + note
+	}
+	turnID, err := s.current().RespondTo(ctx, told, images, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
