@@ -244,23 +244,6 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 			AllowedDomains: &options.AllowedDomains, NetworkAllowList: &options.NetworkAllowList,
 		}
 	}
-	if len(settings.MCPServers) > 0 {
-		servers := make([]acceleration.McpServer, 0, len(settings.MCPServers))
-		for _, server := range settings.MCPServers {
-			declared := acceleration.McpServer{Name: server.Name, Url: server.URL}
-			if len(server.Tools) > 0 {
-				declared.Tools = &server.Tools
-			}
-			if len(server.Scopes) > 0 {
-				declared.Scopes = &server.Scopes
-			}
-			if server.User {
-				declared.User = &server.User
-			}
-			servers = append(servers, declared)
-		}
-		body.McpServers = &servers
-	}
 	if settings.Tools != nil {
 		body.Tools = &acceleration.AgentTools{
 			Progressive: settings.Tools.Progressive, OutputRetention: settings.Tools.OutputRetention,

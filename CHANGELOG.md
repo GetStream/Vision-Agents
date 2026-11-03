@@ -228,6 +228,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The Go SDK refuses `mcp_servers` in agent.yaml
+
+A non-empty `mcp_servers:` in agent.yaml fails the folder read in the Go SDK (`agents.Load`, `agents.New`) with `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`; `mcp_servers: []` and a null `mcp_servers:` load and sync as before, and `agents.MCPServerSettings` and `Settings.MCPServers` are gone (AI-2531).
+
 ### The router no longer points its Chat message hook at itself
 
 `PUT /v1/agents/connectors/{id}/provider-app` (`setConnectorProviderApp`), `setOperatorProviderApp` and `PUT /v1/agents/connectors/{id}/oauth-client` no longer write the message hook into the pinned Stream app's `event_hooks`, so the entry "A provider app points its Stream app's message hook at the router" no longer holds. `setOperatorProviderApp` no longer answers a 503 when Stream refuses the hook. `go run ./cmd/phone hooks -url <base>` writes the call hook only. Stream Chat delivery (`POST /v1/chat/internal/messages`) is the only way Chat text reaches the router; a local router behind a tunnel gets no text written straight into a thread channel. `/v1/chat/hooks/stream` is still served for one release, as a way back. To drop an old message hook: `go run ./cmd/phone hooks -url <base> -remove <base>` (AI-2352).
