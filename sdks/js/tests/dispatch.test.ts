@@ -204,6 +204,57 @@ describe("Dispatch", () => {
     await running;
   });
 
+  it("reads the photos sent with a message, and drops what cannot be fetched", async () => {
+    const cases: [string, unknown, { url: string; mimeType?: string }[]][] = [
+      [
+        "two photos",
+        [{ url: "https://cdn.example.com/a.jpg", mime_type: "image/png" }, { url: "https://cdn.example.com/b.jpg" }],
+        [{ url: "https://cdn.example.com/a.jpg", mimeType: "image/png" }, { url: "https://cdn.example.com/b.jpg" }],
+      ],
+      ["absent", undefined, []],
+      ["null", null, []],
+      ["empty", [], []],
+      ["an object, not a list", { url: "https://cdn.example.com/a.jpg" }, []],
+      ["a string, not a list", "https://cdn.example.com/a.jpg", []],
+      ["entries that are not objects", ["https://cdn.example.com/a.jpg", null, 7, [{ url: "https://cdn.example.com/a.jpg" }]], []],
+      ["entries with no url", [{}, { mime_type: "image/png" }, { url: "" }, { url: 7 }], []],
+      [
+        "a type that is not text, or is empty",
+        [
+          { url: "https://cdn.example.com/a.jpg", mime_type: 3 },
+          { url: "https://cdn.example.com/b.jpg", mime_type: "" },
+        ],
+        [{ url: "https://cdn.example.com/a.jpg" }, { url: "https://cdn.example.com/b.jpg" }],
+      ],
+    ];
+    const written: InboundMessage[] = [];
+    const dispatch = new Dispatch({ client: api }).onMessage((message) => {
+      written.push(message);
+    });
+
+    const running = dispatch.run();
+    const connection = await router.socket();
+    for (const [name, images] of cases) {
+      connection.send({
+        type: "message",
+        work_id: name,
+        channel_id: "chan_1",
+        text: "is this the right part",
+        ...(images === undefined ? {} : { images }),
+      });
+      assert.deepEqual(await connection.next(), { type: "done", work_id: name });
+    }
+
+    assert.equal(written.length, cases.length);
+    cases.forEach(([name, , read], index) => {
+      assert.deepEqual(written[index]?.images, read, name);
+      assert.equal(written[index]?.text, "is this the right part", name);
+    });
+
+    dispatch.stop();
+    await running;
+  });
+
   it("frees the room taken by work it has no handler for, rather than ending the connection", async () => {
     const written: InboundMessage[] = [];
     const dispatch = new Dispatch({ client: api }).onMessage((message) => {
@@ -670,6 +721,52 @@ describe("Dispatch", () => {
           "a token minted for the user would hand the text straight back to a worker",
         );
         assert.equal(claimsOf(token)["user_id"], undefined);
+      }
+    });
+
+    it("answers a hand-built message without photos as text alone, exactly as before photos", async () => {
+      router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+        status: 202,
+        body: { id: "resp_1", session_id: "sess_1", status: "running", created_at: "2026-01-01T00:00:00Z" },
+      });
+      const handBuilt: InboundMessage = {
+        channelId: "",
+        channelType: "agent",
+        agentId: "john",
+        configId: "",
+        sessionId: "sess_1",
+        requestId: "req_2",
+        text: "hi",
+        messageId: "",
+        userId: "ana",
+        userName: "Ana",
+      };
+
+      await new Dispatch({ client: api }).answer(handBuilt);
+
+      assert.deepEqual(router.last.body, { text: "hi", request_id: "req_2" });
+    });
+
+    it("shows the model the photos sent with it, under its request", async () => {
+      // The router takes a request id beside images, so the answer still lands on the message.
+      for (const text of ["", "what is this?"]) {
+        router.serve("POST", "/v1/agents/sessions/sess_1/responses", {
+          status: 202,
+          body: { id: "resp_1", session_id: "sess_1", status: "running", created_at: "2026-01-01T00:00:00Z" },
+        });
+        const dispatch = new Dispatch({ client: api });
+
+        await dispatch.answer({
+          ...message,
+          text,
+          images: [{ url: "https://cdn.example.com/a.jpg", mimeType: "image/png" }, { url: "https://cdn.example.com/b.jpg" }],
+        });
+
+        assert.deepEqual(router.last.body, {
+          text,
+          images: [{ url: "https://cdn.example.com/a.jpg" }, { url: "https://cdn.example.com/b.jpg" }],
+          request_id: "req_1",
+        });
       }
     });
 
