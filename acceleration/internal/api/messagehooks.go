@@ -455,8 +455,8 @@ func (s *Server) unopenedSpec(ctx context.Context, customerID, configID string, 
 // the note that says so instead, as a photo that could not be seen does (withPhotoNote), so the
 // reply says so rather than the person hearing nothing.
 //
-// A queued delivery's recording is heard once: what it said is kept on its row, and a try after
-// one nothing took, here or on a peer, hands that on (origin.heard). A deployment that hears
+// A queued delivery's recording one try heard is not heard again: what it said is kept on its
+// row, and a try after one nothing took, here or on a peer, hands that on (origin.heard). A deployment that hears
 // nothing answers a message with text or photos from those alone, as before recordings were
 // heard.
 func (s *Server) heardText(ctx context.Context, spec session.Spec, origin hookOrigin, event messageEvent) string {
