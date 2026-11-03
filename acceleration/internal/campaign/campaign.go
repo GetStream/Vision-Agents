@@ -642,6 +642,8 @@ func placing(campaign store.Campaign, contact store.Contact) phone.CallRequest {
 		Owner: routing.Owner{CustomerID: campaign.CustomerID, Attribution: scheduledBy(campaign), Tags: campaign.Tags},
 		From:  campaign.FromNumber,
 		To:    contact.ToNumber,
+		// Only a campaign cares who answered, so no other outbound call asks the vendor.
+		DetectMachine: true,
 	}
 }
 

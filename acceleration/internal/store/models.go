@@ -1401,7 +1401,7 @@ type CampaignAttempt struct {
 	Dial         int    `bun:"dial,notnull"`
 	CallID       string `bun:"call_id,notnull"`
 	VendorCallID string `bun:"vendor_call_id,notnull"`
-	// Result is answered, unanswered, invalid_number, refused, deferred, paused, canceled or
+	// Result is answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or
 	// abandoned, and empty while the call is happening.
 	Result    string `bun:"result,notnull"`
 	Outcome   string `bun:"outcome,notnull"`

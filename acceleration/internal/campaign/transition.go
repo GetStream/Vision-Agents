@@ -12,8 +12,11 @@ import (
 type Result string
 
 const (
-	Answered      Result = "answered"
-	Unanswered    Result = "unanswered"
+	Answered   Result = "answered"
+	Unanswered Result = "unanswered"
+	// Voicemail is a call an answering machine took. It uses the attempt like Unanswered, but
+	// ringing the same machine again at once would only leave a second message.
+	Voicemail     Result = "voicemail"
 	InvalidNumber Result = "invalid_number"
 	Refused       Result = "refused"
 	Deferred      Result = "deferred"
@@ -57,6 +60,8 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 		if dial == 1 && sequence.DoubleDial {
 			return store.Settle{}, true
 		}
+		return unanswered(step, hours, zone, contact, started, settle), false
+	case Voicemail:
 		return unanswered(step, hours, zone, contact, started, settle), false
 	case Deferred:
 		at := now.Add(concurrentRetry)

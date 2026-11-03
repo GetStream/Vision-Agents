@@ -652,3 +652,71 @@ func (s *CampaignsSuite) contacts(campaignID string) []Contact {
 		s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+campaignID+"/contacts", nil, &listed))
 	return listed.Items
 }
+
+func (s *CampaignsSuite) TestAVoicemailSettingIsStoredAndReturned() {
+	created := s.create(map[string]any{"name": "may"})
+	s.Nil(created.Sequence.Steps[0].Voicemail, "a campaign that never set it shows none")
+	sequence := created.Sequence
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage, Message: "Hi {{name}}, call us back."}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
+
+	got := s.get(created.Id).Sequence.Steps[0].Voicemail
+	s.Require().NotNil(got)
+	s.Equal(VoicemailActionLeaveMessage, got.Action)
+	s.Equal("Hi {{name}}, call us back.", got.Message)
+}
+
+func (s *CampaignsSuite) TestAVoicemailMessageOverTheLimitIsRefused() {
+	created := s.create(map[string]any{"name": "may"})
+	sequence := created.Sequence
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage, Message: strings.Repeat("a", 1001)}
+
+	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Nil(s.get(created.Id).Sequence.Steps[0].Voicemail)
+}
+
+func (s *CampaignsSuite) TestLeavingAMessageWithoutOneIsRefusedAtLaunch() {
+	created := s.ready()
+	sequence := s.get(created.Id).Sequence
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
+		map[string]any{"consent": true})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), codeCampaignNotReady)
+	s.Contains(string(payload), "voicemail")
+}
+
+func (s *CampaignsSuite) TestLeavingAMessageWithASpeechToSpeechAgentIsRefusedAtLaunch() {
+	var native AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Sts: pointerTo("stub/stub-sts"), Instructions: pointerTo("be brief"),
+	}, &native))
+	created := s.create(map[string]any{"name": "may", "config_id": native.Id, "from_number": s.heldNumber()})
+	s.setGoal(created, "Confirm the visit")
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	sequence := s.get(created.Id).Sequence
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionLeaveMessage, Message: "Call us back."}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/launch",
+		map[string]any{"consent": true})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), codeCampaignNotReady)
+	s.Contains(string(payload), "voicemail")
+	s.Contains(string(payload), "speech-to-speech")
+
+	sequence.Steps[0].Voicemail = &CampaignVoicemail{Action: VoicemailActionHangUp}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/campaigns/"+created.Id,
+		map[string]any{"sequence": sequence}, nil))
+	s.launch(created)
+}

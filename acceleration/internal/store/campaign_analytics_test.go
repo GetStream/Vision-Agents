@@ -105,3 +105,20 @@ func (s *StoreSuite) TestDialsFallOnUTCDaysAtMidnight() {
 
 	s.Equal([]DialDay{{Day: day.Add(-24 * time.Hour), Dials: 1}, {Day: day, Dials: 1, Answered: 1}}, got.Days)
 }
+
+func (s *StoreSuite) TestVoicemailDialsAreDialsAndTheirOwnSeries() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+	contact := s.contactByNumber(campaign, "+15550001")
+	s.dialed(contact, s.base, "voicemail")
+	s.dialed(contact, s.base.Add(time.Minute), "unanswered")
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal(1, got.Dialed)
+	s.Equal(0, got.Connected, "a machine is not a person who answered")
+	s.Equal([]DialDay{{Day: s.base.Truncate(24 * time.Hour), Dials: 2, Voicemail: 1}}, got.Days)
+	made, err := s.store.AttemptsMade(s.ctx, []string{contact.ID})
+	s.Require().NoError(err)
+	s.Equal(1, made[contact.ID])
+}

@@ -14,6 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/danielgtaylor/huma/v2"
@@ -505,7 +506,7 @@ func (s *Server) readyToLaunch(ctx context.Context, customerID string, draft sto
 	if draft.ConfigID == "" {
 		return campaignNotReady("a campaign needs an agent config to make its calls with before it can launch")
 	}
-	_, err = s.configs.AgentConfig(ctx, customerID, draft.ConfigID)
+	config, err := s.configs.AgentConfig(ctx, customerID, draft.ConfigID)
 	if errors.Is(err, store.ErrNoAgentConfig) {
 		return campaignNotReady("the agent config " + draft.ConfigID + " the campaign calls with no longer exists")
 	}
@@ -519,6 +520,9 @@ func (s *Server) readyToLaunch(ctx context.Context, customerID string, draft sto
 	}
 	if err := sequence.Ready(); err != nil {
 		return campaignNotReady(err.Error())
+	}
+	if sequence.First().Voicemail.Action == campaign.VoicemailLeaveMessage && session.FromConfig(config).Native() {
+		return campaignNotReady("the voicemail cannot leave a message with a speech-to-speech agent: use hang_up, or an agent config with a speech-to-text and a voice")
 	}
 	hours, err := campaign.ParseCallingHours(draft.CallingHours)
 	if err != nil {
@@ -652,7 +656,7 @@ func (s *Server) getCampaignAnalytics(ctx context.Context, request *campaignRequ
 	}
 	for _, day := range counted.Days {
 		rendered.DialsPerDay = append(rendered.DialsPerDay, CampaignDialDay{
-			Date: day.Day.Format(time.DateOnly), Dials: day.Dials, Answered: day.Answered,
+			Date: day.Day.Format(time.DateOnly), Dials: day.Dials, Answered: day.Answered, Voicemail: day.Voicemail,
 		})
 	}
 	return &campaignAnalyticsResponse{Body: rendered}, nil
@@ -793,7 +797,7 @@ func (s *Server) registerCampaigns(api huma.API) {
 		Method:      http.MethodGet,
 		Path:        "/v1/agents/campaigns/{id}/analytics",
 		Summary:     "How a campaign's calls went",
-		Description: "A dial is a call placed: answered, unanswered or still happening. dialed, connected and " +
+		Description: "A dial is a call placed: answered, unanswered, taken by an answering machine or still happening. dialed, connected and " +
 			"converted count contacts, not dials.\n" + serverSideOnly,
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The campaign's analytics"},
@@ -866,9 +870,10 @@ type CampaignAnalytics struct {
 
 // CampaignDialDay is the calls placed on one UTC day.
 type CampaignDialDay struct {
-	Date     string `json:"date" format:"date" doc:"YYYY-MM-DD, in UTC."`
-	Dials    int    `json:"dials"`
-	Answered int    `json:"answered"`
+	Date      string `json:"date" format:"date" doc:"YYYY-MM-DD, in UTC."`
+	Dials     int    `json:"dials" doc:"Calls placed, answering machines included."`
+	Answered  int    `json:"answered"`
+	Voicemail int    `json:"voicemail" doc:"Calls an answering machine took."`
 }
 
 // Campaign is a list of people to ring with one agent, and how.
@@ -941,13 +946,20 @@ type CampaignSequence struct {
 
 // CampaignStep is the calls one step makes, and where each outcome leads.
 type CampaignStep struct {
-	Id         string            `json:"id" doc:"step_1, for now."`
-	ConfigId   string            `json:"config_id" doc:"The agent config the step rings with, the same as the campaign's config_id."`
-	Goal       string            `json:"goal" required:"false" maxLength:"2000" doc:"What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch."`
-	Attempts   []CampaignAttempt `json:"attempts" nullable:"false" doc:"1 to 10. The first has a delay of 0."`
-	Outcomes   []CampaignOutcome `json:"outcomes" nullable:"false" doc:"What an answered call can end as. do_not_call is built in."`
-	Other      CampaignRoute     `json:"other" doc:"Where an answered call none of the outcomes fit leads."`
-	NoResponse CampaignRoute     `json:"no_response" doc:"Where running out of attempts leads. It ends unsuccessfully."`
+	Id         string             `json:"id" doc:"step_1, for now."`
+	ConfigId   string             `json:"config_id" doc:"The agent config the step rings with, the same as the campaign's config_id."`
+	Goal       string             `json:"goal" required:"false" maxLength:"2000" doc:"What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch."`
+	Attempts   []CampaignAttempt  `json:"attempts" nullable:"false" doc:"1 to 10. The first has a delay of 0."`
+	Outcomes   []CampaignOutcome  `json:"outcomes" nullable:"false" doc:"What an answered call can end as. do_not_call is built in."`
+	Other      CampaignRoute      `json:"other" doc:"Where an answered call none of the outcomes fit leads."`
+	NoResponse CampaignRoute      `json:"no_response" doc:"Where running out of attempts leads. It ends unsuccessfully."`
+	Voicemail  *CampaignVoicemail `json:"voicemail,omitempty" required:"false" doc:"What the agent does when an answering machine picks up. Absent hangs up. Leaving a message needs an agent that is not speech-to-speech."`
+}
+
+// CampaignVoicemail is what a step's call does on an answering machine.
+type CampaignVoicemail struct {
+	Action  VoicemailAction `json:"action"`
+	Message string          `json:"message,omitempty" maxLength:"1000" doc:"{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces."`
 }
 
 // CampaignAttempt is one try at reaching a contact.

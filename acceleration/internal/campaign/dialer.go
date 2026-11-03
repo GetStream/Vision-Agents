@@ -73,6 +73,10 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	}
 
 	d.hold(ctx, created)
+	if created.EndReason() == session.EndVoicemail {
+		dialed.Result = Voicemail
+		return dialed, nil
+	}
 	answered, err := answeredCall(context.WithoutCancel(ctx), d.store, dial.Campaign.CustomerID, placed.SessionID)
 	if err != nil {
 		return dialed, err
@@ -160,6 +164,10 @@ func campaignSpec(config store.AgentConfig, campaign store.Campaign, step Step, 
 	spec.Greeting = Render(spec.Greeting, contact.Variables)
 	spec.Tags = merge(spec.Tags, campaign.Tags)
 	spec.Attribution = scheduledBy(campaign)
+	spec.Voicemail = &session.VoicemailPlan{}
+	if !step.Voicemail.hangsUp() {
+		spec.Voicemail.Message = Render(step.Voicemail.Message, contact.Variables)
+	}
 	spec.Phone = &session.PhoneSpec{
 		Number:       campaign.FromNumber,
 		To:           contact.ToNumber,

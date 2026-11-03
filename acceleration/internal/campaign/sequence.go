@@ -25,9 +25,15 @@ const (
 )
 
 const (
+	VoicemailHangUp       = "hang_up"
+	VoicemailLeaveMessage = "leave_message"
+)
+
+const (
 	stepOne          = "step_1"
 	maxAttempts      = 10
 	MaxGoal          = 2000
+	MaxVoicemail     = 1000
 	doNotCallName    = "Do not call"
 	doNotCallMeaning = "The person asked not to be called or contacted again."
 )
@@ -48,7 +54,18 @@ type Step struct {
 	Outcomes   []Outcome `json:"outcomes"`
 	Other      Route     `json:"other"`
 	NoResponse Route     `json:"no_response"`
+	// Voicemail is what the agent does when an answering machine picks up. A step saved
+	// before it existed has none, which hangs up.
+	Voicemail VoicemailSetting `json:"voicemail,omitzero"`
 }
+
+// VoicemailSetting is Action hang_up (or empty) or leave_message, which says Message word for word.
+type VoicemailSetting struct {
+	Action  string `json:"action,omitempty"`
+	Message string `json:"message,omitempty"`
+}
+
+func (v VoicemailSetting) hangsUp() bool { return v.Action != VoicemailLeaveMessage }
 
 type Attempt struct {
 	DelayMinutes int `json:"delay_minutes"`
@@ -136,6 +153,9 @@ func (s Sequence) Ready() error {
 	if strings.TrimSpace(step.Goal) == "" {
 		return errors.New("the conversation needs a goal before the campaign can launch")
 	}
+	if step.Voicemail.Action == VoicemailLeaveMessage && strings.TrimSpace(step.Voicemail.Message) == "" {
+		return errors.New("the voicemail needs a message to leave before the campaign can launch")
+	}
 	for _, o := range step.Outcomes {
 		if o.Name == "" {
 			return fmt.Errorf("the outcome %q needs a name before the campaign can launch", o.ID)
@@ -195,6 +215,14 @@ func (st Step) validate() error {
 		if i > 0 && a.DelayMinutes < 1 {
 			return fmt.Errorf("attempt %d needs a delay of at least 1 minute", i+1)
 		}
+	}
+	switch st.Voicemail.Action {
+	case "", VoicemailHangUp, VoicemailLeaveMessage:
+	default:
+		return fmt.Errorf("the voicemail action must be %q or %q", VoicemailHangUp, VoicemailLeaveMessage)
+	}
+	if utf8.RuneCountInString(st.Voicemail.Message) > MaxVoicemail {
+		return fmt.Errorf("the voicemail message is longer than %d characters", MaxVoicemail)
 	}
 	seen := map[string]bool{}
 	for _, o := range st.Outcomes {

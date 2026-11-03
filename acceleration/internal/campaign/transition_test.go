@@ -290,3 +290,17 @@ func (s *TransitionSuite) TestACallCancelledWhileTheVendorWasDialingIsUnanswered
 	// ring them again.
 	s.Equal(Unanswered, resultOf(fmt.Errorf("phone: dial: %w", context.Canceled)).Result)
 }
+
+func (s *TransitionSuite) TestAVoicemailIsUnansweredWithoutADoubleDial() {
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Voicemail, CallID: "c"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.False(again)
+	s.Equal(store.Enrolled, settle.Stage)
+	s.Equal(2, settle.Attempt)
+	s.True(s.at(5, 10, 0).Equal(*settle.NextAttemptAt))
+	s.Equal("c", settle.CallID)
+
+	last, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(4), 1, Dialed{Result: Voicemail}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.False(again)
+	s.Equal(store.ContactCompleted, last.Stage)
+	s.Equal(OutcomeNoResponse, last.Outcome)
+}

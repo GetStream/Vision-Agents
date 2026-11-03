@@ -223,3 +223,36 @@ func (s *SequenceSuite) TestTheLegacySequenceIsWhatTheMigrationWrote() {
 	s.NoError(legacy.Validate())
 	s.ErrorContains(legacy.Ready(), "goal")
 }
+
+func (s *SequenceSuite) TestAVoicemailActionMustBeKnownAndItsMessageShort() {
+	seq := DefaultSequence("cfg")
+	seq.Steps[0].Voicemail = VoicemailSetting{Action: "call_back"}
+	s.ErrorContains(seq.Validate(), "voicemail")
+
+	seq.Steps[0].Voicemail = VoicemailSetting{Action: VoicemailLeaveMessage, Message: strings.Repeat("a", MaxVoicemail+1)}
+	s.ErrorContains(seq.Validate(), "voicemail")
+
+	seq.Steps[0].Voicemail = VoicemailSetting{Action: VoicemailLeaveMessage, Message: strings.Repeat("é", MaxVoicemail)}
+	s.NoError(seq.Validate(), "the limit counts characters, not bytes")
+	seq.Steps[0].Voicemail = VoicemailSetting{Action: VoicemailHangUp}
+	s.NoError(seq.Validate())
+}
+
+func (s *SequenceSuite) TestLeavingAVoicemailNeedsAMessageToLaunch() {
+	seq := DefaultSequence("cfg")
+	seq.Steps[0].Goal = "Confirm the visit"
+	seq.Steps[0].Voicemail = VoicemailSetting{Action: VoicemailLeaveMessage, Message: " \n "}
+
+	s.ErrorContains(seq.Ready(), "voicemail")
+
+	seq.Steps[0].Voicemail.Message = "Hi {{name}}, call us back."
+	s.NoError(seq.Ready())
+}
+
+func (s *SequenceSuite) TestASequenceWrittenBeforeVoicemailParsesAndHangsUp() {
+	seq, err := ParseSequence([]byte(`{"steps":[{"id":"step_1","config_id":"cfg","attempts":[{"delay_minutes":0}],"outcomes":[],"other":{"next":{"end":"unsuccessful"}},"no_response":{"next":{"end":"unsuccessful"}}}],"double_dial":false}`))
+	s.Require().NoError(err)
+
+	s.NoError(seq.Validate())
+	s.True(seq.First().Voicemail.hangsUp())
+}

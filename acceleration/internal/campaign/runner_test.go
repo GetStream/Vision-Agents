@@ -702,7 +702,7 @@ func (d *stubDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	d.mu.Lock()
 	d.now--
 	d.mu.Unlock()
-	if dialed.Result == Answered || dialed.Result == Unanswered {
+	if dialed.Result == Answered || dialed.Result == Unanswered || dialed.Result == Voicemail {
 		dialed.CallID = dial.SessionID
 		dialed.VendorCallID = "vendor-" + dial.SessionID
 	}
@@ -756,4 +756,36 @@ type stubClassifier struct {
 
 func (c *stubClassifier) Classify(context.Context, store.Campaign, string, Step, []chatlog.Spoken) (string, error) {
 	return c.outcome, nil
+}
+
+func (s *RunnerSuite) TestAVoicemailIsNotClassifiedNorDialedAgainAndTheNextAttemptIsOnSchedule() {
+	// Wednesday, so three days on is a Saturday, outside the default hours.
+	s.clock.set(time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC))
+	s.dialer.results["+15550000001"] = []Dialed{{Result: Voicemail}}
+	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
+
+	s.tick(s.runner)
+
+	s.Len(s.dialer.dialed(), 1, "a double dial would ring the machine again")
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Require().Len(attempts, 1)
+	s.Equal(string(Voicemail), attempts[0].Result)
+	s.Empty(attempts[0].ClassifyState, "no outcome is read from a machine's call")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(2, contact.Attempt)
+	s.Require().NotNil(contact.NextAttemptAt)
+	s.Equal(time.Date(2026, 3, 9, 9, 0, 0, 0, time.UTC), contact.NextAttemptAt.UTC())
+}
+
+func (s *RunnerSuite) TestAVoicemailOnTheLastAttemptEndsAsNoResponse() {
+	sequence := s.single()
+	sequence.Steps[0].Attempts = []Attempt{{0}}
+	s.dialer.results["+15550000001"] = []Dialed{{Result: Voicemail}}
+	campaign := s.launched(sequence, 1, "UTC", "+15550000001")
+
+	s.tick(s.runner)
+
+	contact, _ := s.contact(campaign, "+15550000001")
+	s.Equal(store.ContactCompleted, contact.Stage)
+	s.Equal(OutcomeNoResponse, contact.Outcome)
 }

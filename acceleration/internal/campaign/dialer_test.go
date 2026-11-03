@@ -85,3 +85,32 @@ func (s *CampaignSuite) TestACampaignWithNoGoalAddsNoGoalLineButStillTellsTheAge
 	s.NotContains(spec.Instructions, "tell them why you are calling")
 	s.Contains(spec.Instructions, "How the call ends:")
 }
+
+func (s *CampaignSuite) TestACampaignCallAsksTheVendorToDetectAnAnsweringMachine() {
+	request := placing(store.Campaign{CustomerID: "customer-1", FromNumber: "+15550000001"}, store.Contact{ToNumber: "+15550000002"})
+
+	s.True(request.DetectMachine)
+}
+
+func (s *CampaignSuite) TestAStepThatLeavesAMessageSaysItWithTheContactsVariables() {
+	step := DefaultSequence("config-1").First()
+	step.Voicemail = VoicemailSetting{Action: VoicemailLeaveMessage, Message: "Hi {{ name }}, this is Northwind about {{appointment}}."}
+	contact := store.Contact{Variables: map[string]string{"name": "Ali", "appointment": "Tuesday"}}
+
+	spec := campaignSpec(store.AgentConfig{}, store.Campaign{}, step, contact, phone.Placed{})
+
+	s.Require().NotNil(spec.Voicemail)
+	s.Equal("Hi Ali, this is Northwind about Tuesday.", spec.Voicemail.Message)
+}
+
+func (s *CampaignSuite) TestAStepThatHangsUpAndAnOldOneHangUpOnAMachine() {
+	hangUp := DefaultSequence("config-1").First()
+	hangUp.Voicemail = VoicemailSetting{Action: VoicemailHangUp, Message: "ignored"}
+
+	for _, step := range []Step{hangUp, DefaultSequence("config-1").First()} {
+		spec := campaignSpec(store.AgentConfig{}, store.Campaign{}, step, store.Contact{}, phone.Placed{})
+
+		s.Require().NotNil(spec.Voicemail)
+		s.Empty(spec.Voicemail.Message)
+	}
+}
