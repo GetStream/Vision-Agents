@@ -61,13 +61,13 @@ class _ChatViewState extends State<ChatView> {
     if (_failure case final failure?) {
       return Center(
         child: Notice(
-          icon: Icons.warning_amber_outlined,
+          icon: context.streamIcons.exclamationTriangleFill,
           title: 'Could not start',
           message: failure,
         ),
       );
     }
-    return const Center(child: CircularProgressIndicator());
+    return Center(child: StreamLoadingSpinner());
   }
 }
 
@@ -103,11 +103,14 @@ class _AgentConversationState extends State<_AgentConversation> {
   );
 
   // Stream's components, with what the person can do under each finished reply: copy it,
-  // share it and rate it, and the composer without its attachment button. Made once, since
-  // new builders rebuild every component that reads them.
-  late final _components = AIComponentBuilders(
-    replyActions: _replyActions,
-    composer: const _Composer(),
+  // share it and rate it, and the composer without its attachment button, since a question
+  // goes to the agent as text and dictating one stays. Made once, since new builders rebuild
+  // every component that reads them.
+  late final _components = StreamComponentBuilders(
+    extensions: streamAIComponentBuilders(
+      replyActions: _replyActions,
+      composerLeading: (context, props) => ChatComposer.hidden,
+    ),
   );
 
   @override
@@ -152,7 +155,8 @@ class _AgentConversationState extends State<_AgentConversation> {
   Widget build(BuildContext context) {
     final chat = widget.chat;
     final workingOn = chat.workingOn;
-    return AIComponentFactory(
+    // Here rather than above the app, since the reply actions read this chat.
+    return StreamComponentFactory(
       builders: _components,
       child: Column(
         children: [
@@ -170,8 +174,8 @@ class _AgentConversationState extends State<_AgentConversation> {
               footer: workingOn == null
                   ? null
                   : AITypingIndicatorView(text: workingOn),
-              emptyContent: const Notice(
-                icon: Icons.inventory_2_outlined,
+              emptyContent: Notice(
+                icon: context.streamIcons.archive,
                 title: 'Ask about an order',
                 message: 'Orders A-1042 and A-1043 are on this account.',
               ),
@@ -187,9 +191,8 @@ class _AgentConversationState extends State<_AgentConversation> {
               padding: const EdgeInsets.symmetric(horizontal: 16),
               child: Text(
                 failure,
-                style: TextStyle(
-                  color: Theme.of(context).colorScheme.error,
-                  fontSize: 12,
+                style: context.streamTextTheme.captionDefault.copyWith(
+                  color: context.streamColorScheme.accentError,
                 ),
               ),
             ),
@@ -206,14 +209,4 @@ class _AgentConversationState extends State<_AgentConversation> {
       ),
     );
   }
-}
-
-// The composer without its attachment button: a question goes to the agent as text, and
-// dictating one stays.
-class _Composer extends ChatComposerFactory {
-  const _Composer();
-
-  @override
-  Widget? buildLeading(BuildContext context, ChatComposerLeadingProps props) =>
-      null;
 }

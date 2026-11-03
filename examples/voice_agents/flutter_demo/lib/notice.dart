@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:stream_chat_flutter_ai/stream_chat_flutter_ai.dart';
 
 /// A screen's whole content when there is nothing else to show: an icon, a title and a line
 /// saying why.
@@ -16,24 +17,24 @@ class Notice extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final theme = Theme.of(context);
+    final colors = context.streamColorScheme;
+    final text = context.streamTextTheme;
+    final spacing = context.streamSpacing;
     return Padding(
-      padding: const EdgeInsets.all(32),
+      padding: EdgeInsets.all(spacing.xl),
       child: Column(
         mainAxisSize: MainAxisSize.min,
-        spacing: 8,
+        spacing: spacing.xs,
         children: [
-          Icon(icon, size: 56, color: theme.colorScheme.onSurfaceVariant),
+          Icon(icon, size: 56, color: colors.textSecondary),
           Text(
             title,
-            style: theme.textTheme.titleLarge,
+            style: text.headingSm.copyWith(color: colors.textPrimary),
             textAlign: TextAlign.center,
           ),
           Text(
             message,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
+            style: text.bodyDefault.copyWith(color: colors.textSecondary),
             textAlign: TextAlign.center,
           ),
         ],

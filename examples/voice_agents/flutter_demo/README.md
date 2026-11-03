@@ -51,7 +51,7 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   call would have had. The session is kept in a Stream Chat channel, which the router writes and
   the app shows with Stream's AI components (`stream_chat_flutter_ai`):
   - `AIConversationView` lays the conversation out in turns. The reply streams in below the
-    question without moving it, and `AIReplyActionsView` copies, shares (with `share_plus`) and
+    question without moving it, and `AIReplyActionsView` copies, shares (the platform share sheet) and
     rates each finished reply.
   - The model's reasoning shows as it thinks (`StreamingReasoningView`), reassembled from the
     live updates by `LiveReasoning`.
@@ -59,6 +59,10 @@ The Chat tab asks for `xai/grok-4.7`, a model that streams its reasoning, so the
   - What the agent is working on before it answers shows as `AITypingIndicatorView`.
   - `ChatComposer` asks, dictates and stops a reply, and `AISuggestionsView` starts a
     conversation.
+- The app is drawn in Stream's design system (`stream_core_flutter`, which
+  `stream_chat_flutter_ai` is built on and re-exports): `StreamTheme` in light and dark,
+  `StreamAppBar`, `StreamBottomNavBar`, `StreamButton`, the sheet `showStreamSheet` opens with
+  its `StreamSheetHeader`, and `StreamIcons`.
 - **Voice** starts a session, which puts the agent on a call, and joins it over Stream Video as
   the same user, with the token `backend` signed. On Android the app asks for the microphone
   first; on iOS the system asks when the call first uses it.
