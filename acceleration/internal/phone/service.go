@@ -1436,12 +1436,14 @@ func (s *Service) Machine(ctx context.Context, token, contentType string, body [
 	if !ok {
 		return stack.Wrap(fmt.Errorf("%w: %s detects no answering machines", ErrUnknownStatus, call.Vendor))
 	}
-	machine, err := detector.ReadMachine(contentType, body)
+	report, err := detector.ReadMachine(contentType, body)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("%w: %w", ErrUnreadableStatus, err))
 	}
+	s.logger.Info("a vendor reported who answered", "vendor", call.Vendor, "answered_by", report.Word,
+		"machine", report.Machine, "customer", call.CustomerID, "session", call.CallID)
 	if s.machine != nil {
-		s.machine(ctx, call.CustomerID, call.CallID, machine)
+		s.machine(ctx, call.CustomerID, call.CallID, report.Machine)
 	}
 	return nil
 }

@@ -474,10 +474,16 @@ const (
 	MachineUnknown Machine = "unknown"
 )
 
+// MachineReport is who a vendor says picked up. Word is the vendor's own, kept for debugging.
+type MachineReport struct {
+	Machine Machine
+	Word    string
+}
+
 // MachineDetector is a provider whose vendor can tell an answering machine from a person and
 // posts what it found to Outbound.MachineURL.
 type MachineDetector interface {
-	ReadMachine(contentType string, body []byte) (Machine, error)
+	ReadMachine(contentType string, body []byte) (MachineReport, error)
 }
 
 // MachineOf is the Machine for the AnsweredBy word that Twilio and Telnyx TeXML both report.

@@ -659,15 +659,15 @@ func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
 }
 
 // ReadMachine reads a form's machine, as a vendor's machine post would carry it.
-func (s *stub) ReadMachine(_ string, body []byte) (Machine, error) {
+func (s *stub) ReadMachine(_ string, body []byte) (MachineReport, error) {
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
-		return "", err
+		return MachineReport{}, err
 	}
 	if !form.Has("machine") {
-		return "", errors.New("stub: a machine report needs a machine")
+		return MachineReport{}, errors.New("stub: a machine report needs a machine")
 	}
-	return Machine(form.Get("machine")), nil
+	return MachineReport{Machine: Machine(form.Get("machine")), Word: form.Get("machine")}, nil
 }
 
 // silent is a vendor that reports nothing on the calls it places.

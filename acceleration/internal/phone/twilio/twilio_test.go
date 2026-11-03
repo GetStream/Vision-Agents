@@ -531,7 +531,7 @@ func (s *TwilioSuite) TestEachAnsweredByIsWhoPickedUp() {
 	} {
 		got, err := s.provider.ReadMachine(formType, []byte("CallSid=CA1&AnsweredBy="+answeredBy))
 		s.Require().NoError(err)
-		s.Equal(machine, got, answeredBy)
+		s.Equal(phone.MachineReport{Machine: machine, Word: answeredBy}, got, answeredBy)
 	}
 }
 

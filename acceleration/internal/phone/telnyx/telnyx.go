@@ -333,19 +333,19 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 }
 
 // ReadMachine reads the form Telnyx posts to a TeXML call's AsyncAmdStatusCallback.
-func (p *Provider) ReadMachine(contentType string, body []byte) (phone.Machine, error) {
+func (p *Provider) ReadMachine(contentType string, body []byte) (phone.MachineReport, error) {
 	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
-		return "", stack.Wrap(fmt.Errorf("telnyx: a machine report is a form, not %q", contentType))
+		return phone.MachineReport{}, stack.Wrap(fmt.Errorf("telnyx: a machine report is a form, not %q", contentType))
 	}
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
-		return "", stack.Wrap(fmt.Errorf("telnyx: read a machine report: %w", err))
+		return phone.MachineReport{}, stack.Wrap(fmt.Errorf("telnyx: read a machine report: %w", err))
 	}
 	answeredBy := form.Get("AnsweredBy")
 	if answeredBy == "" {
-		return "", stack.Wrap(errors.New("telnyx: a machine report without an AnsweredBy"))
+		return phone.MachineReport{}, stack.Wrap(errors.New("telnyx: a machine report without an AnsweredBy"))
 	}
-	return phone.MachineOf(answeredBy), nil
+	return phone.MachineReport{Machine: phone.MachineOf(answeredBy), Word: answeredBy}, nil
 }
 
 // finalStatuses are the CallStatus words that end a call.
