@@ -621,7 +621,8 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
-		return s.followUp(ctx, store.NewID(), text, images, asked)
+		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked)
+		return turnID, err
 	}
 	// Typed into a call, the text is heard there, and the call's transcript writes it.
 	if s.persisted != nil && s.spec.Text {
@@ -691,9 +692,15 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // alone. asked is what the caller wants changed about this reply alone. notes are voice
 // notes sent with it, shown on the person's message; text already holds what they said.
 func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
-	photos, err := s.photos(ctx, id, images, notes)
-	if err != nil {
-		return persistent.CommandReceipt{}, "", err
+	// A worker's command on a channel it answers hands on what the person wrote there, photos
+	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
+	handedOn := s.spec.Text && s.spec.Dispatched
+	var photos []persistent.Photo
+	if !handedOn {
+		var err error
+		if photos, err = s.photos(ctx, id, images, notes); err != nil {
+			return persistent.CommandReceipt{}, "", err
+		}
 	}
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
@@ -705,6 +712,9 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
+	}
+	if handedOn {
+		return s.followUp(ctx, id, text, images, asked)
 	}
 	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
 	if err != nil {
@@ -798,22 +808,22 @@ func (s *Session) chose(name, connectionID string) {
 func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.ImagePart) error {
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
-	_, err := s.followUp(ctx, id, text, images, options.LLM{})
+	_, _, err := s.followUp(ctx, id, text, images, options.LLM{})
 	return err
 }
 
 // followUp is FollowUp under commandMu, with asked changing this reply alone. It returns the
-// id the turn was recorded as, as Respond does.
-func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM) (string, error) {
+// follow-up's receipt and the id the turn was recorded as, as RespondCommand does.
+func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM) (persistent.CommandReceipt, string, error) {
 	if s.persisted == nil {
-		return "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
+		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {
-		return "", stack.Wrap(err)
+		return receipt, "", stack.Wrap(err)
 	}
 	if receipt.Duplicate {
-		return "", nil
+		return receipt, "", nil
 	}
 	if !s.spec.Text {
 		s.typeInto(text)
@@ -823,13 +833,13 @@ func (s *Session) followUp(ctx context.Context, id, text string, images []llm.Im
 		// No turn started, so a caller retrying the same id must start one, not be told
 		// it is already there.
 		s.persisted.AbandonFollowUp(receipt.CommandID)
-		return "", stack.Wrap(err)
+		return receipt, "", stack.Wrap(err)
 	}
 	s.persisted.BindTurn(receipt.CommandID, turnID)
 	if turnID == "" {
-		return "", nil
+		return receipt, "", nil
 	}
-	return s.openTurn(turnID, text), nil
+	return receipt, s.openTurn(turnID, text), nil
 }
 
 // FollowUpReply is how the reply to the follow-up under id stands: its state and, once it
