@@ -440,9 +440,10 @@ button {
   background: var(--surface);
 }
 
+/* The buttons stay on the last line as the text grows over several. */
 .composer-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 6px;
 }
 
