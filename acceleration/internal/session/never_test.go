@@ -2,6 +2,7 @@ package session
 
 import (
 	"fmt"
+	"runtime"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -48,8 +49,13 @@ func neverWithin(t assert.TestingT, condition func() bool, waitFor, tick, grace 
 		}()
 		select {
 		case <-finished:
-			if <-held {
-				return assert.Fail(t, "Condition satisfied", msgAndArgs...)
+			select {
+			case answer := <-held:
+				if answer {
+					return assert.Fail(t, "Condition satisfied", msgAndArgs...)
+				}
+			default:
+				return assert.Fail(t, "a check ended without an answer: it left through FailNow or runtime.Goexit", msgAndArgs...)
 			}
 		case <-limit.C:
 			return assert.Fail(t, fmt.Sprintf("a check was still running %s after the %s it was to run for", grace, waitFor), msgAndArgs...)
@@ -144,4 +150,32 @@ func (s *NeverSuite) TestACheckStuckPastTheGraceFailsItsTest() {
 	s.Require().Len(t.messages, 1)
 	s.Contains(t.messages[0], "a check was still running 300ms after the 10ms")
 	s.Contains(t.messages[0], "it is stuck")
+}
+
+// A check that leaves through runtime.Goexit (what FailNow does) ends without an answer: never
+// fails its test at once with one message, rather than waiting for an answer that never comes.
+func (s *NeverSuite) TestACheckThatGoexitsFailsItsTestAtOnce() {
+	type outcome struct {
+		held     bool
+		messages []string
+	}
+	done := make(chan outcome, 1)
+	go func() {
+		t := &failures{}
+		held := neverWithin(t, func() bool {
+			runtime.Goexit()
+			return false
+		}, 10*time.Millisecond, time.Millisecond, 300*time.Millisecond, "it left")
+		done <- outcome{held, t.messages}
+	}()
+
+	select {
+	case got := <-done:
+		s.False(got.held)
+		s.Require().Len(got.messages, 1)
+		s.Contains(got.messages[0], "a check ended without an answer")
+		s.Contains(got.messages[0], "it left")
+	case <-time.After(3 * time.Second):
+		s.Fail("never did not return for a check that left through Goexit")
+	}
 }
