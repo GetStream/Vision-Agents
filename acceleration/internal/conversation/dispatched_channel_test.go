@@ -3,13 +3,17 @@ package conversation_test
 import (
 	"context"
 	"testing"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 )
 
 // DispatchedChannelSuite is a conversation held on the channel a message the Router handed to
@@ -93,6 +97,46 @@ func (s *DispatchedChannelSuite) TestAChannelNothingWasWrittenInIsRefused() {
 	_, _, _, err := s.service.Open(s.routerOpens(s.cid), "customer", s.channel, s.cid)
 
 	s.Require().Error(err)
+}
+
+// The router never stamped the channel with a memory scope, so the session's own is kept: a
+// worker remembering per user opens it as one that does not, on first open and on a later one.
+func (s *DispatchedChannelSuite) TestTheRoutersWordOpensTheChannelUnderTheSessionsMemoryScope() {
+	s.created(nil)
+	s.wrote()
+	scope := memory.Scope{UserID: "sam"}
+
+	c, _, _, err := s.service.Open(s.routerOpens(s.cid), "customer", s.channel, s.cid, scope)
+	s.Require().NoError(err)
+	c.Release()
+	_, _, _, err = s.service.Open(s.routerOpens(s.cid), "customer", s.channel, s.cid, scope)
+
+	s.Require().NoError(err, "opened again while this service still holds it")
+}
+
+// A session opened on the channel later is handed what the person asked as well as what was
+// answered. The person's message nothing answered yet is the one the session is about to be
+// told, so it is not history.
+func (s *DispatchedChannelSuite) TestTheChannelIsReadBackWithWhatThePersonWrote() {
+	s.created(nil)
+	s.wrote()
+	c, history, _, err := s.service.Open(s.routerOpens(s.cid), "customer", s.channel, s.cid)
+	s.Require().NoError(err)
+	s.Empty(history)
+	_, err = c.BeginFollowUp("message-1", "is it raining in Rome?")
+	s.Require().NoError(err)
+	c.Observe(agent.Responding{TurnID: "turn-1"})
+	c.Observe(agent.ResponseDelta{TurnID: "turn-1", Text: "It is."})
+	c.Observe(agent.Responded{TurnID: "turn-1", Text: "It is."})
+	s.Require().Eventually(func() bool { return len(s.chat.Stored(s.channel)) == 2 && !s.service.Writing() }, 5*time.Second, 10*time.Millisecond)
+	c.Release()
+
+	later := conversation.NewForChat(s.chat.Client)
+	s.T().Cleanup(later.Close)
+	_, history, _, err = later.Open(s.routerOpens(s.cid), "customer", s.channel, s.cid)
+
+	s.Require().NoError(err)
+	s.Equal([]llm.Message{{Role: llm.User, Content: "is it raining in Rome?", Author: "sam"}, {Role: llm.Assistant, Content: "It is."}}, history)
 }
 
 func (s *DispatchedChannelSuite) routerOpens(cid string) context.Context {
