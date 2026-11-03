@@ -217,30 +217,39 @@ func (s *CampaignsSuite) TestOnlyTheAppsOwnBackendMayCreateACampaign() {
 }
 
 func (s *CampaignsSuite) TestAPauseOnAnotherRouterStopsTheCallsOfTheOneRunningIt() {
-	created := s.campaign(1)
-	s.add(created.Id, map[string]any{"to_number": s.utils.number()}, map[string]any{"to_number": s.utils.number()})
-	// The suite's router runs the campaign; the pause lands on a second router over the same
-	// database, as it does behind a load balancer.
-	other := s.campaigns(s.router.sessions, slog.New(slog.DiscardHandler))
-	locked := s.holdContacts(created.Id)
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+	// A campaign is also left not running by a loop elsewhere that found nobody to ring.
+	for _, left := range []string{store.Paused, store.Finished} {
+		s.Run(left, func() {
+			created := s.campaign(1)
+			s.add(created.Id, map[string]any{"to_number": s.utils.number()}, map[string]any{"to_number": s.utils.number()})
+			// The suite's router runs the campaign; the pause lands on a second router over the
+			// same database, as it does behind a load balancer.
+			other := s.campaigns(s.router.sessions, slog.New(slog.DiscardHandler))
+			locked := s.holdContacts(created.Id)
+			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
 
-	s.Require().NoError(other.Pause(context.Background(), s.customerID(), created.Id))
-	s.Require().NoError(locked.Rollback())
+			if left == store.Paused {
+				s.Require().NoError(other.Pause(context.Background(), s.customerID(), created.Id))
+			} else {
+				s.Require().NoError(s.store.SetCampaignState(context.Background(), s.customerID(), created.Id, store.Finished))
+			}
+			s.Require().NoError(locked.Rollback())
 
-	s.Never(func() bool {
-		return s.state(created.Id) != CampaignStatePaused || s.rung(created.Id) > 0
-	}, time.Second, 20*time.Millisecond, "the router running it rang nobody after the pause, and left it paused")
-	// A call that never finished, which only a start that finds no loop running gives back.
-	_, err := s.store.DB().NewUpdate().Table("campaign_contacts").Set("state = ?", store.Calling).
-		Where("id = ?", s.contacts(created.Id)[0].Id).Exec(context.Background())
-	s.Require().NoError(err)
-	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
-	s.Require().Eventually(func() bool { return s.state(created.Id) == CampaignStateFinished },
-		10*time.Second, 20*time.Millisecond, "started again where its loop ended at the pause, it rings again")
-	for _, contact := range s.contacts(created.Id) {
-		s.Equal(ContactStateFailed, contact.State, "everybody it held back is rung")
-		s.Equal(1, contact.Attempts)
+			s.Never(func() bool {
+				return s.state(created.Id) != CampaignState(left) || s.rung(created.Id) > 0
+			}, time.Second, 20*time.Millisecond, "the router running it rang nobody after the pause, and left it as it was")
+			// A call that never finished, which only a start that finds no loop running gives back.
+			_, err := s.store.DB().NewUpdate().Table("campaign_contacts").Set("state = ?", store.Calling).
+				Where("id = ?", s.contacts(created.Id)[0].Id).Exec(context.Background())
+			s.Require().NoError(err)
+			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+			s.Require().Eventually(func() bool { return s.state(created.Id) == CampaignStateFinished && s.rung(created.Id) == 2 },
+				10*time.Second, 20*time.Millisecond, "started again where its loop ended at the pause, it rings again")
+			for _, contact := range s.contacts(created.Id) {
+				s.Equal(ContactStateFailed, contact.State, "everybody it held back is rung")
+				s.Equal(1, contact.Attempts)
+			}
+		})
 	}
 }
 
