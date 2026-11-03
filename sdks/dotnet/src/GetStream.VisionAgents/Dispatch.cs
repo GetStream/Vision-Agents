@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.Globalization;
 using System.Net.WebSockets;
 using System.Text.Json.Nodes;
+using GetStream.VisionAgents.Models;
 
 namespace GetStream.VisionAgents;
 
@@ -129,7 +130,7 @@ public sealed class Dispatch
     ///         return;
     ///     }
     ///     var agent = await dispatch.GetOrCreateAgentAsync(message, () => new Agent(new() { Config = "support" }));
-    ///     await agent.Responses.CreateAsync(message.Text);
+    ///     await agent.Responses.CreateAsync(message.Text, [.. message.Images.Select(image => new ImageSource { Url = image.Url })]);
     /// });
     /// </code>
     /// Nothing is waited for: the answer is written into the channel as it is generated.
@@ -204,7 +205,8 @@ public sealed class Dispatch
     /// <remarks>
     /// The response is created with this worker's own credential, acting for whoever wrote
     /// the message, so it reaches a conversation that belongs to them and goes to the model
-    /// rather than back to a worker. It carries the message's request id, so the answer lands on it.
+    /// rather than back to a worker. It carries the message's request id, so the answer lands on it,
+    /// and the photos sent with it, by the URLs the router handed over.
     /// </remarks>
     /// <exception cref="InvalidOperationException">No session is holding the message.</exception>
     public async Task<Response> AnswerAsync(InboundMessage message, CancellationToken cancellationToken = default)
@@ -215,7 +217,8 @@ public sealed class Dispatch
         }
         using var acting = Client.ActingFor(message.UserId);
         return await new Responses(acting, message.SessionId)
-            .AnswerAsync(message.Text, null, message.RequestId, cancellationToken).ConfigureAwait(false);
+            .AnswerAsync(message.Text, [.. message.Images.Select(image => new ImageSource { Url = image.Url })],
+                message.RequestId, cancellationToken).ConfigureAwait(false);
     }
 
     /// <summary>
@@ -326,6 +329,7 @@ public sealed class Dispatch
         SessionId = frame.Text("session_id"),
         RequestId = frame.Text("request_id"),
         Text = frame.Text("text"),
+        Images = ImagesOf(frame),
         MessageId = frame.Text("message_id"),
         UserId = frame.Text("user_id"),
         UserName = frame.Text("user_name"),
@@ -595,6 +599,23 @@ public sealed class Dispatch
             }
         }
         return custom;
+    }
+
+    /// <summary>
+    /// The photos a message frame carries. An entry with no URL is dropped, since there is
+    /// nothing to fetch, and so is one that is not an object.
+    /// </summary>
+    private static List<InboundImage> ImagesOf(Frame frame)
+    {
+        var images = new List<InboundImage>();
+        foreach (var entry in frame.Json["images"] as JsonArray ?? [])
+        {
+            if (entry is JsonObject described && new Frame(described) is var image && image.Text("url") is { Length: > 0 } url)
+            {
+                images.Add(new InboundImage(url, image.Text("mime_type")));
+            }
+        }
+        return images;
     }
 
     private static DateTimeOffset? TimeOf(Frame frame) =>

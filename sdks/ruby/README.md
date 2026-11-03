@@ -152,7 +152,8 @@ A message arrives when no agent is running on its channel, and `get_or_create_ag
 agent per channel for the same reason. An agent whose `agent.yaml` says
 `dispatch: {text: enabled}` hands what end users write to the worker instead, with
 `message.session_id` and `message.request_id` set: `dispatch.answer(message)` has the model
-answer it on that session, with the worker's own credential acting for `message.user_id`.
+answer it on that session, with the worker's own credential acting for `message.user_id`, and
+shows it the photos sent with it (`message.images`, by URL).
 `get_or_create_agent` refuses such a message.
 
 A worker can also run an agent's tools for every session under it, whoever opened it, such
