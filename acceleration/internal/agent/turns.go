@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"sync"
 	"sync/atomic"
@@ -18,6 +19,13 @@ const turnQueueSize = 256
 
 // turnWriteTimeout bounds a single write so a stuck database cannot wedge the writer.
 const turnWriteTimeout = 5 * time.Second
+
+// turnDrainTimeout bounds how long Close waits for the queue to be written, however many
+// rows are in it. It is two writes: the one in flight may use its whole turnWriteTimeout,
+// and a healthy writer finishes the rest of a full queue in far less than the second.
+// What is still queued after it is dropped, so a stuck database cannot hold a call's
+// teardown for turnQueueSize writes of turnWriteTimeout each.
+const turnDrainTimeout = 2 * turnWriteTimeout
 
 // playoutGrace is how long a turn whose speech is queued on an edge waits for the track to
 // take it, once everything else about it is known. An edge takes queued speech within the
@@ -459,6 +467,14 @@ type turnRecorder struct {
 	queue chan live.Turn
 	done  chan struct{}
 
+	// write stores one row; it is the store and Redis unless a test says otherwise.
+	write func(ctx context.Context, row live.Turn) error
+
+	// ctx is the writer's, cancelled when Close gives up on what is still queued.
+	ctx          context.Context
+	cancel       context.CancelFunc
+	drainTimeout time.Duration
+
 	// closing guards the queue against the one send that cannot be recovered from. A
 	// send on a closed channel panics even from a select with a default, so closing the
 	// queue and sending to it have to be ordered rather than merely non-blocking.
@@ -469,14 +485,26 @@ type turnRecorder struct {
 }
 
 func newTurnRecorder(pgStore *store.Store, liveClient *live.Client, owner routing.Owner, logger *slog.Logger) *turnRecorder {
+	return buildTurnRecorder(pgStore, liveClient, owner, logger).start()
+}
+
+// buildTurnRecorder is a recorder that has not started writing, so a test can swap how.
+func buildTurnRecorder(pgStore *store.Store, liveClient *live.Client, owner routing.Owner, logger *slog.Logger) *turnRecorder {
 	r := &turnRecorder{
-		store:  pgStore,
-		live:   liveClient,
-		owner:  owner,
-		logger: logger,
-		queue:  make(chan live.Turn, turnQueueSize),
-		done:   make(chan struct{}),
+		store:        pgStore,
+		live:         liveClient,
+		owner:        owner,
+		logger:       logger,
+		queue:        make(chan live.Turn, turnQueueSize),
+		done:         make(chan struct{}),
+		drainTimeout: turnDrainTimeout,
 	}
+	r.write = r.persist
+	r.ctx, r.cancel = context.WithCancel(context.Background())
+	return r
+}
+
+func (r *turnRecorder) start() *turnRecorder {
 	go r.run()
 	return r
 }
@@ -524,14 +552,24 @@ func (r *turnRecorder) Record(turn Turn) {
 	}
 }
 
-// Close drains the queue and stops the writer.
+// Close drains the queue and stops the writer, giving the writes drainTimeout between
+// them. Rows still unwritten then are dropped and counted with the rest.
 func (r *turnRecorder) Close() {
 	r.closeOnce.Do(func() {
 		r.closing.Lock()
 		r.closed = true
 		close(r.queue)
 		r.closing.Unlock()
-		<-r.done
+
+		deadline := time.NewTimer(r.drainTimeout)
+		defer deadline.Stop()
+		select {
+		case <-r.done:
+		case <-deadline.C:
+			r.cancel()
+			<-r.done
+		}
+		r.cancel()
 		if dropped := r.dropped.Load(); dropped > 0 {
 			r.logger.Warn("dropped turns because the writer fell behind", "count", dropped)
 		}
@@ -542,19 +580,35 @@ func (r *turnRecorder) run() {
 	defer close(r.done)
 
 	for row := range r.queue {
-		ctx, cancel := context.WithTimeout(context.Background(), turnWriteTimeout)
-		if r.live != nil {
-			if err := r.live.RecordTurn(ctx, row); err != nil {
-				r.logger.Error("could not record turn", "error", err)
-			}
+		if r.ctx.Err() != nil {
+			r.dropped.Add(1)
+			continue
 		}
-		if r.store != nil {
-			if err := r.store.RecordTurnStats(ctx, sampleOf(row)); err != nil {
-				r.logger.Error("could not count turn", "error", err)
-			}
-		}
+		ctx, cancel := context.WithTimeout(r.ctx, turnWriteTimeout)
+		err := r.write(ctx, row)
 		cancel()
+		if err != nil && r.ctx.Err() != nil {
+			r.dropped.Add(1)
+		}
 	}
+}
+
+// persist writes a row to Redis and to Postgres, logging what fails.
+func (r *turnRecorder) persist(ctx context.Context, row live.Turn) error {
+	var failures []error
+	if r.live != nil {
+		if err := r.live.RecordTurn(ctx, row); err != nil {
+			r.logger.Error("could not record turn", "error", err)
+			failures = append(failures, err)
+		}
+	}
+	if r.store != nil {
+		if err := r.store.RecordTurnStats(ctx, sampleOf(row)); err != nil {
+			r.logger.Error("could not count turn", "error", err)
+			failures = append(failures, err)
+		}
+	}
+	return errors.Join(failures...)
 }
 
 func sampleOf(turn live.Turn) store.TurnSample {

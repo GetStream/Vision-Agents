@@ -220,6 +220,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
+### An agent leaves a call within ten seconds when the database is stuck
+
+Closing an agent waited for every finished turn still queued to be recorded, each with its own five-second write limit, so a stuck Redis or Postgres could hold a call's teardown for many minutes. The waiting is now bound by one deadline of ten seconds. Turns not written by then are dropped and counted in one warning, as turns are when the writer falls behind. With a healthy database every queued turn is still written (AI-2475).
+
 ### A user whose own quota cannot be read is still counted
 
 When a user's own quota could not be read, what they spent was not counted at all if no app or organization limit was set, so the customer's own limit for that user lost the usage. A response is now counted in the user's bucket all the same, and a warning is logged for it, at most once a minute per customer. The request itself is still admitted, as before (AI-2483).
