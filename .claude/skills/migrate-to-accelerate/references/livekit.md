@@ -45,9 +45,9 @@ provider; report it instead of substituting a different vendor silently.
 - Tools on the `AgentSession` shared by all agents work the same way: register once.
 - A tool returning a new `Agent` (handoff) becomes a skill, not a function. The function
   disappears; `instructions.md` tells the agent to hand that kind of work to the skill.
-- `mcp_servers=[mcp.MCPServerHTTP(url)]` becomes an `mcp_servers:` entry
-  `{name, url, tools}` in `agent.yaml`, or a catalog `connectors:` entry when the server
-  is a known product.
+- `mcp_servers=[mcp.MCPServerHTTP(url)]` becomes a custom connector for that URL plus a
+  `connectors:` binding in `agent.yaml` (see "MCP servers by URL" in `SKILL.md`), or a
+  catalog `connectors:` entry when the server is a known product.
 - Raw JSON-schema tools (`raw_schema`) become typed Python functions with the schema
   expressed as type hints and docstring.
 

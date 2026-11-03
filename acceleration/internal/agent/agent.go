@@ -943,6 +943,25 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 // images sent with no text.
 const imagesAlone = "The caller sent these images without a message. Describe what they show."
 
+// PhotoNote is said as history keeps it once the photos sent with it have been seen: followed
+// by a note that they were sent, rather than the photos again, or the note alone for photos
+// sent with no words. said is as it is with no photos.
+func PhotoNote(said string, photos int) string {
+	var note string
+	switch {
+	case photos == 0:
+		return said
+	case photos == 1:
+		note = "[sent with a photo, not shown again]"
+	default:
+		note = fmt.Sprintf("[sent with %d photos, not shown again]", photos)
+	}
+	if said == "" {
+		return note
+	}
+	return said + "\n\n" + note
+}
+
 // SeesImages reports whether a turn's images reach something that looks at them: a vision
 // skill, or a conversation model that accepts images. RespondTo refuses a turn with images
 // with ErrCannotSeeImages when neither is there.
@@ -1058,13 +1077,16 @@ func (a *Agent) captureVideo(ctx context.Context, request harness.CaptureRequest
 //
 // Images go to the conversation model with this question alone, and only one that accepts
 // images takes them: an aside has no vision skill to hand them to (SeesImagesInWriting).
-// Images sent with no text are asked about as imagesAlone.
+// Images sent with no text are asked about as imagesAlone. History keeps the words with a
+// note that photos were sent (PhotoNote), as a thread's history does, and not imagesAlone,
+// which asks about images it no longer holds.
 func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (string, error) {
 	if strings.TrimSpace(text) == "" && len(images) == 0 {
 		return "", errors.New("agent: there is nothing to answer")
 	}
+	asked := text
 	if strings.TrimSpace(text) == "" {
-		text = imagesAlone
+		text, asked = "", imagesAlone
 	}
 	for _, image := range images {
 		if err := image.Validate(); err != nil {
@@ -1086,20 +1108,21 @@ func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (
 		a.mu.Unlock()
 		return "", stack.Wrap(ErrCannotSeeImages)
 	}
-	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: harness.Defang(text)})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images))})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
 	}
-	// On this question alone: the history keeps its words, as a turn's images are kept only
-	// for its reply (keepTurnLocked).
+	// On this question alone: the history keeps its words and the note, as a turn's images
+	// are kept only for its reply (keepTurnLocked).
+	history[len(history)-1].Content = harness.Defang(asked)
 	history = harness.WithImages(history, images)
 	instructions := a.instructions()
 	model, overwrites := a.llm, a.options.Overwrites
 	a.mu.Unlock()
 
 	turnID := writtenPrefix + turnStamp()
-	screening := a.screening(ctx, turnID, text)
+	screening := a.screening(ctx, turnID, asked)
 	if screening != nil && screening.blocking {
 		if verdict := screening.verdict(); !verdict.Allowed {
 			return a.refuseWritten(turnID, verdict), nil

@@ -1,11 +1,16 @@
 package agent
 
 import (
+	"bytes"
+	"context"
 	"log/slog"
+	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/stretchr/testify/suite"
@@ -68,6 +73,142 @@ func (s *TurnRecorderSuite) TestTurnsRecordedWhileClosingAreLetGo() {
 	}
 
 	s.NotPanics(wg.Wait)
+}
+
+// slowRecorder is one whose writes are whatever write says, not a store, with a logger
+// that keeps what it says.
+func (s *TurnRecorderSuite) slowRecorder(drain time.Duration, write func(context.Context, live.Turn) error) (*turnRecorder, *bytes.Buffer) {
+	var logs bytes.Buffer
+	r := buildTurnRecorder(nil, nil, routing.Owner{CustomerID: "acme", AgentID: "agent-1"}, slog.New(slog.NewTextHandler(&logs, nil)))
+	r.drainTimeout = drain
+	r.write = write
+	return r.start(), &logs
+}
+
+func (s *TurnRecorderSuite) TestTheDrainDeadlineIsTwoWrites() {
+	r := s.recorder()
+	r.Close()
+
+	s.Equal(2*turnWriteTimeout, r.drainTimeout)
+	s.Equal(turnWriteTimeout, r.writeTimeout)
+}
+
+// TestCloseGivesUpOnAStoreThatNeverAnswers is the teardown of a call whose database is
+// stuck: every queued row used to get its own turnWriteTimeout, so closing waited for all
+// of them. Now it waits for one deadline and drops what is left, counted once.
+func (s *TurnRecorderSuite) TestCloseGivesUpOnAStoreThatNeverAnswers() {
+	const queued = 20
+	var attempts atomic.Int64
+	r, logs := s.slowRecorder(200*time.Millisecond, func(ctx context.Context, _ live.Turn) error {
+		attempts.Add(1)
+		<-ctx.Done()
+		return ctx.Err()
+	})
+	for i := 0; i < queued; i++ {
+		r.Record(Turn{TurnID: "turn", StartedAt: time.Now().UTC()})
+	}
+
+	closed := make(chan struct{})
+	started := time.Now()
+	go func() {
+		r.Close()
+		close(closed)
+	}()
+	select {
+	case <-closed:
+	case <-time.After(3 * time.Second):
+		s.FailNow("Close was still waiting on a store that never answers")
+	}
+
+	s.GreaterOrEqual(time.Since(started), 200*time.Millisecond, "closing does not drop rows before the deadline")
+	s.EqualValues(queued, r.dropped.Load(), "the row in flight and every queued one are counted")
+	s.EqualValues(1, attempts.Load(), "no row is tried once the deadline has passed")
+	s.Equal(1, strings.Count(logs.String(), "dropped turns"), "the drops are logged once")
+	s.Contains(logs.String(), "count=20")
+}
+
+// TestCloseWritesEveryQueuedRowWhenTheStoreAnswers is the control: a healthy store loses
+// nothing, however many rows are waiting when the call ends.
+func (s *TurnRecorderSuite) TestCloseWritesEveryQueuedRowWhenTheStoreAnswers() {
+	var mu sync.Mutex
+	var written []string
+	r, logs := s.slowRecorder(time.Minute, func(_ context.Context, row live.Turn) error {
+		time.Sleep(time.Millisecond)
+		mu.Lock()
+		defer mu.Unlock()
+		written = append(written, row.TurnID)
+		return nil
+	})
+	var want []string
+	for i := 0; i < turnQueueSize; i++ {
+		id := "turn-" + strings.Repeat("x", i%7) + string(rune('a'+i%26))
+		want = append(want, id)
+		r.Record(Turn{TurnID: id, StartedAt: time.Now().UTC()})
+	}
+
+	r.Close()
+
+	mu.Lock()
+	defer mu.Unlock()
+	s.Equal(want, written, "every row, in the order it finished")
+	s.Zero(r.dropped.Load())
+	s.NotContains(logs.String(), "dropped")
+	s.Error(r.ctx.Err(), "the writer's context is released")
+}
+
+// TestAWriteThatFinishesPastTheDeadlineIsNotCounted keeps the count to rows that were lost:
+// the one in flight when the deadline passes is stored, the two behind it are dropped.
+func (s *TurnRecorderSuite) TestAWriteThatFinishesPastTheDeadlineIsNotCounted() {
+	var attempts atomic.Int64
+	r, _ := s.slowRecorder(50*time.Millisecond, func(context.Context, live.Turn) error {
+		attempts.Add(1)
+		time.Sleep(300 * time.Millisecond)
+		return nil
+	})
+	for i := 0; i < 3; i++ {
+		r.Record(Turn{TurnID: "turn", StartedAt: time.Now().UTC()})
+	}
+
+	r.Close()
+
+	s.EqualValues(1, attempts.Load())
+	s.EqualValues(2, r.dropped.Load())
+}
+
+// TestAWriteThatTimesOutOnItsOwnIsCounted keeps the warning's count equal to the rows lost
+// in a stuck store: the first rows give up on their own timeout, before any deadline.
+func (s *TurnRecorderSuite) TestAWriteThatTimesOutOnItsOwnIsCounted() {
+	var logs bytes.Buffer
+	r := buildTurnRecorder(nil, nil, routing.Owner{CustomerID: "acme"}, slog.New(slog.NewTextHandler(&logs, nil)))
+	r.writeTimeout = 20 * time.Millisecond
+	r.write = func(ctx context.Context, _ live.Turn) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	r.start()
+	for i := 0; i < 3; i++ {
+		r.Record(Turn{TurnID: "turn", StartedAt: time.Now().UTC()})
+	}
+
+	r.Close()
+
+	s.EqualValues(3, r.dropped.Load())
+	s.Contains(logs.String(), "count=3")
+}
+
+// TestAFailedWriteIsNotADrop keeps the count to what the deadline cut: a store that
+// answers with an error is logged by the writer, and the call is not behind.
+func (s *TurnRecorderSuite) TestAFailedWriteIsNotADrop() {
+	r, _ := s.slowRecorder(time.Minute, func(context.Context, live.Turn) error {
+		return context.DeadlineExceeded
+	})
+	for i := 0; i < 5; i++ {
+		r.Record(Turn{TurnID: "turn", StartedAt: time.Now().UTC()})
+	}
+
+	r.Close()
+
+	s.Zero(r.dropped.Load())
 }
 
 func (s *TurnRecorderSuite) TestTurnTimingStartsAtLastTranscriptRevision() {

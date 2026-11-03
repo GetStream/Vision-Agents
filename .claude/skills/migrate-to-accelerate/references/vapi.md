@@ -45,7 +45,7 @@ base) and the assistant API reference (`POST /assistant`).
 | `function` without a server (client-handled) | Python function if the work is server-side; a browser/device action has no equivalent and is reported |
 | `apiRequest` | Python function performing the request; static body fields become function constants, model-filled fields become parameters |
 | `query` (knowledge base) | Not a tool here: files go to `knowledge/` and the tool is deleted |
-| `mcp` | `mcp_servers: [{name, url, tools}]` in `agent.yaml`, or a catalog `connectors:` entry |
+| `mcp` | A custom connector for its URL plus a `connectors:` binding in `agent.yaml` (see "MCP servers by URL" in `SKILL.md`), or a catalog `connectors:` entry |
 | `transferCall` | No tool; transfer policy in `instructions.md`, number in router phone setup. Report |
 | `endCall`, `dtmf`, `voicemail` | No build needed / no equivalent; report each |
 | `handoff` (squad member) | The target assistant becomes `skills/<name>.md`; the handoff tool disappears |

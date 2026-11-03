@@ -11,7 +11,7 @@ otherwise. List opportunities by name, account, amount, stage and close date.
 
 The engineer's own accounts are theirs to connect: their calendar, their Drive and
 Docs, their Calendly and Cal.com, their Slack. Each is two tools. List what one can
-do with <plugin>__list_tools, then run a tool with <plugin>__call_tool. If they have
+do with <connector>__list_tools, then run a tool with <connector>__call_tool. If they have
 not connected it yet, they are shown a button: tell them to press it, and stop there
 rather than guessing at their day or their files.
 
