@@ -34,9 +34,6 @@ connectors:
   - linear                  # a person's own, in the chat
   - google_calendar
   # google_drive, google_docs, calendly, calcom and slack the same way
-  - name: tablejourney      # an MCP server outside the catalog: a custom connector
-    connector: custom_tablejourney
-    connection: tablejourney
 sandbox: daytona  # Blender, built into the router's sandbox for the render skill
 ```
 
@@ -223,19 +220,26 @@ credentials:
 
 ```bash
 curl -X POST "$STREAM_ACCELERATION_URL/v1/agents/connectors" \
+  -H "api_key: $STREAM_API_KEY" -H "stream-auth-type: jwt" \
+  -H "Authorization: Bearer $SERVER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"id": "custom_tablejourney", "name": "TableJourney",
        "description": "Verified restaurants, food festivals and food tours",
        "endpoint": "https://tablejourney.com/mcp", "schemes": ["none"]}'
 curl -X POST "$STREAM_ACCELERATION_URL/v1/agents/connections" \
+  -H "api_key: $STREAM_API_KEY" -H "stream-auth-type: jwt" \
+  -H "Authorization: Bearer $SERVER_TOKEN" \
   -H "Content-Type: application/json" \
   -d '{"connector_id": "custom_tablejourney", "owner": {"type": "app"}, "label": "tablejourney"}'
 # the response is the connection, pending, with its id: use it as $CONNECTION_ID
 curl -X PUT "$STREAM_ACCELERATION_URL/v1/agents/connections/$CONNECTION_ID/credentials" \
-  -H "Content-Type: application/json" -d '{"expected_revision": 1}'
+  -H "api_key: $STREAM_API_KEY" -H "stream-auth-type: jwt" \
+  -H "Authorization: Bearer $SERVER_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"expected_revision": 1}'
 ```
 
-Then `agent.yaml` names it. `connector` is the connector's id and `connection` the label of
+Then add it to `connectors` in `agent.yaml`, once the connector and its connection exist. `connector` is the connector's id and `connection` the label of
 its connection:
 
 ```yaml

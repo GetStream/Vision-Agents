@@ -14,10 +14,6 @@ tools:
 # for that person's connection in the chat the first time it needs it, and offers every
 # tool. Name it with a mapping to offer only the tools named, or matching a pattern such
 # as get_*; left out, all of them. required fails a session that cannot open the binding.
-# TableJourney is a public MCP server outside the catalog, so the app's backend creates a
-# custom connector for it once (the README has the calls). connector names that connector and
-# connection its connection's label; a binding to a connector that takes no login needs the
-# connection, or it gets no tools.
 # Linear, Calendly and Cal.com register their own OAuth clients, so they need nothing
 # configured on the router: ask about an issue and the login works.
 connectors:
@@ -38,9 +34,6 @@ connectors:
   - calendly
   - calcom
   - slack
-  - name: tablejourney
-    connector: custom_tablejourney
-    connection: tablejourney
 # Blender for the render skill, in the router's Daytona sandbox.
 sandbox: daytona
 sandbox_options:
