@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -297,22 +300,28 @@ func (s *QuotaSuite) messagesBeforeRefusal() int {
 	return spent
 }
 
-// spend charges one message to a user's day, the way one of their own replies is, and
-// returns once the day shows it. The limiter stops waiting for a debit after two seconds, so
-// when this process stalls the debit goes on after Debit has returned.
+// spend charges one message to a user's day, the way one of their own replies is.
 func (s *QuotaSuite) spend(client *testClient) {
-	caller := routing.Caller{UserID: client.userID, Verified: client.kind == user || client.kind == guest}
+	debit(s.T(), s.limiter, s.customerID(),
+		routing.Caller{UserID: client.userID, Verified: client.kind == user || client.kind == guest}, 1)
+}
+
+// debit charges caller's day with a response of the given tokens, and returns once the day
+// shows it. The limiter stops waiting for a debit after two seconds, so when this process
+// stalls the debit goes on after Debit has returned, and a request made at once is admitted.
+func debit(t *testing.T, limiter *quota.Limiter, customerID string, caller routing.Caller, tokens int64) {
 	left := func() int64 {
-		status, _ := s.limiter.Allow(s.T().Context(), s.customerID(), caller)
+		status, _ := limiter.Allow(t.Context(), customerID, caller)
 		return status.Remaining
 	}
 	before := left()
-	s.limiter.Debit(s.T().Context(), s.customerID(), caller, 1)
+	limiter.Debit(t.Context(), customerID, caller, tokens)
 	if before == 0 {
+		// No cap to count against, or a day already spent: nothing shows a debit.
 		return
 	}
-	s.Require().Eventually(func() bool { return left() < before }, settleFor, 10*time.Millisecond,
-		"the message was never counted on the day")
+	require.Eventually(t, func() bool { return left() < before }, settleFor, 10*time.Millisecond,
+		"the debit was never counted on the day")
 }
 
 func (s *QuotaSuite) TestAnAnonymousCallerClaimingAUsersIDIsHeldToTheAppsQuota() {
