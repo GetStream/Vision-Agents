@@ -107,7 +107,8 @@ func (s *MessageHooksSuite) TestAVoiceRecordingToARunningSessionReachesTheModelA
 	s.Equal(s.channelID, rows[0].AgentID)
 }
 
-// A running session told of a recording it could not hear says so, after answering the text.
+// A running session told of a recording it could not hear says so, after answering the text
+// or the photo sent with it.
 func (s *MessageHooksSuite) TestARecordingARunningSessionCannotHearIsSaidSo() {
 	s.running("vision/vision-model")
 	asked := len(s.vision.requests())
@@ -116,6 +117,11 @@ func (s *MessageHooksSuite) TestARecordingARunningSessionCannotHearIsSaidSo() {
 		s.recordedMessage("", "is it fixed?", s.recordingFrom(s.images.URL+"/gone.aac"))))
 
 	s.Equal("is it fixed?\n\n"+unheardRecordingWithMore, s.askedOf(s.vision, asked).Content)
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
+		s.recordedMessage("", "", s.recordingFrom(s.images.URL+"/gone.aac"), s.photoAt("/photo.png"))))
+	withPhoto := s.askedOf(s.vision, asked+1)
+	s.Equal(unheardRecordingWithMore, withPhoto.Parts[0].Text, "the photo is the rest of the message")
+	s.Len(imagesIn(withPhoto), 1)
 }
 
 // The voice recording the agent shows on a person's message it wrote itself carries its source,
