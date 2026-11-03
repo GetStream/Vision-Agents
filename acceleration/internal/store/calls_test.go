@@ -73,3 +73,44 @@ func (s *StoreSuite) TestACallKeepsTheTimeItFirstEnded() {
 	s.Require().NotNil(read.EndedAt)
 	s.WithinDuration(s.base.Add(time.Minute), *read.EndedAt, time.Second)
 }
+
+func (s *StoreSuite) TestACallStartedAgainLearnsTheConversationItWasBoundTo() {
+	// A call row from before the column has none. The session carrying on under the same id
+	// names its conversation, and the row keeps it from then on.
+	call := Call{
+		ID: "session-learns-conversation", CustomerID: "acme",
+		CallID: "call-1", AgentID: "agent-learns-conversation", StartedAt: s.base,
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+	before, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Require().Empty(before.ConversationID)
+
+	again := call
+	again.ConversationID = "agent:support-1"
+	s.Require().NoError(s.store.StartCall(s.ctx, &again))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal("agent:support-1", read.ConversationID)
+}
+
+func (s *StoreSuite) TestACallStartedAgainKeepsTheConversationItWasBoundTo() {
+	call := Call{
+		ID: "session-keeps-conversation", CustomerID: "acme",
+		CallID: "call-1", AgentID: "agent-keeps-conversation", StartedAt: s.base,
+		ConversationID: "agent:first",
+	}
+	s.Require().NoError(s.store.StartCall(s.ctx, &call))
+
+	again := call
+	again.ConversationID = "agent:second"
+	s.Require().NoError(s.store.StartCall(s.ctx, &again))
+	third := call
+	third.ConversationID = ""
+	s.Require().NoError(s.store.StartCall(s.ctx, &third))
+
+	read, err := s.store.Call(s.ctx, "acme", call.ID)
+	s.Require().NoError(err)
+	s.Equal("agent:first", read.ConversationID)
+}

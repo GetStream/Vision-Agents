@@ -601,8 +601,8 @@ const transcriptSlack = 2 * time.Second
 // into the conversation its call row names (a call from before that column names none),
 // else into the channel a new conversation is named after its session
 // (session.Manager.Create); failing that it read its agent's channel, as a call from before
-// there were session rows still does. The session's row is written behind the call's, so a call that just ended is
-// read once its writer has caught up.
+// there were session rows still does. The session's row is written behind the call's, so a
+// call that just ended is read once its writer has caught up.
 func (s *Server) transcriptReads(ctx context.Context, customerID string, call store.Call) []chatlog.Read {
 	window := chatlog.Read{
 		Customer: customerID,

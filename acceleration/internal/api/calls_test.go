@@ -529,6 +529,20 @@ func (s *CallsSuite) TestADeletedSessionsConversationHoldingNothingReadsTheCalls
 	s.Equal("said under the call's id", read[0].Text)
 }
 
+func (s *CallsSuite) TestACallBoundToItsOwnChannelReadsEachChannelOnce() {
+	// The call row names agent:<call id>, which is the channel the call is named after:
+	// listing it twice would put the same question to Stream twice.
+	call := s.started(store.Call{ConversationID: "agent:" + s.utils.uuid()})
+	call.ConversationID = "agent:" + call.ID
+
+	var channels []string
+	for _, read := range s.router.transcriptReads(context.Background(), s.customerID(), call) {
+		channels = append(channels, read.Channel)
+	}
+
+	s.Equal([]string{call.ID, call.AgentID}, channels)
+}
+
 func (s *CallsSuite) TestADeletedSessionsConversationOfAnotherCustomerIsNotRead() {
 	conversation := "support-" + s.utils.uuid()
 	call := s.started(store.Call{ConversationID: "agent:" + conversation})
