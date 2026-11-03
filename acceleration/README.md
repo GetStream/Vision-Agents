@@ -291,7 +291,7 @@ what to close instead means a new operation is open by accident, and the cost of
 that wrong is a config a phone can rewrite. The generated SDKs and the check in front of the
 handlers both read the same marks, so there is one answer rather than two that can drift.
 
-Unauthenticated paths — health, the plugin OAuth callback — declare `security: []` and sit
+Unauthenticated paths — health, for one — declare `security: []` and sit
 outside this entirely: there is no caller to classify.
 
 A server-side caller says so twice. `Stream-Auth-Type: server` is the declaration, and a
@@ -2517,7 +2517,7 @@ a new operation is reachable there as soon as the types are regenerated.
 The three sockets cannot be Huma operations, since an upgrade returns a connection rather than
 a response, and neither can the log stream, the data export and import, which stream, or the
 connector consent's launch page, handoff and callback, which a browser reaches. Their handlers are written by hand in `internal/api/sessionws.go`, `streamws.go`,
-`dispatchws.go`, `logs.go`, `datamove.go`, `plugins.go` and `authorizations.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
+`dispatchws.go`, `logs.go`, `datamove.go` and `authorizations.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
 still declared, with its `101` or streamed response, in `internal/api/handwritten.go`, so a
 reader and a client generator know it exists and the server-side check reads its marks like
 any other operation's: an operation the spec cannot see is the one place a default that
