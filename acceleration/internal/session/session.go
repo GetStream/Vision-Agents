@@ -1594,6 +1594,7 @@ func (s *Session) close() error {
 	s.closing = true
 	s.stopTimeout()
 	s.mu.Unlock()
+	s.checked(false)
 
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
