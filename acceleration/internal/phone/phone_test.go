@@ -749,3 +749,18 @@ func (s *PhoneSuite) config() Config {
 	s.Require().NoError(err)
 	return config
 }
+
+func (s *PhoneSuite) TestANumberThatCannotBeDialedIsErrNotDialable() {
+	for _, to := range []string{"+19005550123", "+19765550123", "911", "5125550123", "not a number"} {
+		err := Dialable(to)
+		s.ErrorIs(err, ErrNotDialable, to)
+	}
+	s.NoError(Dialable("+15125550123"))
+}
+
+func (s *PhoneSuite) TestAPremiumNumberIsStillRefusedAsADestination() {
+	err := Dialable("+19005550123")
+	s.ErrorIs(err, ErrDestinationRefused)
+	s.Contains(err.Error(), "premium-rate")
+	s.NotContains(err.Error(), ErrNotDialable.Error())
+}

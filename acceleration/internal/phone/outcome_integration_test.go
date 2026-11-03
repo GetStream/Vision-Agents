@@ -259,6 +259,39 @@ func (s *OutcomeSuite) TestADialThatFailsLeavesNoOutcome() {
 	s.ErrorIs(err, outcome.ErrUnknownCall)
 }
 
+func (s *OutcomeSuite) TestACallCancelledBeforeItWasSentWasNeverPlaced() {
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	_, err := s.service.Call(ctx, CallRequest{Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123"})
+
+	s.ErrorIs(err, ErrNotPlaced)
+	s.Empty(s.vendor.dialed.To, "the vendor was never asked")
+}
+
+func (s *OutcomeSuite) TestACallCancelledWhileTheVendorWasDialingMayHaveRung() {
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	s.build(&hangingUp{stub: s.vendor, cancel: cancel}, "https://router.example")
+
+	_, err := s.service.Call(ctx, CallRequest{Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123"})
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, ErrNotPlaced, "the vendor had the request, so the phone may be ringing")
+}
+
+// hangingUp is a vendor whose dial is cut off by its caller going away mid-request.
+type hangingUp struct {
+	*stub
+	cancel context.CancelFunc
+}
+
+func (h *hangingUp) Dial(ctx context.Context, outbound Outbound) (Dialed, error) {
+	h.stub.dialed = outbound
+	h.cancel()
+	return Dialed{}, ctx.Err()
+}
+
 // placeReported places a call and returns it with the token its status URL carries.
 func (s *OutcomeSuite) placeReported() (Placed, string) {
 	placed := s.place()
