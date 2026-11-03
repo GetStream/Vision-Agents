@@ -3,10 +3,14 @@
 package redisready
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net"
+	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -49,25 +53,54 @@ func Ready(address string) error {
 // NewClient proves one connection, so a caller that left PipelineMultiplex at 0 gets -1, one
 // connection: rueidis' default of four dials the other three on first use, unproven.
 func NewClient(options rueidis.ClientOption) (rueidis.Client, error) {
+	address := ""
 	if len(options.InitAddress) > 0 {
-		if err := Ready(options.InitAddress[0]); err != nil {
-			return nil, err
-		}
+		address = options.InitAddress[0]
 	}
 	if options.PipelineMultiplex == 0 {
 		options.PipelineMultiplex = -1
 	}
+	return Retry(address, func() (rueidis.Client, error) { return rueidis.NewClient(options) })
+}
+
+// Retry is build, for a test whose setup dials the Redis at address through code that tries
+// once, such as live.New, appconfig.New or a relay subscription: it builds again until Ready's
+// minute is up, and fails at once with Ready's error when no Redis answered at address. An
+// empty address skips Ready.
+//
+// A failed build must leave nothing running: what it returned with its error is dropped.
+//
+// Only a dial that stalled, was refused or was cut is tried again: a deterministic error, such
+// as a missing option, fails at once.
+func Retry[T any](address string, build func() (T, error)) (T, error) {
+	var none T
+	if address != "" {
+		if err := Ready(address); err != nil {
+			return none, err
+		}
+	}
 	deadline := time.Now().Add(ready)
 	for {
-		client, err := rueidis.NewClient(options)
+		built, err := build()
 		if err == nil {
-			return client, nil
+			return built, nil
+		}
+		if !dialFailure(err) {
+			return none, err
 		}
 		if time.Now().After(deadline) {
-			return nil, fmt.Errorf("redisready: no client for %v within %s: %w", options.InitAddress, ready, err)
+			return none, fmt.Errorf("redisready: %s still failing within %s: %w", address, ready, err)
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+}
+
+// dialFailure is whether err is a connection that did not come up in time or was cut, which
+// a later try can get past.
+func dialFailure(err error) bool {
+	var network net.Error
+	return errors.Is(err, context.DeadlineExceeded) || errors.Is(err, io.EOF) || errors.Is(err, io.ErrUnexpectedEOF) ||
+		errors.Is(err, syscall.ECONNRESET) || errors.As(err, &network)
 }
 
 // Wait returns once the Redis at address answers PING, or an error after the given time.
@@ -90,7 +123,8 @@ func Wait(address string, within time.Duration) error {
 }
 
 // ping sends one inline PING and wants +PONG back. A Redis still loading its dataset
-// answers with an error instead, which is not ready.
+// answers with an error instead, which is not ready. A -NOAUTH answer is a Redis that is up and
+// wants a password, which the client built after the wait sends.
 func ping(address string) error {
 	conn, err := net.DialTimeout("tcp", address, redisAttempt)
 	if err != nil {
@@ -108,7 +142,7 @@ func ping(address string) error {
 	if _, err := io.ReadFull(conn, reply); err != nil {
 		return err
 	}
-	if string(reply) != pong {
+	if string(reply) != pong && !strings.HasPrefix(string(reply), "-NOAUTH") {
 		return fmt.Errorf("unexpected reply %q", reply)
 	}
 	return nil

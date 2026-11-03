@@ -293,22 +293,110 @@ func (s *ReplicateResumeSuite) TestResumeClosesAOneShotWhoseTimeCameBeforeIt() {
 	s.Equal(1, runs)
 }
 
-// The source had claimed the occurrence when the last catch-up read it, so its run came
-// across while the task's next run had not moved yet.
-func (s *ReplicateResumeSuite) TestResumeClosesAOneShotWhoseRunTheSourceStartedBeforeTheLastCatchUp() {
-	due := s.overdue("st-once", "", store.ScheduledTaskActive)
+// sourceRun imports a run the source had started, as the last catch-up read it.
+func (s *ReplicateResumeSuite) sourceRun(id, customerID, taskID, trigger, state string, scheduledFor time.Time) {
 	_, err := s.store.DB().ExecContext(s.ctx, `
-INSERT INTO scheduled_task_runs (id, task_id, customer_id, scheduled_for, state, started_at)
-VALUES ('run-source', 'st-once', 'acme', ?, 'running', now())`, due)
+INSERT INTO scheduled_task_runs (id, task_id, customer_id, scheduled_for, trigger, state, started_at, attempts)
+VALUES (?, ?, ?, ?, ?, ?, now(), 1)`, id, taskID, customerID, scheduledFor, trigger, state)
 	s.Require().NoError(err)
+}
 
-	s.Equal("resumed 0 scheduled tasks\n", s.cutOver())
+// runOf reads a run as the API lists it.
+func (s *ReplicateResumeSuite) runOf(id string) store.ScheduledTaskRun {
+	var run store.ScheduledTaskRun
+	s.Require().NoError(s.store.DB().NewSelect().Model(&run).Where("id = ?", id).Scan(s.ctx))
+	return run
+}
 
-	s.Equal(store.ScheduledTaskCompleted, s.task("st-once").State)
-	var id string
-	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
-		"SELECT string_agg(id, ',') FROM scheduled_task_runs WHERE task_id = 'st-once'").Scan(&id))
-	s.Equal("run-source", id, "the source's run of the occurrence is the one on record")
+// The source had claimed the occurrence when the last catch-up read it, so its run came
+// across while the task's next run had not moved yet. Nothing here finishes that run, so the
+// cut-over settles it as the occurrence a paused task slept through here.
+func (s *ReplicateResumeSuite) TestResumeSettlesTheRunOfAnOccurrenceTheSourceStartedBeforeTheLastCatchUp() {
+	for _, c := range []struct {
+		name, rrule string
+		started     time.Duration // how long before its next run the task started
+		state       string
+		nextAfter   time.Duration // its next run after the cut-over, from the occurrence skipped
+	}{
+		// A later occurrence than its start, so the run is on the next run and not on the start.
+		{"daily", "FREQ=DAILY", 48 * time.Hour, store.ScheduledTaskActive, 24 * time.Hour},
+		{"one-shot", "", 0, store.ScheduledTaskCompleted, 0},
+	} {
+		s.Run(c.name, func() {
+			s.SetupTest()
+			due := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+			start := due.Add(-c.started)
+			s.importedTask(store.ScheduledTask{ID: "st-source", RRule: c.rrule, StartLocal: start, NextRunAt: &due}, store.ScheduledTaskActive)
+			s.sourceRun("run-source", "acme", "st-source", store.ScheduledTaskTriggerSchedule, store.ScheduledTaskRunRunning, due)
+			var before time.Time
+			s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT now()").Scan(&before))
+
+			s.cutOver()
+
+			var ids string
+			s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+				"SELECT string_agg(id, ',') FROM scheduled_task_runs WHERE task_id = 'st-source'").Scan(&ids))
+			s.Equal("run-source", ids, "the source's run of the occurrence is the one on record")
+			run := s.runOf("run-source")
+			s.Equal(store.ScheduledTaskRunMissed, run.State, "no worker is on it")
+			s.Require().NotNil(run.Error)
+			s.Equal(scheduling.ReasonPaused, *run.Error)
+			s.Require().NotNil(run.FinishedAt, "a finished run is one the prune counts")
+			s.False(run.FinishedAt.Before(before))
+			s.Equal(1, run.Attempts, "the source's claim stays on record")
+			s.Empty(s.claimed())
+			task := s.task("st-source")
+			s.Equal(c.state, task.State)
+			if c.nextAfter > 0 {
+				s.Require().NotNil(task.NextRunAt)
+				s.Equal(due.Add(c.nextAfter), task.NextRunAt.UTC(), "it goes on after the occurrence skipped")
+			}
+		})
+	}
+}
+
+// Only the source's run of the occurrence the cut-over skips is settled: a run by hand in
+// flight there, a run of a task the cut-over leaves alone, another customer's and one the
+// source finished keep what the copy brought.
+func (s *ReplicateResumeSuite) TestResumeSettlesNoOtherRun() {
+	_, err := s.store.DB().ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES ('config-2', 'other', 'a', 'be brief')")
+	s.Require().NoError(err)
+	due := s.overdue("st-daily", "FREQ=DAILY", store.ScheduledTaskActive)
+	s.sourceRun("run-by-hand", "acme", "st-daily", store.ScheduledTaskTriggerManual, store.ScheduledTaskRunRunning, due.Add(-time.Hour))
+	// Asked for at the very instant of the occurrence, so only its trigger tells it from the scheduled run.
+	s.sourceRun("run-by-hand-then", "acme", "st-daily", store.ScheduledTaskTriggerManual, store.ScheduledTaskRunRunning, due)
+	delivered := s.overdue("st-delivered", "", store.ScheduledTaskActive)
+	s.sourceRun("run-delivered", "acme", "st-delivered", store.ScheduledTaskTriggerSchedule, store.ScheduledTaskRunDelivered, delivered)
+	// Held past the cut-over, so the worker here takes it over.
+	held := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
+	s.importedTask(store.ScheduledTask{ID: "st-held", RRule: "FREQ=DAILY", StartLocal: held, NextRunAt: &held}, store.ScheduledTaskActive)
+	_, err = s.store.DB().ExecContext(s.ctx, `
+INSERT INTO scheduled_task_runs (id, task_id, customer_id, scheduled_for, state, started_at, postponed_until, attempts)
+VALUES ('run-held', 'st-held', 'acme', ?, 'running', ?, ?, 1)`, held, held, time.Now().UTC().Add(8*time.Hour))
+	s.Require().NoError(err)
+	ahead := time.Now().UTC().Add(time.Hour).Truncate(time.Second)
+	s.importedTask(store.ScheduledTask{ID: "st-ahead", RRule: "FREQ=WEEKLY", StartLocal: ahead, NextRunAt: &ahead}, store.ScheduledTaskActive)
+	s.sourceRun("run-ahead", "acme", "st-ahead", store.ScheduledTaskTriggerManual, store.ScheduledTaskRunRunning, due)
+	s.importedTask(store.ScheduledTask{ID: "st-daily", CustomerID: "other", ConfigID: "config-2", RRule: "FREQ=DAILY",
+		StartLocal: due, NextRunAt: &due}, store.ScheduledTaskActive)
+	s.sourceRun("run-other", "other", "st-daily", store.ScheduledTaskTriggerSchedule, store.ScheduledTaskRunRunning, due)
+
+	s.cutOver()
+
+	for id, want := range map[string]string{
+		"run-by-hand":      store.ScheduledTaskRunRunning,
+		"run-by-hand-then": store.ScheduledTaskRunRunning,
+		"run-ahead":        store.ScheduledTaskRunRunning,
+		"run-delivered":    store.ScheduledTaskRunDelivered,
+		"run-held":         store.ScheduledTaskRunRunning,
+		"run-other":        store.ScheduledTaskRunRunning,
+	} {
+		run := s.runOf(id)
+		s.Equal(want, run.State, id)
+		s.Nil(run.Error, id)
+		s.Nil(run.FinishedAt, id)
+	}
 }
 
 // The source held the occurrence for quiet hours past the cut-over, so it never delivered it.

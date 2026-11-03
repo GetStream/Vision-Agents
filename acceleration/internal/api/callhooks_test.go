@@ -19,6 +19,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -293,6 +294,119 @@ func (s *CallHooksSuite) TestAnArrivingCallToANumberWithAnAgentIsAnsweredByIt() 
 	s.Equal("voice", spec.Tags["product"], "the config's tags are kept")
 	s.Equal("support", spec.Tags["line"])
 	s.Equal("number", spec.Tags["team"], "the number's tag wins where both name it")
+}
+
+// answeredWithCalls is the tools offered by the agent that answers a call to a number whose
+// config has these calls settings.
+func (s *CallHooksSuite) answeredWithCalls(calls *AgentCalls) []llm.Tool {
+	s.answerable()
+	s.hold("default", s.callID)
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo("echo/local-model"), Calls: calls,
+	}, &created))
+	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), s.e164, created.Id))
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("default"))
+	return s.answered().ToolDefinitions()
+}
+
+func transferOf(tools []llm.Tool) (llm.Tool, bool) {
+	for _, tool := range tools {
+		if tool.Name == "transfer" {
+			return tool, true
+		}
+	}
+	return llm.Tool{}, false
+}
+
+func (s *CallHooksSuite) TestAConfigThatNeverSetCallsOffersTransferByNumber() {
+	tool, ok := transferOf(s.answeredWithCalls(nil))
+
+	s.Require().True(ok, "transfer is on unless a config turns it off")
+	props, _ := tool.Parameters["properties"].(map[string]any)
+	s.Contains(props, "to")
+	s.NotContains(props, "destination")
+}
+
+func (s *CallHooksSuite) TestAConfigWithTransferOffOffersNoTransfer() {
+	off := false
+
+	_, ok := transferOf(s.answeredWithCalls(&AgentCalls{Transfer: &TransferSettings{Enabled: &off}}))
+
+	s.False(ok)
+}
+
+func (s *CallHooksSuite) TestAConfigWithDestinationsOffersThemByNameAndNoNumber() {
+	tool, ok := transferOf(s.answeredWithCalls(&AgentCalls{Transfer: &TransferSettings{Destinations: []TransferDestination{
+		{Name: "Sales", Number: "+15550001111"},
+		{Name: "Support", Number: "+15550002222"},
+	}}}))
+
+	s.Require().True(ok)
+	props, _ := tool.Parameters["properties"].(map[string]any)
+	s.NotContains(props, "to")
+	destination, _ := props["destination"].(map[string]any)
+	s.Require().NotNil(destination, "%v", tool.Parameters)
+	s.ElementsMatch([]any{"Sales", "Support"}, destination["enum"])
+}
+
+// answeredOn is the session of the agent that answers a call to a number whose config
+// talks on llm with these calls settings.
+func (s *CallHooksSuite) answeredOn(llm string, calls *AgentCalls) *session.Session {
+	s.answerable()
+	s.hold("default", s.callID)
+	var created AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
+		Name: "agent-" + s.utils.uuid(), Llm: pointerTo(llm), Calls: calls,
+	}, &created))
+	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), s.e164, created.Id))
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("default"))
+	return s.answered()
+}
+
+// shown reads a session as its backend does.
+func (s *CallHooksSuite) shown(id string) Session {
+	var shown Session
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+id, nil, &shown))
+	return shown
+}
+
+// endedFor waits for the session id to show it ended for reason.
+func (s *CallHooksSuite) endedFor(id string, reason SessionEndReason) {
+	s.Eventually(func() bool {
+		shown := s.shown(id)
+		return shown.State == Ended && shown.EndReason != nil && *shown.EndReason == reason
+	}, settleFor, 50*time.Millisecond, "the session never showed it ended for %s", reason)
+}
+
+// markedEnded reports whether the suite's Stream was asked to end the call for everybody.
+func (s *CallHooksSuite) markedEnded(callType, callID string) bool {
+	for _, request := range s.chat.Requests(suiteStreamKey) {
+		if request.Method == http.MethodPost && strings.HasSuffix(request.Path, "/video/call/"+callType+"/"+callID+"/mark_ended") {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *CallHooksSuite) TestAnAgentThatHangsUpEndsThePhoneCall() {
+	on := true
+	found := s.answeredOn("hanging-up/hanging-up-model", &AgentCalls{EndCall: &EndCallSettings{Enabled: &on}})
+
+	s.callerSays("that is all, thanks")
+
+	s.Eventually(func() bool { return s.markedEnded("default", s.callID) }, settleFor, 20*time.Millisecond,
+		"the phone call was left up after the agent hung up")
+	s.endedFor(found.ID(), "agent_hangup")
+}
+
+func (s *CallHooksSuite) TestASessionShowsWhyItEnded() {
+	found := s.answeredOn("echo/local-model", nil)
+	s.Nil(s.shown(found.ID()).EndReason, "a running session gave a reason it ended")
+
+	s.Require().True(s.router.sessions.EndUnanswered(s.customerID(), found.ID()))
+
+	s.endedFor(found.ID(), "unanswered")
 }
 
 func (s *CallHooksSuite) TestAnArrivingCallDeliveredTwiceKeepsItsAgentOnTheLine() {

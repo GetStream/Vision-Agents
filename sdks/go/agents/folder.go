@@ -194,9 +194,6 @@ type Settings struct {
 	// file lists none, which removes them. A null entry is refused: dropping it
 	// would sync an empty list and wipe the stored bindings.
 	Connectors connectorList `yaml:"connectors"`
-	// MCPServers are MCP servers outside the plugin catalog, which the router opens by
-	// their URL, with a login when the server asks for one.
-	MCPServers []MCPServerSettings `yaml:"mcp_servers"`
 	// Tools is how MCP server and connector tools are offered. Nil when the
 	// declaration says nothing about it.
 	Tools *ToolSettings `yaml:"tools"`
@@ -207,10 +204,13 @@ type Settings struct {
 	// Scheduling is whether the agent may schedule tasks for its users: reminders
 	// and check-ins it creates in conversation and carries out when they come due.
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
-	Keyterms   []string            `yaml:"keyterms"`
-	Tags       map[string]string   `yaml:"tags"`
-	Video      *VideoSettings      `yaml:"video"`
-	Dispatch   *DispatchSettings   `yaml:"dispatch"`
+	// Calls are the tools the agent has on a phone call. A sync always sends them, with
+	// the defaults for what the file leaves out, so it replaces what the dashboard set.
+	Calls    *CallSettings     `yaml:"calls"`
+	Keyterms []string          `yaml:"keyterms"`
+	Tags     map[string]string `yaml:"tags"`
+	Video    *VideoSettings    `yaml:"video"`
+	Dispatch *DispatchSettings `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -326,20 +326,6 @@ func (c *connectorList) UnmarshalYAML(node *yaml.Node) error {
 	return nil
 }
 
-// MCPServerSettings is an MCP server outside the plugin catalog. Name prefixes its tools,
-// as <name>__<tool>.
-type MCPServerSettings struct {
-	Name string `yaml:"name"`
-	URL  string `yaml:"url"`
-	// Tools offer only the server's tools matching these names or path.Match patterns.
-	Tools []string `yaml:"tools"`
-	// Scopes are what the server's OAuth login asks for. Empty asks for what the server
-	// advertises. Without User, the app logs in once, on the dashboard.
-	Scopes []string `yaml:"scopes"`
-	// User has each end user log in with their own account, in the conversation.
-	User bool `yaml:"user"`
-}
-
 // ChannelsSettings are the lines an agent answers on outside Stream Chat.
 type ChannelsSettings struct {
 	WhatsApp *ChannelSettings `yaml:"whatsapp"`
@@ -362,6 +348,44 @@ type SchedulingSettings struct {
 	// DefaultTimezone is the IANA zone a task takes when neither the user nor
 	// their session has ever named one.
 	DefaultTimezone string `yaml:"default_timezone"`
+}
+
+// CallSettings is the tools an agent on a phone call is offered.
+type CallSettings struct {
+	// EndCall lets the agent hang up. Off unless turned on.
+	EndCall *EndCallSettings `yaml:"end_call"`
+	// Press lets the agent press keys, to get through a menu. On unless turned off.
+	Press *CallToolSettings `yaml:"press"`
+	// Transfer lets the agent hand the call to one of its destinations. On unless turned off.
+	Transfer *TransferSettings `yaml:"transfer"`
+}
+
+// CallToolSettings is a call tool that is only on or off.
+type CallToolSettings struct {
+	Enabled *bool `yaml:"enabled"`
+}
+
+// EndCallSettings is when the agent ends a call.
+type EndCallSettings struct {
+	Enabled *bool `yaml:"enabled"`
+	// When is when to hang up, in the caller's terms.
+	When string `yaml:"when"`
+}
+
+// TransferSettings is where the agent may send a call.
+type TransferSettings struct {
+	Enabled      *bool                 `yaml:"enabled"`
+	Destinations []TransferDestination `yaml:"destinations"`
+}
+
+// TransferDestination is one number the agent may transfer to.
+type TransferDestination struct {
+	Name   string `yaml:"name"`
+	Number string `yaml:"number"`
+	// When is when to transfer here, in the caller's terms.
+	When string `yaml:"when"`
+	// Warm announces the caller to the person answering before connecting them.
+	Warm bool `yaml:"warm"`
 }
 
 // ChannelSettings is one line the agent is reachable on.
@@ -671,10 +695,13 @@ func declare(raw []byte) (Settings, error) {
 	if err := decoder.Decode(&declared); err != nil && !errors.Is(err, io.EOF) {
 		return Settings{}, err
 	}
-	if err := refuseReplaced("plugins", declared.Plugins); err != nil {
+	if err := refuseReplaced("plugins", declared.Plugins, replacedByConnectors); err != nil {
 		return Settings{}, err
 	}
-	if err := refuseReplaced("plugin_events", declared.PluginEvents); err != nil {
+	if err := refuseReplaced("plugin_events", declared.PluginEvents, replacedByConnectors); err != nil {
+		return Settings{}, err
+	}
+	if err := refuseReplaced("mcp_servers", declared.MCPServers, replacedByCustomConnectors); err != nil {
 		return Settings{}, err
 	}
 	settings := declared.Settings
@@ -693,9 +720,6 @@ func declare(raw []byte) (Settings, error) {
 		}
 		options.timeout = timeout
 	}
-	if err := refuseConnectorAliases(settings); err != nil {
-		return Settings{}, err
-	}
 	return settings, nil
 }
 
@@ -705,31 +729,23 @@ type declaration struct {
 	Settings     `yaml:",inline"`
 	Plugins      yaml.Node `yaml:"plugins"`
 	PluginEvents yaml.Node `yaml:"plugin_events"`
+	MCPServers   yaml.Node `yaml:"mcp_servers"`
 }
+
+// What a refused key is replaced by: plugins by a catalog connector, an MCP server named
+// by URL by a custom connector made for that URL.
+const (
+	replacedByConnectors       = "plugins were replaced by connectors, so name the provider under connectors"
+	replacedByCustomConnectors = "a server named by URL is now a custom connector, so create one for its URL and name it under connectors"
+)
 
 // refuseReplaced refuses a key connectors replaced, unless it declares nothing: an empty
 // or null list was never sent, so the file syncs as it did.
-func refuseReplaced(key string, value yaml.Node) error {
+func refuseReplaced(key string, value yaml.Node, replacement string) error {
 	if value.Kind == 0 || value.Tag == "!!null" || (value.Kind == yaml.SequenceNode && len(value.Content) == 0) {
 		return nil
 	}
-	return fmt.Errorf("%s is no longer read: plugins were replaced by connectors, so name the provider under connectors", key)
-}
-
-// refuseConnectorAliases refuses an alias that is also an MCP server name. The model is
-// offered each as <name>__<tool>, so the same name would be two tools. Compared on the
-// alias, not the connector id.
-func refuseConnectorAliases(settings Settings) error {
-	servers := map[string]struct{}{}
-	for _, server := range settings.MCPServers {
-		servers[server.Name] = struct{}{}
-	}
-	for _, connector := range settings.Connectors {
-		if _, named := servers[connector.Name]; named {
-			return fmt.Errorf("%q is named under both connectors and mcp_servers", connector.Name)
-		}
-	}
-	return nil
+	return fmt.Errorf("%s is no longer read: %s", key, replacement)
 }
 
 // loadSkills reads skills/: a skill is either a markdown file, or a folder holding a

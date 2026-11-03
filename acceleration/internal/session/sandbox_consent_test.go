@@ -242,7 +242,7 @@ func (s *SandboxGrantsSuite) TestAConsentConnectedAfterItsAttemptWasUsedUpCarrie
 	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
 	begun, cards, _ := seen.counts()
 	s.Equal([]int{1, 1}, []int{begun, cards})
-	s.Never(func() bool { return s.carriedOn() > 1 }, loginPoll+time.Second, 100*time.Millisecond)
+	never(s.T(), func() bool { return s.carriedOn() > 1 }, loginPoll+time.Second, 100*time.Millisecond)
 }
 
 // TestAConsentToReconnectCarriesOnOnlyOnceItConnectedAnew: alice's chosen connection needs
@@ -361,7 +361,7 @@ func (s *SandboxGrantsSuite) TestAConsentARunShowedCarriesOnOnceAndTheNextRunBin
 	s.Equal(tokenOf("primary"), api.value("CRM_TOKEN"))
 	begun, cards, _ := seen.counts()
 	s.Equal([]int{1, 1}, []int{begun, cards})
-	s.Never(func() bool { return s.carriedOn() > 1 }, loginPoll+time.Second, 100*time.Millisecond)
+	never(s.T(), func() bool { return s.carriedOn() > 1 }, loginPoll+time.Second, 100*time.Millisecond)
 }
 
 // TestAConsentFinishedOnAnotherRouterCarriesOnHere: the callback that finishes alice's consent

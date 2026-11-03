@@ -126,7 +126,7 @@ func (s *ProxyQuotaSuite) router(trusted []netip.Prefix) *httptest.Server {
 
 // spend uses up a bucket's day the way a response does.
 func (s *ProxyQuotaSuite) spend(caller routing.Caller) {
-	s.limiter.Debit(s.T().Context(), s.app, caller, 1)
+	debit(s.T(), s.limiter, s.app, caller, 1)
 }
 
 // openSession asks for a session as the gateway forwards a user's token, or a guest's when

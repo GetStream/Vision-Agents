@@ -8,6 +8,9 @@ import (
 	"time"
 	"unicode/utf8"
 
+	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -117,6 +120,35 @@ func (s *TitleSuite) TestAConversationResumedPastARefusedReplyIsNamedWithItWithh
 	s.Require().NoError(err)
 	s.Equal("Order 3825 delivery", named.Title)
 	s.Equal([]spoken{{text: agent.WithheldInput}}, spokenOf(previous))
+}
+
+// The channel a worker's session answers a dispatched message in is the customer's: the
+// session is named, the channel is left as the customer made it. Any other session names its
+// channel.
+func (s *TitleSuite) TestADispatchedSessionLeavesTheCustomersChannelItsName() {
+	ctx := context.Background()
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Rain in Rome","description":"They asked about rain."}`})}
+	chat := chattest.NewServer(s.T())
+	conversations := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(conversations.Close)
+	for dispatched, want := range map[bool]any{true: nil, false: "Rain in Rome"} {
+		channel := "chat-" + uuid.NewString()
+		creator := "sam"
+		_, err := chat.Client.Chat().GetOrCreateChannel(ctx, "agent", channel, &getstream.GetOrCreateChannelRequest{
+			Data: &getstream.ChannelInput{CreatedByID: &creator},
+		})
+		s.Require().NoError(err)
+		session := &Session{id: "session-" + channel, spec: Spec{CustomerID: "customer-named", ConversationID: "agent:" + channel, Dispatched: dispatched},
+			naming: &naming{titles: titles, service: conversations}}
+
+		s.Require().NoError(session.retitle(ctx, []spoken{{text: "is it raining in Rome?"}}))
+
+		s.Equal("Rain in Rome", session.Spec().Title, "dispatched %v", dispatched)
+		stored, _ := chat.Channel(channel)
+		s.Equal(want, stored["name"], "dispatched %v", dispatched)
+	}
 }
 
 func (s *TitleSuite) TestNoTitleIsNotOne() {

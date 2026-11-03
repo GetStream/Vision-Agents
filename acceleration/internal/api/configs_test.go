@@ -257,6 +257,12 @@ func (s *ConfigsSuite) TestAConfigReadBackIsSavedAsItWas() {
 			var saved AgentConfig
 			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id, read, &saved))
 			s.Equal("Be brief.", value(saved.Instructions))
+			s.Contains(read, "calls", "every config renders its calls")
+			savedCalls, err := json.Marshal(saved.Calls)
+			s.Require().NoError(err)
+			readCalls, err := json.Marshal(read["calls"])
+			s.Require().NoError(err)
+			s.JSONEq(string(readCalls), string(savedCalls), "a config saved as read keeps its calls")
 			if scheduling == nil {
 				s.NotContains(read, "scheduling", "a config that never set scheduling renders none")
 				s.Nil(saved.Scheduling)
@@ -572,14 +578,20 @@ func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEachServerOffers() {
 }
 
 func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
-	for _, body := range []map[string]any{
-		{"name": "researcher", "plugins": []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"read_[*"}}}},
-		{"name": "researcher", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}},
+	for body, message := range map[string]string{
+		"plugins":     `plugins: "read_[*" is not a tool name or pattern`,
+		"mcp_servers": `mcp_servers: tablejourney: "read_[*" is not a tool name or pattern`,
 	} {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", body)
+		config := map[string]any{"name": "researcher"}
+		if body == "plugins" {
+			config["plugins"] = []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"read_[*"}}}
+		} else {
+			config["mcp_servers"] = []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}
+		}
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", config)
 
 		s.Equal(http.StatusBadRequest, status)
-		s.Contains(failure, "read_[*")
+		s.Equal(message, failure)
 	}
 }
 
@@ -1549,7 +1561,7 @@ func (s *ConfigsSuite) TestAToolPatternThatCannotMatchIsRefused() {
 		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "not a tool name or pattern")
+	s.Equal(`connector binding "inbox" has a tool_patterns entry that is not a tool name or pattern`, failure)
 }
 
 func (s *ConfigsSuite) TestMoreThan128ToolPatternsAreRefused() {
@@ -1874,10 +1886,10 @@ func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused()
 	s.Contains(failure, `plugin "linear"`)
 }
 
-// TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs: router plugins migrate binds
-// a plugin entry under the plugin's id, to the connector of that id, and keeps the entry
-// (AI-994 F42). The session drops the entry for the binding (Spec.withoutBoundPlugins), so the
-// two never offer the same name, and the config stays editable.
+// TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs: a binding under a plugin
+// entry's id, to the connector of that id, beside the entry (AI-994 F42). The session drops
+// the entry for the binding (Spec.withoutBoundPlugins), so the two never offer the same
+// name, and the config stays editable.
 func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs() {
 	for _, user := range []bool{false, true} {
 		created := s.createConfig(map[string]any{
@@ -2501,4 +2513,103 @@ func (s *ConfigsSuite) TestAToolOutputRetentionOutsideItsBoundsIsRefusedOnEveryW
 		map[string]any{"tools": tooLong})
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "tools.output_retention")
+}
+
+func callsExample() map[string]any {
+	return map[string]any{
+		"end_call": map[string]any{"enabled": true, "when": "the caller says goodbye"},
+		"press":    map[string]any{"enabled": false},
+		"transfer": map[string]any{"enabled": true, "destinations": []any{
+			map[string]any{"name": "Support", "number": "+15550001111", "when": "billing questions", "warm": true},
+			map[string]any{"name": "Sales", "number": "+442071234567"},
+		}},
+	}
+}
+
+func (s *ConfigsSuite) readCalls(id string) map[string]any {
+	var read map[string]any
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+id, nil, &read))
+	calls, ok := read["calls"].(map[string]any)
+	s.Require().True(ok, "calls rendered")
+	return calls
+}
+
+func (s *ConfigsSuite) TestAConfigWithoutCallsReadsTheDefaults() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	calls := s.readCalls(created.Id)
+	s.Equal(false, calls["end_call"].(map[string]any)["enabled"])
+	s.Equal(true, calls["press"].(map[string]any)["enabled"])
+	transfer := calls["transfer"].(map[string]any)
+	s.Equal(true, transfer["enabled"])
+	s.Empty(transfer["destinations"])
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersItsCalls() {
+	created := s.createConfig(map[string]any{"name": "support", "calls": callsExample()})
+	s.Equal(callsExample(), s.readCalls(created.Id))
+}
+
+func (s *ConfigsSuite) TestACallsToolLeftOutOfAnUpdateKeepsItsSettings() {
+	created := s.createConfig(map[string]any{"name": "support", "calls": callsExample()})
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"calls": map[string]any{"end_call": map[string]any{"enabled": false}}}, nil))
+	calls := s.readCalls(created.Id)
+	s.Equal(false, calls["end_call"].(map[string]any)["enabled"])
+	s.Len(calls["transfer"].(map[string]any)["destinations"], 2, "transfer was not sent, so it stays")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "calls": map[string]any{"transfer": map[string]any{"enabled": true}}}, nil))
+	calls = s.readCalls(created.Id)
+	s.Empty(calls["transfer"].(map[string]any)["destinations"], "a tool sent replaces its settings whole")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support"}, nil))
+	s.Equal(false, s.readCalls(created.Id)["end_call"].(map[string]any)["enabled"], "calls left out keeps everything")
+}
+
+func (s *ConfigsSuite) TestCallsAreChecked() {
+	destination := func(name, number string) map[string]any {
+		return map[string]any{"name": name, "number": number}
+	}
+	many := []any{}
+	for i := range 21 {
+		many = append(many, destination(fmt.Sprintf("Desk %d", i), "+15550001111"))
+	}
+	for name, destinations := range map[string][]any{
+		"number without plus":  {destination("Sales", "5550001111")},
+		"number too short":     {destination("Sales", "+1555")},
+		"duplicate name":       {destination("Sales", "+15550001111"), destination(" sales ", "+15550002222")},
+		"empty name":           {destination("", "+15550001111")},
+		"blank name":           {destination("  ", "+15550001111")},
+		"too many":             many,
+		"when over 1000 chars": {map[string]any{"name": "Sales", "number": "+15550001111", "when": strings.Repeat("a", 1001)}},
+	} {
+		s.Run(name, func() {
+			calls := map[string]any{"transfer": map[string]any{"enabled": true, "destinations": destinations}}
+			status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+				map[string]any{"name": "support-" + s.utils.uuid(), "calls": calls})
+			s.Equal(http.StatusBadRequest, status)
+
+			created := s.createConfig(map[string]any{"name": "ok-" + s.utils.uuid()})
+			status, _ = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+				map[string]any{"calls": calls})
+			s.Equal(http.StatusBadRequest, status)
+		})
+	}
+}
+
+func (s *ConfigsSuite) TestCallsWhenIsCountedInCharactersNotBytes() {
+	long := strings.Repeat("щ", 1000)
+	created := s.createConfig(map[string]any{"name": "support", "calls": map[string]any{
+		"end_call": map[string]any{"enabled": true, "when": long},
+		"transfer": map[string]any{"enabled": true, "destinations": []any{
+			map[string]any{"name": "Sales", "number": "+15550001111", "when": long}}},
+	}})
+	calls := s.readCalls(created.Id)
+	s.Equal(long, calls["end_call"].(map[string]any)["when"])
+
+	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"calls": map[string]any{"end_call": map[string]any{"when": strings.Repeat("a", 1001)}}})
+	s.Equal(http.StatusBadRequest, status)
 }

@@ -98,11 +98,15 @@ type Page struct {
 	shared      bool
 	// thread is a page of a thread channel, whose people's messages are read back as user
 	// turns (messageFromThread).
-	thread    bool
-	empty     bool
-	Messages  []Message `json:"messages"`
-	Before    string    `json:"before,omitempty"`
-	Truncated bool      `json:"context_truncated"`
+	thread bool
+	// dispatched is a page of the channel a message the Router handed to a worker was written
+	// in, opened on its word (opensDispatched): the router never stamped it, so it holds no
+	// memory scope to keep, and its people's messages are read back as user turns.
+	dispatched bool
+	empty      bool
+	Messages   []Message `json:"messages"`
+	Before     string    `json:"before,omitempty"`
+	Truncated  bool      `json:"context_truncated"`
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -129,6 +133,9 @@ type commandRecord struct {
 	Reply string `json:",omitempty"`
 	// Files are that reply's files, which a reply carried again carries too (FollowUpFinished).
 	Files []sandbox.Attachment `json:",omitempty"`
+	// Heard is what the voice note sent with the command said, for a retry to carry rather
+	// than hear it again (CheckBegin).
+	Heard string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -148,7 +155,14 @@ const ReadBackPrefix = "st_"
 func readBack(id string) bool { return strings.HasPrefix(id, ReadBackPrefix) }
 
 var validAuthorID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+
+// maxCommandText is the most text one command carries, in bytes.
+const maxCommandText = 1024 * 1024
+
+var errInvalidCommand = errors.New("invalid command ID or text")
+
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 // ledger is what a conversation holds in memory. Stream Chat is its durable copy: a
@@ -340,6 +354,36 @@ func Openable(cid string) bool {
 func opensThread(ctx context.Context, cid string) bool {
 	vouched, _ := ctx.Value(threadOpen{}).(string)
 	return vouched != "" && vouched == cid
+}
+
+// dispatchedOpen is the context key RouterOpensDispatched keeps its channel under.
+type dispatchedOpen struct{}
+
+// RouterOpensDispatched is ctx carrying the Router's word that cid is the channel a message it
+// handed to the customer's worker was written in, whose customer it worked out then
+// (internal/api routeArrivingMessage), and which that worker's session answers in
+// (internal/session Manager.handedOut). Such a channel is the customer's own and carries none
+// of the router's stamps, so ownedBy, which reads them, cannot place it: only a ctx from here
+// opens one, only the one channel it names, and only while it still has none of them.
+func RouterOpensDispatched(ctx context.Context, cid string) context.Context {
+	return context.WithValue(ctx, dispatchedOpen{}, cid)
+}
+
+// opensDispatched is whether ctx carries the Router's word for the channel cid
+// (RouterOpensDispatched), and the channel is one somebody wrote in that the router never
+// stamped: custom is the channel's, empty is a channel nothing was written in, which is not the
+// one the message came from.
+func opensDispatched(ctx context.Context, cid string, custom map[string]any, empty bool) bool {
+	vouched, _ := ctx.Value(dispatchedOpen{}).(string)
+	if vouched == "" || vouched != cid || empty {
+		return false
+	}
+	for _, stamp := range []string{CustomerField, "support_agent_id", "support_owner_id", "support_access", TriggerField} {
+		if _, stamped := custom[stamp]; stamped {
+			return false
+		}
+	}
+	return true
 }
 
 // FinishedReply is an agent's reply in a thread channel, once its final text is stored in
@@ -563,7 +607,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
-		if !sameMemoryScope(page.memoryScope, scope) {
+		if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 		}
 
@@ -610,7 +654,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if err != nil {
 		return nil, nil, false, stack.Wrap(err)
 	}
-	if !sameMemoryScope(page.memoryScope, scope) {
+	if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 	}
 	if agentID == "" {
@@ -952,8 +996,11 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		return Page{}, stack.Wrap(err)
 	}
 	stored, _ := r.Data.Channel.Custom["support_agent_id"].(string)
+	dispatched := false
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
-		return Page{}, stack.Wrap(err)
+		if dispatched = opensDispatched(ctx, cid, r.Data.Channel.Custom, len(r.Data.Messages) == 0); !dispatched {
+			return Page{}, stack.Wrap(err)
+		}
 	}
 	// A thread channel is read only for the Router's word that it opens it: a conversation id
 	// a request names reads nothing there.
@@ -976,7 +1023,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -1001,7 +1048,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			// A message written before schema v1 carries the whole message as support_message.
 			raw, ok := m.Custom["support_message"]
 			if !ok {
-				if written, ok := messageFromThread(m, p.thread); ok {
+				if written, ok := messageFromThread(m, p.thread || p.dispatched); ok {
 					p.Messages = append(p.Messages, written)
 				}
 				continue
@@ -1126,14 +1173,10 @@ func entries(p Page) []entry {
 
 func entryOf(p Page, m Message) entry {
 	said := m.Text
-	if m.Role == "user" && len(m.Files) > 0 {
+	if photos := photosOn(m); m.Role == "user" && photos > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
-		// A message of photos alone is the note alone.
-		if said != "" {
-			said += "\n\n"
-		}
-		said += photoNote(len(m.Files))
+		said = agent.PhotoNote(said, photos)
 	}
 	content := said
 	var artifacts []ArtifactAttachment
@@ -1188,12 +1231,17 @@ func entryOf(p Page, m Message) entry {
 	return entry{message: message, turn: turn}
 }
 
-// photoNote follows a person's words in history when they sent photos with them.
-func photoNote(count int) string {
-	if count == 1 {
-		return "[sent with a photo, not shown again]"
+// photosOn counts the photos on m. A voice note sent with it is not one: its text already
+// holds what was said. A thread channel's photos are read without a type, so a file is a
+// photo unless it is audio.
+func photosOn(m Message) int {
+	var photos int
+	for _, file := range m.Files {
+		if !strings.HasPrefix(file.MIME, "audio/") {
+			photos++
+		}
 	}
-	return fmt.Sprintf("[sent with %d photos, not shown again]", count)
+	return photos
 }
 
 // HistoryLine is one message of a conversation the caller kept itself, such as a thread in
@@ -1290,8 +1338,8 @@ func (c *Conversation) Release() {
 	c.released = time.Now()
 	c.emit = nil
 }
-func (c *Conversation) Begin(text string) error {
-	_, err := c.BeginCommand(uuid.NewString(), text, "")
+func (c *Conversation) Begin(text string, photos ...Photo) error {
+	_, err := c.BeginCommand(uuid.NewString(), text, "", photos...)
 	return err
 }
 
@@ -1311,18 +1359,48 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 	return record.CommandReceipt, nil
 }
 
+// CheckBegin refuses what BeginCommand would refuse id with a voice note for now, for a
+// caller to learn it before work it pays for: hearing the voice note. heard is what the voice
+// note of id said when it was begun, for a retry to carry rather than hear it again, and empty
+// for an id not begun. A command begun without a voice note is another question. text is
+// what was typed with it.
+func (c *Conversation) CheckBegin(id, text string) (heard string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return "", stack.Wrap(errors.New("conversation is not open"))
+	}
+	if len(text) > maxCommandText {
+		return "", stack.Wrap(errInvalidCommand)
+	}
+	if previous, ok := c.data.Commands[id]; ok {
+		if previous.Initiator != c.data.Owner {
+			return "", stack.Wrap(ErrCommandNotFound)
+		}
+		if previous.Heard == "" {
+			return "", stack.Wrap(ErrCommandConflict)
+		}
+		return previous.Heard, nil
+	}
+	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
+		return "", stack.Wrap(ErrResponseRunning)
+	}
+	return "", nil
+}
+
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A command Stream holds is never automatically executed again, including after a restart.
 // clientID names the install the command came from; an invalid one is ignored. photos are
-// what the person sent with it (PublishPhotos), which their message shows.
+// what the person sent with it (PublishPhotos), which their message shows; text may be empty
+// when there are some.
 func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
-	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
-		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
+	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > maxCommandText {
+		return CommandReceipt{}, stack.Wrap(errInvalidCommand)
 	}
 	digest := commandDigest(text, photos)
 	if previous, ok := c.data.Commands[id]; ok {
@@ -1355,7 +1433,13 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
 	}
-	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	record := commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	for _, photo := range photos {
+		if photo.Heard != "" {
+			record.Heard = photo.Heard
+		}
+	}
+	c.data.Commands[id] = record
 	c.data.Current = &a
 	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending,
@@ -1917,7 +2001,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
 	extra = append(extra, connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
-	extra = append(extra, fileAttachments(m.Files)...)
+	extra = append(extra, fileAttachments(m.Files, m.Role == "user")...)
 	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
@@ -1933,7 +2017,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 			custom["ai_generated"] = true
 		}
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files),
+			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})

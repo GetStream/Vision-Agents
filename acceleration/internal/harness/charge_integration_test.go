@@ -5,6 +5,7 @@ package harness
 import (
 	"context"
 	"crypto/rand"
+	"errors"
 	"log/slog"
 	"net/netip"
 	"os"
@@ -118,6 +119,12 @@ func (s *HarnessChargeSuite) session(provider *stubLLM, owner routing.Caller) *l
 // reply answers a turn asked on ctx and passes what the model wrote through the filter,
 // as the agent does. The turn's ctx ends with its reply, as the agent's does.
 func (s *HarnessChargeSuite) reply(ctx context.Context, turnID, written string) {
+	s.replyAfter(ctx, turnID, written, func() {})
+}
+
+// replyAfter is reply with await run between the end of the answer and the filter, for a
+// test that needs the answer counted before the work it delegates is asked.
+func (s *HarnessChargeSuite) replyAfter(ctx context.Context, turnID, written string, await func()) {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	stream, err := s.harness.Respond(ctx, Turn{
@@ -127,6 +134,7 @@ func (s *HarnessChargeSuite) reply(ctx context.Context, turnID, written string) 
 	s.Require().NoError(err)
 	for stream.Next() {
 	}
+	await()
 	s.harness.Filter(turnID, written)
 }
 
@@ -193,7 +201,14 @@ func (s *HarnessChargeSuite) TestWorkAUserDelegatesInASessionABackendOpenedIsRef
 	s.limiter = limiter
 	s.build(routing.Caller{UserID: s.user.UserID, ServerSide: true})
 
-	s.reply(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`)
+	// The limiter stops waiting for a debit after two seconds, so under a stall the reply's
+	// may still be on its way when the work asks for its own turn.
+	s.replyAfter(routing.WithCaller(s.ctx, s.user), "turn-1", `<ask skill="think">15% of 84.20</ask>`, func() {
+		s.Require().Eventually(func() bool {
+			_, err := limiter.Allow(s.ctx, "acme", s.user)
+			return errors.Is(err, quota.ErrExhausted)
+		}, settleFor, 10*time.Millisecond, "the reply's debit never reached the user's day")
+	})
 
 	result := s.settled()
 	s.Equal(Failed, result.State)

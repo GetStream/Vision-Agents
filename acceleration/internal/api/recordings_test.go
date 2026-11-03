@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"io"
 	"maps"
@@ -311,6 +312,16 @@ func (s *RecordingsSuite) TestARecordingTranscribedInlineComesBackInTheAnswer() 
 
 	s.Equal(RecordingStatusCompleted, transcript.Status)
 	s.NotEmpty(value(transcript.Text))
+}
+
+func (s *RecordingsSuite) TestARecordingOfTheInlineLimitIsTranscribedInline() {
+	audio := make([]byte, maxInlineAudio)
+
+	var transcript Transcription
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/stt/recordings",
+		map[string]any{"inline": true, "source": map[string]any{"audio": base64.StdEncoding.EncodeToString(audio)}}, &transcript))
+
+	s.Equal(RecordingStatusCompleted, transcript.Status, value(transcript.Error))
 }
 
 func (s *RecordingsSuite) TestARecordingThroughAConfigOnTheLiveShortcutIsServedByTheBatchModel() {

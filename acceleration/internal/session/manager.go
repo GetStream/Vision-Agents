@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -356,6 +357,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		runtime:       runtime,
 		runtimeMode:   store.ModalityVoice,
 		skills:        skills,
+		moving:        make(chan struct{}, 1),
 	}
 	if spec.Text {
 		created.modality = store.ModalityText
@@ -473,6 +475,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			m.logger.Warn("not keeping the conversation in Stream Chat", "error", err)
 			spec.PersistConversation = false
 		}
+	}
+	if cid, handed := m.handedOut(ctx, spec, stream); handed {
+		spec.ConversationID, spec.Dispatched = cid, true
+		ctx = persistent.RouterOpensDispatched(ctx, cid)
 	}
 	var conv *persistent.Conversation
 	var previous []llm.Message
@@ -639,18 +645,18 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	var callers agent.ToolRunner = created.tools
 	tools, callers = m.hostedTools(spec, created.id, hostedProgress{created}, tools, callers)
 	tools, callers = moderationTools(spec, stream, tools, callers)
-	if line != nil || m.reading(spec) || m.searching(spec) {
+	if line != nil || m.reading(spec) || m.searching(spec) || spec.endsCalls() {
 		builtin, err := harness.DefaultTools()
 		if err != nil {
 			return nil, stack.Wrap(err)
 		}
-		tools = append(tools, builtin.Tools...)
+		tools = append(tools, spec.callTools(builtin.Tools)...)
 	}
 
 	mcp, pluginTools, unconnected := attachPlugins(ctx, spec, m.options.Store, m.options.PluginAuth, m.logger)
 	tools = append(tools, pluginTools...)
 	tools = append(tools, unconnectedTools(unconnected)...)
-	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp)
+	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, connectors.said())
 	created.spec.ServerInstructions = spec.ServerInstructions
 	var runner agent.ToolRunner = &videoRunner{next: callers, session: created}
 	if mcp != nil || len(unconnected) > 0 {
@@ -732,7 +738,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// here. A text session joins nothing, so no edge is opened for it: everything downstream
 	// treats a missing edge as the conversation having no call rather than as a failure.
 	created.supersede = m.supersede
-	created.end = func(reason TimeoutReason) { m.end(created, reason) }
+	created.end = func(reason EndReason) { m.end(created, reason) }
 	created.think = m.think
 	created.build = func(ctx context.Context, spec Spec) (*agent.Agent, error) {
 		var edge agent.Edge
@@ -781,6 +787,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			JudgeTarget:        m.options.FlowJudge,
 			Skills:             skills,
 			Telephony:          line,
+			Destinations:       spec.destinations(),
+			Ender:              m.ender(created, spec, stream),
+			EndCallWhen:        spec.endCallWhen(),
 			ToolRunner:         runner,
 			Tools:              harness.Tools{Tools: tools},
 			Sandbox:            box,
@@ -941,7 +950,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The turns held until now, the greeting's among them, are written after it.
 	if created.records != nil {
 		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC())
+			m.records.Closed(created.id, time.Now().UTC(), created.endReason())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
 		created.startRecording()
@@ -1498,26 +1507,55 @@ func (m *Manager) Close(id string, owner Owner) (bool, error) {
 // nobody is left to hear the end of its sentence. A reopened conversation can take the id
 // of a session that ended, so it does nothing unless found is still the session held under
 // its id.
-func (m *Manager) end(found *Session, reason TimeoutReason) {
-	m.mu.Lock()
-	if held, ok := m.sessions[found.id]; !ok || held != found {
-		m.mu.Unlock()
+func (m *Manager) end(found *Session, reason EndReason) {
+	done, held := m.take(found)
+	if !held {
 		return
+	}
+	defer done()
+	m.release(found.id)
+
+	found.noteEnd(reason)
+	m.logger.Info("ending the session", "session", found.id, "reason", reason)
+	found.abandon()
+}
+
+// hangUp ends found for its agent hanging up. It closes as Close does, so the goodbye is not
+// cut short, and in the background: the agent hangs up from inside its own tool call, and
+// closing the session waits for the agent.
+func (m *Manager) hangUp(found *Session) {
+	done, held := m.take(found)
+	if !held {
+		return
+	}
+	found.noteEnd(EndAgentHangup)
+	go func() {
+		defer done()
+		m.release(found.id)
+		m.logger.Info("ending the session", "session", found.id, "reason", EndAgentHangup)
+		if err := found.Close(); err != nil {
+			m.logger.Warn("could not close the session its agent hung up", "session", found.id, "error", err)
+		}
+	}()
+}
+
+// take stops holding found as it begins to end, reporting whether it was still the session
+// held under its id. done is called once it has closed.
+func (m *Manager) take(found *Session) (done func(), held bool) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if current, ok := m.sessions[found.id]; !ok || current != found {
+		return nil, false
 	}
 	delete(m.sessions, found.id)
 	m.closing++
 	m.ended.Add(1)
-	m.mu.Unlock()
-	defer func() {
+	return func() {
 		m.mu.Lock()
 		m.closing--
 		m.mu.Unlock()
 		m.ended.Done()
-	}()
-	m.release(found.id)
-
-	m.logger.Info("ending the session", "session", found.id, "reason", reason)
-	found.abandon()
+	}, true
 }
 
 // EndUnanswered ends the customer's phone session id if this node holds it and no phone caller
@@ -1845,11 +1883,46 @@ const hookPinFor = 10 * time.Minute
 type hookPinned struct {
 	app int64
 	at  time.Time
+	// handedOut is a channel a message in was handed to a worker (HandOut).
+	handedOut bool
+	// deployment is a hook the deployment signed, which pins no app: the session acts in
+	// whatever app its customer acts in by the time it starts.
+	deployment bool
 }
 
 // PinHook remembers which app a hook for a customer's call or channel came from, for the
 // session a worker opens to answer it, which acts there.
 func (m *Manager) PinHook(customer, cid string, app int64) {
+	m.pin(customer, cid, hookPinned{app: app})
+}
+
+// HandOut remembers that a message written in a customer's channel cid was handed to one of
+// its workers, from a hook of app (deployment: the deployment signed it). The text session
+// the worker opens under the channel's id answers in that channel (handedOut). A hook of a
+// registered app pins the session's app too, as PinHook does.
+//
+// The worker opens its session with a request of its own, which any node may take, so the
+// Directory carries the hand-out to the others.
+func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, deployment bool) {
+	m.pin(customer, cid, hookPinned{app: app, handedOut: true, deployment: deployment})
+	if m.options.Directory == nil {
+		return
+	}
+	entry, err := json.Marshal(handOut{App: app, Deployment: deployment})
+	if err != nil {
+		m.logger.Warn("could not say a channel's message was handed to a worker", "channel", cid, "error", err)
+		return
+	}
+	m.options.Directory.HandOut(ctx, customer, cid, entry, hookPinFor)
+}
+
+// handOut is a hand-out as the Directory carries it to the other nodes, for hookPinFor.
+type handOut struct {
+	App        int64 `json:"app"`
+	Deployment bool  `json:"deployment"`
+}
+
+func (m *Manager) pin(customer, cid string, pinned hookPinned) {
 	m.hookPinsMu.Lock()
 	defer m.hookPinsMu.Unlock()
 	now := time.Now()
@@ -1858,7 +1931,8 @@ func (m *Manager) PinHook(customer, cid string, app int64) {
 			delete(m.hookPins, key)
 		}
 	}
-	m.hookPins[customer+"\x00"+cid] = hookPinned{app: app, at: now}
+	pinned.at = now
+	m.hookPins[customer+"\x00"+cid] = pinned
 }
 
 // hookPin is the app a hook for the session's call or channel came from, if one did lately.
@@ -1870,10 +1944,57 @@ func (m *Manager) hookPin(spec Spec) (int64, bool) {
 	m.hookPinsMu.Lock()
 	defer m.hookPinsMu.Unlock()
 	pinned, ok := m.hookPins[spec.CustomerID+"\x00"+cid]
-	if !ok || time.Since(pinned.at) > hookPinFor {
+	if !ok || pinned.deployment || time.Since(pinned.at) > hookPinFor {
 		return 0, false
 	}
 	return pinned.app, true
+}
+
+// handedOut is the channel a text session answers in when a worker opens it to answer a
+// message the router handed out there (HandOut): its customer's own backend, with no end user
+// it acts for, asking under the channel's id, in the app the message was written in, for a
+// persistent conversation it names no channel for, within hookPinFor of the hand-out. Any
+// other session keeps a channel of its own, as it always has: a device or a backend acting
+// for one of its users is not the worker, and a channel of another customer or app is not
+// the one handed out.
+func (m *Manager) handedOut(ctx context.Context, spec Spec, stream streamapp.Bound) (string, bool) {
+	if !spec.Text || !spec.PersistConversation || spec.Incognito || spec.ConversationID != "" || spec.Recall != nil ||
+		spec.CallerKind != auth.KindServer || spec.Caller.UserID != "" || stream.Client == nil {
+		return "", false
+	}
+	cid := streamapp.AgentChannelType + ":" + spec.AgentID
+	pinned, ok := m.handOutOf(ctx, spec.CustomerID, cid)
+	if !ok {
+		return "", false
+	}
+	if pinned.deployment == stream.Identity.Registered || (!pinned.deployment && stream.Identity.StreamApp != pinned.app) {
+		return "", false
+	}
+	return cid, true
+}
+
+// handOutOf is the hand-out of a customer's channel within hookPinFor: this node's, else the
+// one another node made (HandOut).
+func (m *Manager) handOutOf(ctx context.Context, customer, cid string) (hookPinned, bool) {
+	m.hookPinsMu.Lock()
+	pinned, ok := m.hookPins[customer+"\x00"+cid]
+	m.hookPinsMu.Unlock()
+	if ok && pinned.handedOut && time.Since(pinned.at) <= hookPinFor {
+		return pinned, true
+	}
+	if m.options.Directory == nil {
+		return hookPinned{}, false
+	}
+	entry, err := m.options.Directory.HandedOut(ctx, customer, cid)
+	if err != nil {
+		m.logger.Warn("could not read whether a channel's message was handed to a worker", "channel", cid, "error", err)
+		return hookPinned{}, false
+	}
+	var handed handOut
+	if entry == nil || json.Unmarshal(entry, &handed) != nil {
+		return hookPinned{}, false
+	}
+	return hookPinned{app: handed.App, deployment: handed.Deployment, handedOut: true}, true
 }
 
 // ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream
@@ -2096,4 +2217,53 @@ func publisher(conv *persistent.Conversation) sandbox.Publisher {
 		return nil
 	}
 	return conv.Publish
+}
+
+// callTools is the built-in tools a config's calls settings leave on. A session opened
+// from code, with no config, keeps all of them.
+func (s Spec) callTools(builtin []harness.Tool) []harness.Tool {
+	var kept []harness.Tool
+	for _, tool := range builtin {
+		switch {
+		case tool.Name == "end_call" && !s.endsCalls():
+			continue
+		case s.ConfigID == "":
+		case tool.Name == "transfer" && !s.Calls.TransferOn() || tool.Name == "press" && !s.Calls.PressOn():
+			continue
+		}
+		kept = append(kept, tool)
+	}
+	return kept
+}
+
+// endsCalls reports whether the config lets the agent hang up. A session with no config
+// never may.
+func (s Spec) endsCalls() bool {
+	return s.ConfigID != "" && s.Calls.EndCallOn()
+}
+
+// endCallWhen is when the config tells the agent to hang up, empty for the agent's default.
+func (s Spec) endCallWhen() string {
+	if s.Calls.EndCall == nil {
+		return ""
+	}
+	return s.Calls.EndCall.When
+}
+
+// destinations are the places the config lets the agent transfer to. A session that
+// declares its own transfer keeps it, and the router keeps running it with a number.
+func (s Spec) destinations() []agent.Destination {
+	if s.ConfigID == "" || s.Calls.Transfer == nil || !s.Calls.TransferOn() {
+		return nil
+	}
+	for _, tool := range s.Tools {
+		if tool.Name == "transfer" {
+			return nil
+		}
+	}
+	var destinations []agent.Destination
+	for _, d := range s.Calls.Transfer.Destinations {
+		destinations = append(destinations, agent.Destination{Name: d.Name, Number: d.Number, When: d.When, Warm: d.Warm})
+	}
+	return destinations
 }

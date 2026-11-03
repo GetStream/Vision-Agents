@@ -543,6 +543,11 @@ type ImageSource struct {
 	Url    string             `json:"url" doc:"Absolute HTTP(S) URL or base64 image data URI."`
 }
 
+// AudioSource is a voice note sent with a question.
+type AudioSource struct {
+	Url string `json:"url" doc:"Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address."`
+}
+
 // ImageSourceDetail is the ImageSourceDetail schema.
 type ImageSourceDetail string
 
@@ -804,6 +809,7 @@ type Session struct {
 	CreatedAt        time.Time               `json:"created_at"`
 	Custom           *map[string]interface{} `json:"custom,omitempty"`
 	Description      *string                 `json:"description,omitempty"`
+	EndReason        *SessionEndReason       `json:"end_reason,omitempty" readOnly:"true" doc:"Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped."`
 	ForkedFrom       *string                 `json:"forked_from,omitempty" doc:"The session this one continued from, empty for one opened fresh."`
 	Id               string                  `json:"id"`
 	Incognito        *bool                   `json:"incognito,omitempty" doc:"Nothing about this session was recorded. It is reported so a caller can see that what they asked for is what they got, but it is never read back from storage: an incognito session has no row to read it from."`
@@ -868,6 +874,14 @@ func (e SessionModality) Valid() bool {
 
 func (SessionModality) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "SessionModality", "How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.", "text", "voice", "video")
+}
+
+// SessionEndReason is why a session ended.
+type SessionEndReason string
+
+func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "SessionEndReason", "Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.",
+		"agent_hangup", "transferred", "hangup", "start", "unanswered")
 }
 
 // SessionMode How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.

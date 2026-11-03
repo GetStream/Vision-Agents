@@ -80,7 +80,7 @@ func (s *ShardedStoreSuite) TestARequestItsCallerCancelledIsLoggedAsNoError() {
 
 func (s *ShardedStoreSuite) TestASessionCarriedOnInAnotherShardIsListedOnce() {
 	s.opened("chat", "app", s.base, func(session *AgentSession) { session.Title = "before" })
-	s.Require().NoError(s.store.CloseSession(s.ctx, "chat", s.base.Add(time.Minute)))
+	s.Require().NoError(s.store.CloseSession(s.ctx, "chat", s.base.Add(time.Minute), ""))
 	carried := &AgentSession{ID: "chat", CustomerID: "app", AgentName: "docs", UserID: "jlahey", CallerKind: "user", Title: "after", CreatedAt: s.base}
 	s.Require().NoError(s.other.SaveSession(s.ctx, carried))
 
@@ -93,10 +93,10 @@ func (s *ShardedStoreSuite) TestASessionCarriedOnInAnotherShardIsListedOnce() {
 
 func (s *ShardedStoreSuite) TestSessionsOpenInTwoShardsAtOnceAreOnePeak() {
 	s.opened("here", "app", s.base, nil)
-	s.Require().NoError(s.store.CloseSession(s.ctx, "here", s.base.Add(10*time.Minute)))
+	s.Require().NoError(s.store.CloseSession(s.ctx, "here", s.base.Add(10*time.Minute), ""))
 	there := &AgentSession{ID: "there", CustomerID: "app", AgentName: "docs", UserID: "jlahey", CallerKind: "user", CreatedAt: s.base.Add(5 * time.Minute)}
 	s.Require().NoError(s.other.SaveSession(s.ctx, there))
-	s.Require().NoError(s.other.CloseSession(s.ctx, "there", s.base.Add(20*time.Minute)))
+	s.Require().NoError(s.other.CloseSession(s.ctx, "there", s.base.Add(20*time.Minute), ""))
 
 	peak, err := s.store.CustomerConcurrencyPeak(s.ctx, "app", s.base.Add(-time.Hour), s.base.Add(time.Hour))
 	s.Require().NoError(err)

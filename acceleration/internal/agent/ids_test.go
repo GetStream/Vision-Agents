@@ -168,14 +168,14 @@ func TestAStandInNameIsNotBookedUnder(t *testing.T) {
 		`{"name":"Odenor"}`:            false,
 		`{"name":"Maria de la Cruz"}`:  false,
 		`{"guests":3}`:                 false,
-		`{"name":"Carry on with the caller from what is in your instructions."}`:           true,
-		`{"name":"what a tool or your colleague"}`:                                         true,
-		`{"name":"one short sentence"}`:                                                    true,
-		`{"event_name":"Northside Pottery Club Spring Open Day"}`:                          false,
-		`{"file_name":"minutes of the annual general meeting 2026"}`:                       false,
-		`{"name":"Carry Lind"}`:                                                            false,
-		`{"event_name":"On With The Show"}`:                                                false,
-		`{"name":"Booked by: Carry on with the caller from what is in your instructions"}`: true,
+		`{"name":"Carry on with the caller from the note that follows."}`:           true,
+		`{"name":"what a tool or your colleague"}`:                                  true,
+		`{"name":"one short sentence"}`:                                             true,
+		`{"event_name":"Northside Pottery Club Spring Open Day"}`:                   false,
+		`{"file_name":"minutes of the annual general meeting 2026"}`:                false,
+		`{"name":"Carry Lind"}`:                                                     false,
+		`{"event_name":"On With The Show"}`:                                         false,
+		`{"name":"Booked by: Carry on with the caller from the note that follows"}`: true,
 	} {
 		_, got := placeholderName(nil, llm.ToolCall{Name: "book_room", Arguments: arguments})
 		assert.Equal(t, stand, got, arguments)
@@ -378,4 +378,48 @@ func TestOnlyTheWordWrittenBesideASpellingIsRefused(t *testing.T) {
 	_, spelled, got := misspelledName(after, llm.ToolCall{Name: "add_guest", Arguments: `{"guest_name":"Jonas"}`})
 	assert.True(t, got, "the word right after the spelling")
 	assert.Equal(t, "jones", spelled)
+}
+
+func TestUnsourcedTransfer(t *testing.T) {
+	call := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+15550001111"}`}
+	for told, accepted := range map[string]bool{
+		"Hand off to +15550001111.":                        true,
+		"Hand off to +1 555 000 1111":                      true,
+		"Hand off to +1 (555) 000-1111.":                   true,
+		"Hand off to +1.555.000.1111":                      true,
+		"Hand off to 1-555-000-1111":                       true,
+		"Hand off to (555) 000-1111":                       true,
+		"1. Sales: +15550001111\n2. Billing: +15550002222": true,
+		"Transfer to +1 555 000 1111 (9am-5pm)":            true,
+		"Sales is +15550001111. 24/7 support":              true,
+		"Billing: (555) 000-1111 (9am-5pm)":                true,
+		"Billing: (555) 000-1111. 24/7":                    true,
+		"Hand off to +15550001112":                         false,
+		"Hand off to +1 555 000 1112":                      false,
+		"Hand off to +155500011112":                        false,
+		"Hand off to (555) 000-1112":                       false,
+		"Hand off to +44 555 000 1111":                     false,
+		"Hand off to 555 000 1111 2222":                    false,
+		"Hand off to +44 (555) 000-1111":                   false,
+		"Hand off to +1 555 000 1111 2222":                 false,
+		"Hand off to 555 000 1111 (ext. 22)":               true,
+		"Hand off to 2. 555-000-1111":                      true,
+	} {
+		_, unsourced := unsourcedTransfer(nil, call, told)
+		assert.Equal(t, accepted, !unsourced, told)
+	}
+	german := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+13012345678"}`}
+	_, unsourced := unsourcedTransfer(nil, german, "Hand off to +49 (30) 1234 5678")
+	assert.True(t, unsourced, "a bracketed area code after another country code")
+}
+
+func TestUnsourcedTransferIgnoresANumberQuotedByAFailedTool(t *testing.T) {
+	call := llm.ToolCall{Name: "transfer", Arguments: `{"to":"+15550001111"}`}
+	for _, content := range []string{
+		didNotWork + "no agent is on duty at +15550001111.",
+		`{"error":"line +15550001111 is busy"}`,
+	} {
+		_, unsourced := unsourcedTransfer([]llm.Message{{Role: llm.ToolResult, Content: content}}, call, "")
+		assert.True(t, unsourced, content)
+	}
 }

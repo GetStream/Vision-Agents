@@ -313,6 +313,8 @@ func (l *recordingLine) Transfer(_ context.Context, to string) error {
 	return nil
 }
 
+func (l *recordingLine) Placed() bool { return true }
+
 func (l *recordingLine) SendDigits(_ context.Context, digits string) error {
 	l.mu.Lock()
 	defer l.mu.Unlock()

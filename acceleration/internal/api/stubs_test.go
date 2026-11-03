@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -123,6 +124,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "echo", Model: "local-model", Languages: []string{"la"}, Local: true},
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "hanging-up", Model: "hanging-up-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "connecting", Model: "connector-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "logging-in", Model: "login-model", Languages: []string{"la"}},
@@ -212,12 +214,15 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	if !first && s.then != "" {
 		reply = s.then
 	}
+	// Echoing is what the model was told: its instructions and the harness's notes, which is
+	// where what moves on during a call, such as the day, is told. Reciting is the conversation
+	// it was handed, without them.
 	if s.echoes {
-		reply = params.Instructions
+		reply = toldModel(params)
 	}
 	if s.recites {
 		handed := make([]string, 0, len(params.Input))
-		for _, message := range params.Input {
+		for _, message := range harness.WithoutNotes(params.Input) {
 			handed = append(handed, string(message.Role)+": "+message.Content)
 		}
 		reply = strings.Join(handed, "\n")
@@ -507,14 +512,22 @@ func (l *saidLog) spoken() []string {
 }
 
 // recordedTranscriber transcribes whatever it is handed into the same transcript, so a job
-// can be followed from the row it creates to the result a caller reads back.
+// can be followed from the row it creates to the result a caller reads back. A WAV (wavOf) is
+// heard as the words a test wrote into it instead, so a voice note says what the test needs:
+// nothing, or anything. Its words refuseForMoney and failToTranscribe are not heard: the first
+// is refused for money, the second fails.
 type recordedTranscriber struct{ model string }
+
+const (
+	refuseForMoney   = "refuse for money"
+	failToTranscribe = "fail to transcribe"
+)
 
 func transcriberRegistry() *sttrouter.Transcribers {
 	registry := sttrouter.NewTranscriberRegistry()
 	registry.Register("stub", func(spec routing.Spec) (stt.Transcriber, error) {
 		return &recordedTranscriber{model: spec.Model}, nil
-	})
+	}, routing.OverrideRegion)
 	return registry
 }
 
@@ -523,6 +536,15 @@ func (t *recordedTranscriber) Transcribe(_ context.Context, recording stt.Record
 		Text:            "a call costs a penny",
 		Language:        "en",
 		AudioDurationMs: 4000,
+	}
+	if said, ok := bytes.CutPrefix(recording.Audio, []byte(wavHeader)); ok {
+		switch string(said) {
+		case refuseForMoney:
+			return stt.Transcription{}, fmt.Errorf("stub: %w", policy.ErrBudgetSpent)
+		case failToTranscribe:
+			return stt.Transcription{}, errors.New("stub: the provider answered 500")
+		}
+		transcription.Text = string(said)
 	}
 	if recording.Words {
 		transcription.Words = []stt.Word{
@@ -970,6 +992,9 @@ func (b *knowledgeBase) Drop(_ context.Context, namespace string) (knowledge.Dro
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.down {
+		return knowledge.Dropped{}, fmt.Errorf("turbopuffer: delete %s: 503 Service Unavailable", namespace)
+	}
 	_, existed := b.passages[namespace]
 	delete(b.passages, namespace)
 	return knowledge.Dropped{Existed: existed, Billed: knowledge.Billed{Requests: 1}}, nil

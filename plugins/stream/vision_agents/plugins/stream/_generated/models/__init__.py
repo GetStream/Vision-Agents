@@ -8,6 +8,7 @@ from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
 from .add_trunk_number_request import AddTrunkNumberRequest
 from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
+from .agent_calls import AgentCalls
 from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
@@ -44,6 +45,7 @@ from .approved_connection_tool import ApprovedConnectionTool
 from .approved_connection_tools import ApprovedConnectionTools
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
+from .audio_source import AudioSource
 from .audit_action import AuditAction
 from .audit_change import AuditChange
 from .audit_entry import AuditEntry
@@ -208,6 +210,7 @@ from .detection_result import DetectionResult
 from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
 from .effective_quota import EffectiveQuota
+from .end_call_settings import EndCallSettings
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
@@ -337,6 +340,7 @@ from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
+from .press_settings import PressSettings
 from .price import Price
 from .price_change import PriceChange
 from .price_change_entry import PriceChangeEntry
@@ -428,6 +432,7 @@ from .session_call import SessionCall
 from .session_call_outcome import SessionCallOutcome
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
+from .session_end_reason import SessionEndReason
 from .session_filter import SessionFilter
 from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
@@ -528,6 +533,8 @@ from .transcription_request import TranscriptionRequest
 from .transcription_request_tags import TranscriptionRequestTags
 from .transfer_call_request import TransferCallRequest
 from .transfer_call_request_tags import TransferCallRequestTags
+from .transfer_destination import TransferDestination
+from .transfer_settings import TransferSettings
 from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
@@ -582,6 +589,7 @@ __all__ = (
     "ActivityGranularity",
     "AddTrunkNumberRequest",
     "AddTrunkNumberRequestTags",
+    "AgentCalls",
     "AgentChanges",
     "AgentChannels",
     "AgentConfig",
@@ -618,6 +626,7 @@ __all__ = (
     "ApprovedConnectionTools",
     "AttachNumberRequest",
     "AttachedNumber",
+    "AudioSource",
     "AuditAction",
     "AuditChange",
     "AuditEntry",
@@ -778,6 +787,7 @@ __all__ = (
     "DetectionStatus",
     "DispatchSetting",
     "EffectiveQuota",
+    "EndCallSettings",
     "Endpointing",
     "EqualsType1",
     "ErrorDetail",
@@ -905,6 +915,7 @@ __all__ = (
     "PostalAddress",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
+    "PressSettings",
     "Price",
     "PriceChange",
     "PriceChangeEntry",
@@ -996,6 +1007,7 @@ __all__ = (
     "SessionCallOutcome",
     "SessionConnectorBinding",
     "SessionCustom",
+    "SessionEndReason",
     "SessionFilter",
     "SessionFilterCustom",
     "SessionMemory",
@@ -1096,6 +1108,8 @@ __all__ = (
     "TranscriptionRequestTags",
     "TransferCallRequest",
     "TransferCallRequestTags",
+    "TransferDestination",
+    "TransferSettings",
     "TtsOptions",
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",

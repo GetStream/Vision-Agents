@@ -1036,7 +1036,9 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 		switch {
 		case maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }):
 		case len(kept) == 0:
-			// A call made without custom, as an agent makes its own call, takes this one.
+			// A call made without custom, as an agent makes its own call, takes this one. A dial
+			// that fails after this keeps it on the call: Stream's update-call sets a key to null
+			// but cannot remove it, so there is no putting it back.
 			if err := stream.PutCustom(ctx, callType, callID, request.Custom); err != nil {
 				return Placed{}, err
 			}

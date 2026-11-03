@@ -629,41 +629,20 @@ class TestSyncAgent:
         assert options["allowed_domains"] == ["api.example.com"]
         assert options["network_allow_list"] == ["10.0.0.0/8"]
 
-    async def test_the_mcp_servers_named_by_url_are_sent(
+    async def test_a_directory_naming_mcp_servers_is_refused_before_anything_is_sent(
         self, router: Router, support_dir
     ):
         (support_dir / "agent.yaml").write_text(
             "name: support\nmcp_servers:\n"
             "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n"
-            "    tools: [search_*]\n"
-            "  - name: crm\n    url: https://crm.example.com/mcp\n"
-            "    scopes: [contacts.read]\n"
-            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: true\n"
         )
 
-        result = await stream.sync_agent(
-            "support", path=str(support_dir), url=router.url, customer_id="acme"
-        )
+        with pytest.raises(ValueError, match="create a custom connector"):
+            await stream.sync_agent(
+                "support", path=str(support_dir), url=router.url, customer_id="acme"
+            )
 
-        assert router.configs[result.config.id]["mcp_servers"] == [
-            {
-                "name": "tablejourney",
-                "url": "https://tablejourney.com/mcp",
-                "tools": ["search_*"],
-            },
-            {
-                "name": "crm",
-                "url": "https://crm.example.com/mcp",
-                "tools": [],
-                "scopes": ["contacts.read"],
-            },
-            {
-                "name": "notes",
-                "url": "https://notes.example.com/mcp",
-                "tools": [],
-                "user": True,
-            },
-        ]
+        assert router.bodies == []
 
     async def test_offering_tools_progressively_is_sent(
         self, router: Router, support_dir
@@ -852,13 +831,16 @@ class TestSyncAgent:
             ("", "548ab79689e94718a07f61478044b49e"),
             ("plugins: []\n", "51aa7948bde8d4bd3ca0cc1269080fd1"),
             ("plugins:\n", "1360d920d071489b6b81deb496cf2c9f"),
+            ("mcp_servers: []\n", "2eecd1659c38b855b6fe754105367233"),
+            ("mcp_servers:\n", "4bf3b4285963d17316a0d8bb47dbded2"),
         ],
     )
     async def test_a_connectors_only_directory_syncs_the_body_it_synced_on_base(
         self, router: Router, bare_dir, declared: str, synced_hash: str
     ):
-        # Probed on 259da758b before plugins were refused: these files produced this
-        # body, an empty plugins key included.
+        # Probed on 259da758b before plugins were refused, and the mcp_servers rows on
+        # 1af941985 before mcp_servers were: these files produced this body, an empty
+        # plugins or mcp_servers key included.
         (bare_dir / "agent.yaml").write_text(
             "name: support\nconnectors:\n  - linear\n" + declared
         )

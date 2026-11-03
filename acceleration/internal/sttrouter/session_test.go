@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/muse"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // refusal is what ElevenLabs sends an account that has not accepted its terms, partway
@@ -73,7 +74,7 @@ func (s *SessionSuite) SetupSuite() {
 	s.Require().NoError(pgStore.Migrate(s.ctx))
 	s.store = pgStore
 
-	liveClient, err := live.New(live.Options{Address: address})
+	liveClient, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.live = liveClient
 }

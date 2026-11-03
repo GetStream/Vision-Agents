@@ -180,16 +180,16 @@ func (s *SessionSuite) TestAnInboundSessionWhoseCallerIsGoneEndsAtTheStartTimeou
 }
 
 // endingReason takes the place of the session's ending, to read which timeout reached it.
-func (s *SessionSuite) endingReason(created *Session) <-chan TimeoutReason {
-	reasons := make(chan TimeoutReason, 1)
+func (s *SessionSuite) endingReason(created *Session) <-chan EndReason {
+	reasons := make(chan EndReason, 1)
 	created.mu.Lock()
-	created.end = func(reason TimeoutReason) { reasons <- reason }
+	created.end = func(reason EndReason) { reasons <- reason }
 	created.mu.Unlock()
 	return reasons
 }
 
 // endedBy waits for the session's timeout and checks which one it was.
-func (s *SessionSuite) endedBy(reasons <-chan TimeoutReason, want TimeoutReason) {
+func (s *SessionSuite) endedBy(reasons <-chan EndReason, want EndReason) {
 	select {
 	case reason := <-reasons:
 		s.Equal(want, reason)

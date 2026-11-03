@@ -275,6 +275,19 @@ pub struct AddTrunkNumberRequest {
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
+///The tools an agent on a phone call is offered: end the call, press keys, transfer.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct AgentCalls {
+    ///Lets the agent hang up. Off by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_call: ::std::option::Option<EndCallSettings>,
+    ///Lets the agent press keys on the call, such as to get through a menu. On by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub press: ::std::option::Option<PressSettings>,
+    ///Lets the agent transfer the call to a person. On by default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub transfer: ::std::option::Option<TransferSettings>,
+}
 ///What was changed about an agent since its directory was last synced: the edits a sync of that directory would write over.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentChanges {
@@ -302,6 +315,8 @@ pub struct AgentChannels {
 ///`AgentConfig`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct AgentConfig {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
     ///The bindings exactly as they were written. Absent when there are none.
@@ -393,6 +408,8 @@ pub struct AgentConfig {
 #[serde(deny_unknown_fields)]
 pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
     ///The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -477,6 +494,9 @@ pub struct AgentConfigPatch {
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
+    ///The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
     ///Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
@@ -1196,6 +1216,12 @@ pub struct AttachedNumber {
     ///Where the vendor sends calls: the Stream trunk with the number as its user part, e.g. sip:+15125551234@sip.stream-io-api.com.
     pub sip_uri: ::std::string::String,
     pub trunk_id: ::std::string::String,
+}
+///`AudioSource`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AudioSource {
+    ///Public HTTP(S) URL or base64 audio data URI, such as data:audio/mp4;base64,.... At most 8 MiB, whether fetched or sent as a data URI. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+    pub url: ::std::string::String,
 }
 ///created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
 #[derive(
@@ -4116,6 +4142,9 @@ impl ::std::convert::TryFrom<::std::string::String> for CreateOptOutRequestSourc
 ///`CreateResponseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CreateResponseRequest {
+    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub audio: ::std::option::Option<AudioSource>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
     ///Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's.
@@ -4124,10 +4153,10 @@ pub struct CreateResponseRequest {
     ///How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reasoning_effort: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and videos are refused. A retry with the same id, text and images starts no second turn and returns no id.
+    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
-    ///What to answer, as though it had been said.
+    ///What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
     pub text: ::std::string::String,
     ///Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -5014,6 +5043,16 @@ pub struct EffectiveQuota {
     ///Tokens the user's responses may cost today. 0 is no cap.
     pub tokens_per_user_per_day: i64,
     pub tokens_set_by: QuotaLevel,
+}
+///`EndCallSettings`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct EndCallSettings {
+    ///Offer the tool. Omitted is off.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enabled: ::std::option::Option<bool>,
+    ///When the agent should end the call, in the caller's terms.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub when: ::std::option::Option<::std::string::String>,
 }
 ///What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 #[derive(
@@ -7804,7 +7843,7 @@ pub struct PhoneVendor {
 ///`PlaceCallRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PlaceCallRequest {
-    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom.
+    ///Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
@@ -8170,6 +8209,13 @@ pub struct PressDigitsRequest {
     pub digits: ::std::string::String,
     ///Who is carrying the call, e.g. "telnyx".
     pub vendor: ::std::string::String,
+}
+///`PressSettings`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct PressSettings {
+    ///Offer the tool. Omitted is on.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enabled: ::std::option::Option<bool>,
 }
 ///What one item costs: a model of a provider in a modality, in a region, with the customer's own key (byok) or without, under the attributes in when, at the rates every row of its work is debited at, which X-Stream-Cost-Micros reports. A byok price is a fee: the vendor bills the customer for the work itself.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -8911,12 +8957,16 @@ impl ::std::convert::TryFrom<::std::string::String> for RecordingStatus {
 ///`RespondRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct RespondRequest {
+    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub audio: ::std::option::Option<AudioSource>,
     ///The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub client_id: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
+    ///What to answer, as though it had been said. May be empty when audio carries the question.
     pub text: ::std::string::String,
 }
 ///How a conversation is handed back to the model when a session carries it on.
@@ -9352,7 +9402,7 @@ pub struct ScheduledTask {
     pub schedule: ScheduledTaskSchedule,
     ///The conversation the task follows up in. Empty until its first occurrence opens one.
     pub session_id: ::std::string::String,
-    ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+    ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
     pub state: ScheduledTaskState,
     pub title: ::std::string::String,
     ///Up to the next five occurrences, RFC 3339 with the task zone's offset.
@@ -9444,7 +9494,7 @@ pub struct ScheduledTaskRun {
     pub attempts: i64,
     ///Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
     pub delivered_to: ::std::string::String,
-    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a one-shot's time came while it was paused). The full error is in the router's logs. Null otherwise.
+    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub error: ::std::option::Option<::std::string::String>,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
@@ -9602,7 +9652,7 @@ pub struct ScheduledTaskSchedule {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub until: ::std::option::Option<::std::string::String>,
 }
-///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (auto-paused after five failed occurrences in a row; resume clears it).
+///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -9880,6 +9930,9 @@ pub struct Session {
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
+    ///Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_reason: ::std::option::Option<SessionEndReason>,
     ///The session this one continued from, empty for one opened fresh.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub forked_from: ::std::option::Option<::std::string::String>,
@@ -9972,6 +10025,69 @@ pub struct SessionConnectorBinding {
     pub connection_id: ::std::string::String,
     ///The binding's alias in the agent config.
     pub name: ::std::string::String,
+}
+///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum SessionEndReason {
+    #[serde(rename = "agent_hangup")]
+    AgentHangup,
+    #[serde(rename = "transferred")]
+    Transferred,
+    #[serde(rename = "hangup")]
+    Hangup,
+    #[serde(rename = "start")]
+    Start,
+    #[serde(rename = "unanswered")]
+    Unanswered,
+}
+impl ::std::fmt::Display for SessionEndReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::AgentHangup => f.write_str("agent_hangup"),
+            Self::Transferred => f.write_str("transferred"),
+            Self::Hangup => f.write_str("hangup"),
+            Self::Start => f.write_str("start"),
+            Self::Unanswered => f.write_str("unanswered"),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionEndReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "agent_hangup" => Ok(Self::AgentHangup),
+            "transferred" => Ok(Self::Transferred),
+            "hangup" => Ok(Self::Hangup),
+            "start" => Ok(Self::Start),
+            "unanswered" => Ok(Self::Unanswered),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionEndReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionEndReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///Which sessions to list. A field not listed here is refused rather than ignored.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -11950,6 +12066,9 @@ pub struct SyncAgentRequest {
     ///The newest change the caller has already seen, as last_change named it. Everything up to it is taken as decided, so the sync is not refused for it again.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub base_change: ::std::option::Option<::std::string::String>,
+    ///The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calls: ::std::option::Option<AgentCalls>,
     ///Lines this agent answers on besides Stream Chat, each a number the app connected.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
@@ -12735,6 +12854,30 @@ pub struct TransferCallRequest {
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
     ///The human being brought onto the call.
     pub to: ::std::string::String,
+}
+///`TransferDestination`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct TransferDestination {
+    ///What the agent calls this destination, such as Sales.
+    pub name: ::std::string::String,
+    ///The number to transfer to, in E.164 form.
+    pub number: ::std::string::String,
+    ///Announce the caller to the person answering before connecting them.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub warm: ::std::option::Option<bool>,
+    ///When the agent should transfer here, in the caller's terms.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub when: ::std::option::Option<::std::string::String>,
+}
+///`TransferSettings`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct TransferSettings {
+    ///The numbers the agent may transfer to, by name. Names are unique ignoring case and surrounding spaces.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub destinations: ::std::option::Option<::std::vec::Vec<TransferDestination>>,
+    ///Offer the tool. Omitted is on.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub enabled: ::std::option::Option<bool>,
 }
 ///How this config speaks. A provider that cannot express a term refuses the request rather than dropping it silently, since a voice asked to sound urgent and speaking flatly is worse than one that says it cannot.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

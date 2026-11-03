@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -12,8 +13,10 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // dsnEnvVar and redisEnvVar are where this looks for a Postgres to count turns into and a
@@ -52,8 +55,10 @@ func (s *TurnRecordingSuite) SetupSuite() {
 	s.Require().NoError(pgStore.Ping(context.Background()))
 	s.Require().NoError(pgStore.Migrate(context.Background()))
 
-	liveClient, err := live.New(live.Options{
-		Address: redisAddr, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD"),
+	liveClient, err := redisready.Retry(redisAddr, func() (*live.Client, error) {
+		return live.New(live.Options{
+			Address: redisAddr, Username: os.Getenv("ROUTER_REDIS_USERNAME"), Password: os.Getenv("ROUTER_REDIS_PASSWORD"),
+		})
 	})
 	s.Require().NoError(err)
 	s.liveClient = liveClient
@@ -104,4 +109,43 @@ func (s *TurnRecordingSuite) TestAFinishedExchangeIsKeptAndCounted() {
 	s.Require().Len(stats, 1)
 	s.EqualValues(1, stats[0].TurnCount)
 	s.NotNil(stats[0].RoundtripP50Ms, "the turn's wait is in its hour's percentiles")
+}
+
+// TestPersistReportsAWriteTheDeadlineCut is what lets the recorder count a lost row: a
+// write whose context is gone must say so, whichever of the two stores it was meant for.
+func (s *TurnRecordingSuite) TestPersistReportsAWriteTheDeadlineCut() {
+	row := live.Turn{CustomerID: "acme", AgentID: s.agentID, TurnID: "turn-persist", StartedAt: time.Now().UTC()}
+	owner := routing.Owner{CustomerID: "acme", AgentID: s.agentID}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for name, stores := range map[string]struct {
+		pg   *store.Store
+		live *live.Client
+	}{
+		"redis only":    {live: s.liveClient},
+		"postgres only": {pg: s.pgStore},
+		"both":          {pg: s.pgStore, live: s.liveClient},
+	} {
+		r := buildTurnRecorder(stores.pg, stores.live, owner, slog.New(slog.DiscardHandler))
+		s.Error(r.persist(cancelled, row), name+": a write cut by its context is an error")
+		s.NoError(r.persist(context.Background(), row), name+": a write that goes through is not")
+	}
+}
+
+// TestDecisionsReachRedis pins what the recorder writes with by default: a judgement
+// recorded and flushed by Close must be readable back from the live client.
+func (s *TurnRecordingSuite) TestDecisionsReachRedis() {
+	callID := fmt.Sprintf("call-decisions-%d", time.Now().UnixNano())
+	owner := routing.Owner{CustomerID: "acme", AgentID: s.agentID, CallID: callID}
+	r := newDecisionRecorder(s.liveClient, owner, slog.New(slog.DiscardHandler))
+	r.Record(Decided{Kind: "reply", Reason: "asked a question", TurnID: "turn-1", Text: "hello"})
+	r.Close()
+
+	events, err := s.liveClient.CallEvents(context.Background(), "acme", callID, s.startedAt, nil, 10)
+	s.Require().NoError(err)
+	s.Require().Len(events, 1)
+	s.Equal("reply", events[0].Kind)
+	s.Equal("turn-1", events[0].TurnID)
+	s.Equal("hello", events[0].Said)
 }

@@ -66,8 +66,7 @@ func TestAProxyAddressWithoutRedisOrConnectorsDoesNotStart(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
-	require.NoError(t, redisready.Ready(address))
-	redis, err := live.New(live.Options{Address: address})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
 	_, err = newSandboxProxy(settings, redis, nil, nil, nil, slog.New(slog.DiscardHandler))
@@ -82,8 +81,7 @@ func TestAProxyAddressServesTheProxyThereAlone(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
-	require.NoError(t, redisready.Ready(address))
-	redis, err := live.New(live.Options{Address: address})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
 	settings := config.Defaults().CodeSandbox
@@ -178,8 +176,7 @@ func TestTheProxyBrokerNeedsRedisAndIsGivenTheProxy(t *testing.T) {
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
-	require.NoError(t, redisready.Ready(address))
-	redis, err := live.New(live.Options{Address: address})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
 	require.NoError(t, sandboxBroker(settings, redis, &options))
@@ -199,7 +196,9 @@ func TestTheProxyReadsTheGrantsItsBrokerWrites(t *testing.T) {
 	}
 	require.NoError(t, redisready.Ready(address))
 	shard := forward(t, address)
-	redis, err := live.New(live.Options{Address: address, Shard: live.Shard{Address: shard.Addr().String()}})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) {
+		return live.New(live.Options{Address: address, Shard: live.Shard{Address: shard.Addr().String()}})
+	})
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
 	require.NoError(t, shard.Close())
@@ -292,8 +291,7 @@ func newLoggedListenedProxy(t *testing.T, publicURL string, logger *slog.Logger)
 	if address == "" {
 		t.Skip("ROUTER_REDIS_ADDR not set")
 	}
-	require.NoError(t, redisready.Ready(address))
-	redis, err := live.New(live.Options{Address: address})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	require.NoError(t, err)
 	t.Cleanup(redis.Close)
 	host := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) { _, _ = io.WriteString(w, "hello") }))
@@ -663,8 +661,7 @@ func (s *SandboxProxyHandOverSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
-	s.Require().NoError(redisready.Ready(address))
-	redis, err := live.New(live.Options{Address: address})
+	redis, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.redis = redis
 }

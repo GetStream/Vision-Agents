@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -943,7 +944,8 @@ func (m *loggingInLLM) Create(_ context.Context, params llm.ResponseParams) (*ll
 	offers := func(name string) bool {
 		return slices.ContainsFunc(params.Tools, func(tool llm.Tool) bool { return tool.Name == name })
 	}
-	asked := len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User
+	said := harness.WithoutNotes(params.Input)
+	asked := len(said) > 0 && said[len(said)-1].Role == llm.User && params.ToolChoice != "none"
 	switch {
 	case asked && offers(connectorEcho):
 		// The binding opened when the session did, on the connection it chose.

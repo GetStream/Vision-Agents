@@ -18,7 +18,6 @@ use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Pipeline;
 use GetStream\VisionAgents\Skill;
 use GetStream\VisionAgents\Tests\Support\LocalRouter;
-use GetStream\VisionAgents\Tests\Support\RecordedLog;
 use GetStream\VisionAgents\Tests\Support\Rows;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
@@ -380,10 +379,10 @@ final class AgentTest extends TestCase
         }
     }
 
-    public function testSyncSendsGreetingPluginsHarnessAndSchedules(): void
+    public function testSyncSendsGreetingHarnessAndSchedules(): void
     {
         $this->folder();
-        file_put_contents($this->dir . '/agent.yaml', "name: jean\ngreeting:\n  text: Hello there.\n  mode: variation\nplugins: [sentry]\nharness: default\n");
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\ngreeting:\n  text: Hello there.\n  mode: variation\nharness: default\n");
         file_put_contents($this->dir . '/knowledge/urls.yaml', "- url: https://example.com/plans\n  refresh_hours: 24\n");
         $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
 
@@ -391,8 +390,6 @@ final class AgentTest extends TestCase
 
         $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
         self::assertSame(['text' => 'Hello there.', 'mode' => 'variation'], $sent['greeting']);
-        self::assertSame(['sentry'], $sent['plugins']);
-        self::assertArrayNotHasKey('agent_plugins', $sent);
         self::assertSame('default', $sent['harness']);
         self::assertSame([['url' => 'https://example.com/plans', 'refresh_hours' => 24]], $sent['knowledge_urls']);
     }
@@ -623,28 +620,19 @@ final class AgentTest extends TestCase
         self::assertSame('agents: connector "linear": "prod" matches 2 app connections', $caught->getMessage());
     }
 
-    public function testSyncWarnsOnceThatPluginsAreDeprecatedAndStillSendsThem(): void
+    public function testSyncOfAnEmptyPluginsKeySendsNoPlugins(): void
     {
         $this->folder();
-        file_put_contents($this->dir . '/agent.yaml', "name: jean\nplugins: [sentry]\n");
+        file_put_contents($this->dir . '/agent.yaml', "name: jean\nplugins: []\nconnectors: [linear]\n");
         $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
-        $log = new RecordedLog();
 
-        (new Agent(folder: $this->dir, client: $this->router->client(), logger: $log))->sync();
+        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
 
-        self::assertSame([['warning', 'agent.yaml plugins are deprecated: rename plugins to connectors']], $log->lines);
-        self::assertSame(['sentry'], $this->router->to('POST', '/v1/agents/sync')[0]->json()['plugins']);
-    }
-
-    public function testSyncDoesNotWarnWithoutPlugins(): void
-    {
-        $this->folder();
-        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
-        $log = new RecordedLog();
-
-        (new Agent(folder: $this->dir, client: $this->router->client(), logger: $log))->sync();
-
-        self::assertSame([], $log->lines);
+        $sent = $this->router->to('POST', '/v1/agents/sync')[0]->json();
+        self::assertArrayNotHasKey('plugins', $sent);
+        self::assertArrayNotHasKey('agent_plugins', $sent);
+        self::assertSame('jean', $sent['name']);
+        self::assertSame(['linear'], array_column($this->sentConnectors(), 'connector_id'));
     }
 
     /**

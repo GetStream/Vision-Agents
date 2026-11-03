@@ -151,7 +151,6 @@ pub struct Settings {
     /// How the sandbox is built and what code in it may reach. Outbound network is blocked
     /// unless `network` or an allow list opens it. `None` leaves the stored options.
     pub sandbox_options: Option<types::SandboxOptions>,
-    pub plugins: Vec<String>,
     /// The connectors whose tools the agent may call. `None` when the declaration says
     /// nothing, which leaves the bindings stored; empty when the file lists none, which
     /// removes them.
@@ -481,7 +480,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "mode" => settings.mode = named(&text()?, "mode")?,
             "sandbox" => settings.sandbox = named(&text()?, "sandbox")?,
             "sandbox_options" => settings.sandbox_options = sandbox_options(&value)?,
-            "plugins" => settings.plugins = strings(&value, &key)?,
+            "plugins" | "plugin_events" => refuse_replaced(&key, &value)?,
             "connectors" => settings.connectors = connectors(&value)?,
             "keyterms" => settings.keyterms = strings(&value, &key)?,
             "tags" => settings.tags = mapping(&value, &key)?,
@@ -490,16 +489,19 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
         }
     }
-    // The model is offered each as <name>__<tool>, so the same name would be two tools.
-    for connector in settings.connectors.iter().flatten() {
-        if settings.plugins.contains(&connector.name) {
-            return Err(format!(
-                "{:?} is named under both connectors and plugins",
-                connector.name
-            ));
-        }
-    }
     Ok(settings)
+}
+
+/// Refuses a key connectors replaced, unless it declares nothing: an empty or null list was
+/// never sent, so the file syncs as it did.
+fn refuse_replaced(key: &str, value: &Yaml) -> std::result::Result<(), String> {
+    match value {
+        Yaml::Null => Ok(()),
+        Yaml::Array(items) if items.is_empty() => Ok(()),
+        _ => Err(format!(
+            "{key} is no longer read: plugins were replaced by connectors, so name the provider under connectors"
+        )),
+    }
 }
 
 fn connectors(value: &Yaml) -> std::result::Result<Option<Vec<ConnectorSettings>>, String> {
