@@ -1575,16 +1575,20 @@ func (s *DataMoveSuite) TestACampaignNotPausedHereIsNotNamedForItsCalls() {
 	running := s.seedCampaign("acme", Running)
 	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: running, ToNumber: "+15550101"}}))
 	s.ringOnSource(running)
+	marked := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: marked, ToNumber: "+15550103"}}))
+	s.ringOnSource(marked)
 	other := s.seedCampaign("other", Running)
 	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: other, ToNumber: "+15550102"}}))
 	s.ringOnSource(other)
 	s.Require().NoError(s.source.SetCampaignState(s.ctx, "other", other, Paused))
 	s.move("acme", "moved")
 	s.move("other", "moved-other")
+	s.startHere("moved", running)
 
 	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
 	s.Require().NoError(err)
-	s.Empty(calling, "the one the move paused is named as running there, and another customer's is not its")
+	s.Empty(calling, "one started here rings its own calls, the move's mark names its own, and another customer's is not its")
 }
 
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a
