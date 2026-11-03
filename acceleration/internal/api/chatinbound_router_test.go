@@ -120,7 +120,8 @@ func (s *ChatInboundSuite) TestAVoiceRecordingDeliveredAndHookedIsHeardAndHanded
 		select {
 		case message := <-worker.Messages():
 			s.Equal(want, message.Text, typed)
-		case <-time.After(settleFor):
+		// Longer than a text's wait: the recording is fetched and heard before the worker has it.
+		case <-time.After(3 * settleFor):
 			s.Fail("the recording never reached the worker", typed)
 		}
 		s.False(s.reachesWorker(worker.Messages()), "one delivery is one answer")
