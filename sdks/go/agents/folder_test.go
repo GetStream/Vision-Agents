@@ -332,6 +332,26 @@ func TestPluginEventsAreRefusedWithAPointerToConnectors(t *testing.T) {
 	}
 }
 
+func TestMCPServersAreRefusedWithAPointerToACustomConnector(t *testing.T) {
+	for _, declared := range []string{
+		"mcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n",
+		"mcp_servers: [notes]\n",
+		"mcp_servers: notes\n",
+		"mcp_servers: {name: notes}\n",
+		"mcp_servers: {}\n",
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n"+declared)
+
+		_, err := Load(root)
+		want := "agents: " + filepath.Join(root, "agent.yaml") + ": mcp_servers is no longer read: " +
+			"a server named by URL is now a custom connector, so create one for its URL and name it under connectors"
+		if err == nil || err.Error() != want {
+			t.Errorf("%q: a folder naming MCP servers loaded: %v", declared, err)
+		}
+	}
+}
+
 func TestAPluginNamedOutsideAListIsRefused(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "triage")
 	write(t, root, "agent.yaml", "name: triage\nplugins: sentry\n")
@@ -345,6 +365,10 @@ func TestEmptyPluginKeysLoadAsTheyDidBefore(t *testing.T) {
 	for _, declared := range []string{
 		"plugins: []\nplugin_events: []\n",
 		"plugins:\nplugin_events:\n",
+		// Probed on 1af941985, while the SDK still read mcp_servers.
+		"mcp_servers: []\n",
+		"mcp_servers:\n",
+		"plugins: []\nplugin_events: []\nmcp_servers: []\n",
 	} {
 		root := filepath.Join(t.TempDir(), "concierge")
 		write(t, root, "agent.yaml", "name: concierge\n"+declared+"connectors:\n  - linear\n")
@@ -777,39 +801,6 @@ func TestAConnectorEntryWithKnownKeysAloneLoads(t *testing.T) {
 		Sandbox: true, RequireApproval: &approval}
 	if got := folder.Settings.Connectors; len(got) != 1 || !reflect.DeepEqual(got[0], want) {
 		t.Errorf("the connectors read as %#v", got)
-	}
-}
-
-func TestAConnectorAliasThatIsAlsoAnMCPServerIsRefused(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: linear\n    connector: github\nmcp_servers:\n  - name: linear\n    url: https://example.com/mcp\n")
-
-	_, err := Load(root)
-	if err == nil || !strings.Contains(err.Error(), `"linear" is named under both connectors and mcp_servers`) {
-		t.Fatalf("the shared alias loaded: %v", err)
-	}
-}
-
-func TestAConnectorAliasMayDifferFromItsMCPName(t *testing.T) {
-	root := filepath.Join(t.TempDir(), "concierge")
-	write(t, root, "agent.yaml", `name: concierge
-connectors:
-  - name: issues
-    connector: linear
-  - name: tickets
-    connector: notes
-mcp_servers:
-  - name: notes
-    url: https://example.com/mcp
-`)
-
-	folder, err := Load(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	got := folder.Settings.Connectors
-	if len(got) != 2 || got[0].Name != "issues" || got[0].Connector != "linear" || got[1].Name != "tickets" || got[1].Connector != "notes" {
-		t.Errorf("the aliases read as %+v", got)
 	}
 }
 

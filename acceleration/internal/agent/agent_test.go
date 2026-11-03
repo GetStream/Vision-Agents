@@ -2697,6 +2697,41 @@ func (s *AgentSuite) TestAnAgentWithNeitherSeesNoImages() {
 	s.ErrorIs(err, ErrCannotSeeImages)
 }
 
+// CheckTurn says what RespondTo refuses a turn for, for each state an agent can be in: not
+// joined, joined with nothing that sees, and joined with a model that does.
+func (s *AgentSuite) TestCheckTurnRefusesWhatRespondToRefuses() {
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+	unjoined, err := New(Options{Text: true, CustomerID: "acme", Instructions: "be brief", LLM: s.reasoner(slog.New(slog.DiscardHandler)),
+		LLMTarget: "en-low-latency", Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = unjoined.Close() })
+
+	_, refused := unjoined.RespondTo(s.ctx, "hello", nil, options.LLM{})
+	s.Require().Error(refused)
+	s.EqualError(unjoined.CheckTurn(options.LLM{}, false), refused.Error(), "an agent not joined refuses a turn of text alone")
+	s.EqualError(unjoined.CheckTurn(options.LLM{}, true), refused.Error(), "and one with images")
+
+	s.joinText()
+	s.NoError(s.agent.CheckTurn(options.LLM{}, false))
+	s.ErrorIs(s.agent.CheckTurn(options.LLM{}, true), ErrCannotSeeImages)
+	_, err = s.agent.RespondTo(s.ctx, "what is this?", photo, options.LLM{})
+	s.ErrorIs(err, ErrCannotSeeImages)
+
+	s.agent.nativeMode.Store(true)
+	s.EqualError(s.agent.CheckTurn(options.LLM{}, true), errNativeTakesNoImages.Error(), "a speech-to-speech agent takes no images")
+	_, err = s.agent.RespondTo(s.ctx, "what is this?", photo, options.LLM{})
+	s.ErrorIs(err, errNativeTakesNoImages)
+	s.ErrorIs(s.agent.CheckTurn(options.LLM{}, false), errNotJoined, "and none without a speech session")
+	s.agent.nativeMode.Store(false)
+}
+
+func (s *AgentSuite) TestCheckTurnLetsAJoinedAgentWithSightTakeImages() {
+	s.sees = true
+	s.joinText()
+
+	s.NoError(s.agent.CheckTurn(options.LLM{}, true))
+}
+
 // A written aside shows its photos to a model that accepts images, with its words.
 func (s *AgentSuite) TestAWrittenAsideShowsItsPhotosToAModelThatAcceptsImages() {
 	s.sees = true

@@ -57,6 +57,10 @@ type Spec struct {
 	// the Router sets once it found the channel's channel_threads row (api.threadSession,
 	// api.threadConversation). No request sets it.
 	Thread bool
+	// Dispatched holds ConversationID on the channel a message the router handed to a worker
+	// was written in, which the worker's session answers (Manager.handedOut). The person writes
+	// there themselves, so the session writes only its replies. No request sets it.
+	Dispatched bool
 	// ThreadPerson is the person a thread of one person answers (SMS, WhatsApp, a 1:1 iMessage chat): the
 	// Stream user the channel bridge writes their messages as. The scheduling tools are offered
 	// for them, and ThreadChannel is the thread channel their tasks keep.

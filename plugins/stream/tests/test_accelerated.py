@@ -1256,47 +1256,11 @@ class TestAccelerated:
             type="looked_up", query="delivery cost", documents=3
         )
 
-    async def test_a_login_a_plugin_asks_for_is_reported_with_where_to_make_it(
+    async def test_a_tool_result_asking_for_a_plugin_login_is_no_event(
         self, router: Router, writing: stream.Accelerated
     ):
-        events = writing.remote_events()
-        await router.send(
-            {"type": "tool_ran", "tool": "weather", "result": "it is raining"}
-        )
-        await router.send(
-            {
-                "type": "tool_ran",
-                "tool": "google_calendar__list_tools",
-                "result": json.dumps(
-                    {
-                        "status": "authorization_required",
-                        "message": "The user has not connected Google Calendar.",
-                        "attachment": {
-                            "type": "plugin_authorization",
-                            "plugin_id": "google_calendar",
-                            "title": "Connect Google Calendar",
-                            "authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=1",
-                            "text": "Read calendars, events and free time.",
-                            "thumb_url": "https://router.example/v1/agents/plugins/google_calendar/logo",
-                            "title_link": "https://accounts.google.com/o/oauth2/v2/auth?state=1",
-                        },
-                    }
-                ),
-            }
-        )
-
-        event = await asyncio.wait_for(anext(events), SETTLE)
-
-        assert event == RemoteEvent(
-            type="authorization_required",
-            text="Connect Google Calendar",
-            url="https://accounts.google.com/o/oauth2/v2/auth?state=1",
-            image_url="https://router.example/v1/agents/plugins/google_calendar/logo",
-        )
-
-    async def test_a_login_asked_for_without_a_logo_is_still_reported(
-        self, router: Router, writing: stream.Accelerated
-    ):
+        # Plugins are gone: a login a connector asks for is a step of the reply, so what a
+        # tool answered is not reported, whatever it says.
         events = writing.remote_events()
         await router.send(
             {
@@ -1316,13 +1280,14 @@ class TestAccelerated:
                 ),
             }
         )
+        await router.send(
+            {"type": "looked_up", "query": "delivery cost", "documents": 3}
+        )
 
         event = await asyncio.wait_for(anext(events), SETTLE)
 
         assert event == RemoteEvent(
-            type="authorization_required",
-            text="Connect Google Calendar",
-            url="https://accounts.google.com/auth",
+            type="looked_up", query="delivery cost", documents=3
         )
 
     async def test_the_end_user_is_who_the_session_is_opened_for(self, router: Router):

@@ -173,9 +173,11 @@ func (d *Dispatch) Active() int { return d.dispatch.Active() }
 // Conversation is the one answering this message's channel, started if none is.
 //
 // A channel is one conversation. The second message on it goes to the agent that answered
-// the first, which is still open and knows what has been said; only a channel nothing is
-// answering calls the factory. The session is opened on the message's own channel, so what
-// it writes lands in the conversation the question was asked in.
+// the first, which is still open and knows what has been said: the router answers it from
+// that session and hands it to no worker. Only a channel nothing is answering calls the
+// factory. The session is opened under the message's agent id, which the router holds on
+// the message's own channel, so what it writes lands in the conversation the question was
+// asked in.
 func (d *Dispatch) Conversation(ctx context.Context, message InboundMessage, build AgentFactory) (*Conversation, error) {
 	if message.SessionID != "" {
 		return nil, errors.New("agents: a session is already holding this conversation; answer it there with Answer")

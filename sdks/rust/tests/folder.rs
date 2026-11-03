@@ -413,6 +413,49 @@ fn a_declaration_key_nobody_knows_is_refused() {
 }
 
 #[test]
+fn plugins_and_plugin_events_are_refused_unless_they_declare_nothing() {
+    let wording = |key: &str| {
+        format!(
+            "{key} is no longer read: plugins were replaced by connectors, so name the provider under connectors"
+        )
+    };
+    for (declaration, key) in [
+        ("plugins: [github]\n", "plugins"),
+        ("plugins: github\n", "plugins"),
+        ("plugins:\n  github: {}\n", "plugins"),
+        ("plugins: [github]\nconnectors: [github]\n", "plugins"),
+        (
+            "plugin_events: [{plugin: github, event: push}]\n",
+            "plugin_events",
+        ),
+        ("plugin_events: push\n", "plugin_events"),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", format!("name: jean\n{declaration}"));
+
+        let error = Folder::load(&root).unwrap_err().to_string();
+
+        assert!(
+            error.contains(&wording(key)) && error.contains("agent.yaml"),
+            "{declaration:?} was refused as {error:?}"
+        );
+    }
+    for declaration in [
+        "plugins: []\n",
+        "plugins:\n",
+        "plugins: ~\n",
+        "plugin_events: []\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", format!("name: jean\n{declaration}"));
+
+        let folder = Folder::load(&root).unwrap();
+
+        assert_eq!(folder.name, "jean", "{declaration:?}");
+    }
+}
+
+#[test]
 fn a_directory_hashes_the_way_the_python_and_go_sdks_hash_it() {
     let (_temporary, root) = directory("jean");
     write(&root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
@@ -731,10 +774,6 @@ fn a_connector_that_names_nothing_grants_nothing_or_connects_nowhere_is_refused(
         (
             "connectors:\n  - name: github\n    tools: {}\n",
             "connectors.tools is a list of strings",
-        ),
-        (
-            "plugins: [github]\nconnectors: [github]\n",
-            "\"github\" is named under both connectors and plugins",
         ),
     ] {
         let error = connectors(declaration).unwrap_err();

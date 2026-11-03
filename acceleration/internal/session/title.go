@@ -157,6 +157,11 @@ func (s *Session) retitle(ctx context.Context, said []spoken) error {
 			n.titles.records.Described(s.spec.CustomerID, s.id, named.Title, named.Description, nil)
 		})
 	}
+	// The channel a worker's session answers in is the customer's own, and keeps the name the
+	// customer gave it (Spec.Dispatched): the title is the session's alone.
+	if s.spec.Dispatched {
+		return nil
+	}
 	return n.service.Describe(ctx, s.spec.CustomerID, s.spec.ConversationID, named.Title, named.Description)
 }
 

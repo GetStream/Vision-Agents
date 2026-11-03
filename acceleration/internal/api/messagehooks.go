@@ -245,6 +245,15 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			return false
 		}
 		if running {
+			// The session a worker opened to answer this channel answers in it, as a thread's
+			// does: the message is already there, so only the reply is written.
+			if found.Spec().Dispatched {
+				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
+					return settled
+				}
+				origin.answer(func() { s.followUpMessage(found, event) })
+				return true
+			}
 			if found.Spec().PersistConversation {
 				return true
 			}
@@ -343,6 +352,8 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 		return settled
 	}
+	// Said before the worker has the message, so the session it opens for it finds it said.
+	s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	worker, err := s.dispatch.AssignMessage(customerID, message)
 	if err != nil {
 		// Somebody has written to an agent that nothing is going to answer, which is the
@@ -352,7 +363,6 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		s.unanswered(ctx, origin)
 		return false
 	}
-	s.pinHook(origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
 	s.logger.Info("handed an arriving message to a worker",
 		"channel", event.ChannelID, "customer", customerID,
 		"config", configID, "worker", worker.ID, "stream_app", origin.app)
@@ -576,6 +586,26 @@ func (s *Server) assignMessage(ctx context.Context, customerID string, message d
 		return "", err
 	}
 	return worker.ID, nil
+}
+
+// followUpMessage answers a message in the channel a running session answers for its worker
+// (session.Spec.Dispatched), once the reply it may still be writing is done, as a thread's
+// session answers one (answerClaimed).
+func (s *Server) followUpMessage(found *session.Session, event messageEvent) {
+	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
+	defer cancel()
+	followUpID := "message_" + store.NewID()
+	for {
+		err := found.FollowUp(ctx, followUpID, event.Message.Text, nil)
+		if errors.Is(err, conversation.ErrResponseRunning) && ctx.Err() == nil {
+			time.Sleep(threadTurnPoll)
+			continue
+		}
+		if err != nil {
+			s.logger.Error("could not answer a message", "channel", event.ChannelID, "session", found.ID(), "error", err)
+		}
+		return
+	}
 }
 
 // answerMessage answers from a session that is already running.

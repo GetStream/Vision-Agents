@@ -140,7 +140,7 @@ module GetStream
       READABLE = %w[.md .mdx .txt .rst .yaml .yml].freeze
 
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search sandbox].freeze
-      SETTING_LISTS = %w[plugins keyterms].freeze
+      SETTING_LISTS = %w[keyterms].freeze
       SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch connectors sandbox_options]).freeze
       SANDBOX_LISTS = %w[setup allowed_domains network_allow_list].freeze
       SANDBOX_SIZES = %w[cpu memory_gb disk_gb].freeze
@@ -259,6 +259,7 @@ module GetStream
         parsed = Psych.safe_load(raw, aliases: false) || {}
         raise ConfigurationError, "#{file} should be a mapping of settings" unless parsed.is_a?(Hash)
 
+        refuse_plugins(parsed, file)
         unknown = parsed.keys.map(&:to_s) - SETTINGS
         unless unknown.empty?
           raise ConfigurationError, "#{file}: #{unknown.join(", ")} is not a setting; #{SETTINGS.join(", ")} are"
@@ -268,10 +269,20 @@ module GetStream
           key = key.to_s
           [key, setting(key, value, file)]
         end
-        refuse_connector_aliases(settings, file)
         settings
       rescue Psych::Exception => e
         raise ConfigurationError, "#{file}: #{e.message}"
+      end
+
+      # Connectors replaced plugins. A key that names none was never sent, so it still loads
+      # and is dropped.
+      def self.refuse_plugins(parsed, file)
+        declared = parsed.delete("plugins")
+        return if declared.nil? || declared == []
+
+        raise ConfigurationError,
+              "#{file}: plugins is no longer read: plugins were replaced by connectors, " \
+              "so name the provider under connectors"
       end
 
       def self.setting(key, value, file)
@@ -409,15 +420,6 @@ module GetStream
         return value if value.nil? || value == true || value == false
 
         raise ConfigurationError, "#{file}: connector #{name.inspect}: required should be true or false"
-      end
-
-      # The model is offered each connector and plugin as <name>__<tool>, so one name under
-      # both would be two tools. Compared on the alias, not the connector id.
-      def self.refuse_connector_aliases(settings, file)
-        both = (settings["connectors"] || []).map { |each| each["name"] } & (settings["plugins"] || [])
-        return if both.empty?
-
-        raise ConfigurationError, "#{file}: #{both.first.inspect} is named under both connectors and plugins"
       end
 
       # What the agent says as it joins: text, and a mode of exact, said word for word, or

@@ -5,7 +5,6 @@ from vision_agents.plugins.stream.folder import (
     ChannelSettings,
     ConnectorSettings,
     GreetingSettings,
-    MCPServerSettings,
     ToolSettings,
     SandboxSettings,
     find,
@@ -542,18 +541,43 @@ class TestFolder:
         with pytest.raises(ValueError, match="unknown connectors setting: plugin"):
             load(root)
 
-    def test_a_connector_alias_cannot_be_an_mcp_server_name(self, tmp_path: Path):
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "mcp_servers:\n  - name: notes\n    url: https://notes.example.com/mcp\n",
+            "mcp_servers:\n  - name: notes\n    url: https://notes.example.com/mcp\n"
+            "    user: true\n",
+            "mcp_servers:\n  - name: notes\n    user: alice\n",
+            "mcp_servers: https://notes.example.com/mcp\n",
+            "mcp_servers: {}\n",
+            'mcp_servers: ""\n',
+            "mcp_servers: [notes]\n",
+        ],
+    )
+    def test_mcp_servers_are_refused_with_a_pointer_to_a_custom_connector(
+        self, tmp_path: Path, declared: str
+    ):
         root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nconnectors:\n  - name: notes\n"
-            "mcp_servers:\n  - name: notes\n    url: https://example.com/mcp\n",
-        )
-        with pytest.raises(
-            ValueError, match='"notes" is named under both connectors and mcp_servers'
-        ):
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n" + declared)
+
+        with pytest.raises(ValueError) as refused:
             load(root)
+
+        assert str(refused.value) == (
+            f"{root / 'agent.yaml'}: `mcp_servers` is no longer supported: create a"
+            " custom connector for the server's URL and name it under `connectors`"
+        )
+
+    @pytest.mark.parametrize("declared", ["mcp_servers: []\n", "mcp_servers:\n"])
+    def test_an_empty_mcp_servers_key_names_nothing_and_loads(
+        self, tmp_path: Path, declared: str
+    ):
+        root = tmp_path / "triage"
+        write(root, "agent.yaml", "name: triage\nconnectors:\n  - linear\n" + declared)
+
+        settings = load(root).settings
+
+        assert settings.connectors == [ConnectorSettings(name="linear")]
 
     def test_connectors_that_are_not_a_list_are_refused(self, tmp_path: Path):
         root = tmp_path / "triage"
@@ -627,56 +651,6 @@ class TestFolder:
             "list_users",
             "list_issue_statuses",
         ]
-        assert [(server.name, server.url) for server in settings.mcp_servers] == [
-            ("tablejourney", "https://tablejourney.com/mcp")
-        ]
-        assert settings.mcp_servers[0].tools == [
-            "search_places",
-            "place",
-            "dishes",
-            "plan_day",
-            "festivals",
-            "experiences",
-            "itineraries",
-            "cities",
-        ]
-
-    def test_the_declaration_says_who_logs_into_each_mcp_server(self, tmp_path: Path):
-        root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nmcp_servers:\n"
-            "  - name: crm\n    url: https://crm.example.com/mcp\n    scopes: [contacts.read]\n"
-            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: true\n"
-            "  - name: tablejourney\n    url: https://tablejourney.com/mcp\n",
-        )
-
-        settings = load(root).settings
-
-        assert settings.mcp_servers == [
-            MCPServerSettings(
-                name="crm", url="https://crm.example.com/mcp", scopes=["contacts.read"]
-            ),
-            MCPServerSettings(
-                name="notes", url="https://notes.example.com/mcp", user=True
-            ),
-            MCPServerSettings(name="tablejourney", url="https://tablejourney.com/mcp"),
-        ]
-
-    def test_an_mcp_server_user_that_is_not_true_or_false_is_refused(
-        self, tmp_path: Path
-    ):
-        root = tmp_path / "triage"
-        write(
-            root,
-            "agent.yaml",
-            "name: triage\nmcp_servers:\n"
-            "  - name: notes\n    url: https://notes.example.com/mcp\n    user: alice\n",
-        )
-
-        with pytest.raises(ValueError, match="user"):
-            load(root)
 
     def test_progressive_tools_are_read(self, tmp_path: Path):
         root = tmp_path / "triage"
