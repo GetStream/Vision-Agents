@@ -113,6 +113,24 @@ describe("ChatScreen", () => {
     expect(screen.get().chat).toBeUndefined();
   });
 
+  it("reads the history of a conversation opened from a link, by its session id alone", async () => {
+    const earlier = [message("Plan a weekend in Lisbon")];
+    const asked: Array<[string, string | undefined]> = [];
+    const { deps } = router();
+    const linked: ChatScreenDeps = {
+      ...deps,
+      history: async (sessionId, conversationId) => {
+        asked.push([sessionId, conversationId]);
+        return earlier;
+      },
+    };
+    const screen = new ChatScreen("session-1", linked, () => undefined);
+
+    await settle();
+    expect(asked).toEqual([["session-1", undefined]]);
+    expect(screen.get().history).toEqual(earlier);
+  });
+
   it("lets the chat's own messages take over once its session is open", async () => {
     const { chat, deps, open } = router([message("Plan a weekend in Lisbon")]);
     const screen = new ChatScreen("session-1", deps, () => undefined, "agent:session-1");

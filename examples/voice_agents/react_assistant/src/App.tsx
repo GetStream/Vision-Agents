@@ -68,11 +68,17 @@ function Assistant_() {
   const isListShown = isWide ? !isCollapsed : isMenuOpen;
   // Stream's components are light unless told otherwise, so they are told the page's appearance.
   const [theme, setTheme] = useTheme();
-  /** The conversation open, or undefined for a new one. */
-  const [selected, setSelected] = useState<string | undefined>(undefined);
+  /** The conversation open, or undefined for a new one. A link to one opens it. */
+  const [selected, setSelected] = useState<string | undefined>(conversationInUrl);
+  // A new conversation goes in the URL once it has a session, in place of the empty one it was
+  // started on, so reloading or bookmarking it comes back to it.
+  const started = (sessionId: string) => {
+    setSelected(sessionId);
+    putConversationInUrl(sessionId, "replace");
+  };
   // Which conversation the screen was opened for. It changes only when the person picks one, so
   // a new conversation getting its session keeps the screen it was started on.
-  const [screen, setScreen] = useState(() => new ChatScreen(undefined, deps, setSelected));
+  const [screen, setScreen] = useState(() => new ChatScreen(conversationInUrl(), deps, started));
   const { items } = useStore(conversations);
   const { chat, isVoiceShown } = useStore(screen);
 
@@ -108,14 +114,36 @@ function Assistant_() {
     return () => window.removeEventListener("keydown", close);
   }, [isMenuOpen]);
 
-  const show = (session: SessionRow | undefined) => {
+  const open = (sessionId: string | undefined) => {
     screen.leave();
-    setSelected(session?.id);
-    setScreen(new ChatScreen(session?.id, deps, setSelected, session?.conversation_id ?? undefined));
+    setSelected(sessionId);
+    const row = items.find((each) => each.id === sessionId);
+    setScreen(new ChatScreen(sessionId, deps, started, row?.conversation_id ?? undefined));
     setMenuOpen(false);
   };
 
+  /** Opens a conversation, or a new one, as a page of its own that Back returns from. */
+  const show = (session: SessionRow | undefined) => {
+    open(session?.id);
+    putConversationInUrl(session?.id, "push");
+  };
+
+  useEffect(() => {
+    // Back and Forward go between the conversations opened, as between pages.
+    const followUrl = () => {
+      const sessionId = conversationInUrl();
+      if (sessionId !== selected) open(sessionId);
+    };
+    window.addEventListener("popstate", followUrl);
+    return () => window.removeEventListener("popstate", followUrl);
+  });
+
   const title = items.find((each) => each.id === selected);
+
+  useEffect(() => {
+    // What a bookmark or a tab is called.
+    document.title = title ? `${displayTitle(title)} · Juno` : "Juno";
+  }, [title]);
   const list = (
     <ConversationList
       conversations={conversations}
@@ -193,9 +221,12 @@ function screenDeps(tools: Tools): ChatScreenDeps {
           });
       return AgentChat.open(session);
     },
-    history: async (conversationId) => {
-      // The channel the session writes to, read as the page's user, who is a member of it.
-      const [type = "agent", ...rest] = conversationId.split(":");
+    history: async (sessionId, conversationId) => {
+      // The channel the session writes to, read as the page's user, who is a member of it. A
+      // conversation opened from a link has only its id, so its session says which channel.
+      const channelId = conversationId ?? (await sessions().get(sessionId)).conversation_id;
+      if (!channelId) return [];
+      const [type = "agent", ...rest] = channelId.split(":");
       const channel = chatClient.channel(type, rest.join(":"));
       await channel.query({ messages: { limit: PAGE_SIZE }, watch: false });
       return [...channel.state.messages];
@@ -203,6 +234,33 @@ function screenDeps(tools: Tools): ChatScreenDeps {
     remove: (sessionId) => sessions().delete(sessionId),
     voiceOf: (session) => VoiceSession.of(session),
   };
+}
+
+/** The query parameter a conversation's link names it by. */
+const CONVERSATION_PARAM = "conversation";
+
+/** The conversation the page's URL names, or undefined for a new one. */
+function conversationInUrl(): string | undefined {
+  return new URLSearchParams(window.location.search).get(CONVERSATION_PARAM) || undefined;
+}
+
+/**
+ * Names a conversation, or none for a new one, in the page's URL: as a new history entry when it
+ * was picked, or in place of the current one when a new conversation got its session.
+ */
+function putConversationInUrl(sessionId: string | undefined, how: "push" | "replace"): void {
+  const url = new URL(window.location.href);
+  if ((url.searchParams.get(CONVERSATION_PARAM) || undefined) === sessionId) return;
+  if (sessionId) {
+    url.searchParams.set(CONVERSATION_PARAM, sessionId);
+  } else {
+    url.searchParams.delete(CONVERSATION_PARAM);
+  }
+  if (how === "push") {
+    window.history.pushState(null, "", url);
+  } else {
+    window.history.replaceState(null, "", url);
+  }
 }
 
 const keys = new WeakMap<ChatScreen, number>();
