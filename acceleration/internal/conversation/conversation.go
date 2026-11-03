@@ -1193,11 +1193,12 @@ func entryOf(p Page, m Message) entry {
 
 // photoNote follows a person's words in history when they sent photos with them.
 // photosOn counts the photos on m. A voice note sent with it is not one: its text already
-// holds what was said.
+// holds what was said. A thread channel's photos are read without a type, so a file is a
+// photo unless it is audio.
 func photosOn(m Message) int {
 	var photos int
 	for _, file := range m.Files {
-		if strings.HasPrefix(file.MIME, "image/") {
+		if !strings.HasPrefix(file.MIME, "audio/") {
 			photos++
 		}
 	}
