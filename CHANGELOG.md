@@ -266,6 +266,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A deleted session's call still reads its transcript
+
+`GET /v1/agents/calls/{id}/transcript` and `/timeline` read the conversation channel a new session is named after, also once the session is deleted. Deleting a session keeps its conversation in Stream Chat and its call, but the read found no session to name the channel and answered an empty list from the agent's channel. A call that was bound to an existing conversation before its session was deleted still reads empty (AI-2473).
+
 ### A photo sent to a running session's chat channel stays in its history as a note
 
 A message with photos that a running session answers in writing is kept in the session's history as its text followed by `[sent with a photo, not shown again]`, as a thread's history keeps it. A message of photos alone is kept as the note alone. Before, the history kept the text with no sign of the photo, and for a photo alone the question the router asked about it, so later replies read a request to describe images they were not shown (AI-2548).

@@ -561,7 +561,14 @@ func (s *Server) transcriptOf(ctx context.Context, customerID string, call store
 	if err != nil {
 		return nil, err
 	}
-	return chatlog.NewReaderFromClient(bound.Client).Transcript(ctx, s.transcriptRead(ctx, customerID, call))
+	reader := chatlog.NewReaderFromClient(bound.Client)
+	said := []chatlog.Spoken{}
+	for _, read := range s.transcriptReads(ctx, customerID, call) {
+		if said, err = reader.Transcript(ctx, read); err != nil || len(said) > 0 {
+			return said, err
+		}
+	}
+	return said, nil
 }
 
 // agentStream is the app an agent's channel is in: the one its most recent session was
@@ -587,26 +594,34 @@ func (s *Server) agentStream(ctx context.Context, customerID, agentID string) (s
 // disagree, so the first and last lines are not lost to a timestamp a moment off.
 const transcriptSlack = 2 * time.Second
 
-// transcriptRead is where a call's transcript was written. A call bound to a conversation
-// wrote into that conversation's channel, beside what was typed before and after it, so
-// only the call's own window is read. A call with no session row read its agent's channel
-// before there were session rows, and still does. The session's row is written behind the
-// call's, so a call that just ended is read once its writer has caught up.
-func (s *Server) transcriptRead(ctx context.Context, customerID string, call store.Call) chatlog.Read {
-	channel := call.AgentID
-	if stored, err := s.storedSession(ctx, customerID, call.ID); err == nil {
-		channel = transcriptChannel(stored)
-	}
-	read := chatlog.Read{
-		Channel:  channel,
+// transcriptReads is where a call's transcript may have been written, most likely first. A
+// call bound to a conversation wrote into that conversation's channel, beside what was
+// typed before and after it, so only the call's own window is read. A call whose session
+// row is gone, as a deleted session's is while its conversation stays in Stream Chat, wrote
+// into the channel a new conversation is named after its session (session.Manager.Create);
+// failing that it read its agent's channel, as a call from before there were session rows
+// still does. The session's row is written behind the call's, so a call that just ended is
+// read once its writer has caught up.
+func (s *Server) transcriptReads(ctx context.Context, customerID string, call store.Call) []chatlog.Read {
+	window := chatlog.Read{
 		Customer: customerID,
 		Agent:    call.AgentID,
 		From:     call.StartedAt.Add(-transcriptSlack),
 	}
 	if call.EndedAt != nil {
-		read.To = call.EndedAt.Add(transcriptSlack)
+		window.To = call.EndedAt.Add(transcriptSlack)
 	}
-	return read
+	channels := []string{call.ID, call.AgentID}
+	if stored, err := s.storedSession(ctx, customerID, call.ID); err == nil {
+		channels = []string{transcriptChannel(stored)}
+	}
+	reads := make([]chatlog.Read, 0, len(channels))
+	for _, channel := range channels {
+		read := window
+		read.Channel = channel
+		reads = append(reads, read)
+	}
+	return reads
 }
 
 // getCallEvents returns what the conversation decided on one call, oldest first.

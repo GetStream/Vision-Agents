@@ -464,6 +464,46 @@ func (s *CallsSuite) TestACallWithoutASessionRowReadsItsAgentChannel() {
 	s.Equal("said on the call", read[0].Text)
 }
 
+func (s *CallsSuite) TestACallWhoseSessionRowIsGoneReadsItsSessionsChannel() {
+	// A deleted session leaves its conversation in Chat and its call row behind. A new
+	// conversation is named after its session, so that is where the call wrote.
+	call := s.started(store.Call{})
+	s.inChannel(call.ID, s.customerID(), call.StartedAt.Add(time.Minute), "said on the deleted session")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "said on another call of the agent")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said on the deleted session", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallWhoseSessionChannelHoldsNothingReadsItsAgentChannel() {
+	// An empty channel under the call's id is no answer: the agent's channel may hold the call.
+	call := s.started(store.Call{})
+	s.inChannel(call.ID, s.customerID(), call.StartedAt.Add(-time.Hour), "said long before the call")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "said on the call")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said on the call", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallWhoseSessionRowIsGoneDoesNotReadAnotherCustomersChannel() {
+	call := s.started(store.Call{})
+	s.inChannel(call.ID, s.data.createApp().app.ID, call.StartedAt.Add(time.Minute), "said to another customer")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Empty(read)
+}
+
 func (s *CallsSuite) TestReadingACallsTranscriptCreatesNoChannel() {
 	call := s.started(store.Call{})
 

@@ -6,6 +6,7 @@ import (
 	"context"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -757,6 +758,31 @@ func (s *SessionCreateSuite) TestAForkOfAConversationPastARefusedTurnCarriesItWi
 		"/v1/agents/sessions/"+opened.Id+"/fork", ForkSessionRequest{}, &forked))
 	s.Equal("user: Where is order 3825?\nassistant: "+answered+"\nuser: "+agent.WithheldInput+"\nuser: And order 4472?",
 		s.answerTo(forked.Id, "And order 4472?"))
+}
+
+// TestADeletedSessionsCallStillReadsItsTranscript: deleting a session keeps its conversation
+// in Chat and its call row, so the call's transcript is read without the session's row.
+func (s *SessionCreateSuite) TestADeletedSessionsCallStillReadsItsTranscript() {
+	opened := s.serverClient.createSession(historySession(false))
+	answered := s.answerTo(opened.Id, "Where is order 3825?")
+	want := []string{"Where is order 3825?", answered}
+	transcript := func() (said []string) {
+		var read []TranscriptMessage
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+			"/v1/agents/calls/"+opened.Id+"/transcript", nil, &read))
+		for _, line := range read {
+			said = append(said, line.Text)
+		}
+		return said
+	}
+	s.Require().Eventually(func() bool { return slices.Equal(want, transcript()) },
+		settleFor, 20*time.Millisecond, "the call's transcript was never written")
+
+	s.serverClient.deleteSession(opened.Id)
+	_, err := s.store.StoredSession(s.T().Context(), s.customerID(), opened.Id)
+	s.Require().Error(err, "the session's row is deleted")
+
+	s.Equal(want, transcript())
 }
 
 // TestATranscriptReadBeforeItsSessionRowIsWrittenIsTheConversations: the session's row is
