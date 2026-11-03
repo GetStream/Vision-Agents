@@ -324,6 +324,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A typed message in a voice session is offered tools once the caller has spoken
+
+On a voice session where a speculative reply answered every spoken turn, a typed message was still treated as sent before anyone spoke, and its reply was offered no tools. It is now offered them, as after any other spoken turn. A speculative reply thrown away can no longer clear what was recorded for the answer asked for under the same turn id (AI-2543, AI-2541).
 ### A session outside region us cannot ask for memory
 
 The memory provider (mem0, at `api.mem0.ai`) keeps everything in the US, and an agent's work is done in its own region only. A session in another region, such as an `eu` agent's, that asks for memory (`memory.user_id`) is now refused with a 400 naming the region, rather than sending what the user said to the US (AI-2187).
