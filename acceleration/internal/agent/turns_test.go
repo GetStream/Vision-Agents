@@ -174,6 +174,27 @@ func (s *TurnRecorderSuite) TestAWriteThatFinishesPastTheDeadlineIsNotCounted() 
 	s.EqualValues(2, r.dropped.Load())
 }
 
+// TestAWriteThatTimesOutOnItsOwnIsCounted keeps the warning's count equal to the rows lost
+// in a stuck store: the first rows give up on their own timeout, before any deadline.
+func (s *TurnRecorderSuite) TestAWriteThatTimesOutOnItsOwnIsCounted() {
+	var logs bytes.Buffer
+	r := buildTurnRecorder(nil, nil, routing.Owner{CustomerID: "acme"}, slog.New(slog.NewTextHandler(&logs, nil)))
+	r.writeTimeout = 20 * time.Millisecond
+	r.write = func(ctx context.Context, _ live.Turn) error {
+		<-ctx.Done()
+		return ctx.Err()
+	}
+	r.start()
+	for i := 0; i < 3; i++ {
+		r.Record(Turn{TurnID: "turn", StartedAt: time.Now().UTC()})
+	}
+
+	r.Close()
+
+	s.EqualValues(3, r.dropped.Load())
+	s.Contains(logs.String(), "count=3")
+}
+
 // TestAFailedWriteIsNotADrop keeps the count to what the deadline cut: a store that
 // answers with an error is logged by the writer, and the call is not behind.
 func (s *TurnRecorderSuite) TestAFailedWriteIsNotADrop() {

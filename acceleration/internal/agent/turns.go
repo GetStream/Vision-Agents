@@ -22,10 +22,28 @@ const turnWriteTimeout = 5 * time.Second
 
 // turnDrainTimeout bounds how long Close waits for the queue to be written, however many
 // rows are in it. It is two writes: the one in flight may use its whole turnWriteTimeout,
-// and a healthy writer finishes the rest of a full queue in far less than the second.
-// What is still queued after it is dropped, so a stuck database cannot hold a call's
-// teardown for turnQueueSize writes of turnWriteTimeout each.
+// and the second is what is left for the rows behind it. That is a tradeoff, not a promise
+// to write them all: a full queue takes the store about 25 to 40 ms a row (measured against
+// a local Postgres and Redis under load), so a store that answers but is slow loses the
+// tail of a full queue at the deadline. What is not written by then is dropped and counted,
+// so a stuck database cannot hold a call's teardown for turnQueueSize writes of
+// turnWriteTimeout each.
 const turnDrainTimeout = 2 * turnWriteTimeout
+
+// drainWithin waits for a writer to finish what is queued, for at most timeout. After that
+// it cancels the writer's context, which makes the writer drop and count what is left, and
+// waits for it to stop. It is how every recorder's Close is bound by one deadline.
+func drainWithin(done <-chan struct{}, timeout time.Duration, cancel context.CancelFunc) {
+	deadline := time.NewTimer(timeout)
+	defer deadline.Stop()
+	select {
+	case <-done:
+	case <-deadline.C:
+		cancel()
+		<-done
+	}
+	cancel()
+}
 
 // playoutGrace is how long a turn whose speech is queued on an edge waits for the track to
 // take it, once everything else about it is known. An edge takes queued speech within the
@@ -474,6 +492,7 @@ type turnRecorder struct {
 	ctx          context.Context
 	cancel       context.CancelFunc
 	drainTimeout time.Duration
+	writeTimeout time.Duration
 
 	// closing guards the queue against the one send that cannot be recovered from. A
 	// send on a closed channel panics even from a select with a default, so closing the
@@ -498,6 +517,7 @@ func buildTurnRecorder(pgStore *store.Store, liveClient *live.Client, owner rout
 		queue:        make(chan live.Turn, turnQueueSize),
 		done:         make(chan struct{}),
 		drainTimeout: turnDrainTimeout,
+		writeTimeout: turnWriteTimeout,
 	}
 	r.write = r.persist
 	r.ctx, r.cancel = context.WithCancel(context.Background())
@@ -561,15 +581,7 @@ func (r *turnRecorder) Close() {
 		close(r.queue)
 		r.closing.Unlock()
 
-		deadline := time.NewTimer(r.drainTimeout)
-		defer deadline.Stop()
-		select {
-		case <-r.done:
-		case <-deadline.C:
-			r.cancel()
-			<-r.done
-		}
-		r.cancel()
+		drainWithin(r.done, r.drainTimeout, r.cancel)
 		if dropped := r.dropped.Load(); dropped > 0 {
 			r.logger.Warn("dropped turns because the writer fell behind", "count", dropped)
 		}
@@ -584,10 +596,13 @@ func (r *turnRecorder) run() {
 			r.dropped.Add(1)
 			continue
 		}
-		ctx, cancel := context.WithTimeout(r.ctx, turnWriteTimeout)
+		ctx, cancel := context.WithTimeout(r.ctx, r.writeTimeout)
 		err := r.write(ctx, row)
+		// A write cut by its own timeout or by the drain deadline is a row lost, and is
+		// counted either way; one the store refused is only logged by the writer.
+		lost := err != nil && ctx.Err() != nil
 		cancel()
-		if err != nil && r.ctx.Err() != nil {
+		if lost {
 			r.dropped.Add(1)
 		}
 	}

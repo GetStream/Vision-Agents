@@ -234,9 +234,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Bug Fixes
 
-### An agent leaves a call within ten seconds when the database is stuck
+### Closing an agent no longer waits on a stuck database for every queued row
 
-Closing an agent waited for every finished turn still queued to be recorded, each with its own five-second write limit, so a stuck Redis or Postgres could hold a call's teardown for many minutes. The waiting is now bound by one deadline of ten seconds. Turns not written by then are dropped and counted in one warning, as turns are when the writer falls behind. With a healthy database every queued turn is still written (AI-2475).
+Closing an agent waited for every finished turn and every judgement still queued to be recorded, each write with its own five-second limit, so a stuck Redis or Postgres could hold a call's teardown for many minutes. The turn writer and the decision writer are each now bound by one deadline of ten seconds. Rows not written by then are dropped and counted in one warning each, as rows are when a writer falls behind. A store that answers but is slow can also lose the tail of a full queue at the deadline. With a healthy database every queued row is still written. The memory writer is not changed (AI-2475).
+
 ### A dispatch worker's session answers in the channel the message was written in
 
 A text session that the customer's backend opens under the `agent_id` of a message the router just handed to its dispatch worker now answers in that message's channel. The Go SDK's `Dispatch.Conversation` opens its sessions this way. Before, the session wrote its reply into a new `agent:<session id>` channel, and the person saw nothing. The session writes only its replies: the person's message is already in the channel. A second message while that session runs is answered by the same session, and is not dispatched again. Every other session keeps a channel of its own, as before (AI-2505).

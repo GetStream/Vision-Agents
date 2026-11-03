@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"os"
 	"testing"
 	"time"
@@ -12,6 +13,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
@@ -107,4 +109,26 @@ func (s *TurnRecordingSuite) TestAFinishedExchangeIsKeptAndCounted() {
 	s.Require().Len(stats, 1)
 	s.EqualValues(1, stats[0].TurnCount)
 	s.NotNil(stats[0].RoundtripP50Ms, "the turn's wait is in its hour's percentiles")
+}
+
+// TestPersistReportsAWriteTheDeadlineCut is what lets the recorder count a lost row: a
+// write whose context is gone must say so, whichever of the two stores it was meant for.
+func (s *TurnRecordingSuite) TestPersistReportsAWriteTheDeadlineCut() {
+	row := live.Turn{CustomerID: "acme", AgentID: s.agentID, TurnID: "turn-persist", StartedAt: time.Now().UTC()}
+	owner := routing.Owner{CustomerID: "acme", AgentID: s.agentID}
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	for name, stores := range map[string]struct {
+		pg   *store.Store
+		live *live.Client
+	}{
+		"redis only":    {live: s.liveClient},
+		"postgres only": {pg: s.pgStore},
+		"both":          {pg: s.pgStore, live: s.liveClient},
+	} {
+		r := buildTurnRecorder(stores.pg, stores.live, owner, slog.New(slog.DiscardHandler))
+		s.Error(r.persist(cancelled, row), name+": a write cut by its context is an error")
+		s.NoError(r.persist(context.Background(), row), name+": a write that goes through is not")
+	}
 }
