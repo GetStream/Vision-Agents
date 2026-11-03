@@ -3,6 +3,7 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // A photo sent with text in a plain agent channel nothing runs on reaches the worker handed
@@ -26,19 +28,17 @@ func (s *MessageHooksSuite) TestAPhotoSentWithTextReachesTheWorkerByItsURL() {
 	s.Equal([]dispatch.Image{{URL: s.images.URL + "/photo.png"}}, handed.Images)
 }
 
-// A photo sent alone reaches the worker too, on a plain channel and on a channel named as a
-// thread channel that no thread is linked to.
-func (s *MessageHooksSuite) TestAPhotoSentAloneReachesTheWorker() {
+// Control, as on base: a photo sent alone reaches no worker, on a plain channel nor on a
+// channel named as a thread channel that no thread is linked to. A worker not yet updated to
+// read photos answers an empty text with an error.
+func (s *MessageHooksSuite) TestAPhotoSentAloneReachesNoWorker() {
 	worker := s.workerOf(s.customerID())
 	for _, channel := range []string{"chat-" + s.utils.uuid(), "thread-" + s.utils.uuid()} {
 		s.channelID = channel
 
-		s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/photo.png"), s.photoAt("/other.png")))
+		s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/photo.png")))
 
-		handed := s.handed(worker)
-		s.Equal(channel, handed.ChannelID)
-		s.Empty(handed.Text)
-		s.Equal([]dispatch.Image{{URL: s.images.URL + "/photo.png"}, {URL: s.images.URL + "/other.png"}}, handed.Images, channel)
+		s.nothingReaches(worker, "a photo alone in "+channel)
 	}
 }
 
@@ -80,23 +80,28 @@ func (s *MessageHooksSuite) TestAPhotoAloneInAChannelNobodyOwnsReachesNoWorker()
 	s.nothingReaches(worker, "a photo in a channel nobody owns")
 }
 
-// A photo sent to a running session whose agent leaves text to dispatch reaches its worker
-// with the session, by its URL, with text and alone.
-func (s *MessageHooksSuite) TestAPhotoSentToADispatchSessionReachesItsWorker() {
+// A photo sent with text to a running session whose agent leaves text to dispatch reaches its
+// worker with the session, by its URL, beside the text.
+func (s *MessageHooksSuite) TestAPhotoSentWithTextToADispatchSessionReachesItsWorker() {
 	session := s.dispatching()
 	worker := s.workerOf(s.customerID())
 
 	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.ownedBy(s.customerID()), "is this fan broken?", s.photoAt("/photo.png")))
-	withText := s.handed(worker)
-	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.ownedBy(s.customerID()), "", s.photoAt("/other.png")))
-	alone := s.handed(worker)
 
-	s.Equal(session, withText.SessionID)
-	s.Equal("is this fan broken?", withText.Text)
-	s.Equal([]dispatch.Image{{URL: s.images.URL + "/photo.png"}}, withText.Images)
-	s.Equal(session, alone.SessionID)
-	s.Empty(alone.Text)
-	s.Equal([]dispatch.Image{{URL: s.images.URL + "/other.png"}}, alone.Images)
+	handed := s.handed(worker)
+	s.Equal(session, handed.SessionID)
+	s.Equal("is this fan broken?", handed.Text)
+	s.Equal([]dispatch.Image{{URL: s.images.URL + "/photo.png"}}, handed.Images)
+}
+
+// Control, as on base: a photo sent alone to a dispatch session reaches no worker.
+func (s *MessageHooksSuite) TestAPhotoSentAloneToADispatchSessionReachesNoWorker() {
+	s.dispatching()
+	worker := s.workerOf(s.customerID())
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.ownedBy(s.customerID()), "", s.photoAt("/photo.png")))
+
+	s.nothingReaches(worker, "a photo alone for a dispatch session")
 }
 
 // Control, as on base: a text-only message to a dispatch session reaches its worker with no
@@ -238,4 +243,30 @@ func photoServer(paths ...string) *httptest.Server {
 		}
 		_, _ = w.Write(pngStart)
 	}))
+}
+
+// A call whose config names a vision skill but whose conversation model reads only text says it
+// cannot see a photo written to it: the aside it answers it with runs no vision skill, so a
+// photo handed to it would refuse the turn and leave the person without an answer.
+func (s *MessageHooksSuite) TestACallWithAVisionSkillSaysItCannotSeeAWrittenPhoto() {
+	config := store.AgentConfig{
+		CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(), Mode: "voice",
+		LLM: "holding/holding-model", Subagent: "vision/vision-model", Skills: []string{"vision"},
+	}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	s.Require().NoError(s.store.CreateSkill(context.Background(), &store.Skill{
+		CustomerID: s.customerID(), ConfigID: config.ID, Name: "vision",
+		Description: "look at photos", Instructions: "Describe the photo.",
+	}))
+	s.serverClient.createSession(CreateSessionRequest{
+		AgentId: &s.channelID, ConfigId: &config.ID, StartVoice: pointerTo(true), Incognito: pointerTo(true),
+	})
+	asked := len(s.holding.requests())
+	question := "is this fan broken? " + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos("", question, s.photoAt("/photo.png")))
+
+	turn := s.askedOf(s.holding, asked)
+	s.Equal(question+"\n\n"+unseenPhotoWithText, turn.Content)
+	s.Empty(imagesIn(turn))
 }

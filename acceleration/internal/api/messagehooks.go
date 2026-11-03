@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -229,6 +230,10 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		origin.answer(func() { s.answerThread(origin, thread, event) })
 		return true
 	}
+	// Only a linked thread answers a photo sent without text on a thread channel (addressed).
+	if event.Message.Text == "" && strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) {
+		return true
+	}
 	if s.sessions != nil {
 		found, running, err := s.liveSessionOn(ctx, origin, event)
 		if errors.Is(err, store.ErrAmbiguousHook) {
@@ -241,6 +246,11 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		}
 		if running {
 			if found.Spec().PersistConversation {
+				return true
+			}
+			// A worker not yet updated to read photos answers an empty text with an error,
+			// so a photo alone is not handed to one.
+			if found.Spec().DispatchText && event.Message.Text == "" {
 				return true
 			}
 			if answer, settled := s.answerOnce(ctx, origin, event); !answer {
@@ -283,6 +293,11 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 	}
 
 	if s.store == nil || s.dispatch == nil {
+		return true
+	}
+
+	// A photo alone is not handed to a worker (see DispatchText above).
+	if event.Message.Text == "" {
 		return true
 	}
 

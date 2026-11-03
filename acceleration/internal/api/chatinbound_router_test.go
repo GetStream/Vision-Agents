@@ -72,21 +72,21 @@ func (s *ChatInboundSuite) TestADeliveryIsAnsweredOnce() {
 	s.False(s.reachesWorker(worker.Messages()), "one delivery is one answer")
 }
 
-// A photo sent alone, delivered by Stream Chat, is queued and handed to the worker once, by
-// its URL.
-func (s *ChatInboundSuite) TestAPhotoDeliveredAloneReachesTheWorkerOnce() {
+// A photo sent with text, delivered by Stream Chat, is queued and handed to the worker once,
+// by its URL, beside the text.
+func (s *ChatInboundSuite) TestAPhotoDeliveredWithTextReachesTheWorkerOnce() {
 	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 2})
 	defer release()
 	body := strings.Replace(s.message(suiteStreamApp, s.config(s.customerID()), ""),
 		`"text": "is my order on its way?"`,
-		`"text": "", "attachments": [{"type": "image", "image_url": "https://cdn.example/photo.jpg"}]`, 1)
+		`"text": "is my order on its way?", "attachments": [{"type": "image", "image_url": "https://cdn.example/photo.jpg"}]`, 1)
 	s.Require().Contains(body, `"attachments"`)
 
 	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
 
 	select {
 	case message := <-worker.Messages():
-		s.Empty(message.Text)
+		s.Equal("is my order on its way?", message.Text)
 		s.Equal([]dispatch.Image{{URL: "https://cdn.example/photo.jpg"}}, message.Images)
 	case <-time.After(settleFor):
 		s.Fail("the photo never reached the worker")
