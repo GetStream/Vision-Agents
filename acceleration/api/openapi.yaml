@@ -5896,6 +5896,9 @@ components:
             type: string
           description: 'Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router''s own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.'
           type: object
+        detect_voicemail:
+          description: Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. What the agent then does is the session's phone.voicemail.
+          type: boolean
         from:
           description: One of the customer's own numbers, which is what the person sees.
           type: string
@@ -8061,6 +8064,9 @@ components:
         vendor_call_id:
           description: The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
           type: string
+        voicemail:
+          $ref: '#/components/schemas/SessionVoicemail'
+          description: What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person.
       required:
         - number
       type: object
@@ -8245,6 +8251,18 @@ components:
         source:
           description: Track or processor source. Omitted requires one unambiguous available source.
           type: string
+      type: object
+    SessionVoicemail:
+      description: What the agent does when an answering machine picks up.
+      properties:
+        action:
+          $ref: '#/components/schemas/VoicemailAction'
+        message:
+          description: Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message.
+          maxLength: 1000
+          type: string
+      required:
+        - action
       type: object
     SetNumberAgentRequest:
       properties:
@@ -10948,6 +10966,14 @@ components:
       required:
         - audio
       type: object
+    VoicemailAction:
+      description: |-
+        hang_up: end the call at once, saying nothing.
+        leave_message: say message once the greeting has ended, then hang up.
+      enum:
+        - hang_up
+        - leave_message
+      type: string
     WhatsAppProfile:
       properties:
         business_account:

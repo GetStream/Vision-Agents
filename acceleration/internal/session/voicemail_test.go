@@ -1,6 +1,7 @@
 package session
 
 import (
+	"slices"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
@@ -48,6 +49,23 @@ func (s *SessionSuite) TestAMachineWhoseGreetingEndedHearsTheMessageThenTheSessi
 
 	s.endedForVoicemail(created)
 	s.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.")
+}
+
+func (s *SessionSuite) TestTheSessionEndsOnlyOnceTheMessageHasBeenSpoken() {
+	s.manages()
+	created := s.rings(leavesVoicemail("Hi Ali, this is Northwind Dental."), caller)
+	s.settles(created)
+	release := s.voice.holds("Hi Ali, this is Northwind Dental.")
+	s.T().Cleanup(release)
+
+	s.True(s.manager.Machine("acme", created.ID(), phone.MachineGreetingEnded))
+
+	s.eventually(func() bool { return slices.Contains(s.saidText(), "Hi Ali, this is Northwind Dental.") },
+		"the message was never said")
+	s.Never(func() bool { return created.State() == Ended || !s.manager.Running(created.ID()) }, 4*testTimeout, 5*time.Millisecond,
+		"the session ended while the message was being spoken")
+	release()
+	s.endedForVoicemail(created)
 }
 
 func (s *SessionSuite) TestAMachineIsHungUpOnWithNothingSaidWhenThereIsNoMessage() {

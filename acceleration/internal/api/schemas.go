@@ -925,9 +925,35 @@ func (*SessionCall) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.
 
 // SessionPhone The number the session acts from, which is what turns transferring on.
 type SessionPhone struct {
-	Number       string  `json:"number" doc:"One of the customer's own numbers, written as +15551234567."`
-	Vendor       *string `json:"vendor,omitempty" doc:"Who carries an outbound leg."`
-	VendorCallId *string `json:"vendor_call_id,omitempty" doc:"The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at."`
+	Number       string            `json:"number" doc:"One of the customer's own numbers, written as +15551234567."`
+	Vendor       *string           `json:"vendor,omitempty" doc:"Who carries an outbound leg."`
+	VendorCallId *string           `json:"vendor_call_id,omitempty" doc:"The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at."`
+	Voicemail    *SessionVoicemail `json:"voicemail,omitempty" doc:"What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person."`
+}
+
+// SessionVoicemail is what the agent does when an answering machine picks up.
+type SessionVoicemail struct {
+	Action  VoicemailAction `json:"action"`
+	Message *string         `json:"message,omitempty" maxLength:"1000" doc:"Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message."`
+}
+
+func (*SessionVoicemail) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "What the agent does when an answering machine picks up."
+	return schema
+}
+
+// VoicemailAction is what the agent does on reaching an answering machine.
+type VoicemailAction string
+
+const (
+	VoicemailActionHangUp       VoicemailAction = "hang_up"
+	VoicemailActionLeaveMessage VoicemailAction = "leave_message"
+)
+
+func (VoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "VoicemailAction", "hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended, then hang up.",
+		"hang_up", "leave_message")
 }
 
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

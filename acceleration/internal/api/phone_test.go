@@ -933,6 +933,81 @@ func (s *CallStatusSuite) openPhoneSession(id string) (int, ErrorResponse) {
 	return status, answered
 }
 
+// openWithVoicemail opens the session id for a placed call with plan, as an SDK does.
+func (s *CallStatusSuite) openWithVoicemail(id string, plan SessionVoicemail) (int, string) {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
+		Id: &id, StartVoice: pointerTo(true), Phone: &SessionPhone{Number: s.utils.number(), Voicemail: &plan},
+	})
+	return status, string(payload)
+}
+
+// endedForVoicemail waits for the session id to show it ended for an answering machine.
+func (s *CallStatusSuite) endedForVoicemail(id string) {
+	s.Require().Eventually(func() bool {
+		shown := s.serverClient.getSession(id)
+		return shown.EndReason != nil && *shown.EndReason == "voicemail"
+	}, 10*time.Second, 50*time.Millisecond, "the session never showed it ended for voicemail")
+}
+
+func (s *CallStatusSuite) TestASessionAskedToHangUpOnAMachineDoesWhenOneAnswers() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{Action: VoicemailActionHangUp})
+	s.Require().Equal(http.StatusCreated, status, payload)
+
+	answered, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_silence"}})
+
+	s.Equal(http.StatusNoContent, answered)
+	s.endedForVoicemail(id)
+}
+
+func (s *CallStatusSuite) TestASessionAskedToLeaveAMessageLeavesItWhenAMachineAnswers() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo("Hi Ali, this is Northwind Dental."),
+	})
+	s.Require().Equal(http.StatusCreated, status, payload)
+
+	answered, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, answered)
+	s.endedForVoicemail(id)
+}
+
+func (s *CallStatusSuite) TestAVoicemailPlanWithAnUnknownActionIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{Action: "call_back"})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "action")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageWithNoMessageIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{Action: VoicemailActionLeaveMessage})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestAVoicemailMessageOver1000CharactersIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo(strings.Repeat("é", 1001)),
+	})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestAVoicemailMessageOf1000CharactersIsTaken() {
+	id := s.utils.uuid()
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo(strings.Repeat("é", 1000)),
+	})
+	defer s.serverClient.stopSession(id)
+
+	s.Equal(http.StatusCreated, status, payload)
+}
+
 func (s *CallStatusSuite) TestOpeningASessionAfterItsCallWasBusyIsRefused() {
 	id := s.utils.uuid()
 	token, _ := s.placedFor(id)
