@@ -36,6 +36,26 @@ func (s *SessionSuite) saidText() []string {
 	return said
 }
 
+// heardBySession waits for a watcher to be sent what the caller said. The session ends the
+// machine check on a line before it sends it on, and the agent answers without waiting for
+// either, so the model being asked does not mean the check is over.
+func (s *SessionSuite) heardBySession(events <-chan Event, text string) {
+	deadline := time.After(settleFor)
+	for {
+		select {
+		case event, open := <-events:
+			if !open {
+				s.FailNow("the session ended before it took in what the caller said", text)
+			}
+			if heard, ok := event.(agent.Heard); ok && heard.Text == text {
+				return
+			}
+		case <-deadline:
+			s.FailNow("the session never took in what the caller said", text)
+		}
+	}
+}
+
 // carriesOn checks a machine report left the session running and said nothing for it.
 func (s *SessionSuite) carriesOn(created *Session, said int) {
 	never(s.T(), func() bool {
@@ -128,7 +148,10 @@ func (s *SessionSuite) TestAnUnknownPickUpAfterTheCallerSpokeToTheAgentChangesNo
 	s.manages()
 	created := s.rings(leavesVoicemail("Hi Ali, this is Northwind Dental."), caller)
 	s.settles(created)
+	events, detach := created.Watch()
+	defer detach()
 	s.callerSays("who is this?")
+	s.heardBySession(events, "who is this?")
 	s.eventually(func() bool { return len(s.model.requests()) == 1 && !created.Busy() }, "the caller was never answered")
 	said := len(s.voice.spoken())
 
