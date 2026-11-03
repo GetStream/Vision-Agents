@@ -246,11 +246,11 @@ func (s *SpecSuite) TestAnMCPServersToolsAndInstructionsJoinTheSession() {
 }
 
 // What the config's MCP servers said comes first, then what each custom connector's server
-// said, each cut to the same cap on its own: a cut that splits a rune drops it.
+// said, each cut to the same 4000 bytes on its own: a cut that splits a rune drops it.
 func (s *SpecSuite) TestMCPServersAndCustomConnectorsSayTheirsInOneBlock() {
 	spec, mcp, _ := s.tablejourney()
 	defer mcp.Close()
-	long := strings.Repeat("a", serverInstructionsLimit-1) + "é" + "never read"
+	long := strings.Repeat("a", 3999) + "é" + "never read"
 
 	spec.ServerInstructions = serverInstructions(spec.MCPServers, mcp, []serverSaid{
 		{name: "crm", tools: "crm__*", text: long},
@@ -259,7 +259,7 @@ func (s *SpecSuite) TestMCPServersAndCustomConnectorsSayTheirsInOneBlock() {
 
 	s.Equal("Be brief.\n\n"+
 		"The tablejourney tools (tablejourney__*) come with these instructions from their server:\n\nKeep booking links whole.\n\n"+
-		"The crm tools (crm__*) come with these instructions from their server:\n\n"+strings.Repeat("a", serverInstructionsLimit-1)+"\n\n"+
+		"The crm tools (crm__*) come with these instructions from their server:\n\n"+strings.Repeat("a", 3999)+"\n\n"+
 		"The archive tools (archive__*) come with these instructions from their server:\n\nDates are UTC.",
 		spec.prompt())
 }

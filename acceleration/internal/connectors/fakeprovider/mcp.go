@@ -76,8 +76,8 @@ func (s *Server) AnswerMCP(status int) {
 	s.mcpStatus = status
 }
 
-// InstructMCP has the MCP endpoint answer server/discover and initialize with instructions
-// about using its tools, until InstructMCP("").
+// InstructMCP has the MCP endpoint answer server/discover with instructions about using its
+// tools, until InstructMCP("").
 func (s *Server) InstructMCP(instructions string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -188,9 +188,6 @@ func (s *Server) mcp(w http.ResponseWriter, r *http.Request) {
 			"protocolVersion": legacyVersion,
 			"capabilities":    map[string]any{"tools": map[string]any{}},
 			"serverInfo":      serverInfo(),
-		}
-		if s.mcpInstructions != "" {
-			result["instructions"] = s.mcpInstructions
 		}
 	case modern && s.is(MCPEvents) && (request.Method == "events/subscribe" || request.Method == "events/unsubscribe"):
 		var envelope struct {
