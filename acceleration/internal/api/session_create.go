@@ -133,6 +133,10 @@ func refuseSessionRequest(ctx context.Context, request CreateSessionRequest) (AP
 			return invalidRequest("return_url: " + err.Error()), true
 		}
 	}
+	if plan := request.Phone; plan != nil && plan.Voicemail != nil &&
+		plan.Voicemail.Action == VoicemailActionLeaveMessage && value(plan.Voicemail.Message) == "" {
+		return invalidRequest("phone.voicemail.message is required to leave a message"), true
+	}
 	// A zone nobody knows is refused where it is named, rather than at the first task
 	// that would have run in it.
 	if zone := value(request.Timezone); zone != "" {

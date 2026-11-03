@@ -748,6 +748,12 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 			Vendor:       value(request.Phone.Vendor),
 			VendorCallID: value(request.Phone.VendorCallId),
 		}
+		if plan := request.Phone.Voicemail; plan != nil {
+			spec.Voicemail = &session.VoicemailPlan{}
+			if plan.Action == VoicemailActionLeaveMessage {
+				spec.Voicemail.Message = value(plan.Message)
+			}
+		}
 	}
 	if request.Video != nil {
 		spec.VideoSource = override(spec.VideoSource, request.Video.Source)
