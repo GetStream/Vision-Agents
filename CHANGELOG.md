@@ -10,6 +10,10 @@
 
 A photo a person sends in a plain `agent` channel is now answered. A running session the router answers shows it to its model, with or without text, or tells the model to say it cannot see it. A dispatch worker gets a photo sent with text: its URLs come in `images` on the `message` frame (`stream.InboundMessage.Images` in Go), and Go's `Conversation.Respond(text, images...)` and `agents.Dispatch.Answer` pass them on to the model. Python and JS workers read them too, into `InboundMessage.images`, and `Dispatch.answer` in each passes them on under the message's request id (AI-2649). A photo sent without text is not handed to a worker yet. A voice note, a video or a file sent alone is still not answered (AI-2521, AI-2522).
 
+### Rust and PHP dispatch workers pass a message's photos to the model
+
+A message frame's `images` reach the Rust worker as `InboundMessage.images` (`InboundImage { url, mime_type }`) and the PHP worker as `InboundMessage->images` (`InboundImage`). An entry that is not an object or has no string `url` is dropped. `Dispatch::answer` (Rust) and `Dispatch->answer()` (PHP) send them as the response's images, on the message's own request id. `create` with images still sends no request id (AI-2651).
+
 ### A custom connector's server instructions reach the agent
 
 The `instructions` a custom connector's MCP server (`custom_…`) sends when a session opens it are added after the agent config's own instructions, as for a server under `mcp_servers`: under a line naming the binding and its tools (`crm__*`), cut to 4000 bytes per server, and only when the session offers at least one of its tools. A built-in connector's are still left out. The instructions are read when the session opens; a binding the session opens later, after a login during the conversation, adds none (AI-2525).
