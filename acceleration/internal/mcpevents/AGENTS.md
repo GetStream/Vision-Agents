@@ -1,6 +1,6 @@
 # internal/mcpevents
 
-MCP Events over connections (T60, AI-899). An agent config's fixed connector binding declares the events it wants (`connectors[].events`). The router subscribes to each on the binding's connection's MCP server, with a callback of its own, and each event the server delivers opens a text conversation from the config. It is the plugin system's MCP Events client (`internal/pluginevents`, `internal/plugins/events.go`) moved onto connections. The plugin path (`POST /v1/agents/plugins/events/{token}`, tables `agent_plugin_event_*`) stays as it is until T23 removes it.
+MCP Events over connections (T60, AI-899). An agent config's fixed connector binding declares the events it wants (`connectors[].events`). The router subscribes to each on the binding's connection's MCP server, with a callback of its own, and each event the server delivers opens a text conversation from the config. It is the plugin system's MCP Events client (`internal/pluginevents`, `internal/plugins/events.go`) moved onto connections. The plugin path (`POST /v1/agents/plugins/events/{token}`) is no longer served (404), and the tables `agent_plugin_event_*` stay until a later contract migration drops them.
 
 MCP Events is a draft: [experimental-ext-triggers-events](https://github.com/modelcontextprotocol/experimental-ext-triggers-events), `docs/design-sketch-proposal.md` at `6682596d` (September 8, 2026), «Status: Draft proposal». Only its webhook delivery is implemented here. No production MCP server offers events yet; the tests run against `fakeprovider.MCPEvents`.
 
