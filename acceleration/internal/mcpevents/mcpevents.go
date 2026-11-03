@@ -42,8 +42,8 @@ const Path = "/v1/connectors/mcp-events/"
 // Unverified against a real server's largest event.
 const MaxEventBytes = webhook.MaxEventBytes
 
-// refreshAhead is how long before refreshBefore a subscription is asked for again, a choice. The draft: «the client MUST re-call
-// events/subscribe ... before refreshBefore».
+// refreshAhead is how long before refreshBefore a subscription is asked for again, a
+// choice. The draft: «the client MUST re-call events/subscribe ... before refreshBefore».
 const refreshAhead = 10 * time.Minute
 
 // retryAfter is how long a refused subscription waits before it is asked for again the first
