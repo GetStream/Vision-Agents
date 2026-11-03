@@ -232,6 +232,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The Python SDK refuses `mcp_servers` in agent.yaml
+
+`plugins.stream` now fails to load an agent folder whose `agent.yaml` names `mcp_servers`, with a `ValueError` that says to create a custom connector for the server's URL and name it under `connectors`, and never sends `mcp_servers` to the router. An empty key (`mcp_servers: []`, or the key with nothing after it) names nothing and loads. `RemoteEvent` has no `authorization_required` type and no `url` or `image_url`: only a plugin's login made it, and a connector's login is a step of the reply (AI-2532).
+
 ### The .NET SDK refuses `plugins` in agent.yaml
 
 `Folder.Load` and `new Agent(...)` in `GetStream.VisionAgents` throw a `ConfigurationException` for a non-empty `plugins:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as the Go and Python SDKs do. `SyncAsync` no longer sends `plugins`, and no longer logs that they are deprecated. The public `Declaration.Plugins` property is removed, so code that reads it no longer compiles. An empty `plugins: []` or a bare `plugins:` still loads. Name the provider under `connectors:` instead (AI-2527).
