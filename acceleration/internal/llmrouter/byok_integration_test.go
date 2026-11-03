@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // BYOKSuite routes on keys customers keep, put sealed through the configuration cache a router
@@ -49,10 +50,12 @@ func (s *BYOKSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.live, err = live.New(live.Options{Address: address})
+	s.live, err = redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.T().Cleanup(s.live.Close)
-	s.configs, err = appconfig.New(appconfig.Options{Store: opened, Address: address})
+	s.configs, err = redisready.Retry(address, func() (*appconfig.Store, error) {
+		return appconfig.New(appconfig.Options{Store: opened, Address: address})
+	})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.configs.Close)
 	s.sealer, err = auth.NewSealer("byok suite")

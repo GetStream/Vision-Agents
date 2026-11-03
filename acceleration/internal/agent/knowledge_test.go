@@ -51,6 +51,10 @@ func (k *stubKnowledge) Delete(context.Context, string, []string) (knowledge.Bil
 	return knowledge.Billed{}, errors.New("the agent does not delete")
 }
 
+func (k *stubKnowledge) Drop(context.Context, string) (knowledge.Dropped, error) {
+	return knowledge.Dropped{}, errors.New("the agent does not delete")
+}
+
 func (k *stubKnowledge) Namespaces(context.Context, string) ([]string, error) { return nil, nil }
 
 func (k *stubKnowledge) Stored(context.Context, string) (knowledge.Billed, error) {

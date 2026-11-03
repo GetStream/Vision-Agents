@@ -86,6 +86,10 @@ type Usage struct {
 	// TotalTokens is the provider's own total where it sends one, else input and output
 	// added up. A total the two do not add up to is a part of the bill the adapter missed.
 	TotalTokens int64
+	// OutputUnfinished is an OutputTokens counted before the response ended, by a provider
+	// that reports its output only once it is done: Anthropic's message_start. A response cut
+	// short with it is billed at least the output it streamed.
+	OutputUnfinished bool
 	// VendorCostMicros is what the provider said the response cost it, in millionths of a
 	// dollar, for a provider that says. It never prices the response: the price list does,
 	// and this is what it is checked against.

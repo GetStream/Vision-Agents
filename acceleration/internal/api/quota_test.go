@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/require"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -183,6 +186,7 @@ func (s *QuotaSuite) TestAnAppsQuotaCountsItsBackendsTurnsForTheUser() {
 		RespondRequest{Text: "how much does a call cost", RequestId: pointerTo(s.utils.uuid())})
 	s.Require().Equal(http.StatusOK, status, failure)
 	s.awaitReplies(opened, 1)
+	s.awaitLeft(s.client, 1)
 	s.spend(s.client)
 
 	status, refused := s.backend.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/respond",
@@ -297,11 +301,40 @@ func (s *QuotaSuite) messagesBeforeRefusal() int {
 	return spent
 }
 
+// awaitLeft waits until the client's day shows exactly remaining messages, which is what
+// the debits of the replies already recorded leave once they have landed.
+func (s *QuotaSuite) awaitLeft(client *testClient, remaining int64) {
+	caller := routing.Caller{UserID: client.userID, Verified: client.kind == user || client.kind == guest}
+	s.Require().Eventually(func() bool {
+		status, _ := s.limiter.Allow(s.T().Context(), s.customerID(), caller)
+		return status.Remaining == remaining
+	}, settleFor, 10*time.Millisecond, "the client's day never showed %d left", remaining)
+}
+
 // spend charges one message to a user's day, the way one of their own replies is.
 func (s *QuotaSuite) spend(client *testClient) {
-	s.limiter.Debit(s.T().Context(), s.customerID(), routing.Caller{
-		UserID: client.userID, Verified: client.kind == user || client.kind == guest,
-	}, 1)
+	debit(s.T(), s.limiter, s.customerID(),
+		routing.Caller{UserID: client.userID, Verified: client.kind == user || client.kind == guest}, 1)
+}
+
+// debit charges caller's day with a response of the given tokens, and returns once the day
+// shows exactly one message less than before: a caller with a debit of its own still in
+// flight waits for it first, or its landing would pass for this one. The limiter stops
+// waiting for a debit after two seconds, so when this process stalls the debit goes on
+// after Debit has returned, and a request made at once is admitted.
+func debit(t *testing.T, limiter *quota.Limiter, customerID string, caller routing.Caller, tokens int64) {
+	left := func() int64 {
+		status, _ := limiter.Allow(t.Context(), customerID, caller)
+		return status.Remaining
+	}
+	before := left()
+	limiter.Debit(t.Context(), customerID, caller, tokens)
+	if before == 0 {
+		// No cap to count against, or a day already spent: nothing shows a debit.
+		return
+	}
+	require.Eventually(t, func() bool { return left() == before-1 }, settleFor, 10*time.Millisecond,
+		"the debit was never counted on the day")
 }
 
 func (s *QuotaSuite) TestAnAnonymousCallerClaimingAUsersIDIsHeldToTheAppsQuota() {
@@ -374,7 +407,8 @@ func (s *QuotaSuite) awaitTheDaySpent() {
 }
 
 // awaitReplies waits until a session's replies have all been recorded. The day is debited
-// just before a reply's request row is, so a row means its debit has landed.
+// just before a reply's request row is, but the limiter stops waiting for that write after
+// two seconds, so a row does not mean the debit has landed: awaitLeft does.
 func (s *QuotaSuite) awaitReplies(sessionID string, replies int) {
 	s.Require().Eventually(func() bool {
 		var rows []store.Request

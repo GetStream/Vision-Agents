@@ -117,7 +117,7 @@ public struct ScheduledTask: Sendable, Hashable, Identifiable {
     public let upcoming: [Date]
     /// When a run last finished, or nil when none has.
     public let lastRunAt: Date?
-    /// Failed occurrences in a row. Five fail the task.
+    /// Failed occurrences in a row. Five fail a repeat and one fails a one-shot, a run that failed with already_called not counting.
     public let consecutiveFailures: Int
     public let createdBy: CreatedBy
     /// The conversation the task follows up in. Empty until its first occurrence opens one.
@@ -132,7 +132,7 @@ public struct ScheduledTask: Sendable, Hashable, Identifiable {
         case paused
         /// A one-shot that ran, or a repeat past its end.
         case completed
-        /// Paused after five failed occurrences in a row. `resume` clears it.
+        /// A one-shot whose occurrence failed, or a repeat paused after five failed occurrences in a row, a run that failed with already_called not counting. `resume` clears it.
         case failed
         /// A state this SDK has never heard of.
         case unknown

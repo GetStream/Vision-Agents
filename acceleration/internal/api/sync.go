@@ -56,6 +56,7 @@ type SyncAgentRequest struct {
 	SandboxOptions *SandboxOptions    `json:"sandbox_options,omitempty"`
 	Tags           *map[string]string `json:"tags,omitempty"`
 	Tools          *AgentTools        `json:"tools,omitempty" doc:"How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored."`
+	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
 }
@@ -273,6 +274,9 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 		return nil, invalidRequest(message)
 	}
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := callsComplaint(config.Calls); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := outputRetentionComplaint(config); !ok {
@@ -601,6 +605,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, body.Tools)
 	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, body.Tools)
 	config.Scheduling = schedulingOr(config.Scheduling, body.Scheduling)
+	config.Calls = callsOr(config.Calls, body.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, body.ResumeHistory)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)

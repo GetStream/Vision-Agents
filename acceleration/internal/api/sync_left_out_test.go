@@ -157,6 +157,8 @@ func (s *SyncSuite) TestASyncLeavingOutMoreThan64ConnectorsIsRefused() {
 
 // The keys a sync and a GET answered on 7f4c3e16, before left-out connectors existed, for a
 // sync that left nothing out (probe in the PR). They answer the same now.
+// calls is the one deliberate addition to the keys a config renders: every config renders
+// its call tools, defaults included.
 func (s *SyncSuite) TestASyncLeavingNothingOutAnswersAsBefore() {
 	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sync",
 		map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("inbox")}})
@@ -165,13 +167,13 @@ func (s *SyncSuite) TestASyncLeavingNothingOutAnswersAsBefore() {
 		Config map[string]json.RawMessage `json:"config"`
 	}
 	s.Require().NoError(json.Unmarshal(body, &synced))
-	s.Equal("connectors created_at dispatch episode_cards harness id mode name region sync_hash tools updated_at video",
+	s.Equal("calls connectors created_at dispatch episode_cards harness id mode name region sync_hash tools updated_at video",
 		strings.Join(slices.Sorted(maps.Keys(synced.Config)), " "))
 
 	status, body = s.serverClient.call(http.MethodGet, "/v1/agents/configs/"+strings.Trim(string(synced.Config["id"]), `"`), nil)
 	s.Require().Equal(http.StatusOK, status)
 	var got map[string]json.RawMessage
 	s.Require().NoError(json.Unmarshal(body, &got))
-	s.Equal("connectors created_at dispatch duration episode_cards harness id mode name region sync_hash tools updated_at video",
+	s.Equal("calls connectors created_at dispatch duration episode_cards harness id mode name region sync_hash tools updated_at video",
 		strings.Join(slices.Sorted(maps.Keys(got)), " "))
 }

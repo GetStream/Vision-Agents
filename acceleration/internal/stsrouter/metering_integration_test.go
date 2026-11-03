@@ -32,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openailive"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts/openairealtime"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // MeteringSuite holds conversations with the real adapters, against a vendor's socket that
@@ -75,7 +76,7 @@ func (s *MeteringSuite) SetupSuite() {
 	if address == "" {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
-	s.live, err = live.New(live.Options{Address: address})
+	s.live, err = redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.T().Cleanup(s.live.Close)
 }
@@ -501,8 +502,9 @@ func (s *MeteringSuite) audioOf(customer string) []int64 {
 
 // TestAnXAIReplyCutOffBeforeItWasCountedBillsItsAudioOnce: the second reply is opened and
 // superseded by a third before xAI counts it, and the fourth is open when the caller hangs up.
-// The audio the second covered is in xAI's count at the third, and the caller's audio during
-// the fourth is billed by the session's last row, each once.
+// No done ever comes for the second, so it settles at the hang-up, before the fourth. The audio
+// the second covered is in xAI's count at the third, and the caller's audio during the fourth
+// is billed by the session's last row, each once.
 func (s *MeteringSuite) TestAnXAIReplyCutOffBeforeItWasCountedBillsItsAudioOnce() {
 	session := s.xai()
 	second := sts.PcmData{Samples: make([]int16, sts.InputSampleRate), SampleRate: sts.InputSampleRate, Channels: 1}
@@ -522,8 +524,66 @@ func (s *MeteringSuite) TestAnXAIReplyCutOffBeforeItWasCountedBillsItsAudioOnce(
 	s.Require().NoError(session.ProcessAudio(second, sts.Participant{}))
 	s.closed(session.Session, session.recorder)
 
-	s.Equal([]int64{2_000, 0, 7_000, 0, 1_000}, s.audioOf(session.customer),
-		"the cut-off replies bill nothing, xAI's count at the third covers the second, and the last row the hang-up")
+	s.Equal([]int64{2_000, 7_000, 0, 0, 1_000}, s.audioOf(session.customer),
+		"the cut-off replies bill no audio, xAI's count at the third covers the second, and the last row the hang-up")
+}
+
+// counter is a router counter's value for the speech-to-speech item, with the labels given.
+func counter(name, provider, model string, labels ...string) float64 {
+	families, _ := prometheus.DefaultGatherer.Gather()
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			found := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				found[label.GetName()] = label.GetValue()
+			}
+			matches := found["modality"] == "sts" && found["provider"] == provider && found["model"] == model
+			for i := 0; i+1 < len(labels); i += 2 {
+				matches = matches && found[labels[i]] == labels[i+1]
+			}
+			if matches {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+// TestAReplyHungUpOnBeforeXAICountedItIsBilledOnAnEstimate: the caller hangs up a second into
+// the second reply, and xAI never answers the cancel. The reply is one row, of the input the
+// first reply read and xAI's 50 output tokens a second, marked estimated and counted as a cut,
+// and the second of speech it sent, which xAI bills, is billed by the session's last row.
+func (s *MeteringSuite) TestAReplyHungUpOnBeforeXAICountedItIsBilledOnAnEstimate() {
+	session := s.xai()
+	missing := counter("router_usage_missing_total", "xai", "grok-voice-3.0")
+	cut := counter("router_usage_estimated_total", "xai", "grok-voice-3.0", "reason", "cancelled")
+
+	session.created("resp_1")
+	session.done("resp_1", 2)
+	s.settledReply(session.Session, "resp_1")
+	session.created("resp_2")
+	session.socket.send(`{"type":"response.output_audio.delta","response_id":"resp_2","item_id":"item_2","delta":"` +
+		base64.StdEncoding.EncodeToString(make([]byte, 24_000*2)) + `"}`)
+	for event := range session.Events() {
+		if _, ok := event.(sts.AudioChunk); ok {
+			break
+		}
+	}
+	s.closed(session.Session, session.recorder)
+
+	rows := s.rows(session.customer)
+	s.Require().Len(rows, 3, "one row a reply, the one hung up on too, then the session's last")
+	hungUp := rows[1]
+	s.EqualValues(7, hungUp.InputTokens, "what the conversation read at the last reply xAI counted")
+	s.EqualValues(50, hungUp.OutputTokens)
+	s.Equal("true", hungUp.Attributes[routing.AttributeUsageEstimated])
+	s.Equal([]int64{2_000, 0, 1_000}, s.audioOf(session.customer), "the speech it sent is billed once, by the last row")
+	s.Positive(rows[2].CostMicros)
+	s.Equal(missing, counter("router_usage_missing_total", "xai", "grok-voice-3.0"))
+	s.Equal(cut+1, counter("router_usage_estimated_total", "xai", "grok-voice-3.0", "reason", "cancelled"))
 }
 
 // TestAStrayXAIReportLeavesItsGrowthToTheNextReply: a response.done with no reply open

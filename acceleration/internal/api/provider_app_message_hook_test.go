@@ -134,8 +134,9 @@ func (s *messageHookHarness) asked(apiKey, method, suffix string) int {
 	return count
 }
 
-// ProviderAppMessageHookSuite is connectors on, with ROUTER_PUBLIC_URL set: a provider app
-// PUT points the message hook of the Stream app the provider app is pinned to.
+// ProviderAppMessageHookSuite is connectors on, with ROUTER_PUBLIC_URL set: the PUTs that make a
+// provider app leave the hooks of the Stream app it is pinned to as they were. Stream Chat
+// delivers the messages (chat_inbound), so the router no longer points a message hook.
 type ProviderAppMessageHookSuite struct {
 	messageHookHarness
 }
@@ -149,7 +150,31 @@ func (s *ProviderAppMessageHookSuite) SetupSuite() {
 	s.start(true, providerAppPublicURL)
 }
 
-func (s *ProviderAppMessageHookSuite) TestCreatingTheAppPointsThePinnedAppsMessageHookAtTheRouter() {
+// seeded gives the customer's app a hook of its own and the message hook an older router
+// pointed, and returns them: what a PUT must leave exactly as it is.
+func (s *ProviderAppMessageHookSuite) seeded() []getstream.EventHook {
+	hooks := []getstream.EventHook{pointed("https://customer.example/hooks"), pointed(s.hookURL(providerAppPublicURL))}
+	raw := make([]json.RawMessage, len(hooks))
+	for index, hook := range hooks {
+		var err error
+		raw[index], err = json.Marshal(hook)
+		s.Require().NoError(err)
+	}
+	s.chat.SetEventHooks(s.apiKey, raw...)
+	return hooks
+}
+
+// leftAlone is the app's hooks as they were, and no update or read of the app asked of Stream
+// by the router, the customer's or the deployment's.
+func (s *ProviderAppMessageHookSuite) leftAlone(hooks []getstream.EventHook) {
+	s.Equal(hooks, s.chat.EventHooks(s.apiKey))
+	s.Zero(s.asked(s.apiKey, http.MethodPatch, "/api/v2/app"))
+	s.Zero(s.asked(suiteStreamKey, http.MethodPatch, "/api/v2/app"), "the deployment's own app is left alone")
+}
+
+func (s *ProviderAppMessageHookSuite) TestCreatingTheAppLeavesThePinnedAppsHooksAlone() {
+	hooks := s.seeded()
+
 	status, payload := s.serverClient.call(http.MethodPut, providerAppPath("slack_bot"),
 		ConnectorProviderAppRequest{Name: "Acme", ConfigRefreshToken: s.slack.NewConfigToken()})
 
@@ -157,52 +182,36 @@ func (s *ProviderAppMessageHookSuite) TestCreatingTheAppPointsThePinnedAppsMessa
 	record, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
 	s.Require().NoError(err)
 	s.Equal(s.appID(), record.StreamAppPK, "pinned to the customer's own app")
-	s.Equal([]getstream.EventHook{pointed(s.hookURL(providerAppPublicURL))}, s.chat.EventHooks(s.apiKey))
-	s.Zero(s.asked(suiteStreamKey, http.MethodPatch, "/api/v2/app"), "the deployment's own app is left alone")
+	s.leftAlone(hooks)
 }
 
-// A PUT again points the hook again: it updates the one it pointed rather than adding a
-// second, puts it back when it was removed, and leaves a hook of the customer's own.
-func (s *ProviderAppMessageHookSuite) TestAPutAgainPointsTheHookAgainAndLeavesTheAppsOtherHooks() {
-	client, err := getstream.NewClient(s.apiKey, s.secret, getstream.WithBaseUrl(s.chat.URL))
-	s.Require().NoError(err)
-	customers := chat.StreamOf(client)
-	_, err = customers.PointMessageHook(context.Background(), "https://customer.example/hooks")
-	s.Require().NoError(err)
-	both := []getstream.EventHook{pointed("https://customer.example/hooks"), pointed(s.hookURL(providerAppPublicURL))}
+func (s *ProviderAppMessageHookSuite) TestAPutAgainLeavesThePinnedAppsHooksAlone() {
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPut, providerAppPath("slack_bot"),
 		ConnectorProviderAppRequest{Name: "Acme", ConfigRefreshToken: s.slack.NewConfigToken()}, nil))
+	hooks := s.seeded()
 
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, providerAppPath("slack_bot"),
 		ConnectorProviderAppRequest{Name: "Acme"}, nil))
-	s.Equal(both, s.chat.EventHooks(s.apiKey), "updated, not added again")
 
-	_, err = customers.RemoveMessageHook(context.Background(), s.hookURL(providerAppPublicURL))
-	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, providerAppPath("slack_bot"),
-		ConnectorProviderAppRequest{Name: "Acme"}, nil))
-	s.Equal(both, s.chat.EventHooks(s.apiKey), "put back")
+	s.leftAlone(hooks)
 }
 
-func (s *ProviderAppMessageHookSuite) TestStaffSettingStreamsOwnAppPointsThePinnedAppsMessageHook() {
+func (s *ProviderAppMessageHookSuite) TestStaffSettingStreamsOwnAppLeavesThePinnedAppsHooksAlone() {
+	hooks := s.seeded()
+
 	s.Require().Equal(http.StatusCreated, s.operatorApp())
 
-	s.Equal([]getstream.EventHook{pointed(s.hookURL(providerAppPublicURL))}, s.chat.EventHooks(s.apiKey))
+	s.leftAlone(hooks)
 }
 
-// Stream refusing fails the PUT, as it fails `router phone hooks`, and keeps the provider
-// app: a PUT again points the hook.
-func (s *ProviderAppMessageHookSuite) TestAHookStreamRefusesFailsThePutAndAPutAgainPointsIt() {
+// A Stream app that refuses the customer's key used to fail the PUT with a 503, for the hook
+// it could not point. Nothing is asked of it now.
+func (s *ProviderAppMessageHookSuite) TestAStreamAppThatRefusesDoesNotFailTheOperatorPut() {
 	s.answering(true)
 
-	s.Equal(http.StatusServiceUnavailable, s.operatorApp())
+	s.Equal(http.StatusCreated, s.operatorApp())
 
-	_, err := s.store.ConnectorOAuthClient(context.Background(), s.customerID(), "slack_bot")
-	s.Require().NoError(err, "the provider app is kept")
 	s.Empty(s.chat.EventHooks(s.apiKey))
-	s.answering(false)
-	s.Equal(http.StatusOK, s.operatorApp())
-	s.Equal([]getstream.EventHook{pointed(s.hookURL(providerAppPublicURL))}, s.chat.EventHooks(s.apiKey))
 }
 
 // A customer with no app of its own is pinned to the deployment's, whose hooks are the
@@ -404,34 +413,6 @@ func (s *ProviderAppMessageHookNoAppSuite) TestAProviderAppPinnedToZeroPointsNoH
 	s.NotZero(s.stream.DeploymentApp())
 	s.Equal(before, s.asked(suiteStreamKey, http.MethodPatch, "/api/v2/app"))
 	s.Empty(s.chat.EventHooks(suiteStreamKey))
-}
-
-// ProviderAppMessageHookWithoutPublicURLSuite is connectors on without ROUTER_PUBLIC_URL:
-// Stream's own app is set all the same, with no hook and one warning. The managed app needs
-// the URL for Slack and refuses as before.
-type ProviderAppMessageHookWithoutPublicURLSuite struct {
-	messageHookHarness
-}
-
-func TestProviderAppMessageHookWithoutPublicURLSuite(t *testing.T) {
-	runSuite(t, new(ProviderAppMessageHookWithoutPublicURLSuite))
-}
-
-func (s *ProviderAppMessageHookWithoutPublicURLSuite) SetupSuite() {
-	s.database = "message_hook_no_url"
-	s.start(true, "")
-}
-
-func (s *ProviderAppMessageHookWithoutPublicURLSuite) TestStaffSettingStreamsOwnAppPointsNoHookAndWarnsOnce() {
-	before := strings.Count(s.logged.String(), "ROUTER_PUBLIC_URL is not set")
-	asked := len(s.chat.Requests(s.apiKey))
-
-	s.Require().Equal(http.StatusCreated, s.operatorApp())
-
-	s.Empty(s.chat.EventHooks(s.apiKey))
-	s.Len(s.chat.Requests(s.apiKey), asked, "nothing is asked of the customer's Stream app")
-	s.Equal(before+1, strings.Count(s.logged.String(), "ROUTER_PUBLIC_URL is not set"))
-	s.Contains(s.logged.String(), "stream_app="+strconv.FormatInt(s.appID(), 10))
 }
 
 // ProviderAppMessageHookOffSuite is connectors off, the control: the provider app PUTs answer

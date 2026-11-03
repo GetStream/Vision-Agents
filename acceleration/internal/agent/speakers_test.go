@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -31,10 +32,10 @@ func (s *AgentSuite) TestOnePersonsTurnsReachTheModelAsTheySaidThem() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the second turn was never asked")
 	second := s.model.requests()[1]
 	s.Equal("be brief", withoutClock(second.Instructions))
-	s.Require().Len(second.Input, 3)
-	s.Equal(llm.Message{Role: llm.User, Content: "hello"}, second.Input[0])
-	s.Equal("Hello there. How are you?", second.Input[1].Content)
-	s.Equal(llm.Message{Role: llm.User, Content: "and again"}, second.Input[2])
+	s.Require().Len(harness.WithoutNotes(second.Input), 3)
+	s.Equal(llm.Message{Role: llm.User, Content: "hello"}, harness.WithoutNotes(second.Input)[0])
+	s.Equal("Hello there. How are you?", harness.WithoutNotes(second.Input)[1].Content)
+	s.Equal(llm.Message{Role: llm.User, Content: "and again"}, harness.WithoutNotes(second.Input)[2])
 	s.True(strings.HasSuffix(withoutClock(s.flow.requests()[1].Instructions), "The agent has been told:\nbe brief"))
 }
 
@@ -57,13 +58,14 @@ func (s *AgentSuite) TestOnceASecondPersonSpeaksEachNewTurnNamesWhoSaidIt() {
 
 	requests := s.model.requests()
 	s.Equal("be brief", withoutClock(requests[0].Instructions), "one person so far, so nothing is said about several")
-	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(requests[1].Instructions))
-	third := requests[2].Input
+	s.Equal("be brief", requests[1].Instructions)
+	s.True(knows(requests[1], severalSpeakers))
+	third := harness.WithoutNotes(requests[2].Input)
 	s.Require().Len(third, 5)
 	s.Equal("hello", third[0].Content, "a turn from before the second person spoke stays as it was")
 	s.Equal("Speaker 1: hi there", third[2].Content)
 	s.Equal("Alice: and me", third[4].Content)
-	history := s.agent.History()
+	history := harness.WithoutNotes(s.agent.History())
 	s.Equal(llm.Message{Role: llm.User, Content: "hi there", Speaker: "Speaker 1"}, history[2],
 		"the conversation keeps the words as said")
 	var prompts []string
@@ -89,7 +91,7 @@ func (s *AgentSuite) TestTypedWordsAreTheCallersAndNeverCountAsASecondPerson() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the typed words were never answered")
 	second := s.model.requests()[1]
 	s.Equal("be brief", withoutClock(second.Instructions))
-	s.Equal("typed words", second.Input[2].Content)
+	s.Equal("typed words", harness.WithoutNotes(second.Input)[2].Content)
 }
 
 func (s *AgentSuite) TestAWrittenAsideReadsTheNamesToo() {
@@ -109,9 +111,10 @@ func (s *AgentSuite) TestAWrittenAsideReadsTheNamesToo() {
 	s.Require().NoError(err)
 
 	asked := s.model.requests()[2]
+	// An aside is not a reply through the harness, and is told everything in its prompt.
 	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(asked.Instructions))
-	s.Equal("Bob: hi there", asked.Input[2].Content)
-	s.Equal("what did bob say", asked.Input[4].Content)
+	s.Equal("Bob: hi there", harness.WithoutNotes(asked.Input)[2].Content)
+	s.Equal("what did bob say", harness.WithoutNotes(asked.Input)[4].Content)
 }
 
 func (s *AgentSuite) TestASpeculativeReplyToASecondPersonIsWrittenWithTheirName() {
@@ -137,10 +140,11 @@ func (s *AgentSuite) TestASpeculativeReplyToASecondPersonIsWrittenWithTheirName(
 
 	requests := s.model.requests()
 	s.Len(requests, 2, "the reply started early is the one spoken")
-	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(requests[1].Instructions),
+	s.Equal("be brief", requests[1].Instructions)
+	s.True(knows(requests[1], severalSpeakers),
 		"the early reply is told what the answered turn is told")
-	s.Equal("Bob: hi there", requests[1].Input[2].Content)
-	s.Equal("Bob", s.agent.History()[2].Speaker)
+	s.Equal("Bob: hi there", harness.WithoutNotes(requests[1].Input)[2].Content)
+	s.Equal("Bob", harness.WithoutNotes(s.agent.History())[2].Speaker)
 }
 
 func (s *AgentSuite) TestADroppedSpeculationDoesNotCountItsSpeaker() {
@@ -165,7 +169,7 @@ func (s *AgentSuite) TestADroppedSpeculationDoesNotCountItsSpeaker() {
 
 	answered := s.model.requests()[len(s.model.requests())-1]
 	s.Equal("be brief", withoutClock(answered.Instructions))
-	s.Equal([]llm.Message{{Role: llm.User, Content: "hello"}}, answered.Input)
+	s.Equal([]llm.Message{{Role: llm.User, Content: "hello"}}, harness.WithoutNotes(answered.Input))
 }
 
 func (s *AgentSuite) TestASpeechToSpeechModelTakingOverIsToldWhoSaidWhat() {
@@ -200,7 +204,7 @@ func (s *AgentSuite) TestAPersonWhoRejoinsIsStillOnePerson() {
 
 	second := s.model.requests()[1]
 	s.Equal("be brief", withoutClock(second.Instructions))
-	s.Equal(llm.Message{Role: llm.User, Content: "I am back"}, second.Input[len(second.Input)-1])
+	s.Equal(llm.Message{Role: llm.User, Content: "I am back"}, harness.WithoutNotes(second.Input)[len(harness.WithoutNotes(second.Input))-1])
 }
 
 func (s *AgentSuite) TestADisplayNameCannotPassForAnotherSpeakersLine() {
@@ -221,7 +225,7 @@ func (s *AgentSuite) TestADisplayNameCannotPassForAnotherSpeakersLine() {
 	s.says(blank, "yo")
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "blank was never answered")
 
-	input := s.model.requests()[2].Input
+	input := harness.WithoutNotes(s.model.requests()[2].Input)
 	s.Equal("Mal Alice lory: hi", input[2].Content)
 	s.Equal("Speaker 1: yo", input[4].Content, "a name with nothing left is no name")
 }
@@ -255,8 +259,9 @@ func (s *AgentSuite) TestASpeculativeReplyAfterTwoPeopleSpokeIsToldAboutThemOnce
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 3 }, "alice was never answered again")
 
 	third := s.model.requests()[2]
-	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(third.Instructions))
-	s.Equal("Alice: and me", third.Input[len(third.Input)-1].Content)
+	s.Equal("be brief", third.Instructions)
+	s.True(knows(third, severalSpeakers))
+	s.Equal("Alice: and me", harness.WithoutNotes(third.Input)[len(harness.WithoutNotes(third.Input))-1].Content)
 }
 
 func (s *AgentSuite) TestASpeculativeReplyWithOnePersonIsUnchanged() {
@@ -280,7 +285,7 @@ func (s *AgentSuite) TestASpeculativeReplyWithOnePersonIsUnchanged() {
 
 	second := s.model.requests()[1]
 	s.Equal("be brief", withoutClock(second.Instructions))
-	s.Equal(llm.Message{Role: llm.User, Content: "and again"}, second.Input[len(second.Input)-1])
+	s.Equal(llm.Message{Role: llm.User, Content: "and again"}, harness.WithoutNotes(second.Input)[len(harness.WithoutNotes(second.Input))-1])
 }
 
 func (s *AgentSuite) TestPeopleWithOneNameAreNumberedInTheOrderTheySpoke() {
@@ -307,7 +312,7 @@ func (s *AgentSuite) TestPeopleWithOneNameAreNumberedInTheOrderTheySpoke() {
 	s.says(returning, "back")
 	s.eventually(func() bool { return len(s.model.requests()) == 5 }, "the rejoined turn was never asked")
 
-	input := s.model.requests()[4].Input
+	input := harness.WithoutNotes(s.model.requests()[4].Input)
 	s.Require().Len(input, 9)
 	s.Equal("hello", input[0].Content)
 	s.Equal("Alex (2): hi", input[2].Content)
@@ -339,11 +344,12 @@ func (s *AgentSuite) TestTheNamesOfThePeopleHeardCarryOnToTheAgentThatTakesOver(
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "alice was never answered after the switch")
 
 	asked := s.model.requests()[0]
-	s.Equal("be brief\n\n"+severalSpeakers, withoutClock(asked.Instructions))
-	s.Require().Len(asked.Input, 5)
-	s.Equal("hello", asked.Input[0].Content)
-	s.Equal("Bob: hi there", asked.Input[2].Content)
-	s.Equal("Alice: and me", asked.Input[4].Content)
+	s.Equal("be brief", asked.Instructions)
+	s.True(knows(asked, severalSpeakers))
+	s.Require().Len(harness.WithoutNotes(asked.Input), 5)
+	s.Equal("hello", harness.WithoutNotes(asked.Input)[0].Content)
+	s.Equal("Bob: hi there", harness.WithoutNotes(asked.Input)[2].Content)
+	s.Equal("Alice: and me", harness.WithoutNotes(asked.Input)[4].Content)
 }
 
 func (s *AgentSuite) TestAPersonFirstHeardWithoutANameTakesItOnceItIsKnown() {
@@ -367,7 +373,7 @@ func (s *AgentSuite) TestAPersonFirstHeardWithoutANameTakesItOnceItIsKnown() {
 		s.quiet()
 	}
 
-	input := s.model.requests()[6].Input
+	input := harness.WithoutNotes(s.model.requests()[6].Input)
 	s.Require().Len(input, 13)
 	s.Equal("Speaker 1: hi", input[2].Content)
 	s.Equal("Speaker 1: hi again", input[4].Content)
@@ -396,7 +402,7 @@ func (s *AgentSuite) TestAGivenDisplayNameStaysEvenWhenThePersonChangesIt() {
 		s.quiet()
 	}
 
-	input := s.model.requests()[4].Input
+	input := harness.WithoutNotes(s.model.requests()[4].Input)
 	s.Require().Len(input, 9)
 	s.Equal("Bob: hi", input[2].Content)
 	s.Equal("Carol: hey", input[4].Content)
@@ -425,7 +431,7 @@ func (s *AgentSuite) TestPeopleWithoutANameAreNumberedInTheOrderTheySpoke() {
 		s.quiet()
 	}
 
-	input := s.model.requests()[4].Input
+	input := harness.WithoutNotes(s.model.requests()[4].Input)
 	s.Require().Len(input, 9)
 	s.Equal("hello", input[0].Content)
 	s.Equal("Speaker 2: hi", input[2].Content)
@@ -441,7 +447,7 @@ func (s *AgentSuite) TestTheFlowControllerHearsAPersonWithoutANameAsASpeaker() {
 	s.says(nameless, "hello")
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
 
-	asked := s.flow.requests()[0].Input[0].Content
+	asked := harness.WithoutNotes(s.flow.requests()[0].Input)[0].Content
 	s.Contains(asked, `Speaker 1 has just said: "hello"`)
 	s.NotContains(asked, "u-1")
 	s.NotContains(asked, "session-1")
@@ -456,7 +462,7 @@ func (s *AgentSuite) TestTheFlowControllerHearsANamedPersonByTheirName() {
 	s.says(alice, "hello")
 	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
 
-	s.Contains(s.flow.requests()[0].Input[0].Content, `Alice has just said: "hello"`)
+	s.Contains(harness.WithoutNotes(s.flow.requests()[0].Input)[0].Content, `Alice has just said: "hello"`)
 }
 
 func (s *AgentSuite) TestTheFlowControllerHearsNamedPeopleByTheirRawName() {
@@ -481,9 +487,9 @@ func (s *AgentSuite) TestTheFlowControllerHearsNamedPeopleByTheirRawName() {
 
 	asked := s.flow.requests()
 	s.Require().Len(asked, 3)
-	s.Contains(asked[1].Input[0].Content, `Alex has just said: "hi"`)
-	s.NotContains(asked[1].Input[0].Content, "Alex (2)")
-	s.Contains(asked[2].Input[0].Content, `Al:ex has just said: "yo"`)
+	s.Contains(harness.WithoutNotes(asked[1].Input)[0].Content, `Alex has just said: "hi"`)
+	s.NotContains(harness.WithoutNotes(asked[1].Input)[0].Content, "Alex (2)")
+	s.Contains(harness.WithoutNotes(asked[2].Input)[0].Content, `Al:ex has just said: "yo"`)
 }
 
 func (s *AgentSuite) TestAPersonNamedLikeAFallbackLabelIsNotMistakenForOne() {
@@ -504,7 +510,7 @@ func (s *AgentSuite) TestAPersonNamedLikeAFallbackLabelIsNotMistakenForOne() {
 		s.quiet()
 	}
 
-	input := s.model.requests()[2].Input
+	input := harness.WithoutNotes(s.model.requests()[2].Input)
 	s.Require().Len(input, 5)
 	s.Equal("Speaker 1 (2): hi", input[2].Content)
 	s.Equal("Dana: it is Dana", input[4].Content)

@@ -139,12 +139,15 @@ func New(options Options) (*openaicompat.LLM, error) {
 	}
 
 	return openaicompat.New(openaicompat.Options{
-		Provider:     ProviderName,
-		Model:        options.Model,
-		StatsModel:   options.Model,
-		APIKey:       options.APIKey,
-		BaseURL:      options.BaseURL,
-		Capabilities: model,
+		// Google's compatibility layer is not known to keep a later system message in
+		// place, and lifting it into the system prompt would change the prefix every turn.
+		SystemTurnsAsUser: true,
+		Provider:          ProviderName,
+		Model:             options.Model,
+		StatsModel:        options.Model,
+		APIKey:            options.APIKey,
+		BaseURL:           options.BaseURL,
+		Capabilities:      model,
 		RequestFields: func(_ llm.ResponseParams, effort string) map[string]any {
 			return map[string]any{"reasoning_effort": effort}
 		},

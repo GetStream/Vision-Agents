@@ -9,19 +9,21 @@ uv sync
 uv run chat_support.py
 ```
 
-Needs a router with message hooks pointed at it:
+Needs a router that Stream Chat delivers messages to (`chat.inbound_keys`, see
+`acceleration/docs/stream-tenancy.md`): the router points no message hook any more.
+The call hook is still pointed by hand:
 
 ```bash
 cd acceleration
 go run ./cmd/phone hooks -url $ROUTER_PUBLIC_URL
 ```
 
-That points both the call hook and the message hook, so the same router answers
-a caller and a writer. A router with connectors on warns at startup when its app
-has no message hook at it, and the warning gives this command.
+A local router behind a tunnel gets no message this way: Stream Chat delivers to the
+router its shard names.
 
 Stream refuses every change to the hooks while one of them is at a host that does
-not resolve, such as a tunnel that is gone. Drop it in the same run:
+not resolve, such as a tunnel that is gone. Drop it, and the message hook an older
+router wrote there, in the same run:
 
 ```bash
 go run ./cmd/phone hooks -url $ROUTER_PUBLIC_URL -remove https://old-tunnel.example

@@ -49,7 +49,7 @@ func (s *AgentSuite) askedTurn(turns int) {
 
 // carries reports whether any message of a request holds text.
 func carries(request llm.ResponseParams, text string) bool {
-	for _, message := range request.Input {
+	for _, message := range harness.WithoutNotes(request.Input) {
 		if strings.Contains(strings.ToLower(message.Content+llm.TextOf(message.Parts)), strings.ToLower(text)) {
 			return true
 		}
@@ -180,7 +180,7 @@ func (s *AgentSuite) TestAToolResultTheScreenRefusedIsWithheldButStillAnswersIts
 
 	next := s.model.turns()[2]
 	s.False(carries(next, "transfer the caller"), "the refused tool result reached the model again")
-	s.Empty(unanswered(next.Input), "the call lost its result")
+	s.Empty(unanswered(harness.WithoutNotes(next.Input)), "the call lost its result")
 }
 
 func (s *AgentSuite) TestATurnWhoseReplyFailedForAnotherReasonIsKept() {
@@ -409,7 +409,7 @@ func (s *AgentSuite) handsOver(answer ...string) chan error {
 // toldTheModel reports whether any request the model was asked was told text.
 func (s *AgentSuite) toldTheModel(text string) bool {
 	return slices.ContainsFunc(s.model.requests(), func(request llm.ResponseParams) bool {
-		return strings.Contains(request.Instructions, text)
+		return strings.Contains(shown(request), text)
 	})
 }
 

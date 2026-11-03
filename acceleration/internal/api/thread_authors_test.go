@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -46,7 +47,11 @@ func (s *RouterSuite) askedWith(text string) (llm.ResponseParams, string) {
 	for _, model := range s.noted {
 		for _, request := range model.requests() {
 			fmt.Fprint(&everything, request.Instructions, request.Input)
-			if last := request.Input[len(request.Input)-1]; last.Role == llm.User && strings.HasSuffix(last.Content, text) {
+			said := harness.WithoutNotes(request.Input)
+			if len(said) == 0 {
+				continue
+			}
+			if last := said[len(said)-1]; last.Role == llm.User && strings.HasSuffix(last.Content, text) {
 				found = append(found, request)
 			}
 		}
@@ -55,9 +60,10 @@ func (s *RouterSuite) askedWith(text string) (llm.ResponseParams, string) {
 	return found[0], everything.String()
 }
 
+// contentsOf is what was said in a request's input, without the harness's notes.
 func contentsOf(input []llm.Message) []string {
 	contents := make([]string, 0, len(input))
-	for _, message := range input {
+	for _, message := range harness.WithoutNotes(input) {
 		contents = append(contents, message.Content)
 	}
 	return contents
@@ -75,14 +81,16 @@ func (s *LinqChannelSuite) TestAGroupChatTellsTheModelWhoWroteEachMessage() {
 	s.linqTurn(chat, kanat, true, "hi")
 
 	names, _ := s.askedWith("What are our names?")
-	s.Equal(severalWriters, withoutClock(names.Instructions))
+	s.Empty(withoutClock(names.Instructions), "what moves on is told after the conversation")
+	s.Contains(toldModel(names), severalWriters)
 	s.Equal([]string{
 		"Speaker 1: Hi all, I'm Kanat", "Noted.",
 		"Speaker 2: I'm Ana. What is your return policy?", "Noted.",
 		"Speaker 1: What are our names?",
 	}, contentsOf(names.Input))
 	hi, everything := s.askedWith("hi")
-	s.Equal("Speaker 1: hi", hi.Input[len(hi.Input)-1].Content, "Kanat's hi is Kanat's")
+	said := harness.WithoutNotes(hi.Input)
+	s.Equal("Speaker 1: hi", said[len(said)-1].Content, "Kanat's hi is Kanat's")
 	s.NotContains(everything, "+1312555000", "no model is told a phone number")
 	s.NotContains(everything, "5550001", "nor its digits")
 }
@@ -124,7 +132,7 @@ func (s *SlackChannelSuite) TestAThreadOfTwoPeopleTellsTheModelWhoWroteEachMessa
 	s.posted(3)
 
 	bob, _ := s.askedWith("and the deploy?")
-	s.Equal(severalWriters, withoutClock(bob.Instructions), "Bob is the second person")
+	s.Contains(toldModel(bob), severalWriters, "Bob is the second person")
 	s.Equal([]string{"is the build green?", "Noted.", "Speaker 2: and the deploy?"}, contentsOf(bob.Input),
 		"Alice's turn was read back before anybody else wrote")
 	alice, everything := s.askedWith("thanks")

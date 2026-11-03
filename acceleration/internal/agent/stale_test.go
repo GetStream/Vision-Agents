@@ -10,6 +10,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/testutil"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -50,7 +51,7 @@ func (s *AgentSuite) TestAReplyTheCallerSaidMoreOverBeforeHearingAnyIsDropped() 
 	s.synthesises(two)
 	s.says(nash, "Hey. Can you help me find after school care for the kids?")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the newer words were never answered")
-	input := s.model.requests()[1].Input
+	input := harness.WithoutNotes(s.model.requests()[1].Input)
 	s.Equal("two", input[len(input)-2].Content, "the words the dropped reply was for are still in the history")
 	s.Equal("Hey. Can you help me find after school care for the kids?", input[len(input)-1].Content)
 	edge := s.edge
@@ -170,7 +171,7 @@ func (s *AgentSuite) TestAReplyNobodySaidMoreOverPlaysAsBefore() {
 	s.says(nash, "two")
 
 	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the reply never played")
-	s.eventually(func() bool { return len(s.agent.History()) == 2 }, "the exchange was never kept")
+	s.eventually(func() bool { return len(harness.WithoutNotes(s.agent.History())) == 2 }, "the exchange was never kept")
 	var spoken []string
 	for _, request := range s.voice.spoken() {
 		spoken = append(spoken, request.Text)
@@ -178,8 +179,8 @@ func (s *AgentSuite) TestAReplyNobodySaidMoreOverPlaysAsBefore() {
 	s.Equal([]string{"Hello there.", "How are you?", ""}, spoken)
 	s.Len(s.edge.heard(), 2)
 	s.Zero(countOf[Interrupted](s.reported()))
-	s.Equal("two", s.agent.History()[0].Content)
-	s.Equal("Hello there. How are you?", s.agent.History()[1].Content)
+	s.Equal("two", harness.WithoutNotes(s.agent.History())[0].Content)
+	s.Equal("Hello there. How are you?", harness.WithoutNotes(s.agent.History())[1].Content)
 	s.Equal(0.0, testutil.ToFloat64(staleReplies)-dropped)
 	s.Equal(0.0, testutil.ToFloat64(talkedOver.WithLabelValues(kindCaller))-over)
 	s.Equal(0.0, testutil.ToFloat64(settledOverAgent.WithLabelValues("1", "true", "answer"))-quiet,
@@ -304,8 +305,10 @@ func (s *AgentSuite) TestAReplyThatEndedWithNothingSaidIsNoReplyToDrop() {
 }
 
 func (s *AgentSuite) TestAssentOfMoreThanOneWordLeavesTheReplyToPlay() {
-	for _, assent := range []string{"okay okay", "yeah yeah", "uh huh", "uh-huh", "uh-huh okay", "got it", "thank you", "uh yeah",
-		"ok gotcha", "yes yes", "yep yep", "yup sure", "mhm right", "mm-hmm alright", "thanks thanks"} {
+	for _, assent := range []string{
+		"okay okay", "yeah yeah", "uh huh", "uh-huh", "uh-huh okay", "got it", "thank you", "uh yeah",
+		"ok gotcha", "yes yes", "yep yep", "yup sure", "mhm right", "mm-hmm alright", "thanks thanks",
+	} {
 		s.Run(assent, func() {
 			s.False(takesFloor(assent), "assent is somebody listening")
 		})
@@ -456,15 +459,15 @@ func (s *AgentSuite) TestTheTurnAfterADroppedReplyIsAskedToAnswerWhatItWasFor() 
 	s.eventually(func() bool { return len(s.model.requests()) == 4 }, "the newer words were never answered")
 
 	newer := s.model.requests()[3]
-	s.Contains(newer.Instructions, missedNote(correction), "the correction is owed with the newer words")
-	s.NotContains(s.model.requests()[2].Instructions, "not yet answered", "nothing was dropped before the correction")
+	s.Contains(shown(newer), missedNote(correction), "the correction is owed with the newer words")
+	s.NotContains(shown(s.model.requests()[2]), "not yet answered", "nothing was dropped before the correction")
 
 	s.model.writes(newer.ID, "Five at seven, inside noted. Under Quillon?")
 	s.heardSomeOf(newer.ID)
 	s.model.finishes(newer.ID)
 	s.says(nash, "Can we sit outside?")
 	s.eventually(func() bool { return len(s.model.requests()) == 5 }, "the next turn was never answered")
-	s.NotContains(s.model.requests()[4].Instructions, "not yet answered", "what was owed was answered once")
+	s.NotContains(shown(s.model.requests()[4]), "not yet answered", "what was owed was answered once")
 }
 
 func (s *AgentSuite) TestATurnAnsweredWithNothingDroppedIsAskedAsBefore() {
@@ -479,7 +482,7 @@ func (s *AgentSuite) TestATurnAnsweredWithNothingDroppedIsAskedAsBefore() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the next turn was never answered")
 	s.Equal(s.model.requests()[0].Instructions, s.model.requests()[1].Instructions)
-	s.NotContains(s.model.requests()[1].Instructions, "not yet answered")
+	s.NotContains(shown(s.model.requests()[1]), "not yet answered")
 }
 
 func (s *AgentSuite) TestWhatADroppedReplyWasForIsOwedToTheSameCallerAlone() {
@@ -492,11 +495,11 @@ func (s *AgentSuite) TestWhatADroppedReplyWasForIsOwedToTheSameCallerAlone() {
 
 	s.says(bob, "Is anyone there?")
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the other voice was never answered")
-	s.NotContains(s.model.requests()[1].Instructions, "not yet answered", "bob never said two")
+	s.NotContains(shown(s.model.requests()[1]), "not yet answered", "bob never said two")
 	s.says(nash, "wait no the second one")
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the caller was never answered")
 
-	s.Contains(s.model.requests()[2].Instructions, missedNote("two"))
+	s.Contains(shown(s.model.requests()[2]), missedNote("two"))
 }
 
 func (s *AgentSuite) TestTheCallersEarlierWordsAreQuotedInTheirNoteWithNoMoreAuthority() {
@@ -522,7 +525,7 @@ func (s *AgentSuite) TestEveryDroppedReplyInARowIsOwed() {
 	s.says(nash, "actually four")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the last words were never answered")
-	s.Contains(s.model.requests()[2].Instructions, missedNote("two wait no three"))
+	s.Contains(shown(s.model.requests()[2]), missedNote("two wait no three"))
 }
 
 func (s *AgentSuite) TestWhatDroppedRepliesOweKeepsOnlyTheNewestWords() {
@@ -546,7 +549,7 @@ func (s *AgentSuite) TestWhatDroppedRepliesOweKeepsOnlyTheNewestWords() {
 	s.says(nash, numbered("y", 1, 10))
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the last words were never answered")
-	s.Contains(s.model.requests()[2].Instructions,
+	s.Contains(shown(s.model.requests()[2]),
 		missedNote(numbered("w", 61, 80)+" "+numbered("x", 1, 80)),
 		"the newest hundred words of the two dropped turns are owed, the oldest twenty are not")
 }
@@ -565,7 +568,7 @@ func (s *AgentSuite) TestAReplyStartedBeforeTheRulingIsNotUsedForWhatADroppedRep
 	// the one with the note is looked for among every request, not taken to be the last.
 	s.eventually(func() bool {
 		return slices.ContainsFunc(s.model.requests(), func(asked llm.ResponseParams) bool {
-			return strings.Contains(asked.Instructions, missedNote("two"))
+			return strings.Contains(shown(asked), missedNote("two"))
 		})
 	}, "the turn was answered by a reply written without what it owes")
 }
@@ -609,9 +612,9 @@ func (s *AgentSuite) TestAQueuedTurnTheCallerCorrectedSinceIsAnsweredWithTheCorr
 	s.join(true)
 	dropped := testutil.ToFloat64(staleQueuedTurns)
 	newer := s.correctsAQueuedTurn()
-	s.Equal(queuedCorrection, newer.Input[len(newer.Input)-1].Content)
-	s.Contains(newer.Instructions, missedNote("A window seat too."), "the queued words are owed with the correction")
-	for _, message := range newer.Input {
+	s.Equal(queuedCorrection, harness.WithoutNotes(newer.Input)[len(harness.WithoutNotes(newer.Input))-1].Content)
+	s.Contains(shown(newer), missedNote("A window seat too."), "the queued words are owed with the correction")
+	for _, message := range harness.WithoutNotes(newer.Input) {
 		s.NotEqual("A window seat too.", message.Content, "the queued words reach the model in the note, not the history")
 	}
 	s.model.writes(newer.ID, "Five at seven, inside and by a window noted.")
@@ -656,14 +659,14 @@ func (s *AgentSuite) TestQueuedWordsTakenInByADroppedReplyAreOwedToTheNextTurn()
 	// was for, the queued words with it, is owed to the caller's next turn.
 	s.join(true)
 	newer := s.correctsAQueuedTurn()
-	s.Require().Contains(newer.Instructions, missedNote("A window seat too."))
+	s.Require().Contains(shown(newer), missedNote("A window seat too."))
 	s.mutters(nash, "Under the name")
 	s.eventually(func() bool { return s.model.abandoned(newer.ID) }, "the reply to the correction kept going")
 
 	s.says(nash, "Under the name Quillon.")
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the newer words were never answered")
-	s.Contains(s.model.requests()[2].Instructions, missedNote("A window seat too. "+queuedCorrection))
+	s.Contains(shown(s.model.requests()[2]), missedNote("A window seat too. "+queuedCorrection))
 }
 
 func (s *AgentSuite) TestAQueuedTurnNobodySaidMoreAfterIsAskedAsBefore() {
@@ -678,9 +681,9 @@ func (s *AgentSuite) TestAQueuedTurnNobodySaidMoreAfterIsAskedAsBefore() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the queued turn was never answered")
 	queued := s.model.requests()[1]
 	s.Equal([]string{"A table for four at seven please.", "Seven works.", "A window seat too."},
-		contents(queued.Input))
+		contents(harness.WithoutNotes(queued.Input)))
 	s.Equal(s.model.requests()[0].Instructions, queued.Instructions)
-	s.NotContains(queued.Instructions, "not yet answered")
+	s.NotContains(shown(queued), "not yet answered")
 	s.Equal(0.0, testutil.ToFloat64(staleQueuedTurns)-dropped)
 }
 

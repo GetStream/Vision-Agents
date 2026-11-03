@@ -18,6 +18,7 @@ final readonly class AgentConfig
         // Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it....
         public string $region,
         public \DateTimeImmutable $updatedAt,
+        public ?AgentCalls $calls = null,
         public ?AgentChannels $channels = null,
         // The bindings exactly as they were written. Absent when there are none.
         /** @var list<AgentConnectorBinding>|null */
@@ -84,6 +85,7 @@ final readonly class AgentConfig
             name: Json::string($data, 'name'),
             region: Json::string($data, 'region'),
             updatedAt: Json::date($data, 'updated_at'),
+            calls: array_key_exists('calls', $data) && $data['calls'] !== null ? AgentCalls::fromArray(Json::object($data, 'calls')) : null,
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
@@ -134,6 +136,9 @@ final readonly class AgentConfig
         $out['name'] = $this->name;
         $out['region'] = $this->region;
         $out['updated_at'] = Json::dateValue($this->updatedAt);
+        if ($this->calls !== null) {
+            $out['calls'] = $this->calls->toArray();
+        }
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();
         }

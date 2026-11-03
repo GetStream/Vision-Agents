@@ -191,7 +191,10 @@ type stubLLM struct {
 	asked []llm.ResponseParams
 	reply string
 	calls []llm.ToolCall
-	sees  bool
+	// called is whether calls were handed out: they go on the first request that offers
+	// tools, as a model told it may call none does not.
+	called bool
+	sees   bool
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
@@ -199,11 +202,12 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
-	first := len(s.asked) == 1
+	offered := len(params.Tools) > 0 && params.ToolChoice != "none"
 	reply := s.reply
 	var calls []llm.ToolCall
-	if first {
+	if offered && !s.called && len(s.calls) > 0 {
 		calls = append([]llm.ToolCall(nil), s.calls...)
+		s.called = true
 	}
 	s.mu.Unlock()
 
@@ -492,7 +496,7 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
-		other := &stubLLM{reply: "Sure."}
+		other := &stubLLM{reply: "Sure.", sees: s.model.sees}
 		s.othersMu.Lock()
 		s.others = append(s.others, other)
 		s.othersMu.Unlock()
@@ -575,6 +579,26 @@ func (s *SessionSuite) joins(spec Spec) *Session {
 func (s *SessionSuite) says(created *Session, text string) {
 	_, err := created.Respond(s.ctx, text, nil, options.LLM{})
 	s.Require().NoError(err)
+}
+
+// hears has somebody speak to a session on a call, once. A reply to nobody yet heard is
+// offered no tools, so a test whose model calls one has the caller speak first.
+func (s *SessionSuite) hears(created *Session) {
+	s.Require().Eventually(func() bool { return len(s.edges) > 0 }, settleFor, 10*time.Millisecond)
+	alice := stt.Participant{ID: "alice", Name: "Alice"}
+	s.model.mu.Lock()
+	calls := s.model.calls
+	s.model.calls = nil
+	s.model.mu.Unlock()
+	asked := len(s.model.requests())
+	pcm := audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}
+	s.edges[len(s.edges)-1].inbound <- agent.InboundAudio{Participant: alice, Audio: pcm}
+	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: "hello", Language: "en", Confidence: 1})
+	s.Require().Eventually(func() bool { return len(s.model.requests()) == asked+1 }, settleFor, 10*time.Millisecond, "the caller was never answered")
+	s.Require().Eventually(func() bool { return !created.Busy() }, settleFor, 10*time.Millisecond)
+	s.model.mu.Lock()
+	s.model.calls = calls
+	s.model.mu.Unlock()
 }
 
 func (s *SessionSuite) eventually(condition func() bool, message string) {
@@ -1325,7 +1349,7 @@ func (s *SessionSuite) TestTheGreetingWaitsForSomebodyToJoinTheCall() {
 	s.manages()
 	s.joins(Spec{Greeting: "Hi, I'm listening."})
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said to an empty call")
 
 	s.call().arrives(visitor)
@@ -1342,7 +1366,7 @@ func (s *SessionSuite) TestTheGreetingGivesWhoeverJoinedTimeToHearIt() {
 
 	s.call().arrives(visitor)
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 2*testTimeout, 5*time.Millisecond,
 		"the greeting started the moment somebody joined")
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
 }
@@ -1366,7 +1390,7 @@ func (s *SessionSuite) TestTheGreetingIsSaidOnceWhoeverJoinsAfter() {
 	s.saw(events, caller, true)
 
 	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "nobody was greeted")
-	s.Never(func() bool { return len(s.voice.spoken()) > 1 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 1 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said again")
 }
 
@@ -1376,7 +1400,7 @@ func (s *SessionSuite) TestTheAgentsOwnVideoUserIsNotGreeted() {
 
 	s.rings(Spec{Greeting: "Hi, I'm listening."}, video)
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the agent greeted itself")
 }
 
@@ -1395,7 +1419,7 @@ func (s *SessionSuite) TestStartingVoiceGreetsWhoeverJoinsTheCall() {
 	created := s.writes(Spec{Greeting: "Hi, I'm listening."})
 	s.Require().NoError(created.StartVoice(s.ctx, Call{}))
 
-	s.Never(func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
+	never(s.T(), func() bool { return len(s.voice.spoken()) > 0 }, 4*testTimeout, 5*time.Millisecond,
 		"the greeting was said to an empty call")
 
 	s.call().arrives(visitor)
@@ -1440,6 +1464,7 @@ func (s *SessionSuite) TestACallersToolIsAskedForAndItsAnswerReachesTheModel() {
 
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "where is my order")
 
 	asked := awaitToolCall(events)
@@ -1949,6 +1974,7 @@ func (s *SessionSuite) TestImageToolWithoutVisionReportsFailure() {
 
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "what is on camera")
 
 	asked := awaitToolCall(events)
@@ -1981,6 +2007,7 @@ func (s *SessionSuite) TestAToolsPictureIsShownToAModelThatSeesWithItsReplyAlone
 	})
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "what is in the room")
 
 	asked := awaitToolCall(events)
@@ -2070,7 +2097,7 @@ func (s *SessionSuite) TestAPictureIsShownOnlyToTheReplyItCameWith() {
 // handed is what a model request handed the model, one "role: content" line per message.
 func handed(request llm.ResponseParams) []string {
 	lines := make([]string, 0, len(request.Input))
-	for _, message := range request.Input {
+	for _, message := range harness.WithoutNotes(request.Input) {
 		lines = append(lines, string(message.Role)+": "+message.Content)
 	}
 	return lines
@@ -2101,8 +2128,10 @@ func awaitReply(events <-chan Event) string {
 // events. Every connector hook is a no-op without a binding (AI-851).
 func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConnector() {
 	server := mcpsdk.NewServer(&mcpsdk.Implementation{Name: "notes", Version: "1"}, nil)
-	server.AddTool(&mcpsdk.Tool{Name: "search", Description: "Finds a note.",
-		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}}},
+	server.AddTool(&mcpsdk.Tool{
+		Name: "search", Description: "Finds a note.",
+		InputSchema: map[string]any{"type": "object", "properties": map[string]any{}},
+	},
 		func(context.Context, *mcpsdk.CallToolRequest) (*mcpsdk.CallToolResult, error) {
 			return &mcpsdk.CallToolResult{Content: []mcpsdk.Content{&mcpsdk.TextContent{Text: "the note"}}}, nil
 		})
@@ -2117,6 +2146,7 @@ func (s *SessionSuite) TestAnMCPServersToolRunsAsBeforeWhenTheConfigBindsNoConne
 
 	events, detach := created.Watch()
 	defer detach()
+	s.hears(created)
 	s.says(created, "find my note")
 
 	var ran *agent.ToolRan

@@ -27,6 +27,9 @@ type Turn struct {
 	firstByteAt time.Time
 	audioMs     float64
 	chunks      int
+	// said is the bytes of transcript the reply streamed, which an estimate counts its text
+	// tokens from.
+	said int
 }
 
 // NewTurn starts tracking a reply. heardAt is when the caller stopped talking, and zero
@@ -51,6 +54,13 @@ func (t *Turn) Chunk(pcm audio.PcmData) AudioChunk {
 	t.chunks++
 
 	return AudioChunk{ResponseID: t.ID, Generation: t.Generation, Index: index, Audio: pcm}
+}
+
+// Said records a piece of the reply's transcript.
+func (t *Turn) Said(text string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.said += len(text)
 }
 
 // HeardAt records when the caller stopped, for a reply the model opened before they had.

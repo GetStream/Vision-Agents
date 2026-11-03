@@ -53,8 +53,8 @@ skills at https://www.skills.sh/getstream/agent-skills/stream.
    accept a path to that folder; if you move it, drop the `$schema` comment line from
    `agent.yaml`.
 3. **Map tools** (rules below), **knowledge** (documents into `knowledge/`, URL sources
-   into `knowledge/urls.yaml`), and **integrations** (catalog connectors and
-   `mcp_servers` in `agent.yaml`; phone numbers and messaging lines under `channels:`).
+   into `knowledge/urls.yaml`), and **integrations** (catalog and custom connectors under
+   `connectors:` in `agent.yaml`; phone numbers and messaging lines under `channels:`).
 4. **Sync and test.** `getstream agents sync <path>` then
    `echo "Where is order NW-1001?" | getstream agents test <name>` (stdin lines in a
    non-interactive terminal). Fix what the sync refuses; do not silence it by dropping
@@ -63,7 +63,7 @@ skills at https://www.skills.sh/getstream/agent-skills/stream.
    `agents test` runs the stored config only: Python `register_function` tools in the
    entry point do not execute there. Validate tools by running the Python agent joined
    to a router (`STREAM_ACCELERATION_URL`), or report them as untested code. A tool that
-   must work without Python running needs a connector or `mcp_servers:` instead.
+   must work without Python running needs a connector (catalog or custom) instead.
 5. **Report.** End with three lists: migrated, approximated (and how it differs), and
    no equivalent. A silent drop is a failed migration.
 
@@ -81,7 +81,8 @@ skills at https://www.skills.sh/getstream/agent-skills/stream.
 | Function tool that runs your code | `@agent.llm.register_function(description=...)` in the Python entry point; the backend calls it back mid-conversation |
 | Hosted/built-in tool (end call, transfer) | No tool needed for end/hangup; transfers and other platform actions go in `instructions.md` or a skill. See the platform reference |
 | Procedure / workflow / AOP / state machine | A `skills/<name>.md` (description + instructions for the subagent), referenced from `instructions.md` |
-| Tool that is an HTTPS call to a third-party system | A connector (`connectors:` in `agent.yaml`, app or per-user connection) or an `mcp_servers:` entry `{name, url, tools}`; a plain webhook-style tool becomes a Python function that makes the call |
+| Tool that is an HTTPS call to a third-party system | A catalog connector (`connectors:` in `agent.yaml`, app or per-user connection); a plain webhook-style tool becomes a Python function that makes the call |
+| MCP server given by URL (inline in the source config) | A custom connector plus a binding, never `mcp_servers:` or `plugins:` (the SDKs refuse both). See "MCP servers by URL" below |
 | Knowledge base documents | Files in `knowledge/` |
 | Knowledge base from URLs | `knowledge/urls.yaml` entries `{url, title?, description?, refresh_hours?}` |
 | Retrieval tuning (top_k, chunk size) | No equivalent knob. Drop it and say so in the report |
@@ -94,6 +95,26 @@ skills at https://www.skills.sh/getstream/agent-skills/stream.
 | Evals / simulations | `simulations/*.yaml`, run with `getstream agents simulate <name>` |
 | Multilingual language setting | `Accelerated(language=...)`; keyterms lists map to `keyterms:` in `agent.yaml` |
 | Sandbox / code execution | `sandbox: daytona` plus `sandbox_options:`; skills run code there |
+
+### MCP servers by URL
+
+A source's inline MCP server (LiveKit `MCPServerHTTP`, Vapi `mcp`, a GPT Live backend MCP
+tool) is a custom connector. The app's backend creates it once, with
+`POST /v1/agents/connectors`: `id` starts with `custom_`, `endpoint` is the server's public
+`https` URL, `schemes` says how a connection signs in. The folder gets a binding in
+`agent.yaml`: `{name, connector: custom_<id>, connection: <label>}`, and the source's tool
+filter becomes `tools:`. Pick the shape by how the server signs in:
+
+| The source server | `schemes` | Connection |
+| --- | --- | --- |
+| Public, no credential | `["none"]` | The app's, saved with empty credentials. Keep `connection` in the binding: without it the binding gets no tools |
+| An API key in a header | `["api_key"]` | The app's, with the key and the header name (never `Authorization`). The key is never copied into the folder |
+| Each user signs in (OAuth) | `["oauth2_code"]` with `client: {registration: ["cimd", "dcr"]}` | Each user's own: leave `connection` out. The server must publish its OAuth protected resource metadata |
+
+Creating the connector and its connection takes the app's server token, so unless you were
+given one, report each server under "migrated" with the one-time setup call the app's backend
+still has to make. Never write the source's header values or tokens into the output. The calls in full are in
+[Custom connectors](https://getstream.io/agents/docs/python/connectors/mcp/).
 
 Provider/model spellings: a competitor's model name is almost never a valid target.
 `openai/gpt-4.1-mini`, `deepgram/nova-3`, and `cartesia/sonic-3` all fail session start

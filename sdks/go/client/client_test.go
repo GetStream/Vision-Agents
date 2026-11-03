@@ -823,6 +823,27 @@ func TestImagesAndClipsGoOverWithTheQuestion(t *testing.T) {
 	}
 }
 
+func TestAVoiceNoteGoesOverWithTheQuestionAndItsRequestID(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "", VoiceNote{URL: "https://example.com/note.m4a"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	audio, _ := json.Marshal(body["audio"])
+	if string(audio) != `{"url":"https://example.com/note.m4a"}` {
+		t.Errorf("the voice note went over as %s", audio)
+	}
+	if text, sent := body["text"]; !sent || text != "" {
+		t.Errorf("the text went over as %v, sent %v", text, sent)
+	}
+	if id, _ := body["request_id"].(string); id == "" {
+		t.Error("the router uploads a voice note to the conversation itself, so it goes with a request id")
+	}
+}
+
 func TestALengthAndAnEffortGoOverWithTheQuestion(t *testing.T) {
 	backend := newRouter(t)
 	session := open(t, backend)
