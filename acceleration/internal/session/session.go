@@ -731,19 +731,19 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // that one returns the id of the response it recorded. clientID names the install the
 // command came from, which a client tool called while answering is addressed to. images
 // are photos sent with it, shown on the person's message and to the model with this reply
-// alone. frames are those of videos sent with it, which the model is shown with this reply
-// alone and the person's message does not show, as Respond's frames. asked is what the caller
-// wants changed about this reply alone. notes are voice notes sent with it, shown on the
-// person's message; text already holds what they said.
-func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images, frames []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
-	shown := slices.Concat(images, frames)
+// alone; the frames of a video among them are the model's alone, as Respond's are, and are not
+// part of what a retry is matched on. asked is what the caller wants changed about this reply
+// alone. notes are voice notes sent with it, shown on the person's message; text already holds
+// what they said.
+func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
 	var photos []persistent.Photo
 	if !handedOn {
 		var err error
-		if photos, err = s.photos(ctx, id, images, notes); err != nil {
+		sent := slices.DeleteFunc(slices.Clone(images), func(image llm.ImagePart) bool { return image.Video })
+		if photos, err = s.photos(ctx, id, sent, notes); err != nil {
 			return persistent.CommandReceipt{}, "", err
 		}
 	}
@@ -759,7 +759,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
 	if handedOn {
-		return s.followUp(ctx, id, text, shown, asked, true)
+		return s.followUp(ctx, id, text, images, asked, true)
 	}
 	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
 	if err != nil {
@@ -777,7 +777,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, shown, asked)
+	turnID, err := s.current().RespondTo(ctx, text, images, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)

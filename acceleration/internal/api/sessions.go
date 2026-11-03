@@ -271,7 +271,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 		return nil, failure
 	}
 	if id != "" && found.Durable() {
-		receipt, _, err := found.RespondCommand(ctx, id, text, value(request.Body.ClientId), nil, nil, options.LLM{}, notes...)
+		receipt, _, err := found.RespondCommand(ctx, id, text, value(request.Body.ClientId), nil, options.LLM{}, notes...)
 		if errors.Is(err, conversation.ErrCommandConflict) {
 			return nil, conflict(err.Error())
 		}

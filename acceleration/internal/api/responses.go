@@ -102,7 +102,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 
 	var responseID string
 	if commandID != "" && found.Durable() {
-		_, responseID, err = found.RespondCommand(ctx, commandID, text, "", parts[:len(images)], parts[len(images):], asked, notes...)
+		_, responseID, err = found.RespondCommand(ctx, commandID, text, "", parts, asked, notes...)
 	} else {
 		responseID, err = found.Respond(ctx, text, parts, asked, parts[:len(images)]...)
 	}
