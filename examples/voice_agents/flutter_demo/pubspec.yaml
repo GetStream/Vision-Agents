@@ -16,12 +16,15 @@ dependencies:
   # first uses it.
   permission_handler: ^12.0.3
   # Stream Chat's AI components: the conversation, its steps, the composer and the voice glow.
-  # From main, pinned, until they are released.
+  # From stream-chat-flutter-ai#30 (built on Stream's design system), pinned, until it is merged.
   stream_chat_flutter_ai:
     git:
       url: https://github.com/GetStream/stream-chat-flutter-ai.git
-      ref: e7a0d2a254a5cf9d7bc2a07321a8ebd20523e354
+      ref: ced7d1c3d22f9ee54a6e2c64ac13644ca08f26be
       path: packages/stream_chat_flutter_ai
+  # Stream's design system, which the AI components are built on: its widgets for the app's own
+  # screens (app bar, buttons, sheets). The version stream_chat_flutter_ai uses.
+  stream_core_flutter: ^0.5.3
   # The channel a written conversation is kept in; the version vision_agents_chat pins.
   stream_chat: 10.4.0
   stream_video_flutter: 1.6.0
