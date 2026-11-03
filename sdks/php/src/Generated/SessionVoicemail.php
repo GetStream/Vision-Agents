@@ -15,7 +15,7 @@ final readonly class SessionVoicemail
 {
     public function __construct(
         public VoicemailAction|string $action,
-        // Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_messa...
+        // Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the ag...
         public ?string $message = null,
     ) {
     }
