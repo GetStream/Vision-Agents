@@ -22,14 +22,13 @@ use GetStream\VisionAgents\Generated\SessionVideo;
 final readonly class Declaration
 {
     private const array STRINGS = ['name', 'description', 'mode', 'stt', 'tts', 'voice', 'llm', 'harness', 'subagent', 'search', 'sandbox'];
-    private const array LISTS = ['plugins', 'keyterms'];
+    private const array LISTS = ['keyterms'];
 
     /**
      * @param ?string $sts null when the declaration says nothing, empty when it turns it off
      * @param string $voice the voice the agent speaks in: a provider's own voice id, or one of your voices by id or by
      *     the name you gave it. Prefix it with `custom:` to mean only yours. A native (sts) agent
      *     takes the vendor's own voice name instead
-     * @param list<string> $plugins
      * @param list<string> $keyterms
      * @param array<string, string> $tags
      * @param ?list<Connector> $connectors null when the declaration says nothing, which leaves
@@ -51,7 +50,6 @@ final readonly class Declaration
         public string $search = '',
         public ?Greeting $greeting = null,
         public string $sandbox = '',
-        public array $plugins = [],
         public array $keyterms = [],
         public array $tags = [],
         public ?SessionVideo $video = null,
@@ -98,17 +96,12 @@ final readonly class Declaration
                 $values['dispatch'] = self::dispatch($value);
             } elseif ($key === 'sandbox_options') {
                 $values['sandbox_options'] = self::sandboxOptions($value);
+            } elseif ($key === 'plugins') {
+                self::refuseReplaced($mapped instanceof \stdClass ? $mapped->plugins : $value);
             } elseif ($key === 'connectors') {
                 $connectors = self::connectors($mapped instanceof \stdClass ? $mapped->connectors : $value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
-            }
-        }
-
-        $plugins = self::pickList($values, 'plugins');
-        foreach ($connectors ?? [] as $connector) {
-            if (in_array($connector->name, $plugins, true)) {
-                throw new ConfigurationException("\"{$connector->name}\" is named under both connectors and plugins");
             }
         }
 
@@ -126,7 +119,6 @@ final readonly class Declaration
             search: self::pick($values, 'search'),
             greeting: ($values['greeting'] ?? null) instanceof Greeting ? $values['greeting'] : null,
             sandbox: self::pick($values, 'sandbox'),
-            plugins: $plugins,
             keyterms: self::pickList($values, 'keyterms'),
             tags: self::pickTags($values),
             video: ($values['video'] ?? null) instanceof SessionVideo ? $values['video'] : null,
@@ -134,6 +126,17 @@ final readonly class Declaration
             connectors: $connectors,
             sandboxOptions: ($values['sandbox_options'] ?? null) instanceof SandboxOptions ? $values['sandbox_options'] : null,
         );
+    }
+
+    /**
+     * Refuses a `plugins` that names anything: connectors replaced it. An empty or null one was
+     * never sent, so the file loads as it did.
+     */
+    private static function refuseReplaced(mixed $value): void
+    {
+        if ($value !== null && $value !== []) {
+            throw new ConfigurationException('plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors');
+        }
     }
 
     private static function scalar(string $key, mixed $value): string
