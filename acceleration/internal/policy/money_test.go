@@ -248,7 +248,9 @@ func (s *PolicySuite) TestAnOrganizationWithNoCreditMayNotSpend() {
 	for _, tier := range []string{usage.DefaultTier, openTier} {
 		s.Run(tier, func() {
 			s.SetupTest()
-			enforcer := s.billed()
+			// An account unread for MaxStale is refused as unreadable, which is an ErrNoCredits too,
+			// so a first read slow on a loaded machine would answer for the balance's own refusal.
+			enforcer := s.billed(func(settings *Settings) { settings.MaxStale = time.Minute })
 			enforcer.Join(s.app, s.org, tier)
 
 			spend := s.spendRefused(enforcer.Enforcer, s.app, ErrNoCredits)
@@ -514,7 +516,10 @@ func (s *PolicySuite) TestAMissReadsThePoliciesNowAndTheMoneyLater() {
 		DataPolicy:    store.PolicyDataPolicy{AllowTraining: &no},
 		AllowedModels: &[]string{"openai/gpt-5.6-luna"},
 	})
-	enforcer := s.billed()
+	// An account never read admits until it has gone unread for MaxStale, which the admission
+	// itself can outlast: it waits FirstRead (250 ms) for the first read of the limits, and on a
+	// loaded machine for the policies, so it needs a MaxStale far past both.
+	enforcer := s.billed(func(settings *Settings) { settings.MaxStale = time.Minute })
 	enforcer.front.down.Store(true)
 
 	admitted, err := enforcer.Admit(s.ctx, ownerOf(s.app))
@@ -569,7 +574,9 @@ func (s *PolicySuite) TestSpendRecordedHereCountsAtOnce() {
 }
 
 func (s *PolicySuite) TestAHoldIsKeptUntilAReadAfterItsAck() {
-	enforcer := s.billed()
+	// A hold is dropped once PendingTTL passes unacked, which the two reads before the check can
+	// outlast on a loaded machine; it is let go here by the ack alone.
+	enforcer := s.billed(func(settings *Settings) { settings.PendingTTL = time.Hour })
 	s.usage().Credit(s.T(), s.org, 3_000_000)
 	enforcer.Join(s.app, s.org, openTier)
 	s.read(enforcer.Enforcer, s.org)
