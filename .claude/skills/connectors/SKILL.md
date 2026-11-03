@@ -377,18 +377,22 @@ in the thread. It needs more than tools:
 3. **A connection.** New connection › Slack bot › install the app into the workspace.
 4. **One live agent per connection.** Bind it `fixed` on exactly one agent config. With two,
    the bridge does not know which agent answers.
-5. **Stream Chat delivery.** The reply runs when Stream Chat delivers `message.new` for the
-   thread to this router (`POST /v1/chat/internal/messages`, signed with a key in
+5. **Stream Chat delivery.** A Slack message is answered with no Stream Chat delivery: the
+   bridge worker reads it from the events route (`internal/channelbridge/AGENTS.md`). Delivery
+   matters only for text written straight into the thread channel: Stream Chat delivers
+   `message.new` to this router (`POST /v1/chat/internal/messages`, signed with a key in
    `chat.inbound_keys`). The router points no message hook any more: not when a provider
    app is put, not through `PUT …/oauth-client`, not through `go run ./cmd/phone hooks`
    (it writes the call hook only). The old route `/v1/chat/hooks/stream` is still served for
-   one release, as a way back. **A local router behind a tunnel gets no Chat text from a
-   shared shard's app:** Stream Chat delivers to the one router its shard names. Test the
-   reply on a router the shard delivers to, or a Stream app on a shard that delivers to yours.
+   one release, as a way back. **A local router behind a tunnel gets no Chat text written
+   into a thread channel from a shared shard's app:** Stream Chat delivers to the one router
+   its shard names. Test a direct write on a router the shard delivers to, or a Stream app on
+   a shard that delivers to yours. The Slack reply itself needs no such router.
 
    An app that an older router pointed keeps its message hook until someone drops it:
-   `go run ./cmd/phone hooks -remove <ROUTER_PUBLIC_URL> [-app <stream app id>]` drops the
-   call and the message hook of that base, `hooks` alone lists what is left. Hooks are one
+   `go run ./cmd/phone hooks -url <ROUTER_PUBLIC_URL> -remove <ROUTER_PUBLIC_URL> [-app <stream app id>]`
+   drops the call and the message hook of that base and keeps the call hook of the running
+   router (`-remove` alone drops the call hook too), `hooks` alone lists what is left. Hooks are one
    setting for the whole Stream app: look first, and change only your own. In the dashboard
    they are under **Chat › Settings › Webhooks**.
 6. **Test with a mention typed by hand.** A message posted through another Slack app (an
@@ -406,7 +410,7 @@ Check the router log first (`docker compose logs -f router` locally).
 | «no OAuth client available» on consent | No Stream client (`<ENV>_MCP_CLIENT_ID`) and no app client | Set one of them |
 | 409 «Another customer's record already names this provider app» | That Slack app is registered to another customer on this router | Use another Slack app, or remove the old record |
 | A 401 on `/v1/connectors/events/…` with the text `api_key is required` | The gateway in front does not allow the route. The router's own refusal is a different body: it checks the provider's signature | Allowlist the events routes on the gateway |
-| The events request gets 200, but no reply. The router you expect logs nothing, and the router the hook points at logs «an arriving message's channel names a config nobody in its app holds» | Stream Chat delivers the app's messages to another router (the shard's `AGENTS_ROUTER_URL`), or an old message hook of the app still points at one | Delivery goes to the router the shard names (step 4.5); drop an old message hook with `phone hooks -remove`. Also check that two configs do not bind the connection, and that the mention did not come from an app (steps 4.4, 4.6) |
+| A message written straight into the thread channel gets no reply (a Slack message does not need delivery: step 4.5). The router you expect logs nothing, and the router the hook points at logs «an arriving message's channel names a config nobody in its app holds» | Stream Chat delivers the app's messages to another router (the shard's `AGENTS_ROUTER_URL`), or an old message hook of the app still points at one | Delivery goes to the router the shard names (step 4.5); drop an old message hook with `phone hooks -remove`. Also check that two configs do not bind the connection, and, for a Slack message, that the mention did not come from an app (steps 4.4, 4.6) |
 | A `session` binding opens with no tools | The user has no connected connection, or the caller is not a verified end user | Connect from Playground; check the user header |
 | Validate says failed | The provider refused the credential | Replace the token, or Reconnect for OAuth |
 | The consent fails, and the connection's last validation has code `connector_consent_refused` with `unauthorized_client` | The provider does not let this client sign in for the organization. For Gong, its tech admin has not added the router as an MCP integration | An admin at the provider allows the client with the router's redirect URI (for Gong, see step 2), then consent again |

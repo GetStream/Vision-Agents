@@ -6,7 +6,6 @@ import (
 	"slices"
 	"testing"
 
-	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
@@ -40,23 +39,14 @@ var (
 	routerOwned    = json.RawMessage(`{"id":"h4","hook_type":"webhook","enabled":false,"event_types":["message.updated"],"webhook_url":"` + routerHook + `","timeout_ms":3000,"failover_config":{"type":"s3","s3_bucket":"mine"}}`)
 )
 
-// point is what a router pointing an app at url does with the app's hooks: the hook at url
-// asked for new messages, switched on, or one added, in one update.
-func (s *HooksSuite) point(url string) (bool, error) {
+// rewrite is the app's hooks read and written back unchanged, the way every change to them
+// goes through the production code.
+func (s *HooksSuite) rewrite() error {
 	hooks, err := ReadHooks(context.Background(), s.chat.Client)
 	if err != nil {
-		return false, err
+		return err
 	}
-	enabled, updated, hookType := true, false, "webhook"
-	for index, hook := range hooks {
-		if webhookURL(hook.EventHook) == url {
-			hooks[index].EventTypes, hooks[index].Enabled, updated = []string{"message.new"}, &enabled, true
-		}
-	}
-	if !updated {
-		hooks = append(hooks, Hook{EventHook: getstream.EventHook{HookType: &hookType, WebhookUrl: &url, Enabled: &enabled, EventTypes: []string{"message.new"}}})
-	}
-	return updated, WriteHooks(context.Background(), s.chat.Client, hooks)
+	return WriteHooks(context.Background(), s.chat.Client, hooks)
 }
 
 func (s *HooksSuite) SetupTest() {
@@ -88,50 +78,21 @@ func (s *HooksSuite) lastUpdate() map[string]json.RawMessage {
 	return fields
 }
 
-func (s *HooksSuite) TestWritingKeepsEveryOtherHookAsStreamSentIt() {
+func (s *HooksSuite) TestWritingKeepsEveryHookAsStreamSentIt() {
 	s.chat.SetEventHooks("test", otherHooks...)
 
-	updated, err := s.point(routerHook)
+	s.Require().NoError(s.rewrite())
 
-	s.Require().NoError(err)
-	s.False(updated)
-	sent := s.sent()
-	s.Require().Len(sent, 4)
-	s.Equal(texts(sqsFIFO, pubSub, s3FailoverSent), sent[:3], "every other hook, every field, byte for byte but its times")
-	hooks := s.chat.EventHooks("test")
-	s.Equal(routerHook, *hooks[3].WebhookUrl)
-	s.Equal([]string{"message.new"}, hooks[3].EventTypes)
-	s.True(*hooks[3].Enabled)
+	s.Equal(texts(sqsFIFO, pubSub, s3FailoverSent), s.sent(), "every hook, every field, byte for byte but its times")
 }
 
 func (s *HooksSuite) TestWritingSendsTheHooksAndNoOtherSetting() {
 	s.chat.SetEventHooks("test", otherHooks...)
 
-	_, err := s.point(routerHook)
+	s.Require().NoError(s.rewrite())
 
-	s.Require().NoError(err)
 	s.Equal([]string{"event_hooks"}, keys(s.lastUpdate()),
 		"no grants, user_search_disallowed_roles or webhook_events sent as null")
-}
-
-func (s *HooksSuite) TestChangingAHookChangesOnlyWhatTheRouterSets() {
-	s.chat.SetEventHooks("test", sqsFIFO, routerOwned, pubSub)
-
-	updated, err := s.point(routerHook)
-
-	s.Require().NoError(err)
-	s.True(updated)
-	sent := s.sent()
-	s.Require().Len(sent, 3)
-	s.Equal(string(sqsFIFO), sent[0])
-	s.Equal(string(pubSub), sent[2])
-	var own map[string]any
-	s.Require().NoError(json.Unmarshal([]byte(sent[1]), &own))
-	s.Equal(map[string]any{
-		"id": "h4", "hook_type": "webhook", "enabled": true, "event_types": []any{"message.new"},
-		"webhook_url": routerHook, "timeout_ms": float64(3000),
-		"failover_config": map[string]any{"type": "s3", "s3_bucket": "mine"},
-	}, own, "its events and switch set, the rest of it kept")
 }
 
 func (s *HooksSuite) TestRemovingKeepsEveryOtherHookAsStreamSentIt() {
@@ -161,23 +122,20 @@ func (s *HooksSuite) TestAHooksTimesGoBackAsText() {
 	read := json.RawMessage(`{"id":"h9","hook_type":"webhook","enabled":true,"event_types":["call.session_started"],"webhook_url":"https://other.example/h","created_at":1791485542458572000,"updated_at":1791588958134941000}`)
 	s.chat.SetEventHooks("test", read)
 
-	_, err := s.point(routerHook)
-
-	s.Require().NoError(err)
+	s.Require().NoError(s.rewrite())
 	sent := s.sent()
-	s.Require().Len(sent, 2)
+	s.Require().Len(sent, 1)
 	s.Equal(`{"id":"h9","hook_type":"webhook","enabled":true,"event_types":["call.session_started"],"webhook_url":"https://other.example/h","created_at":"2026-10-08T18:52:22.458572Z","updated_at":"2026-10-09T23:35:58.134941Z"}`, sent[0])
 }
 
-// The router's own hook, changed, keeps its times too, as text.
+// The router's own hook keeps its times as text too.
 func (s *HooksSuite) TestTheRoutersOwnHookKeepsItsTimesAsText() {
 	s.chat.SetEventHooks("test", json.RawMessage(`{"id":"h4","hook_type":"webhook","enabled":false,"event_types":["message.updated"],"webhook_url":"`+routerHook+`","created_at":1791485542458572000}`))
 
-	_, err := s.point(routerHook)
+	s.Require().NoError(s.rewrite())
 
-	s.Require().NoError(err)
 	var own map[string]any
 	s.Require().NoError(json.Unmarshal([]byte(s.sent()[0]), &own))
 	s.Equal("2026-10-08T18:52:22.458572Z", own["created_at"])
-	s.Equal([]any{"message.new"}, own["event_types"])
+	s.Equal([]any{"message.updated"}, own["event_types"], "left as it was")
 }
