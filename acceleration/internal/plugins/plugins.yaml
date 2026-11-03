@@ -135,7 +135,7 @@ plugins:
     instance_hint: The shop hostname, such as mystore.myshopify.com
     # The shop host pattern of
     # https://shopify.dev/docs/apps/build/authentication-authorization/access-tokens/authorization-code-grant,
-    # as the Shopify connector checks it (connectors/core/testdata/manifests/shopify.yaml).
+    # as the Shopify connector checks it (connectors/providers/shopify.yaml:43-47).
     instance_pattern: ^[a-zA-Z0-9][a-zA-Z0-9\-]*\.myshopify\.com$
   # https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/sobject-reads.html,
   # opened October 5, 2026. One host for every production org, read-only: sobject-mutations,
