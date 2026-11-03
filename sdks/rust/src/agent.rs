@@ -569,13 +569,6 @@ impl Agent {
     async fn sync_folder(&self, folder: &Folder) -> Result<types::AgentConfig> {
         let client = self.router()?;
         let name = self.config.clone().unwrap_or_else(|| self.name.clone());
-        // Still sent as before, until the router stops taking them.
-        if !folder.settings.plugins.is_empty() {
-            eprintln!(
-                "WARN agent.yaml plugins are deprecated: rename plugins to connectors agent={name} plugins={:?}",
-                folder.settings.plugins
-            );
-        }
         let hash = self.folder_hash(folder);
         if folder::read_stamp(&folder.path) == hash
             && let Some(stored) = stored_config(client, &name).await?
@@ -650,14 +643,6 @@ impl Agent {
             greeting: settings.greeting.clone(),
             sandbox: sandbox.or(settings.sandbox),
             sandbox_options: settings.sandbox_options.clone(),
-            plugins: (!settings.plugins.is_empty()).then(|| {
-                settings
-                    .plugins
-                    .iter()
-                    .cloned()
-                    .map(types::PluginEntry::String)
-                    .collect()
-            }),
             keyterms: (!settings.keyterms.is_empty()).then(|| settings.keyterms.clone()),
             tags,
             video: settings.video.as_ref().map(|video| types::SessionVideo {
