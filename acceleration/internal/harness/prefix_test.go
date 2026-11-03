@@ -169,7 +169,7 @@ func (s *HarnessSuite) TestADroppedSpeculationLeavesItsNotesPending() {
 
 	s.respond("speculative", "is it done")
 	s.False(s.harness.Pending(), "the speculative reply took the answer")
-	s.harness.Forget("speculative")
+	s.harness.Forget("speculative", 0)
 
 	s.True(s.harness.Pending(), "a reply nobody heard told nobody")
 	s.respond("turn-2", "is it done")

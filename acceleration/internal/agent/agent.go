@@ -327,6 +327,9 @@ type Agent struct {
 	// first speculative reply to a turn of the caller's until the turn is answered.
 	speculations map[string]*speculation
 	speculating  string
+	// speculated numbers the replies started speculatively, so a harness that is told to
+	// forget one does not forget the answer asked for under the same id after it.
+	speculated uint64
 	// pumps are the goroutines draining those streams into replies.
 	pumps sync.WaitGroup
 
