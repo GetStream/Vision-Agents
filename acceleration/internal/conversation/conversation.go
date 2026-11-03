@@ -1176,11 +1176,7 @@ func entryOf(p Page, m Message) entry {
 	if photos := photosOn(m); m.Role == "user" && photos > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
-		// A message of photos alone is the note alone.
-		if said != "" {
-			said += "\n\n"
-		}
-		said += photoNote(photos)
+		said = agent.PhotoNote(said, photos)
 	}
 	content := said
 	var artifacts []ArtifactAttachment
@@ -1235,7 +1231,6 @@ func entryOf(p Page, m Message) entry {
 	return entry{message: message, turn: turn}
 }
 
-// photoNote follows a person's words in history when they sent photos with them.
 // photosOn counts the photos on m. A voice note sent with it is not one: its text already
 // holds what was said. A thread channel's photos are read without a type, so a file is a
 // photo unless it is audio.
@@ -1247,13 +1242,6 @@ func photosOn(m Message) int {
 		}
 	}
 	return photos
-}
-
-func photoNote(count int) string {
-	if count == 1 {
-		return "[sent with a photo, not shown again]"
-	}
-	return fmt.Sprintf("[sent with %d photos, not shown again]", count)
 }
 
 // HistoryLine is one message of a conversation the caller kept itself, such as a thread in

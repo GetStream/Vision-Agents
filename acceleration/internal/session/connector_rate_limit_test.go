@@ -324,7 +324,11 @@ func (s *RateLimitSuite) logged(connection string, count int) []string {
 		require.NoError(c, err)
 		require.GreaterOrEqual(c, len(rows), count)
 	}, 5*time.Second, 20*time.Millisecond)
-	never(s.T(), func() bool { return len(read()) > count }, 300*time.Millisecond, 50*time.Millisecond)
+	// An error counts as a change: never's check runs off the test goroutine, so it only returns.
+	never(s.T(), func() bool {
+		rows, err := fetch()
+		return err != nil || len(rows) > count
+	}, 300*time.Millisecond, 50*time.Millisecond)
 	var types []string
 	for _, row := range read() {
 		types = append(types, row.ErrorType)

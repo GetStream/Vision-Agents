@@ -16,16 +16,18 @@ load_dotenv()
 
 """
 A text agent on the router's connectors, plus Blender in the router's sandbox.
-TableJourney, which knows where to eat, is an MCP server the router has never heard of.
+TableJourney, which knows where to eat, is a public MCP server outside the catalog, so it is a
+custom connector the app's backend creates once.
 
 `agent.yaml` is where all of it is set up, and each kind is set up differently. Sentry,
 GitHub, HubSpot and Salesforce are the company's accounts: each entry sets
 `connection: company`, the label of the connection created once on the dashboard, and every
 conversation uses that account. Linear, Google Calendar, Drive and Docs, Calendly, Cal.com
 and Slack are each person's. A name alone is a session binding offering every tool; `tools`
-on an entry is the patterns it offers. readonly, scopes and toolsets are plugins-only. In a
-chat a login request is a `connector_authorization` attachment. Blender is no MCP server at all: `sandbox_options` builds it into the
-router's Daytona sandbox, and `skills/render.md` is what the subagent writes its scene
+on an entry is the patterns it offers. TableJourney's entry names the custom connector and
+the label of its connection. In a chat a login request is a `connector_authorization`
+attachment. Blender is no MCP server at all: `sandbox_options` builds it into the router's
+Daytona sandbox, and `skills/render.md` is what the subagent writes its scene
 under. The render comes back as a file of run_code, attached to the reply.
 
 A calendar belongs to somebody, so the conversation is opened for an end user. Without one

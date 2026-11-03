@@ -1200,6 +1200,42 @@ func (s *HarnessSuite) TestATurnMadeToAnswerIsOfferedNoToolsAndToldWhy() {
 	s.Contains(shown(s.fast.requests()[0]), answerNow)
 }
 
+func (s *HarnessSuite) TestTheNoteToAnswerSaysNothingOfTimeOrOfTheCaller() {
+	s.tools = testTools()
+
+	for name, text := range map[string]bool{"voice": false, "text": true} {
+		s.Run(name, func() {
+			s.build(true)
+			s.harness.options.Text = text
+
+			s.answer(Turn{
+				ID:        "tool-9-" + name,
+				History:   []llm.Message{{Role: llm.User, Content: "where is my order"}},
+				AfterTool: true,
+				Answers:   true,
+			})
+
+			requests := s.fast.requests()
+			s.Require().Len(requests, 1)
+			input := requests[0].Input
+			end := len(input)
+			for end > 0 && IsNote(input[end-1]) {
+				end--
+			}
+			s.Require().Less(end, len(input), "the note is the trailing system note")
+			var notes []string
+			for _, message := range input[end:] {
+				notes = append(notes, message.Content)
+			}
+			note := strings.Join(notes, "\n")
+			s.Contains(note, "No more tools this turn: answer now from what the tools returned")
+			for _, wrong := range []string{"no time", "waiting", "answer the caller"} {
+				s.NotContains(strings.ToLower(note), wrong, "a text reader is told nothing of a call")
+			}
+		})
+	}
+}
+
 func (s *HarnessSuite) TestACallOnAReplyOfferedNoToolsIsDropped() {
 	s.tools = testTools()
 	s.build(true)
