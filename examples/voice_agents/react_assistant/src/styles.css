@@ -12,8 +12,9 @@
   font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
 }
 
+/* The system's appearance, until the person picks one with the sidebar's switch. */
 @media (prefers-color-scheme: dark) {
-  :root {
+  :root:not([data-theme="light"]) {
     --bg: #101114;
     --surface: #1c1e23;
     --text: #eceef2;
@@ -23,6 +24,17 @@
     --sidebar-hover: #24262c;
     color-scheme: dark;
   }
+}
+
+:root[data-theme="dark"] {
+  --bg: #101114;
+  --surface: #1c1e23;
+  --text: #eceef2;
+  --muted: #9aa0ab;
+  --border: #2c2f36;
+  --sidebar: #16171b;
+  --sidebar-hover: #24262c;
+  color-scheme: dark;
 }
 
 * {
@@ -137,7 +149,7 @@ button {
   border-right: 1px solid var(--border);
 }
 
-.rail-user {
+.rail-bottom {
   margin-top: auto;
 }
 
@@ -290,6 +302,7 @@ button {
 }
 
 .signed-in-text {
+  flex: 1;
   display: flex;
   flex-direction: column;
   min-width: 0;

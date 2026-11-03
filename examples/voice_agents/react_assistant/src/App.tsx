@@ -13,7 +13,7 @@ import { Conversations, displayTitle } from "./conversations";
 import { messageOf } from "./errors";
 import { deviceTools } from "./deviceTools";
 import { MenuIcon, NewChatIcon } from "./icons";
-import { DARK, useMediaQuery, useStoredFlag, WIDE } from "./layout";
+import { useMediaQuery, useStoredFlag, useTheme, WIDE } from "./layout";
 import { scheduleReminders } from "./reminders";
 import { useStore } from "./store";
 import { VoiceMode } from "./VoiceMode";
@@ -66,8 +66,8 @@ function Assistant_() {
   const [isCollapsed, setCollapsed] = useStoredFlag("juno.sidebar-collapsed", false);
   const [isMenuOpen, setMenuOpen] = useState(false);
   const isListShown = isWide ? !isCollapsed : isMenuOpen;
-  // Stream's components are light unless told otherwise, so they follow the system with the page.
-  const isDark = useMediaQuery(DARK);
+  // Stream's components are light unless told otherwise, so they are told the page's appearance.
+  const [theme, setTheme] = useTheme();
   /** The conversation open, or undefined for a new one. */
   const [selected, setSelected] = useState<string | undefined>(undefined);
   // Which conversation the screen was opened for. It changes only when the person picks one, so
@@ -126,15 +126,17 @@ function Assistant_() {
       }}
       onNew={() => show(undefined)}
       onOpen={(session) => show(session.id)}
+      onTheme={setTheme}
       selected={selected}
+      theme={theme}
     />
   );
 
   return (
-    <div className={`app str-chat str-chat__theme-${isDark ? "dark" : "light"} ${isWide ? "wide" : "narrow"}`}>
+    <div className={`app str-chat str-chat__theme-${theme} ${isWide ? "wide" : "narrow"}`}>
       {isWide ? (
         isCollapsed ? (
-          <SidebarRail onExpand={() => setCollapsed(false)} onNew={() => show(undefined)} />
+          <SidebarRail onExpand={() => setCollapsed(false)} onNew={() => show(undefined)} onTheme={setTheme} theme={theme} />
         ) : (
           <aside className="sidebar">{list}</aside>
         )

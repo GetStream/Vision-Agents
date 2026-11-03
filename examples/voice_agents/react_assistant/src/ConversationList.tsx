@@ -3,7 +3,8 @@ import { Avatar } from "stream-chat-react";
 
 import { Assistant } from "./assistant";
 import { displayTitle, type Conversations, type SessionRow } from "./conversations";
-import { NewChatIcon, SidebarIcon, TrashIcon } from "./icons";
+import { MoonIcon, NewChatIcon, SidebarIcon, SunIcon, TrashIcon } from "./icons";
+import type { Theme } from "./layout";
 import { daySections } from "./sections";
 import { useStore } from "./store";
 
@@ -18,6 +19,8 @@ export function ConversationList({
   onNew,
   onOpen,
   onDelete,
+  theme,
+  onTheme,
 }: {
   conversations: Conversations;
   /** The conversation open beside this, or undefined for a new one. */
@@ -27,6 +30,8 @@ export function ConversationList({
   onNew: () => void;
   onOpen: (session: SessionRow) => void;
   onDelete: (session: SessionRow) => void;
+  theme: Theme;
+  onTheme: (theme: Theme) => void;
 }) {
   const { items, failure } = useStore(conversations);
   const [search, setSearch] = useState("");
@@ -90,13 +95,25 @@ export function ConversationList({
         {search && items.length === 0 && !failure && <p className="list-empty">No conversations match “{search}”.</p>}
         {failure && <p className="list-failure">{failure}</p>}
       </div>
-      <SignedIn />
+      <SignedIn>
+        <ThemeSwitch onTheme={onTheme} theme={theme} />
+      </SignedIn>
     </nav>
   );
 }
 
 /** The sidebar folded on a wide window: open it again, start a conversation, and who is signed in. */
-export function SidebarRail({ onExpand, onNew }: { onExpand: () => void; onNew: () => void }) {
+export function SidebarRail({
+  onExpand,
+  onNew,
+  theme,
+  onTheme,
+}: {
+  onExpand: () => void;
+  onNew: () => void;
+  theme: Theme;
+  onTheme: (theme: Theme) => void;
+}) {
   return (
     <nav className="sidebar-rail" aria-label="Conversations">
       <button aria-label="Open sidebar" className="icon-button" onClick={onExpand} title="Open sidebar" type="button">
@@ -105,7 +122,10 @@ export function SidebarRail({ onExpand, onNew }: { onExpand: () => void; onNew: 
       <button aria-label="New chat" className="icon-button" onClick={onNew} title="New chat" type="button">
         <NewChatIcon />
       </button>
-      <div className="rail-user" title={Assistant.user.name}>
+      <div className="rail-bottom">
+        <ThemeSwitch onTheme={onTheme} theme={theme} />
+      </div>
+      <div title={Assistant.user.name}>
         <Avatar size="md" userName={Assistant.user.name} />
       </div>
     </nav>
@@ -113,7 +133,7 @@ export function SidebarRail({ onExpand, onNew }: { onExpand: () => void; onNew: 
 }
 
 /** Who the page talks to the router as. There is no sign-in, so there is nothing to sign out of. */
-function SignedIn() {
+function SignedIn({ children }: { children: React.ReactNode }) {
   return (
     <div className="signed-in">
       <Avatar size="md" userName={Assistant.user.name} />
@@ -121,6 +141,23 @@ function SignedIn() {
         <span className="signed-in-name">{Assistant.user.name}</span>
         <span className="signed-in-id">{Assistant.user.id}</span>
       </div>
+      {children}
     </div>
+  );
+}
+
+/** Light or dark, whichever the page is not in. */
+function ThemeSwitch({ theme, onTheme }: { theme: Theme; onTheme: (theme: Theme) => void }) {
+  const label = theme === "dark" ? "Switch to light mode" : "Switch to dark mode";
+  return (
+    <button
+      aria-label={label}
+      className="icon-button"
+      onClick={() => onTheme(theme === "dark" ? "light" : "dark")}
+      title={label}
+      type="button"
+    >
+      {theme === "dark" ? <SunIcon /> : <MoonIcon />}
+    </button>
   );
 }

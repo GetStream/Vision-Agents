@@ -69,7 +69,7 @@ npm run build     # types, then the bundle
   window narrower than 768 px in the drawer the menu button opens: `sessions.query()` lists this
   user's, `sessions.search` finds them by title, and the router titles each one as it goes. They
   are under Today, Yesterday, This week and then their month, by when they started, with who is
-  signed in at the bottom. The list is read again when it is shown, when a new chat gets its
+  signed in and a light or dark switch at the bottom, which follows the system until it is used. The list is read again when it is shown, when a new chat gets its
   session and after each reply. A new chat has no session until its first
   message is written, and one opened but never sent is deleted again on leaving it. One that
   ended carries on when it is next asked something.
