@@ -169,7 +169,6 @@ public sealed record Declaration
     /// <summary>How the sandbox is built and what it may reach, null when agent.yaml has no <c>sandbox_options:</c> block.</summary>
     public SandboxDeclaration? SandboxOptions { get; init; }
 
-
     /// <summary>
     /// The connectors whose tools the agent may call. Null when agent.yaml says nothing, which
     /// leaves the stored bindings; empty when it lists none, which removes them.

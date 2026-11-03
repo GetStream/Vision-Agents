@@ -230,7 +230,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### The .NET SDK refuses `plugins` in agent.yaml
 
-`Folder.Load` and `new Agent(...)` in `GetStream.VisionAgents` throw a `ConfigurationException` for a non-empty `plugins:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as the Go and Python SDKs do. `SyncAsync` no longer sends `plugins`, and no longer logs that they are deprecated. An empty `plugins: []` or a bare `plugins:` still loads. Name the provider under `connectors:` instead (AI-2527).
+`Folder.Load` and `new Agent(...)` in `GetStream.VisionAgents` throw a `ConfigurationException` for a non-empty `plugins:` in `agent.yaml`: `<path>/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors`, as the Go and Python SDKs do. `SyncAsync` no longer sends `plugins`, and no longer logs that they are deprecated. The public `Declaration.Plugins` property is removed, so code that reads it no longer compiles. An empty `plugins: []` or a bare `plugins:` still loads. Name the provider under `connectors:` instead (AI-2527).
 
 ### The router no longer points its Chat message hook at itself
 
