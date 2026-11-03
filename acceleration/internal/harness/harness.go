@@ -517,7 +517,13 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 	stream, err := session.Create(ctx, params)
 	if err != nil {
 		// A reply that never started read nothing: what it took is owed to the next one.
-		h.Release(turn.ID)
+		// A speculation cancelled in Create can fail after the answer took its ID, and what
+		// is recorded under the ID is then the answer's, as in Forget.
+		h.mu.Lock()
+		if current, taken := h.generations[turn.ID]; !taken || current == turn.Generation {
+			h.release(turn.ID)
+		}
+		h.mu.Unlock()
 	}
 	return stream, err
 }

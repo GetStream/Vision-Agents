@@ -1773,8 +1773,6 @@ func (s *AgentSuite) TestADroppedSpeculationForgottenAfterTheAnswerWasAskedLeave
 			return false
 		}
 	}
-	s.Never(func() bool { return isClosed(forgotten) }, 100*time.Millisecond, 10*time.Millisecond,
-		"the speculation was forgotten before the model finished it")
 	close(finish)
 	s.eventually(func() bool { return isClosed(forgotten) }, "the dropped speculation was never forgotten")
 

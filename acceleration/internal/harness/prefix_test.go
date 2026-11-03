@@ -196,6 +196,36 @@ func (s *HarnessSuite) TestAForgottenSpeculationLeavesTheAnswerAskedUnderItsIdAl
 	s.Empty(s.harness.DropUnoffered("turn-2", called), "an older speculation's Forget cleared the newer one's offer")
 }
 
+func (s *HarnessSuite) TestASpeculationCancelledInCreateLeavesTheAnswerAskedUnderItsIdAlone() {
+	s.tools = testTools()
+	s.build(true)
+	called := []llm.ToolCall{{ID: "call-1", Name: s.tools.Tools[0].Name, Arguments: "{}"}}
+	history := []llm.Message{{Role: llm.User, Content: "where is my order"}}
+
+	hold := make(chan struct{})
+	s.fast.mu.Lock()
+	s.fast.holdCreate = hold
+	s.fast.mu.Unlock()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	failed := make(chan error, 1)
+	go func() {
+		_, err := s.harness.Respond(ctx, Turn{ID: "turn-1", Instructions: "be brief", History: history, Generation: 1})
+		failed <- err
+	}()
+	s.eventually(func() bool { return len(s.fast.requests()) == 1 }, "the speculation was never asked")
+
+	s.fast.mu.Lock()
+	s.fast.holdCreate = nil
+	s.fast.mu.Unlock()
+	s.answer(Turn{ID: "turn-1", Instructions: "be brief", History: history, NoTools: true})
+
+	cancel()
+	s.Require().Error(<-failed, "the speculation's create did not fail")
+	s.harness.Forget("turn-1", 1)
+	s.Empty(s.harness.DropUnoffered("turn-1", called), "the speculation's failed create cleared that the answer was offered no tools")
+}
+
 func (s *HarnessSuite) TestAForgottenSpeculationAloneIsForgottenWhateverItsGeneration() {
 	s.tools = testTools()
 	s.build(true)
