@@ -70,8 +70,11 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 
 	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	commandID := value(request.Body.RequestId)
-	// Heard last, once nothing else can refuse the question, since hearing it is billed. A
-	// retry of a question carries what its first hearing heard.
+	// Heard after every check that can refuse the question beforehand, since hearing it is
+	// billed. Three refusals can still come after it is heard, and the note is billed then: the
+	// transcript pushes a typed text over the 1 MiB command limit, a second turn starts between
+	// the check and the start of this one, or the note fails to upload to Chat. A retry of a
+	// question carries what its first hearing heard.
 	text := request.Body.Text
 	var notes []conversation.VoiceNote
 	if request.Body.Audio != nil {
