@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -63,7 +64,10 @@ func (s *MessageHooksSuite) TestAVoiceRecordingNoWorkerWouldAnswerIsNotHeard() {
 	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
 		s.recordedMessage(s.namesConfig(), "", s.recordingAt("hello "+s.utils.uuid()))))
 
-	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, dropped, 10*time.Millisecond, "a recording nobody answers was heard")
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `msg="nobody could answer an arriving message" channel=`+s.channelID)
+	}, settleFor, 10*time.Millisecond, "the message was never offered to a worker")
+	s.Never(func() bool { return len(s.sttRowsSince(since)) > 0 }, time.Second, 10*time.Millisecond, "a recording nobody answers was heard")
 }
 
 // A voice recording sent to a running session whose agent leaves text to dispatch reaches its
