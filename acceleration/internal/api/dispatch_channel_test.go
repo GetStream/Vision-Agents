@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"net/http"
 	"slices"
@@ -15,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -141,18 +143,36 @@ func (s *MessageHooksSuite) TestAWorkersRespondCommandIsNotWrittenIntoTheChannel
 	s.answered(handed.Text, finishedReply)
 }
 
+// TestAWorkersCommandWithAPhotoUploadsNothingIntoTheChannel fails on base: the photo is
+// already on the person's message, and was uploaded again for the copy. The model is still
+// shown it.
+func (s *MessageHooksSuite) TestAWorkersCommandWithAPhotoUploadsNothingIntoTheChannel() {
+	handed := s.handedOut()
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	photo := "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"+s.utils.uuid()))
+	uploaded, seen := len(s.chat.Uploads()), len(s.vision.requests())
+
+	s.askedAs(opened.Id, CreateResponseRequest{Text: handed.Text, RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: photo}}})
+
+	s.answered(handed.Text, finishedReply)
+	s.Empty(s.chat.Uploads()[uploaded:])
+	s.True(slices.ContainsFunc(s.vision.requests()[seen:], llm.ResponseParams.HasImage), "the model was never shown the photo")
+}
+
 // TestAWorkersQuestionAskedAgainIsAnsweredOnce: the Go SDK asks after its request id once
 // its socket drops; the same id again starts no second reply and writes nothing.
 func (s *MessageHooksSuite) TestAWorkersQuestionAskedAgainIsAnsweredOnce() {
 	handed := s.handedOut()
-	opened := s.workersSession(handed)
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
+	seen := len(s.vision.requests())
 	asked := CreateResponseRequest{Text: handed.Text, RequestId: pointerTo(s.utils.uuid())}
 	s.askedAs(opened.Id, asked)
 	s.answered(handed.Text, finishedReply)
 
 	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", asked, nil))
 
-	s.Never(func() bool { return len(s.inTheChannel()) > 2 }, dropped, 20*time.Millisecond, "asked again, it was answered again")
+	s.Never(func() bool { return len(s.vision.requests())-seen > 1 }, dropped, 20*time.Millisecond, "asked again, the model was asked again")
+	s.Len(s.vision.requests()[seen:], 1)
 	s.answered(handed.Text, finishedReply)
 }
 

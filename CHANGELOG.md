@@ -262,6 +262,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A dispatched channel shows the person's first message once
+
+A dispatch worker's session on the channel a message was handed out from no longer writes a second copy of that message as `support-operator`. The copy came from the first question the worker asked with a `request_id`, which the Go SDK sends with every text-only question. Such a question is now answered with the reply alone, and the router uploads no photo again, as it already did for a question without a `request_id` and for a follow-up in the channel. Every other session still writes the question it is asked into its own channel (AI-2551).
+
 ### Tool rounds are bound even when a model calls a tool it was not offered
 
 A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).
