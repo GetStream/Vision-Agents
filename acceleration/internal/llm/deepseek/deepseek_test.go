@@ -4,6 +4,8 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openaicompat"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/openweights/hosttest"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -83,4 +85,28 @@ func (s *DeepSeekSuite) TestBaseURLCanBeOverriddenForADedicatedDeployment() {
 	provider, err := New(Options{APIKey: "k"})
 	s.Require().NoError(err)
 	s.NotNil(provider.Client())
+}
+
+// rolesSent is the role of every message a model sends upstream for a conversation with a
+// system message on both sides of the caller's turn.
+func (s *DeepSeekSuite) rolesSent(options Options) []string {
+	return hosttest.SentRoles(s.T(), func(baseURL string) (*openaicompat.LLM, error) {
+		options.APIKey, options.BaseURL = "k", baseURL
+		return New(options)
+	}, hosttest.Noted())
+}
+
+func (s *DeepSeekSuite) TestFlashSendsASystemMessageAfterTheCallerOnTheUsersSide() {
+	// V4's chat template, given a system message after the caller, has the model write on
+	// from the note and close a think block it never opened, all in the answer, which is
+	// how a harness note and a stray </think> reached a written reply.
+	s.Equal([]string{"system", "user", "user"}, s.rolesSent(Options{Model: "DeepSeek-V4-Flash-0731"}),
+		"one that opens the conversation is still a system message")
+}
+
+func (s *DeepSeekSuite) TestProSendsASystemMessageAfterTheCallerOnTheUsersSide() {
+	// Pro thinking does no better: the note lands where its thinking should start, so
+	// nothing streams as reasoning and the note and </think> arrive as the answer.
+	s.Equal([]string{"system", "user", "user"},
+		s.rolesSent(Options{Model: "DeepSeek-V4-Pro-0813", Thinking: true, ReasoningEffort: "low"}))
 }
