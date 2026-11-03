@@ -196,7 +196,7 @@ type Enforcer struct {
 	tiers   map[string]tierSeen
 	// now is the clock the tiers are kept by.
 	now func() time.Time
-	// userQuotaLogs quota.Throttles the line a user's own quota that cannot be read logs, per app.
+	// userQuotaLogs throttles (quota.Throttle) the line a user's own quota that cannot be read logs, to once a minute per customer.
 	userQuotaLogs quota.Throttle
 
 	money money
