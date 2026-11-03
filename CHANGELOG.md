@@ -262,6 +262,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A photo sent with no text is answered without a request id
+
+`POST /v1/agents/sessions/{id}/responses` and the session socket's `respond`, on a session kept in Stream Chat, now answer a question of photos alone that carries no `request_id`, as they did with one: the photos are uploaded and shown on the person's message, as data URIs, at most 8. Before, such a question was a 400 "invalid command ID or text". A question with text and no `request_id` is unchanged.
+
 ### Tool rounds are bound even when a model calls a tool it was not offered
 
 A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).
