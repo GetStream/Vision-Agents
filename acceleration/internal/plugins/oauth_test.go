@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -461,6 +462,93 @@ func (s *OAuthSuite) TestAServerNamedByURLNeverGetsTheDeploymentsSecret() {
 	s.Require().NoError(err)
 
 	s.Equal([]string{"", ""}, secrets, "the exchange and the refresh both go without the secret")
+}
+
+// A Shopify shop is a host under myshopify.com: the deployment's Shopify client logs into
+// one, and its secret goes to that shop's token endpoint on the exchange and the refresh.
+func (s *OAuthSuite) TestTheDeploymentsShopifyClientLogsIntoAShopifyShop() {
+	var secrets []string
+	shop := s.shop(&secrets, new(int))
+	defer shop.Close()
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_SECRET", "deployment-secret")
+	auth := &Auth{HTTP: dialing(shop), PublicURL: "https://router.example"}
+	shopify, ok := Lookup("shopify")
+	s.Require().True(ok)
+	owner := Owner{CustomerID: "c1", ConfigID: "a1"}
+
+	pending, err := auth.StartAuthorize(context.Background(), owner, shopify, "https://mystore.myshopify.com/")
+	s.Require().NoError(err)
+	s.Equal("deployment-client", pending.ClientID)
+	s.Equal("https://mystore.myshopify.com/token", pending.TokenEndpoint)
+	_, err = auth.Exchange(context.Background(), owner, pending, "code")
+	s.Require().NoError(err)
+	_, err = auth.Refresh(context.Background(), owner, pending.PluginID, pending.TokenEndpoint, pending.ClientID, "ref")
+	s.Require().NoError(err)
+
+	s.Equal([]string{"deployment-secret", "deployment-secret"}, secrets)
+}
+
+// Any other host is no shop, so a login there is refused before a request is made, and
+// the deployment's Shopify secret never reaches it.
+func (s *OAuthSuite) TestTheShopifyPluginLogsIntoNoHostOutsideShopify() {
+	var secrets []string
+	requests := 0
+	server := s.shop(&secrets, &requests)
+	defer server.Close()
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_SECRET", "deployment-secret")
+	auth := &Auth{HTTP: dialing(server), PublicURL: "https://router.example"}
+	shopify, ok := Lookup("shopify")
+	s.Require().True(ok)
+	for _, instance := range []string{
+		server.Listener.Addr().String(),
+		"https://shop.example/",
+		"mystore.myshopify.com.shop.example",
+		"mystore.myshopify.com/../shop.example",
+		"myshopify.com",
+		"-mystore.myshopify.com",
+	} {
+		_, err := auth.StartAuthorize(context.Background(), Owner{CustomerID: "c1", ConfigID: "a1"}, shopify, instance)
+		s.ErrorContains(err, "is not a Shopify instance url", instance)
+	}
+
+	s.Zero(requests, "not even discovery")
+	s.Empty(secrets)
+}
+
+// shop is a Shopify shop's MCP and OAuth server, at whatever host it is reached by, that
+// keeps the client secret each token request carries and counts every request.
+func (s *OAuthSuite) shop(secrets *[]string, requests *int) *httptest.Server {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/.well-known/oauth-authorization-server", func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(authServer{
+			AuthorizationEndpoint: "https://" + r.Host + "/authorize",
+			TokenEndpoint:         "https://" + r.Host + "/token",
+		})
+	})
+	mux.HandleFunc("/token", func(w http.ResponseWriter, r *http.Request) {
+		*secrets = append(*secrets, r.FormValue("client_secret"))
+		_ = json.NewEncoder(w).Encode(tokenResponse{AccessToken: "tok", RefreshToken: "ref"})
+	})
+	return httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		*requests++
+		mux.ServeHTTP(w, r)
+	}))
+}
+
+// dialing is a client of server that reaches it whatever host a request names, as if that
+// host's address were server's.
+func dialing(server *httptest.Server) *http.Client {
+	client := server.Client()
+	transport := client.Transport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	// The name httptest's certificate is for.
+	transport.TLSClientConfig.ServerName = "example.com"
+	client.Transport = transport
+	return client
 }
 
 func (s *OAuthSuite) TestAServerWithALoginTheRouterCanMakePassesTheCheck() {

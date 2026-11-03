@@ -7,12 +7,14 @@ import (
 	"context"
 	"encoding/json"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
@@ -175,14 +177,14 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABinding
 	defer shop.Close()
 	shopify, found := plugins.Lookup("shopify")
 	s.Require().True(found)
-	s.login("", shopify, strings.TrimPrefix(shop.URL, "https://"), "good-token")
+	s.login("", shopify, "mystore.myshopify.com", "good-token")
 	spec := Spec{
 		CustomerID: s.runner.customerID,
 		ConfigID:   s.runner.configID,
 		Plugins:    []store.PluginEntry{{Name: "shopify"}},
 	}
 	open := func(spec Spec) (*plugins.Runtime, []harness.Tool) {
-		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.DiscardHandler))
+		runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: dialing(shop)}, slog.New(slog.DiscardHandler))
 		if runtime != nil {
 			s.T().Cleanup(runtime.Close)
 		}
@@ -198,6 +200,36 @@ func (s *UserPluginsSuite) TestTheAppsLoginToAnAgentPluginIsOpenedUnlessABinding
 	s.Equal([]string{"shopify__list_events"}, toolNames(tools))
 	s.Nil(bound)
 	s.Empty(boundTools)
+}
+
+// A login to a Shopify instance outside myshopify.com, as one stored before the host was
+// checked, is not opened, so its token is not renewed with the deployment's Shopify secret.
+func (s *UserPluginsSuite) TestTheAppsLoginToAShopOutsideShopifyIsNeitherOpenedNorRenewed() {
+	var requests atomic.Int32
+	outside := httptest.NewTLSServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests.Add(1)
+		_ = json.NewEncoder(w).Encode(map[string]string{"access_token": "renewed-token"})
+	}))
+	defer outside.Close()
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_ID", "deployment-client")
+	s.T().Setenv("SHOPIFY_MCP_CLIENT_SECRET", "deployment-secret")
+	expired := time.Now().Add(-time.Hour)
+	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &store.PluginConnection{
+		CustomerID: s.runner.customerID, ConfigID: s.runner.configID, PluginID: "shopify",
+		InstanceURL: strings.TrimPrefix(outside.URL, "https://"), Status: store.PluginConnected,
+		AccessToken: "old-token", ExpiresAt: &expired, RefreshToken: "refresh-token",
+		ClientID: "deployment-client", TokenEndpoint: outside.URL + "/token",
+	}))
+	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, Plugins: []store.PluginEntry{{Name: "shopify"}}}
+
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: outside.Client()}, slog.New(slog.DiscardHandler))
+	if runtime != nil {
+		defer runtime.Close()
+	}
+
+	s.Nil(runtime)
+	s.Empty(tools)
+	s.Zero(requests.Load(), "no renewal and no MCP request")
 }
 
 func (s *UserPluginsSuite) TestAConnectedUserReachesTheirAccount() {
@@ -397,11 +429,11 @@ func (s *UserPluginsSuite) TestASessionOnTheAppsPluginLoginWarnsOfTheDeprecation
 	defer shop.Close()
 	shopify, found := plugins.Lookup("shopify")
 	s.Require().True(found)
-	s.login("", shopify, strings.TrimPrefix(shop.URL, "https://"), "good-token")
+	s.login("", shopify, "mystore.myshopify.com", "good-token")
 	spec := Spec{CustomerID: s.runner.customerID, ConfigID: s.runner.configID, Plugins: []store.PluginEntry{{Name: "shopify"}}}
 	var logged bytes.Buffer
 
-	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: shop.Client()}, slog.New(slog.NewTextHandler(&logged, nil)))
+	runtime, tools, _ := attachPlugins(context.Background(), spec, s.store, &plugins.Auth{HTTP: dialing(shop)}, slog.New(slog.NewTextHandler(&logged, nil)))
 	s.Require().NotNil(runtime)
 	defer runtime.Close()
 	for range 2 {
@@ -548,6 +580,20 @@ func (s *UserPluginsSuite) appLogin(pluginID string) store.PluginConnection {
 	}
 	s.FailNow("the app has no login to " + pluginID)
 	return store.PluginConnection{}
+}
+
+// dialing is a client of server that reaches it whatever host a request names, as if that
+// host's address were server's.
+func dialing(server *httptest.Server) *http.Client {
+	client := server.Client()
+	transport := client.Transport.(*http.Transport).Clone()
+	transport.DialContext = func(ctx context.Context, network, _ string) (net.Conn, error) {
+		return (&net.Dialer{}).DialContext(ctx, network, server.Listener.Addr().String())
+	}
+	// The name httptest's certificate is for.
+	transport.TLSClientConfig.ServerName = "example.com"
+	client.Transport = transport
+	return client
 }
 
 func toolNames(tools []harness.Tool) []string {

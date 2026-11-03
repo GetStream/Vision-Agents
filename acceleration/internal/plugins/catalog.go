@@ -3,6 +3,7 @@ package plugins
 import (
 	"embed"
 	"fmt"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -34,6 +35,9 @@ type Plugin struct {
 	// InstanceRequired means the URL is a template that needs a shop or org hostname.
 	InstanceRequired bool   `yaml:"instance_required"`
 	InstanceHint     string `yaml:"instance_hint"`
+	// InstancePattern is the regular expression a hostname must match to be an instance of
+	// the plugin, so a login is only ever made at the vendor's own hosts. Empty checks none.
+	InstancePattern string `yaml:"instance_pattern"`
 	// ClientRequired means the provider registers no OAuth client on the fly, so logging
 	// in needs one registered in advance: the agent's own, or this deployment's.
 	ClientRequired bool `yaml:"client_required"`
@@ -236,6 +240,11 @@ func (p Plugin) Endpoint(instance string) (string, error) {
 			return "", stack.Wrap(fmt.Errorf("plugins: %s needs an instance url: %s", p.Name, p.InstanceHint))
 		}
 		return "", stack.Wrap(fmt.Errorf("plugins: %s needs an instance url", p.Name))
+	}
+	if p.InstancePattern != "" {
+		if matched, err := regexp.MatchString(p.InstancePattern, host); err != nil || !matched {
+			return "", stack.Wrap(fmt.Errorf("plugins: %s is not a %s instance url: %s", host, p.Name, p.InstanceHint))
+		}
 	}
 	return strings.ReplaceAll(p.URL, "{instance}", host), nil
 }
