@@ -4385,7 +4385,7 @@ func (s *AgentSuite) TestATextReplyThatKeepsCallingToolsIsMadeToAnswer() {
 	}, "the reply made to answer was never kept")
 	requests := s.model.requests()
 	s.Len(requests, maxToolRounds+1, "the model was asked again after it was made to answer")
-	s.Contains(shown(requests[maxToolRounds]), "answer the caller now")
+	s.Contains(shown(requests[maxToolRounds]), "No more tools this turn")
 	s.Len(s.runner.asked(), 1, "the same call ran twice")
 
 	// The rounds are counted from the user's last message, so the next one starts afresh.
@@ -4577,10 +4577,10 @@ func (s *AgentSuite) TestATextAgentWithAHigherToolRoundLimitChainsPastTheDefault
 	requests := s.model.requests()
 	s.NotEmpty(requests[maxToolRounds].Tools, "the default's round was made to answer under a higher limit")
 	s.NotEqual("none", requests[maxToolRounds].ToolChoice, "the default's round was made to answer under a higher limit")
-	s.NotContains(shown(requests[maxToolRounds]), "answer the caller now")
+	s.NotContains(shown(requests[maxToolRounds]), "No more tools this turn")
 	s.NotEmpty(requests[s.toolRoundLimit].Tools, "tools remain offered to preserve the cached prefix")
 	s.Equal("none", requests[s.toolRoundLimit].ToolChoice, "the reply at the configured limit could still call tools")
-	s.Contains(shown(requests[s.toolRoundLimit]), "answer the caller now")
+	s.Contains(shown(requests[s.toolRoundLimit]), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestATextAgentWithNoToolRoundLimitIsNeverMadeToAnswer() {
@@ -4605,7 +4605,7 @@ func (s *AgentSuite) TestATextAgentWithNoToolRoundLimitIsNeverMadeToAnswer() {
 	for round, request := range requests {
 		s.NotEmpty(request.Tools, "round %d was offered no tools", round)
 		s.NotEqual("none", request.ToolChoice, "round %d was made to answer", round)
-		s.NotContains(shown(request), "answer the caller now", "round %d was told to answer", round)
+		s.NotContains(shown(request), "No more tools this turn", "round %d was told to answer", round)
 	}
 }
 
@@ -4652,7 +4652,7 @@ func (s *AgentSuite) TestATextReplyToOneToolIsStillOfferedTools() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
 	afterTool := s.model.requests()[1]
 	s.NotEmpty(afterTool.Tools, "a reply after one tool round was offered no tools")
-	s.NotContains(shown(afterTool), "answer the caller now")
+	s.NotContains(shown(afterTool), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestAnOrderIsPlacedAgainOnlyWhenTheCallerAsksAgain() {

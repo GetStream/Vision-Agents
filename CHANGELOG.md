@@ -285,6 +285,10 @@ Closing an agent waited for every finished turn and every judgement still queued
 
 A reply that is offered no tools, because the tool rounds ran out or nobody has spoken yet, no longer runs or follows a tool call a model returns anyway. The call is dropped and logged once at warn, and the reply's text is the answer. Before, such a call was run and its result followed by another reply, so a model that ignored the limit chained past `max_tool_rounds` (AI-2477).
 
+### A text reply is no longer told there is no time
+
+The note given to a reply that is offered no more tools said there was no time for another tool. A written reply could pass that on to a reader who was not waiting. The note is now the same on a call and in text: no more tools this turn, answer from what the tools returned and say plainly what could not be got (AI-2478).
+
 ### A dispatch worker's session answers in the channel the message was written in
 
 A text session that the customer's backend opens under the `agent_id` of a message the router just handed to its dispatch worker now answers in that message's channel. The Go SDK's `Dispatch.Conversation` opens its sessions this way. Before, the session wrote its reply into a new `agent:<session id>` channel, and the person saw nothing. The session writes only its replies: the person's message is already in the channel. A second message while that session runs is answered by the same session, and is not dispatched again. Every other session keeps a channel of its own, as before (AI-2505).
@@ -335,7 +339,7 @@ A Claude response cut off before its final usage event was recorded with the one
 
 ### A call into a held session with other custom data is refused
 
-A call placed with `POST /v1/phone/calls` into a `session_id` whose Stream call was already there left that call's custom data as it was, so the `custom` it sent never reached the agent, and no error said so. Such a call is now refused with a 400 before it rings or a trunk is made: omit `custom` or use a new session. A session's call that carries no custom of its own, as one `Agent.outbound_call` makes, is given the `custom` sent and places. A call with the same custom as the session's call, or with none, places as before (AI-2471).
+A call placed with `POST /v1/phone/calls` into a `session_id` whose Stream call was already there left that call's custom data as it was, so the `custom` it sent never reached the agent, and no error said so. Such a call is now refused with a 400 before it rings or a trunk is made: omit `custom` or use a new session. A session's call that carries no custom of its own, as one `Agent.outbound_call` makes, is given the `custom` sent and places. A call with the same custom as the session's call, or with none, places as before. A dial that fails after its `custom` is on the session's call leaves it there, because Stream cannot take it off, so the `custom` doc now says to retry with the same custom or use a new session (AI-2471, AI-2485).
 
 ### The session writer keeps its queue for rows
 
