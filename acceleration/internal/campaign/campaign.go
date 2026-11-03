@@ -120,8 +120,11 @@ func (r *Runner) Start(ctx context.Context, customerID, id string) error {
 		defer r.mu.Unlock()
 		// A pause on another router leaves the loop here until its next claim finds the
 		// campaign paused (stopped), so the row may say paused while it is listed. It is written
-		// running holding the list, which that loop reads it under.
-		return r.store.SetCampaignState(ctx, customerID, campaign.ID, store.Running)
+		// running holding the list, which that loop reads it under, so the write is bounded as
+		// the read is.
+		written, cancel := context.WithTimeout(ctx, writeTimeout)
+		defer cancel()
+		return r.store.SetCampaignState(written, customerID, campaign.ID, store.Running)
 	}
 	// The loop outlives the request that started it, so it takes the background rather
 	// than a context that is cancelled the moment the caller is answered.

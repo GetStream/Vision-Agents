@@ -339,6 +339,38 @@ func (s *CampaignsSuite) TestAStartOnTheRouterWhoseLoopOutlivedAPauseRunsTheCamp
 	s.Equal(1, s.rung(created.Id))
 }
 
+func (s *CampaignsSuite) TestAStartWaitingOnItsCampaignsRowLeavesTheCampaignsOfOthersAlone() {
+	created := s.campaign(1)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	unrelated := s.campaign(1)
+	ctx := context.Background()
+	locked := s.holdContacts(created.Id)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+	// Another router's write on the campaign's row, held open.
+	writing, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = writing.Rollback() })
+	_, err = writing.NewUpdate().Table("campaigns").Set("state = ?", store.Running).Where("id = ?", created.Id).Exec(ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(locked.Rollback())
+
+	// The start finds its loop listed and writes the row, behind that write, holding the list.
+	go s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil)
+	s.Require().Eventually(func() bool { return s.waitingOn(created.Id) >= 2 },
+		10*time.Second, 20*time.Millisecond, "the start waits on the row")
+
+	paused := make(chan int, 1)
+	go func() {
+		paused <- s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+unrelated.Id+"/pause", nil, nil)
+	}()
+	select {
+	case status := <-paused:
+		s.Equal(http.StatusOK, status)
+	case <-time.After(15 * time.Second):
+		s.Fail("a start that waits on one campaign's row holds every campaign's pause past the 10 s a write may take")
+	}
+}
+
 // running marks a campaign running without starting a loop, for a test that claims its
 // contacts itself.
 func (s *CampaignsSuite) running(campaignID string) {
