@@ -331,6 +331,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A moved campaign does not ring again a contact the source rang
+
+`router replicate --resume` told the operator to start each campaign that was running at the source, and a start rang again each contact the source had rung after the last `--once`, and each contact in a call at that moment. The cut-over now begins with a pause of the campaigns at the source and a wait for their calls to end, before the last `--once`. A campaign paused that way stays paused here and `--resume` does not name it. A campaign still running at the source at the last `--once` stays paused, and `--resume` says that a start here rings again the contacts rung there since then (AI-2428).
+
 ### A typed message in a voice session is offered tools once the caller has spoken
 
 On a voice session where a speculative reply answered every spoken turn, a typed message was still treated as sent before anyone spoke, and its reply was offered no tools. It is now offered them, as after any other spoken turn. A speculative reply thrown away can no longer clear what was recorded for the answer asked for under the same turn id (AI-2543, AI-2541).
