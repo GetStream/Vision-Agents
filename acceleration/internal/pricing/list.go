@@ -428,15 +428,15 @@ func (l *List) Entries() []Entry {
 func (l *List) Unpriced(items []Item) []Item {
 	var unpriced []Item
 	for _, item := range items {
-		if !l.covers(item) {
+		if !l.Covers(item) {
 			unpriced = append(unpriced, item)
 		}
 	}
 	return unpriced
 }
 
-// covers reports whether the list prices the item's work, or marks it free or local.
-func (l *List) covers(item Item) bool {
+// Covers reports whether the list prices the item's work, or marks it free or local.
+func (l *List) Covers(item Item) bool {
 	entries := l.entries[keyOf(item)]
 	if len(item.Attributes) == 0 && !slices.ContainsFunc(entries, func(entry Entry) bool { return len(entry.When) == 0 }) {
 		return slices.ContainsFunc(entries, Entry.settled)
