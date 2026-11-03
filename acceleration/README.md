@@ -673,9 +673,9 @@ organization's numbers is refused: on Telnyx it is rejected before it is answere
 not billed. Over Stream SIP the bridge has already answered the caller when the router hears
 of the call, so no agent is dispatched and the call is ended through Stream at once; the few
 seconds it was up are billed by the vendor. The same holds for a telephony suspension.
-Releasing a number is never refused. A campaign is refused at start, and one refused midway
-pauses with the refusal's code as `paused_reason`, giving the contact it was about to ring
-back to be rung once it is started again. A scheduled task that could not be delivered for
+Releasing a number is never refused. A campaign is refused at launch, and one refused midway
+pauses with the refusal's code as `paused_reason`. The contact it was about to ring goes back
+to waiting without using up an attempt, and is rung once the campaign is resumed. A scheduled task that could not be delivered for
 money records the refusal's code.
 
 Holds are bounded in memory: an account keeps at most 10,000 apart and folds the oldest,
@@ -1598,7 +1598,7 @@ inline in the request overrides it, so a config can be reused and one call still
 | `GET /v1/agents/calls/{id}/events`          | What the conversation decided, and why       |
 | `POST /v1/agents/knowledge`                 | Fill a knowledge base from documents         |
 | `/v1/agents/knowledge/urls`                 | Pages a knowledge base is kept filled from   |
-| `/v1/agents/campaigns`                      | Lists of people to ring, and how far they got |
+| `/v1/agents/campaigns`                      | Outbound calls: an agent rings a list of contacts within calling hours, and what each call ended as |
 | `/v1/agents/scheduled-tasks`                 | Things the agent does later for a user, once or on a repeat, and what came of each occurrence |
 
 **Skills are named rather than spelled out.** A config carries skill names, and they are
@@ -1726,12 +1726,25 @@ by agent, and the timings are kept in Redis for an hour. The timeline endpoint i
 joined, so it shows a call's turns only while they are that recent. When the call ends, a short model pass over the conversation writes a summary and
 a score from one to five onto the row, billed through the LLM router like anything else.
 
-**Campaigns are the outbound half.** A campaign is one agent, one of the customer's
-numbers and a list of people, each with instructions of their own that are added to the
-config's. Starting one runs a loop that holds a semaphore sized to `concurrency`, places
-each call at the vendor and creates a session for it; contacts are claimed in Postgres, so
-a process that stopped mid-campaign resumes rather than starting again. Pausing stops
-ringing new people and leaves the conversations already happening alone.
+**Campaigns are the outbound half.** A campaign is one agent config ringing a list of
+contacts from one of the customer's numbers. Each contact's variables (`{{first_name}}`)
+reach the agent. Launching takes `consent: true` and an optional `start_at`, and from then on
+the contacts, the sequence and the calling hours are fixed. The sequence says how many
+attempts each contact gets, how far apart, and whether to ring again at once when nobody
+answered. Nobody is rung outside calling hours, judged in the contact's own time zone.
+
+After an answered call, one model call reads the transcript and picks one of the step's
+outcomes, or none, which counts as `other`. `do_not_call` also opts the number out of every
+call the app makes. There is no voicemail detection yet (AI-2077): a call a voicemail
+answered counts as answered, and gets an outcome like any other.
+
+Every router runs the dialer, and its state is all in Postgres. A router claims a contact
+that is due under a lease, and the claim counts the campaign's calls in progress in the same
+transaction, so several routers together never go past `concurrency` or ring one person
+twice. When a router dies its leases run out, and another router reads how each call ended
+instead of ringing again. Pausing stops new calls within seconds and leaves the calls already
+happening alone. A router with no Postgres, no sessions or no LLM dials nothing, and says so
+when it starts.
 
 ## Voices a customer brought with them
 
@@ -1778,7 +1791,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
 | `calls`                                  | Conversation that happened, with its summary and score |
-| `campaigns`, `campaign_contacts`         | List of people to ring, and what became of each     |
+| `campaigns`, `campaign_contacts`, `campaign_attempts` | Outbound campaign, each person on it, and each call placed to them |
 | `scheduled_tasks`, `scheduled_task_runs` | Thing a user is to be reminded of or done for later, and each occurrence of it |
 | `audit_log`                              | Change somebody made to the app's configuration     |
 
@@ -2430,8 +2443,9 @@ any of the export's rows is written, unless the request asks `?full=true`; a bat
 The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
 `--source-auth server` is for a source router reached directly.
 
-A scheduled task active on the source is imported paused, and so is a campaign running there,
-since the source goes on delivering them until the move is cut over. Each is marked as paused by
+A scheduled task active on the source is imported paused, and so is a campaign running or
+scheduled there, since the source goes on delivering them until the move is cut over. A contact
+in the middle of a call on the source waits here for its next attempt. Each is marked as paused by
 the move; a change carried later sets the mark again from the source's state, so one the user
 paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
 any other edit keeps it.
@@ -2466,7 +2480,7 @@ Cut over once SDKs point here:
 
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
 at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
-and names the marked campaigns. The source went on delivering between the last `--once` and its
+and resumes the marked campaigns. The source went on delivering between the last `--once` and its
 stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
 the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
 the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
@@ -2478,18 +2492,8 @@ and the command prints how many it left that way. A user holds at most the confi
 `max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
 made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
 and the rest stay paused and marked. The command prints how many; run it again once the user
-has made room.
-
-A campaign rings only from the router that started it, and `--resume` starts none. A campaign
-paused at the source in step 1 stays paused here and is not named. Start it here with
-`POST /v1/agents/campaigns/{id}/start` when it is to ring again. A campaign still running at the
-source at the last `--once` stays paused here, and `--resume` names it: a contact the source rang
-after that is still `pending` here, and a start here rings that contact again. Read its contacts
-at the source before you start it here. A campaign paused at the source that still holds contacts
-`calling` is named too, with how many: a start here rings them again.
-
-Do not run `--once` again after `--resume`. Every run reads the source and makes it the truth
-again: it overwrites what the cut-over resumed and started here with what the source has.
+has made room. Every router here dials a running campaign, so a resumed one rings from here
+at once; one whose `start_at` has not come yet goes back to scheduled.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app
