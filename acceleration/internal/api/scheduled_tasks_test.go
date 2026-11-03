@@ -1472,10 +1472,12 @@ func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
 
 	s.delivered(s.tasksOf(user)[0])
 	s.awaitAnswers(1)
+	s.awaitLeftOfTheDay(user, "2")
 	s.Equal("2", s.leftOfTheDay(user), "the scheduled turn spent none of the user's day")
 
 	s.respondAs(user, opened.Id, "and what else")
 	s.awaitAnswers(2)
+	s.awaitLeftOfTheDay(user, "1")
 	s.Equal("1", s.leftOfTheDay(user), "the user's own turn after it is counted on their day")
 }
 
@@ -1490,6 +1492,7 @@ func (s *ScheduledTasksSuite) TestAUsersOwnTurnInTheirConversationIsCountedOnThe
 
 	s.respondAs(user, opened.Id, "how much does a call cost")
 	s.awaitAnswers(1)
+	s.awaitLeftOfTheDay(user, "1")
 	s.Equal("1", s.leftOfTheDay(user))
 }
 
@@ -1506,6 +1509,14 @@ func (s *ScheduledTasksSuite) leftOfTheDay(user *testClient) string {
 	response := user.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 	s.Require().Equal(http.StatusCreated, response.StatusCode)
 	return response.Header.Get("X-Quota-Remaining")
+}
+
+// awaitLeftOfTheDay waits until the user's day shows left, as the limiter stops waiting for
+// a debit after two seconds and a recorded answer does not mean its debit has landed.
+func (s *ScheduledTasksSuite) awaitLeftOfTheDay(user *testClient, left string) {
+	s.Require().Eventually(func() bool {
+		return user.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil)).Header.Get("X-Quota-Remaining") == left
+	}, settleFor, 50*time.Millisecond, "the user's day never showed %s left", left)
 }
 
 // respondAs has the user type text into their conversation with their own
