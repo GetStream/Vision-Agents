@@ -1472,7 +1472,6 @@ func (s *ScheduledTasksSuite) TestADueTaskIsNotCountedOnItsUsersDay() {
 
 	s.delivered(s.tasksOf(user)[0])
 	s.awaitAnswers(1)
-	s.awaitLeftOfTheDay(user, "2")
 	s.Equal("2", s.leftOfTheDay(user), "the scheduled turn spent none of the user's day")
 
 	s.respondAs(user, opened.Id, "and what else")

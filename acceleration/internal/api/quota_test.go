@@ -319,8 +319,9 @@ func (s *QuotaSuite) spend(client *testClient) {
 
 // debit charges caller's day with a response of the given tokens, and returns once the day
 // shows exactly one message less than before: a caller with a debit of its own still in
-// flight waits for it first, or its landing would pass for this one. The limiter stops waiting for a debit after two seconds, so when this process
-// stalls the debit goes on after Debit has returned, and a request made at once is admitted.
+// flight waits for it first, or its landing would pass for this one. The limiter stops
+// waiting for a debit after two seconds, so when this process stalls the debit goes on
+// after Debit has returned, and a request made at once is admitted.
 func debit(t *testing.T, limiter *quota.Limiter, customerID string, caller routing.Caller, tokens int64) {
 	left := func() int64 {
 		status, _ := limiter.Allow(t.Context(), customerID, caller)
