@@ -1277,8 +1277,12 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	// asks it something, a follow-up after a login included (chat_logins_test.go).
 	reasoning.Register("logging-in", func(routing.Spec) (llmrouter.Provider, error) { return &loggingInLLM{}, nil })
 	// A customer's own model, answering with where it was told to go, so a test reads back
-	// that the stored endpoint and key reached the provider.
+	// that the stored endpoint and key reached the provider. One serving acme/down refuses
+	// every request, as a deployment that is down or scaling up does.
 	reasoning.Register(routing.CustomProvider, func(spec routing.Spec) (llmrouter.Provider, error) {
+		if spec.Endpoint.Model == "acme/down" {
+			return &scriptedLLM{refuses: errors.New("custom: the deployment is down")}, nil
+		}
 		return &scriptedLLM{reply: spec.Endpoint.BaseURL + " " + spec.Endpoint.Model + " " + spec.Endpoint.APIKey}, nil
 	})
 	// Nil unless the suite prices from the database: a nil *pricing.Active is no nil Pricer.

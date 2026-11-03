@@ -22,6 +22,7 @@ type AgentConfigPatch struct {
 	Sts                *string                  `json:"sts,omitempty"`
 	Voice              *string                  `json:"voice,omitempty" doc:"The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead."`
 	Llm                *string                  `json:"llm,omitempty"`
+	LlmFallbacks       *[]string                `json:"llm_fallbacks,omitempty" maxItems:"5" doc:"Replaces the list whole. An empty list removes it."`
 	Subagent           *string                  `json:"subagent,omitempty" doc:"Only a voice agent names one. Switching an agent to text drops it."`
 	Search             *string                  `json:"search,omitempty"`
 	Instructions       *string                  `json:"instructions,omitempty"`
@@ -170,6 +171,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.STS = override(config.STS, patch.Sts)
 	config.Voice = override(config.Voice, patch.Voice)
 	config.LLM = override(config.LLM, patch.Llm)
+	if patch.LlmFallbacks != nil {
+		config.LLMFallbacks = fallbacksOf(patch.LlmFallbacks)
+	}
 	config.Subagent = override(config.Subagent, patch.Subagent)
 	config.Search = override(config.Search, patch.Search)
 	config.Instructions = override(config.Instructions, patch.Instructions)
@@ -271,6 +275,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.liveSTTComplaint(config, heard); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.llmFallbacksComplaint(config, original.LLMFallbacks); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, was); !ok {

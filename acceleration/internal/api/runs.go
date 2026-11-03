@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -191,7 +192,7 @@ func (s *Server) createRun(ctx context.Context, request *createRunRequest) (*cre
 	return &createRunResponse{Body: Run{
 		FinalText:  run.finalText,
 		SessionId:  created.ID(),
-		ModelRoute: model,
+		ModelRoute: cmp.Or(run.answeredBy, model),
 		Usage:      run.usage,
 	}}, nil
 }
@@ -202,6 +203,9 @@ type runOutcome struct {
 	// failed is a model failure no later reply made up for.
 	failed error
 	usage  CallUsage
+	// answeredBy is the provider/model of the last reply that was served, which is not the
+	// session's first choice when that one failed and the reply fell back.
+	answeredBy string
 }
 
 // see adds event to the outcome, and says whether it ends the run: an answer the agent
@@ -223,6 +227,9 @@ func (r *runOutcome) see(event session.Event) bool {
 		r.usage.OutputTokens += typed.OutputTokens
 		r.usage.CostMicros += typed.CostMicros
 		r.usage.Requests++
+		if typed.Success && typed.Purpose == "reply" {
+			r.answeredBy = typed.Provider + "/" + typed.Model
+		}
 	}
 	return false
 }

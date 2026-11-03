@@ -550,6 +550,11 @@ type AgentConfig struct {
 	Search         string `bun:"search,notnull"`
 	Instructions   string `bun:"instructions,notnull"`
 	Greeting       string `bun:"greeting,notnull"`
+
+	// LLMFallbacks are the targets a turn falls back to, in order, when LLM fails it. LLM
+	// is still the first choice; nil falls back only among LLM's own candidates.
+	LLMFallbacks []string `bun:"llm_fallbacks,type:jsonb"`
+
 	// GreetingMode is GreetingExact, said word for word, or GreetingVariation, which the
 	// model rewords on every call.
 	GreetingMode string `bun:"greeting_mode,notnull"`

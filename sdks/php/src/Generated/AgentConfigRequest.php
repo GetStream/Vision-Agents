@@ -35,6 +35,9 @@ final readonly class AgentConfigRequest
         public ?string $knowledgeNamespace = null,
         // The model holding the conversation.
         public ?string $llm = null,
+        // Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of y...
+        /** @var list<string>|null */
+        public ?array $llmFallbacks = null,
         // MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name...
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
@@ -101,6 +104,7 @@ final readonly class AgentConfigRequest
             keyterms: array_key_exists('keyterms', $data) && $data['keyterms'] !== null ? Json::strings($data, 'keyterms') : null,
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
+            llmFallbacks: array_key_exists('llm_fallbacks', $data) && $data['llm_fallbacks'] !== null ? Json::strings($data, 'llm_fallbacks') : null,
             mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
             mode: array_key_exists('mode', $data) && $data['mode'] !== null ? Json::enum($data, 'mode', AgentMode::class) : null,
             pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
@@ -170,6 +174,9 @@ final readonly class AgentConfigRequest
         }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
+        }
+        if ($this->llmFallbacks !== null) {
+            $out['llm_fallbacks'] = $this->llmFallbacks;
         }
         if ($this->mcpServers !== null) {
             $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);

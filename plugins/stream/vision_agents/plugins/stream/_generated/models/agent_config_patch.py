@@ -60,6 +60,7 @@ class AgentConfigPatch:
             keyterms (list[str] | Unset):
             knowledge_namespace (str | Unset):
             llm (str | Unset):
+            llm_fallbacks (list[str] | Unset): Replaces the list whole. An empty list removes it.
             mcp_servers (list[McpServer] | Unset):
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
@@ -116,6 +117,7 @@ class AgentConfigPatch:
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     llm: str | Unset = UNSET
+    llm_fallbacks: list[str] | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
     name: str | Unset = UNSET
@@ -183,6 +185,10 @@ class AgentConfigPatch:
         knowledge_namespace = self.knowledge_namespace
 
         llm = self.llm
+
+        llm_fallbacks: list[str] | Unset = UNSET
+        if not isinstance(self.llm_fallbacks, Unset):
+            llm_fallbacks = self.llm_fallbacks
 
         mcp_servers: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.mcp_servers, Unset):
@@ -300,6 +306,8 @@ class AgentConfigPatch:
             field_dict["knowledge_namespace"] = knowledge_namespace
         if llm is not UNSET:
             field_dict["llm"] = llm
+        if llm_fallbacks is not UNSET:
+            field_dict["llm_fallbacks"] = llm_fallbacks
         if mcp_servers is not UNSET:
             field_dict["mcp_servers"] = mcp_servers
         if mode is not UNSET:
@@ -423,6 +431,8 @@ class AgentConfigPatch:
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
 
         llm = d.pop("llm", UNSET)
+
+        llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
 
         _mcp_servers = d.pop("mcp_servers", UNSET)
         mcp_servers: list[McpServer] | Unset = UNSET
@@ -568,6 +578,7 @@ class AgentConfigPatch:
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             llm=llm,
+            llm_fallbacks=llm_fallbacks,
             mcp_servers=mcp_servers,
             mode=mode,
             name=name,

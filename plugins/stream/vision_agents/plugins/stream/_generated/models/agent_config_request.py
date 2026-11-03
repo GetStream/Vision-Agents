@@ -69,6 +69,13 @@ class AgentConfigRequest:
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
             told.
         llm (str | Unset): The model holding the conversation.
+        llm_fallbacks (list[str] | Unset): Where a response goes when llm fails it, in order: each a provider/model, a
+            capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails
+            is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of
+            another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A
+            response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list
+            stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no
+            instance in the agent's region, is refused.
         mcp_servers (list[McpServer] | Unset): MCP servers outside the plugin catalog, opened by their URL with no
             login. Their tools are offered as <name>__<tool>.
         mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
@@ -146,6 +153,7 @@ class AgentConfigRequest:
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     llm: str | Unset = UNSET
+    llm_fallbacks: list[str] | Unset = UNSET
     mcp_servers: list[McpServer] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
     plugin_events: list[PluginEvent] | Unset = UNSET
@@ -215,6 +223,10 @@ class AgentConfigRequest:
         knowledge_namespace = self.knowledge_namespace
 
         llm = self.llm
+
+        llm_fallbacks: list[str] | Unset = UNSET
+        if not isinstance(self.llm_fallbacks, Unset):
+            llm_fallbacks = self.llm_fallbacks
 
         mcp_servers: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.mcp_servers, Unset):
@@ -334,6 +346,8 @@ class AgentConfigRequest:
             field_dict["knowledge_namespace"] = knowledge_namespace
         if llm is not UNSET:
             field_dict["llm"] = llm
+        if llm_fallbacks is not UNSET:
+            field_dict["llm_fallbacks"] = llm_fallbacks
         if mcp_servers is not UNSET:
             field_dict["mcp_servers"] = mcp_servers
         if mode is not UNSET:
@@ -457,6 +471,8 @@ class AgentConfigRequest:
         knowledge_namespace = d.pop("knowledge_namespace", UNSET)
 
         llm = d.pop("llm", UNSET)
+
+        llm_fallbacks = cast(list[str], d.pop("llm_fallbacks", UNSET))
 
         _mcp_servers = d.pop("mcp_servers", UNSET)
         mcp_servers: list[McpServer] | Unset = UNSET
@@ -601,6 +617,7 @@ class AgentConfigRequest:
             keyterms=keyterms,
             knowledge_namespace=knowledge_namespace,
             llm=llm,
+            llm_fallbacks=llm_fallbacks,
             mcp_servers=mcp_servers,
             mode=mode,
             plugin_events=plugin_events,

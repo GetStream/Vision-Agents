@@ -49,18 +49,27 @@ func (s *Server) regionComplaint(ctx context.Context, config store.AgentConfig, 
 	// billed is the work in the region the agent's save asks about, each named by its setting,
 	// which must have a price: work with none is recorded at nothing and reserves nothing.
 	var billed []settingItem
-	for _, model := range []struct {
+	type setting struct {
 		setting       string
 		modality      routing.Modality
 		target, stood string
-	}{
+	}
+	models := []setting{
 		{"llm", routing.LLM, config.LLM, was.LLM},
 		{"stt", routing.STT, config.STT, was.STT},
 		{"tts", routing.TTS, config.TTS, was.TTS},
 		{"sts", routing.STS, config.STS, was.STS},
 		{"subagent", routing.LLM, config.Subagent, was.Subagent},
 		{"search", routing.Search, config.Search, was.Search},
-	} {
+	}
+	for _, target := range config.LLMFallbacks {
+		var stood string
+		if slices.Contains(was.LLMFallbacks, target) {
+			stood = target
+		}
+		models = append(models, setting{"llm_fallbacks", routing.LLM, target, stood})
+	}
+	for _, model := range models {
 		if model.target == "" || (!moved && model.target == model.stood) {
 			continue
 		}

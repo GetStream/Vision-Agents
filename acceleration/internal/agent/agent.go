@@ -127,6 +127,11 @@ type Options struct {
 	STS       *stsrouter.Router
 	STSTarget string
 
+	// LLMFallbacks are the targets a conversation turn falls back to, in order, when
+	// LLMTarget fails it or is late to say anything. Empty leaves LLMTarget to its own
+	// candidates.
+	LLMFallbacks []string
+
 	// SubagentTarget routes the slower, more capable model that runs the work the voice
 	// model hands over. It is a target on the same router as LLMTarget, because the
 	// difference between them is which model, not which service. Empty means the agent

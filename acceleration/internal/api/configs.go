@@ -160,6 +160,9 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := s.liveSTTComplaint(config, ""); !ok {
 		return nil, invalidRequest(message)
 	}
+	if message, ok := s.llmFallbacksComplaint(config, nil); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, nil); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -265,6 +268,11 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	if request.Body.Region == nil {
 		config.Region = existing.Region
 	}
+	// Kept for the same reason: a client that does not know the list must not take away the
+	// model a custom one falls back to by saving.
+	if request.Body.LlmFallbacks == nil {
+		config.LLMFallbacks = existing.LLMFallbacks
+	}
 	// Only a sync writes them, so a save from the dashboard keeps them.
 	config.LeftOutConnectors = existing.LeftOutConnectors
 	config.ProgressiveTools = progressiveOf(existing.ProgressiveTools, request.Body.Tools)
@@ -306,6 +314,9 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.liveSTTComplaint(config, existing.STT); !ok {
+		return nil, invalidRequest(message)
+	}
+	if message, ok := s.llmFallbacksComplaint(config, existing.LLMFallbacks); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := s.sandboxLimitsComplaint(ctx, customerID, config, sandboxOfConfig(existing)); !ok {
@@ -617,6 +628,28 @@ func (s *Server) liveSTTComplaint(config store.AgentConfig, was string) (string,
 		return err.Error(), false
 	}
 	return "", true
+}
+
+// llmFallbacksComplaint refuses a fallback this deployment could never route. llm alone is
+// left to the session, which refuses it on the first turn; a fallback that cannot route is
+// only skipped, so a typo would show once the model it backs had already failed. A list the
+// save leaves as it was is not asked about again, as liveSTTComplaint leaves a transcriber.
+func (s *Server) llmFallbacksComplaint(config store.AgentConfig, was []string) (string, bool) {
+	if slices.Equal(config.LLMFallbacks, was) {
+		return "", true
+	}
+	if message, ok := s.chainComplaint(routing.LLM, config.LLMFallbacks); !ok {
+		return "llm_fallbacks: " + message, false
+	}
+	return "", true
+}
+
+// fallbacksOf is llm_fallbacks as stored: nil when there are none.
+func fallbacksOf(sent *[]string) []string {
+	if sent == nil || len(*sent) == 0 {
+		return nil
+	}
+	return *sent
 }
 
 // configComplaint reports what is wrong with an agent config, if anything. Keyterms are
@@ -1894,6 +1927,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		STS:                value(request.Sts),
 		Voice:              value(request.Voice),
 		LLM:                value(request.Llm),
+		LLMFallbacks:       fallbacksOf(request.LlmFallbacks),
 		Subagent:           value(request.Subagent),
 		Search:             value(request.Search),
 		Instructions:       value(request.Instructions),
@@ -1995,6 +2029,9 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Sts = optional(config.STS)
 	rendered.Voice = optional(config.Voice)
 	rendered.Llm = optional(config.LLM)
+	if len(config.LLMFallbacks) > 0 {
+		rendered.LlmFallbacks = &config.LLMFallbacks
+	}
 	rendered.Subagent = optional(config.Subagent)
 	frames := config.VideoMaxFrames
 	if frames == 0 {
@@ -2289,6 +2326,7 @@ type AgentConfigRequest struct {
 	Keyterms           *[]string                `json:"keyterms,omitempty" doc:"Business-specific words the transcriber would otherwise get wrong, such as product or company names. Up to 100 terms, and providers that cannot be told about vocabulary ignore them."`
 	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty" doc:"What the agent may look things up in. Empty means it knows only what it was told."`
 	Llm                *string                  `json:"llm,omitempty" doc:"The model holding the conversation."`
+	LlmFallbacks       *[]string                `json:"llm_fallbacks,omitempty" maxItems:"5" doc:"Where a response goes when llm fails it, in order: each a provider/model, a capability shortcut or one of your custom/ models, as llm takes. llm stays the first choice. A response it fails is asked of each next one in turn, and one it says nothing in for as long as a reply may is also asked of another, the first to start answering kept, so a model you serve yourself can be backed by one Stream serves. A response that has started is never moved, however slowly it goes on. Omitted or null on an update, the list stored stays as it is; an empty list removes it. A target this deployment does not route, or one with no instance in the agent's region, is refused."`
 	Mode               *AgentMode               `json:"mode,omitempty"`
 	Name               string                   `json:"name" doc:"What the config is called, which is unique among the customer's own."`
 	Region             *string                  `json:"region,omitempty" pattern:"^[a-z][a-z0-9-]{0,31}$" patternDescription:"a letter and up to 31 of a-z, 0-9 and hyphens, such as us or eu" example:"eu" doc:"Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region."`
@@ -2330,6 +2368,7 @@ type AgentConfig struct {
 	Keyterms           *[]string                `json:"keyterms,omitempty"`
 	KnowledgeNamespace *string                  `json:"knowledge_namespace,omitempty"`
 	Llm                *string                  `json:"llm,omitempty"`
+	LlmFallbacks       *[]string                `json:"llm_fallbacks,omitempty" doc:"Where a response goes, in order, when llm fails it. Absent when there are none."`
 	Mode               AgentMode                `json:"mode"`
 	Name               string                   `json:"name"`
 	Region             string                   `json:"region" example:"us" doc:"Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another."`
