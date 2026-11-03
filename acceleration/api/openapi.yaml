@@ -186,6 +186,34 @@ components:
         - daily
         - monthly
       type: string
+    AddContactsRequest:
+      properties:
+        contacts:
+          description: Up to 1,000.
+          items:
+            $ref: '#/components/schemas/ContactInput'
+          maxItems: 1000
+          minItems: 1
+          type: array
+        default_country:
+          description: The region, as ISO 3166-1 alpha-2, a number without a country code is read in. Omitted is the campaign's default_country, else US.
+          type: string
+      required:
+        - contacts
+      type: object
+    AddContactsResponse:
+      properties:
+        added:
+          type: integer
+        refused:
+          description: In the order sent.
+          items:
+            $ref: '#/components/schemas/RefusedContact'
+          type: array
+      required:
+        - added
+        - refused
+      type: object
     AddTrunkNumberRequest:
       properties:
         country:
@@ -260,8 +288,8 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          $ref: '#/components/schemas/EpisodeCardsMode'
-          description: What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any.
+          description: Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+          type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
         guardrail:
@@ -368,7 +396,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          $ref: '#/components/schemas/EpisodeCardsMode'
+          type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
           description: Replaces the greeting whole. An empty text removes it.
@@ -391,8 +419,7 @@ components:
           deprecated: true
           description: 'No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            additionalProperties: {}
-            type: object
+            $ref: '#/components/schemas/McpServer'
           type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
@@ -404,16 +431,13 @@ components:
           deprecated: true
           description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            additionalProperties: {}
-            type: object
+            $ref: '#/components/schemas/PluginEvent'
           type: array
         plugins:
           deprecated: true
           description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            oneOf:
-              - type: string
-              - type: object
+            $ref: '#/components/schemas/PluginEntry'
           type: array
         region:
           description: 'Where the agent''s work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.'
@@ -483,8 +507,8 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          $ref: '#/components/schemas/EpisodeCardsMode'
-          description: 'What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation''s card, and its summary once it ends, into the person''s omni-channel: an agent channel for each person and agent, keyed by the caller''s E.164 number, the app chat''s Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat''s agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. So does a session the person''s own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat''s agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user''s token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays.'
+          description: 'Whether each phone call under this agent writes an episode card into the caller''s omni-channel: an agent channel for each caller number and agent, keyed by the caller''s E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
+          type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
         guardrail:
@@ -509,8 +533,7 @@ components:
           deprecated: true
           description: 'No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            additionalProperties: {}
-            type: object
+            $ref: '#/components/schemas/McpServer'
           type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
@@ -521,16 +544,13 @@ components:
           deprecated: true
           description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            additionalProperties: {}
-            type: object
+            $ref: '#/components/schemas/PluginEvent'
           type: array
         plugins:
           deprecated: true
           description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            oneOf:
-              - type: string
-              - type: object
+            $ref: '#/components/schemas/PluginEntry'
           type: array
         region:
           description: 'Where the agent''s work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.'
@@ -666,7 +686,7 @@ components:
         - type
       type: object
     AgentConnectorSelectionType:
-      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
       enum:
         - fixed
         - session
@@ -928,45 +948,6 @@ components:
         progressive:
           description: Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
           type: boolean
-      type: object
-    AgentUser:
-      properties:
-        include_phone_history:
-          description: true when the user reads all of what the number ever said. Left out otherwise.
-          type: boolean
-        phone:
-          description: The number linked to the user, in E.164; null when none is.
-          example: "+15551234567"
-          nullable: true
-          type: string
-        phone_history_since:
-          description: 'From when on the user reads what the number said: the link''s time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.'
-          format: date-time
-          type: string
-        user_id:
-          description: The Stream user id, as the app's own token signs it.
-          type: string
-      required:
-        - user_id
-        - phone
-      type: object
-    AgentUserRequest:
-      description: 'Who one of the app''s users is, as the app''s backend knows it. phone is required: a number, or null for none.'
-      properties:
-        include_phone_history:
-          description: 'How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies.'
-          type: boolean
-        phone:
-          description: 'The user''s phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent''s episode cards of one are read by the other. What the number said before the link is not the user''s, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number''s SMS, WhatsApp or iMessage thread is handed none of the thread''s earlier messages. null unlinks the number the user had, and that number then reads none of the user''s cards. A new number takes the place of the old one, which reads none of the user''s cards from then on. A number linked to another user of the app is refused (409 phone_taken).'
-          example: "+15551234567"
-          nullable: true
-          type: string
-        phone_history_since:
-          description: 'The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).'
-          format: date-time
-          type: string
-      required:
-        - phone
       type: object
     AnalyzeReviewsRequest:
       properties:
@@ -1725,72 +1706,363 @@ components:
         - output_tokens
         - requests
       type: object
+    CallingHours:
+      properties:
+        excluded_dates:
+          description: YYYY-MM-DD, the contact's local date, on which nobody is rung.
+          items:
+            type: string
+          type: array
+        time_zone:
+          $ref: '#/components/schemas/CampaignTimeZone'
+        windows:
+          additionalProperties:
+            items:
+              $ref: '#/components/schemas/CallingWindow'
+            nullable: true
+            type: array
+          description: Keyed monday to sunday. A day left out rings nobody.
+          type: object
+      required:
+        - windows
+        - time_zone
+        - excluded_dates
+      type: object
+    CallingWindow:
+      properties:
+        end:
+          description: HH:MM, up to 24:00. A window does not cross midnight.
+          type: string
+        start:
+          description: HH:MM, on a 15-minute step.
+          type: string
+      required:
+        - start
+        - end
+      type: object
     Campaign:
       properties:
+        calling_hours:
+          $ref: '#/components/schemas/CallingHours'
+        completed_at:
+          description: When it had nobody left to ring.
+          format: date-time
+          type: string
         concurrency:
+          description: How many of these calls may be happening at once.
           type: integer
         config_id:
+          description: The agent config the calls are made with, the same as the sequence's step names.
           type: string
+        contacts:
+          $ref: '#/components/schemas/ContactCounts'
         created_at:
           format: date-time
           type: string
-        finished_at:
-          format: date-time
+        default_country:
+          description: The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
           type: string
         from_number:
+          description: One of the app's own numbers, which is what the person sees.
           type: string
         id:
+          type: string
+        launched_at:
+          format: date-time
           type: string
         name:
           type: string
         paused_reason:
-          description: 'Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it.'
+          description: 'Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, session_refused when its agent config makes a session that cannot open, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it.'
+          type: string
+        sequence:
+          $ref: '#/components/schemas/CampaignSequence'
+        start_at:
+          description: When it was launched to start ringing.
+          format: date-time
           type: string
         started_at:
+          description: When it first rang anybody.
           format: date-time
           type: string
         state:
-          enum:
-            - draft
-            - running
-            - paused
-            - finished
+          $ref: '#/components/schemas/CampaignState'
+        stopped_at:
+          format: date-time
           type: string
         tags:
           additionalProperties:
             type: string
           type: object
+        type:
+          $ref: '#/components/schemas/CampaignType'
       required:
-        - concurrency
-        - config_id
-        - created_at
-        - from_number
         - id
         - name
+        - type
         - state
+        - config_id
+        - from_number
+        - default_country
+        - concurrency
+        - sequence
+        - calling_hours
+        - tags
+        - created_at
+        - contacts
       type: object
-    CampaignRequest:
+    CampaignAnalytics:
       properties:
-        concurrency:
-          default: 1
-          description: How many of these calls may be happening at once.
+        connected:
+          description: Contacts who answered at least one call.
+          format: int64
           type: integer
-        config_id:
-          description: The agent config the calls are made with.
+        conversion_rate:
+          description: converted / dialed, 0 when nobody was dialed.
+          format: double
+          type: number
+        converted:
+          description: Contacts that ended successfully.
+          format: int64
+          type: integer
+        dialed:
+          description: Contacts with at least one call placed.
+          format: int64
+          type: integer
+        dials_per_day:
+          description: Oldest first, only the days with a dial.
+          items:
+            $ref: '#/components/schemas/CampaignDialDay'
+          type: array
+        outcomes:
+          additionalProperties:
+            format: int64
+            type: integer
+          description: Contacts that are done, by outcome id, no_response included.
+          type: object
+      required:
+        - dialed
+        - connected
+        - converted
+        - conversion_rate
+        - outcomes
+        - dials_per_day
+      type: object
+    CampaignAttempt:
+      properties:
+        delay_minutes:
+          description: Minutes after the previous attempt started, pushed into the calling hours.
+          format: int64
+          type: integer
+      required:
+        - delay_minutes
+      type: object
+    CampaignDialDay:
+      properties:
+        answered:
+          format: int64
+          type: integer
+        date:
+          description: YYYY-MM-DD, in UTC.
+          format: date
           type: string
-        from_number:
-          description: One of your own numbers, which is what the person sees.
+        dials:
+          description: Calls placed, answering machines included.
+          format: int64
+          type: integer
+        voicemail:
+          description: Calls an answering machine took.
+          format: int64
+          type: integer
+      required:
+        - date
+        - dials
+        - answered
+        - voicemail
+      type: object
+    CampaignNext:
+      properties:
+        end:
+          description: 'How the contact ends: successful counts as converted.'
+          enum:
+            - successful
+            - unsuccessful
+          type: string
+        step:
+          description: Reserved for branching to another step, which is refused for now.
+          type: string
+      type: object
+    CampaignOutcome:
+      properties:
+        description:
+          description: What the call has to have been for this outcome, which the model reading the transcript goes by.
+          type: string
+        id:
+          description: Lowercase letters, digits and underscores, starting with a letter.
           type: string
         name:
           type: string
+        next:
+          $ref: '#/components/schemas/CampaignNext'
+      required:
+        - id
+        - name
+        - description
+        - next
+      type: object
+    CampaignPage:
+      properties:
+        has_more:
+          type: boolean
+        items:
+          items:
+            $ref: '#/components/schemas/Campaign'
+          type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last.
+          type: string
+      required:
+        - items
+        - has_more
+      type: object
+    CampaignRequest:
+      properties:
+        calling_hours:
+          $ref: '#/components/schemas/CallingHours'
+          description: Omitted is weekdays 09:00 to 18:00 where the contact is, on create.
+        concurrency:
+          description: How many of these calls may be happening at once. Omitted is 1 on create.
+          maximum: 50
+          minimum: 1
+          type: integer
+        config_id:
+          description: The agent config the calls are made with. Setting it sets the sequence's step's too.
+          type: string
+        default_country:
+          description: The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+          type: string
+        from_number:
+          description: One of the app's own numbers, which is what the person sees.
+          type: string
+        name:
+          description: Required on create.
+          minLength: 1
+          type: string
+        sequence:
+          $ref: '#/components/schemas/CampaignSequence'
+          description: 'Omitted is four attempts over twenty days, with double dial, on create. Its step''s config_id is the campaign''s: sending both, they must agree.'
         tags:
           additionalProperties:
             type: string
           type: object
+        type:
+          $ref: '#/components/schemas/CampaignType'
+          description: Omitted is standard on create. It never changes.
+      type: object
+    CampaignRoute:
+      properties:
+        next:
+          $ref: '#/components/schemas/CampaignNext'
       required:
+        - next
+      type: object
+    CampaignSequence:
+      properties:
+        double_dial:
+          description: Ring again at once when the first call of an attempt is not answered.
+          type: boolean
+        steps:
+          description: Exactly one step for now.
+          items:
+            $ref: '#/components/schemas/CampaignStep'
+          type: array
+      required:
+        - steps
+        - double_dial
+      type: object
+    CampaignState:
+      description: 'Where a campaign is: draft until it is launched, scheduled until its start_at, running while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to ring.'
+      enum:
+        - draft
+        - scheduled
+        - running
+        - paused
+        - stopped
+        - completed
+      type: string
+    CampaignStep:
+      properties:
+        attempts:
+          description: 1 to 10. The first has a delay of 0.
+          items:
+            $ref: '#/components/schemas/CampaignAttempt'
+          type: array
+        config_id:
+          description: The agent config the step rings with, the same as the campaign's config_id.
+          type: string
+        goal:
+          description: What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch.
+          maxLength: 2000
+          type: string
+        id:
+          description: step_1, for now.
+          type: string
+        no_response:
+          $ref: '#/components/schemas/CampaignRoute'
+          description: Where running out of attempts leads. It ends unsuccessfully.
+        other:
+          $ref: '#/components/schemas/CampaignRoute'
+          description: Where an answered call none of the outcomes fit leads.
+        outcomes:
+          description: What an answered call can end as. do_not_call is built in.
+          items:
+            $ref: '#/components/schemas/CampaignOutcome'
+          type: array
+        voicemail:
+          $ref: '#/components/schemas/CampaignVoicemail'
+          description: What the agent does when an answering machine picks up. Absent hangs up. Leaving a message needs an agent that is not speech-to-speech.
+      required:
+        - id
         - config_id
-        - from_number
-        - name
+        - attempts
+        - outcomes
+        - other
+        - no_response
+      type: object
+    CampaignTimeZone:
+      properties:
+        fallback:
+          description: An IANA zone, used by contact mode.
+          type: string
+        fixed:
+          description: An IANA zone, used by fixed mode.
+          type: string
+        mode:
+          description: 'contact reads the hours where each contact is: their time_zone, else their number''s, else fallback. fixed reads them in fixed.'
+          enum:
+            - contact
+            - fixed
+          type: string
+      required:
+        - mode
+        - fallback
+      type: object
+    CampaignType:
+      description: What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+      enum:
+        - standard
+        - auto_enroll
+      type: string
+    CampaignVoicemail:
+      properties:
+        action:
+          $ref: '#/components/schemas/VoicemailAction'
+        message:
+          description: '{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.'
+          maxLength: 1000
+          type: string
+      required:
+        - action
       type: object
     CancelPriceChangeInput:
       additionalProperties: false
@@ -2490,9 +2762,6 @@ components:
             type: string
           nullable: true
           type: array
-        read_only:
-          description: 'Whether the tool only reads, as the connector''s latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.'
-          type: boolean
         schema_digest:
           description: The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
           type: string
@@ -2501,7 +2770,6 @@ components:
         - description
         - input_schema
         - schema_digest
-        - read_only
       type: object
     ConnectionToolApproval:
       properties:
@@ -2699,7 +2967,7 @@ components:
         - created_at
       type: object
     ConnectorAuditAction:
-      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app''s backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.'
+      description: 'grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app''s backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.'
       enum:
         - grant_created
         - grant_refreshed
@@ -2765,7 +3033,7 @@ components:
         owner_type:
           $ref: '#/components/schemas/ConnectionOwnerType'
         reason:
-          description: 'Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.'
+          description: 'Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.'
           type: string
         request_id:
           description: The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -3202,54 +3470,180 @@ components:
     Contact:
       properties:
         attempts:
+          description: Every dial made to them, oldest first. Only on a contact read alone.
+          items:
+            $ref: '#/components/schemas/ContactAttempt'
+          nullable: true
+          type: array
+        attempts_made:
+          description: Attempts that placed at least one call.
+          type: integer
+        attempts_total:
+          description: The attempts the sequence makes at most.
           type: integer
         call_id:
-          description: The call this contact became, which is what the call paths take.
+          description: The last call placed to them, which is what the call paths take.
           type: string
-        error:
-          description: Why they could not be rung, when they could not be.
+        converted:
+          description: They ended successfully.
+          type: boolean
+        created_at:
+          format: date-time
           type: string
         id:
           type: string
-        instructions:
+        next_attempt_at:
+          description: When they are next rung, while they are waiting to be.
+          format: date-time
           type: string
         outcome:
-          $ref: '#/components/schemas/CallOutcome'
-          description: How the call to them ended, once it has. The state still says only whether they were rung.
-        state:
-          enum:
-            - pending
-            - calling
-            - done
-            - failed
+          description: The id of the outcome they ended with, once they have.
+          type: string
+        reason:
+          description: Why they were rejected, failed or stopped.
+          type: string
+        stage:
+          $ref: '#/components/schemas/ContactStage'
+        time_zone:
+          description: The IANA zone they were added with.
           type: string
         to_number:
+          description: E.164.
           type: string
-        vendor_call_id:
+        variables:
+          additionalProperties:
+            type: string
+          description: Filled into the agent's {{placeholders}} on their calls.
+          type: object
+        zone:
+          description: 'The IANA zone the calling hours are read in for them: the campaign''s fixed zone, else their time_zone, else their number''s, else the campaign''s fallback.'
           type: string
       required:
-        - attempts
         - id
-        - state
+        - to_number
+        - variables
+        - zone
+        - stage
+        - attempts_made
+        - attempts_total
+        - converted
+        - created_at
+      type: object
+    ContactAttempt:
+      properties:
+        attempt:
+          description: Which attempt of the sequence, from 1.
+          type: integer
+        call_id:
+          type: string
+        dial:
+          description: 1, or 2 for the second call of a double dial.
+          type: integer
+        ended_at:
+          format: date-time
+          type: string
+        outcome:
+          description: The outcome an answered call was read as.
+          type: string
+        result:
+          description: answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or abandoned; empty while the call is happening. Only answered, unanswered and voicemail placed a call that ended.
+          type: string
+        started_at:
+          format: date-time
+          type: string
+      required:
+        - attempt
+        - dial
+        - result
+        - started_at
+      type: object
+    ContactCounts:
+      properties:
+        completed:
+          format: int64
+          type: integer
+        converted:
+          description: Contacts that ended successfully.
+          format: int64
+          type: integer
+        dialed:
+          description: Contacts with at least one call placed.
+          format: int64
+          type: integer
+        enrolled:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        in_progress:
+          format: int64
+          type: integer
+        rejected:
+          format: int64
+          type: integer
+        stopped:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - enrolled
+        - in_progress
+        - completed
+        - rejected
+        - stopped
+        - failed
+        - dialed
+        - converted
+      type: object
+    ContactInput:
+      properties:
+        instructions:
+          description: What to say to this person, added to whatever the config already says. Up to 2,000 characters; longer fails the whole request with 400.
+          maxLength: 2000
+          type: string
+        time_zone:
+          description: An IANA zone, which a campaign reading its hours where each contact is goes by before the number's.
+          type: string
+        to_number:
+          description: With or without a country code.
+          type: string
+        variables:
+          additionalProperties:
+            type: string
+          description: Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; up to 50, each value up to 1,000 characters on one line.
+          type: object
+      required:
         - to_number
       type: object
-    ContactsRequest:
+    ContactPage:
       properties:
-        contacts:
+        has_more:
+          type: boolean
+        items:
           items:
-            properties:
-              instructions:
-                description: What to say to this person, added to whatever the config already says.
-                type: string
-              to_number:
-                type: string
-            required:
-              - to_number
-            type: object
+            $ref: '#/components/schemas/Contact'
           type: array
+        next_cursor:
+          description: Pass as cursor for the next page. Absent on the last.
+          type: string
       required:
-        - contacts
+        - items
+        - has_more
       type: object
+    ContactStage:
+      description: 'Where a contact is: enrolled while waiting to be rung, in_progress while a call to them happens or is being read, completed once the sequence is done with them, rejected when their number was refused before any call, stopped when they were left unrung, failed when a call could not be made.'
+      enum:
+        - enrolled
+        - in_progress
+        - completed
+        - rejected
+        - stopped
+        - failed
+      type: string
     ContentPart:
       oneOf:
         - $ref: '#/components/schemas/TextContentPart'
@@ -4048,6 +4442,18 @@ components:
         - enabled
         - disabled
       type: string
+    DuplicateCampaignRequest:
+      properties:
+        contacts:
+          description: none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+          enum:
+            - none
+            - all
+            - not_contacted
+          type: string
+      required:
+        - contacts
+      type: object
     EffectiveQuota:
       description: 'The quota a user is held to: each number is the first set of the user''s own, the app''s, the organization''s and the router''s default. Both are 0 on a router that counts nothing.'
       properties:
@@ -4085,13 +4491,6 @@ components:
         - silence
         - semantic
       type: string
-    EpisodeCardsMode:
-      description: 'What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation''s card and its summary into the person''s omni-channel, and no session reads them. on writes them as record does, and a session starts with the person''s other cards. Turning record into on reads what record wrote.'
-      enum:
-        - "off"
-        - record
-        - "on"
-      type: string
     Equals:
       description: 'Matches one value exactly: "value" is short for {"$eq": "value"}.'
       oneOf:
@@ -4106,7 +4505,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer''s own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer''s own key here, and the message names the ones that are), campaign_locked (a 409: the campaign''s state does not allow the change, such as a launched campaign''s sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -4562,7 +4961,7 @@ components:
           format: int64
           type: integer
         instructions:
-          description: 'The system prompt: the agent''s instructions, skills and connector guidance.'
+          description: 'The system prompt: the agent''s instructions, skills and plugin guidance.'
           format: int64
           type: integer
         messages:
@@ -4758,6 +5157,18 @@ components:
         - indexed
         - failed
       type: string
+    LaunchCampaignRequest:
+      properties:
+        consent:
+          description: 'Must be true: the people on the campaign agreed to be called by it. Recorded with the time.'
+          type: boolean
+        start_at:
+          description: When to start ringing. Omitted is now; up to a minute in the past is now too.
+          format: date-time
+          type: string
+      required:
+        - consent
+      type: object
     LeftOutConnector:
       description: A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
       properties:
@@ -5511,6 +5922,63 @@ components:
       required:
         - actor
       type: object
+    McpServer:
+      description: An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
+      properties:
+        branding:
+          $ref: '#/components/schemas/McpServerBranding'
+          description: How the server described itself when the config was saved. Absent when it did not answer.
+          readOnly: true
+        name:
+          description: What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
+          maxLength: 32
+          minLength: 1
+          pattern: ^[a-z][a-z0-9_-]*$
+          type: string
+        needs_login:
+          description: 'Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.'
+          readOnly: true
+          type: boolean
+        scopes:
+          description: The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
+          items:
+            type: string
+          maxItems: 32
+          type: array
+        tools:
+          description: Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
+          items:
+            type: string
+          maxItems: 128
+          type: array
+        url:
+          description: 'Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.'
+          maxLength: 2048
+          minLength: 1
+          type: string
+        user:
+          description: Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
+          type: boolean
+      required:
+        - name
+        - url
+      type: object
+    McpServerBranding:
+      description: The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
+      properties:
+        description:
+          type: string
+        icon_url:
+          description: Its first icon served over https, as the server links it.
+          type: string
+        title:
+          description: Its display title, or its name when it gives none.
+          type: string
+        version:
+          type: string
+        website_url:
+          type: string
+      type: object
     MessageContent:
       oneOf:
         - type: string
@@ -5800,7 +6268,7 @@ components:
           description: The number, in E.164.
           type: string
         source:
-          description: keyword when they texted STOP, otherwise api or dashboard.
+          description: keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or dashboard.
           type: string
       required:
         - id
@@ -6037,6 +6505,68 @@ components:
       required:
         - status
         - vendor_call_id
+      type: object
+    PluginEntry:
+      description: 'One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.'
+      oneOf:
+        - minLength: 1
+          type: string
+        - $ref: '#/components/schemas/PluginWithOptions'
+    PluginEvent:
+      description: One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
+      properties:
+        arguments:
+          additionalProperties: {}
+          description: The event's filters, as its inputSchema describes them.
+          type: object
+        event:
+          description: The event's name, as the server's events/list gives it, such as comment.created.
+          minLength: 1
+          type: string
+        instructions:
+          description: What the agent does with the event when it arrives, added to its instructions for that conversation.
+          type: string
+        plugin:
+          description: A catalog plugin the config names under plugins.
+          minLength: 1
+          type: string
+      required:
+        - plugin
+        - event
+      type: object
+    PluginWithOptions:
+      description: One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
+      properties:
+        name:
+          description: A catalog plugin id, such as linear.
+          minLength: 1
+          type: string
+        readonly:
+          description: Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
+          type: boolean
+        scopes:
+          description: The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
+          items:
+            type: string
+          maxItems: 32
+          type: array
+        tools:
+          description: Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
+          items:
+            type: string
+          maxItems: 128
+          type: array
+        toolsets:
+          description: Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
+          items:
+            type: string
+          maxItems: 32
+          type: array
+        user:
+          description: 'Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person''s own account, such as google_calendar, is connected by each end user, and one reaching the company''s, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.'
+          type: boolean
+      required:
+        - name
       type: object
     Policy:
       description: 'What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.'
@@ -7010,6 +7540,29 @@ components:
         - completed
         - failed
       type: string
+    RefusedContact:
+      properties:
+        index:
+          description: Its place in contacts, from 0.
+          type: integer
+        reason:
+          $ref: '#/components/schemas/RefusedReason'
+        to_number:
+          description: As it was sent.
+          type: string
+      required:
+        - index
+        - to_number
+        - reason
+      type: object
+    RefusedReason:
+      description: 'Why a contact was not added: invalid_number is a number that cannot be read, duplicate one the campaign already holds or the request repeats, invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, invalid_time_zone a time zone that is not an IANA one.'
+      enum:
+        - invalid_number
+        - duplicate
+        - invalid_variable
+        - invalid_time_zone
+      type: string
     RespondRequest:
       properties:
         audio:
@@ -7500,7 +8053,7 @@ components:
           description: 'Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.'
           type: string
         error:
-          description: 'Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task''s thread no longer exists or is not its user''s), connection_removed (a thread task''s line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run''s time came while its task was paused). The full error is in the router''s logs. Null otherwise.'
+          description: 'Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task''s thread no longer exists or is not its user''s), connection_removed (a thread task''s line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run''s time came while its task was paused). The full error is in the router''s logs. Null otherwise.'
           nullable: true
           type: string
         finished_at:
@@ -9178,8 +9731,7 @@ components:
           deprecated: true
           description: 'No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            additionalProperties: {}
-            type: object
+            $ref: '#/components/schemas/McpServer'
           type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
@@ -9190,16 +9742,13 @@ components:
           deprecated: true
           description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            additionalProperties: {}
-            type: object
+            $ref: '#/components/schemas/PluginEvent'
           type: array
         plugins:
           deprecated: true
           description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
-            oneOf:
-              - type: string
-              - type: object
+            $ref: '#/components/schemas/PluginEntry'
           type: array
         region:
           description: 'agent.yaml''s region: where the agent''s work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.'
@@ -10173,6 +10722,9 @@ components:
         agent_id:
           description: The agent the work was done for.
           type: string
+        api_key:
+          description: The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+          type: string
         app_id:
           description: The app the work was for.
           type: string
@@ -10203,9 +10755,6 @@ components:
         occurred_at:
           description: When the work happened.
           format: date-time
-          type: string
-        origin:
-          description: 'Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.'
           type: string
         provider:
           description: Who did the work, such as openai.
@@ -10252,7 +10801,7 @@ components:
         - usage_id
         - occurred_at
         - app_id
-        - origin
+        - api_key
         - usage_categories
         - meter
         - quantities
@@ -11803,16 +12352,42 @@ paths:
       summary: What caused the calls the agents handled badly
   /v1/agents/campaigns:
     get:
+      description: |-
+        Newest first.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: listCampaigns
+      parameters:
+        - description: Only the campaigns in this state.
+          explode: false
+          in: query
+          name: state
+          schema:
+            $ref: '#/components/schemas/CampaignState'
+            description: Only the campaigns in this state.
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same state.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same state.
+            type: string
       responses:
         "200":
           content:
             application/json:
               schema:
-                items:
-                  $ref: '#/components/schemas/Campaign'
-                type: array
-          description: The customer's campaigns, newest first
+                $ref: '#/components/schemas/CampaignPage'
+          description: A page of the customer's campaigns
           headers:
             X-Stream-Balance-Micros:
               $ref: '#/components/headers/X-Stream-Balance-Micros'
@@ -11837,7 +12412,7 @@ paths:
       summary: The campaigns the calling customer has
     post:
       description: |-
-        A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+        A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: createCampaign
       requestBody:
@@ -11852,7 +12427,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/Campaign'
-          description: The campaign was stored
+          description: The draft
           headers:
             X-Stream-Balance-Micros:
               $ref: '#/components/headers/X-Stream-Balance-Micros'
@@ -11876,9 +12451,56 @@ paths:
           $ref: '#/components/responses/InternalError'
         "503":
           $ref: '#/components/responses/Unavailable'
-      summary: Define a list of people to ring
+      summary: Make a draft campaign
   /v1/agents/campaigns/{id}:
+    delete:
+      description: |-
+        A draft, stopped or completed campaign only. Its calls stay.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteCampaign
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "204":
+          description: The campaign is gone
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Delete a campaign and its contacts
     get:
+      description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
       operationId: getCampaign
       parameters:
         - description: The resource, as returned when it was created.
@@ -11918,10 +12540,69 @@ paths:
           $ref: '#/components/responses/InternalError'
         "503":
           $ref: '#/components/responses/Unavailable'
-      summary: One campaign
-  /v1/agents/campaigns/{id}/contacts:
+      summary: One campaign, with its contacts counted by stage
+    patch:
+      description: |-
+        Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: updateCampaign
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/CampaignRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+          description: The campaign as it is now
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Change a campaign's settings
+  /v1/agents/campaigns/{id}/analytics:
     get:
-      operationId: listCampaignContacts
+      description: |-
+        A dial is a call placed: answered, unanswered, taken by an answering machine or still happening. dialed, connected and converted count contacts, not dials.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: getCampaignAnalytics
       parameters:
         - description: The resource, as returned when it was created.
           in: path
@@ -11935,10 +12616,8 @@ paths:
           content:
             application/json:
               schema:
-                items:
-                  $ref: '#/components/schemas/Contact'
-                type: array
-          description: The contacts, in the order they are rung
+                $ref: '#/components/schemas/CampaignAnalytics'
+          description: The campaign's analytics
           headers:
             X-Stream-Balance-Micros:
               $ref: '#/components/headers/X-Stream-Balance-Micros'
@@ -11962,10 +12641,132 @@ paths:
           $ref: '#/components/responses/InternalError'
         "503":
           $ref: '#/components/responses/Unavailable'
-      summary: Who a campaign is ringing, and how far it has got
+      summary: How a campaign's calls went
+  /v1/agents/campaigns/{id}/contacts:
+    delete:
+      description: |-
+        A draft only: once launched, the list is fixed (409 campaign_locked).
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: deleteCampaignContacts
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "204":
+          description: The campaign has no contacts
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Remove every contact of a draft
+    get:
+      description: |-
+        In the order they are rung.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: listCampaignContacts
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+        - description: Up to 200. Omitted is 50.
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Up to 200. Omitted is 50.
+            format: int64
+            maximum: 200
+            minimum: 1
+            type: integer
+        - description: The next_cursor of the previous page, sent with the same filters.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: The next_cursor of the previous page, sent with the same filters.
+            type: string
+        - description: Only the contacts at this stage.
+          explode: false
+          in: query
+          name: stage
+          schema:
+            $ref: '#/components/schemas/ContactStage'
+            description: Only the contacts at this stage.
+        - description: Only the contacts whose number contains this.
+          explode: false
+          in: query
+          name: number
+          schema:
+            description: Only the contacts whose number contains this.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ContactPage'
+          description: A page of the campaign's contacts
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Who a campaign rings, and how far it has got
     post:
       description: |-
-        Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+        A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: addCampaignContacts
       parameters:
@@ -11980,17 +12781,71 @@ paths:
         content:
           application/json:
             schema:
-              $ref: '#/components/schemas/ContactsRequest'
+              $ref: '#/components/schemas/AddContactsRequest'
         required: true
       responses:
         "201":
           content:
             application/json:
               schema:
-                items:
-                  $ref: '#/components/schemas/Contact'
-                type: array
-          description: The contacts, in the order they are rung
+                $ref: '#/components/schemas/AddContactsResponse'
+          description: How many were added, and which were refused
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Add people to ring
+  /v1/agents/campaigns/{id}/contacts/{contact_id}:
+    get:
+      description: 'Server-side only: it needs a server-side token, so it cannot be reached from an end user''s device.'
+      operationId: getCampaignContact
+      parameters:
+        - description: The campaign.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The campaign.
+            type: string
+        - description: The contact, as the campaign's contacts list it.
+          in: path
+          name: contact_id
+          required: true
+          schema:
+            description: The contact, as the campaign's contacts list it.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+          description: The contact
           headers:
             X-Stream-Balance-Micros:
               $ref: '#/components/headers/X-Stream-Balance-Micros'
@@ -12014,11 +12869,183 @@ paths:
           $ref: '#/components/responses/InternalError'
         "503":
           $ref: '#/components/responses/Unavailable'
-      summary: Add people to ring
+      summary: One contact, with every dial made to them
+  /v1/agents/campaigns/{id}/contacts/{contact_id}/stop:
+    post:
+      description: |-
+        One waiting for their next attempt is stopped now. One on a call is not cut off: they are stopped when the call ends. One the sequence is done with is left as it is.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: stopCampaignContact
+      parameters:
+        - description: The campaign.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The campaign.
+            type: string
+        - description: The contact, as the campaign's contacts list it.
+          in: path
+          name: contact_id
+          required: true
+          schema:
+            description: The contact, as the campaign's contacts list it.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Contact'
+          description: The contact
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Ring a contact no more
+  /v1/agents/campaigns/{id}/duplicate:
+    post:
+      description: |-
+        Its contacts are copied as asked, starting over with no attempts.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: duplicateCampaign
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/DuplicateCampaignRequest'
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+          description: The new draft
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Make a draft with a campaign's settings
+  /v1/agents/campaigns/{id}/launch:
+    post:
+      description: |-
+        Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: launchCampaign
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/LaunchCampaignRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+          description: The campaign, scheduled or running
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Launch a draft
   /v1/agents/campaigns/{id}/pause:
     post:
       description: |-
-        The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered.
+        A running or scheduled campaign only. The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does not start at its start_at, and resuming it before then returns it to scheduled.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: pauseCampaign
       parameters:
@@ -12055,17 +13082,23 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Stop ringing anybody new
-  /v1/agents/campaigns/{id}/start:
+  /v1/agents/campaigns/{id}/resume:
     post:
       description: |-
-        Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
+        A paused campaign only. It carries on from whoever is left, and clears paused_reason. A campaign whose start time has not come goes back to scheduled rather than running. An organization that may not pay for calls is refused as a call would be.
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: startCampaign
+      operationId: resumeCampaign
       parameters:
         - description: The resource, as returned when it was created.
           in: path
@@ -12075,12 +13108,12 @@ paths:
             description: The resource, as returned when it was created.
             type: string
       responses:
-        "202":
+        "200":
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/Campaign'
-          description: The campaign is running
+          description: The campaign is running, or scheduled when its start time has not come
           headers:
             X-Stream-Balance-Micros:
               $ref: '#/components/headers/X-Stream-Balance-Micros'
@@ -12100,11 +13133,74 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "429":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Too Many Requests
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
           $ref: '#/components/responses/Unavailable'
-      summary: Start ringing
+      summary: Ring people again
+  /v1/agents/campaigns/{id}/stop:
+    post:
+      description: |-
+        Nobody waiting is rung; calls in progress finish.
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: stopCampaign
+      parameters:
+        - description: The resource, as returned when it was created.
+          in: path
+          name: id
+          required: true
+          schema:
+            description: The resource, as returned when it was created.
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Campaign'
+          description: The campaign is stopped
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: End a campaign for good
   /v1/agents/channels:
     get:
       description: |-
@@ -13527,7 +14623,7 @@ paths:
   /v1/agents/connections/{id}/tools:
     get:
       description: |-
-        The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
+        The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
 
         Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
       operationId: listConnectionTools
@@ -16812,7 +17908,7 @@ paths:
         message_start and message_end are offsets in Unicode code points into the text of the Chat message the reply is written into, the one whose turn_id names the turn, from message_start up to message_end. They are left out where the router does not know them.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
         `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is running again with authorization.status connected and no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at the provider, declines the login (declined); a consent that ended otherwise without connecting, such as with another account, is failed, and one not finished by expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is running again with authorization.status connected and no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at the provider, declines the login (declined); a consent that ended otherwise without connecting, such as with another account, is failed, and one not finished by expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
         A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text and images returns the existing IDs without invoking the model again; reuse with different content emits an error. Its images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, user_message_id is empty, and a reused id is answered as a duplicate even with other text or images. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -17461,7 +18557,7 @@ paths:
       x-client-accessible: true
   /v1/agents/sessions/{id}/tools:
     get:
-      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its connectors'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
+      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its plugins'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
       operationId: listSessionTools
       parameters:
         - description: The resource, as returned when it was created.
@@ -18342,107 +19438,6 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
-  /v1/agents/users/{user_id}:
-    get:
-      description: |-
-        The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
-
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: getUser
-      parameters:
-        - description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
-          in: path
-          name: user_id
-          required: true
-          schema:
-            description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
-            minLength: 1
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentUser'
-          description: The user as the router holds it
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: Get a user's phone link
-    put:
-      description: |-
-        Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: updateUser
-      parameters:
-        - description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
-          in: path
-          name: user_id
-          required: true
-          schema:
-            description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
-            minLength: 1
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AgentUserRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/AgentUser'
-          description: The user as the router now holds it
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: Conflict
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: Link a user to a phone number
   /v1/agents/users/{user_id}/connections:
     delete:
       description: |-
@@ -19248,7 +20243,6 @@ paths:
       description: |-
         Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
         Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
-        A router with shards cannot be the source of a move and answers 400 `not_configured`.
         Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
       operationId: listDataChanges
       parameters:
@@ -19309,7 +20303,6 @@ paths:
       description: |-
         One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
         Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
-        A router with shards cannot be the source of a move and answers 400 `not_configured`.
         Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
       operationId: exportData
       responses:
@@ -19343,22 +20336,15 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: 'This deployment has no database to export from, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again.'
+          description: This deployment has no database to export from.
       summary: Everything this app has, as newline-delimited JSON
   /v1/data/import:
     post:
       description: |-
         Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-        An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
+        Importing is idempotent: the same export applied twice leaves what applying it once would.
         Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
       operationId: importData
-      parameters:
-        - description: Write an export's rows over what an app that already has data here holds.
-          in: query
-          name: full
-          schema:
-            default: false
-            type: boolean
       requestBody:
         content:
           application/octet-stream:
@@ -19391,12 +20377,6 @@ paths:
           $ref: '#/components/responses/PaymentRequired'
         "403":
           $ref: '#/components/responses/Forbidden'
-        "409":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ErrorResponse'
-          description: The file carries an export's rows, the app already has data here and `full` is not true.
         "500":
           $ref: '#/components/responses/InternalError'
         "503":
@@ -19930,12 +20910,10 @@ paths:
           name: app_id
           schema:
             type: string
-        - description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
-          explode: false
+        - explode: false
           in: query
-          name: api_key_id
+          name: api_key
           schema:
-            description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -20194,12 +21172,10 @@ paths:
           name: app_id
           schema:
             type: string
-        - description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
-          explode: false
+        - explode: false
           in: query
-          name: api_key_id
+          name: api_key
           schema:
-            description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -20414,7 +21390,7 @@ paths:
   /v1/manage/spend/limits/usage:
     get:
       description: |-
-        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
         Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
       operationId: manageGetLimitUsage
@@ -20436,12 +21412,12 @@ paths:
             maxItems: 100
             nullable: true
             type: array
-        - description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+        - description: The key of each subject, for subject api_key.
           explode: true
           in: query
-          name: api_key_id
+          name: api_key
           schema:
-            description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+            description: The key of each subject, for subject api_key.
             items:
               type: string
             maxItems: 100
@@ -23305,12 +24281,10 @@ paths:
           name: app_id
           schema:
             type: string
-        - description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
-          explode: false
+        - explode: false
           in: query
-          name: api_key_id
+          name: api_key
           schema:
-            description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -23582,12 +24556,10 @@ paths:
           name: app_id
           schema:
             type: string
-        - description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
-          explode: false
+        - explode: false
           in: query
-          name: api_key_id
+          name: api_key
           schema:
-            description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -23819,7 +24791,7 @@ paths:
   /v1/spend/limits/usage:
     get:
       description: |-
-        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
         Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
       operationId: getLimitUsage
@@ -23841,12 +24813,12 @@ paths:
             maxItems: 100
             nullable: true
             type: array
-        - description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+        - description: The key of each subject, for subject api_key.
           explode: true
           in: query
-          name: api_key_id
+          name: api_key
           schema:
-            description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+            description: The key of each subject, for subject api_key.
             items:
               type: string
             maxItems: 100
@@ -24080,13 +25052,13 @@ paths:
   /v1/stats/spend:
     get:
       description: |-
-        Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+        Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
         scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
         Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
         Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
       operationId: getSpend
       parameters:
-        - description: '"modality", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by.'
+        - description: '"modality", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.'
           in: query
           name: group_by
           schema:
@@ -24142,7 +25114,7 @@ paths:
         - description: Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
           explode: false
           in: query
-          name: origin
+          name: api_key
           schema:
             description: Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
             maxLength: 255
@@ -24553,7 +25525,7 @@ paths:
   /v1/usage/events:
     get:
       description: |-
-        Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+        Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 
         Server-side only: a request that is not server-side answers 403 server_side_only.
       operationId: listUsageEvents
@@ -24600,7 +25572,7 @@ paths:
         - description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
           explode: false
           in: query
-          name: origin
+          name: api_key
           schema:
             description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
             maxLength: 255

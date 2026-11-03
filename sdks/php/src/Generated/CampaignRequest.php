@@ -11,15 +11,24 @@ use GetStream\VisionAgents\Json;
 final readonly class CampaignRequest
 {
     public function __construct(
-        // The agent config the calls are made with.
-        public string $configId,
-        // One of your own numbers, which is what the person sees.
-        public string $fromNumber,
-        public string $name,
-        // How many of these calls may be happening at once.
+        // Omitted is weekdays 09:00 to 18:00 where the contact is, on create.
+        public ?CallingHours $callingHours = null,
+        // How many of these calls may be happening at once. Omitted is 1 on create.
         public ?int $concurrency = null,
+        // The agent config the calls are made with. Setting it sets the sequence's step's too.
+        public ?string $configId = null,
+        // The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+        public ?string $defaultCountry = null,
+        // One of the app's own numbers, which is what the person sees.
+        public ?string $fromNumber = null,
+        // Required on create.
+        public ?string $name = null,
+        // Omitted is four attempts over twenty days, with double dial, on create. Its step's config_id is the campaig...
+        public ?CampaignSequence $sequence = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
+        // Omitted is standard on create. It never changes.
+        public CampaignType|string|null $type = null,
     ) {
     }
 
@@ -29,11 +38,15 @@ final readonly class CampaignRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            configId: Json::string($data, 'config_id'),
-            fromNumber: Json::string($data, 'from_number'),
-            name: Json::string($data, 'name'),
+            callingHours: array_key_exists('calling_hours', $data) && $data['calling_hours'] !== null ? CallingHours::fromArray(Json::object($data, 'calling_hours')) : null,
             concurrency: array_key_exists('concurrency', $data) && $data['concurrency'] !== null ? Json::int($data, 'concurrency') : null,
+            configId: array_key_exists('config_id', $data) && $data['config_id'] !== null ? Json::string($data, 'config_id') : null,
+            defaultCountry: array_key_exists('default_country', $data) && $data['default_country'] !== null ? Json::string($data, 'default_country') : null,
+            fromNumber: array_key_exists('from_number', $data) && $data['from_number'] !== null ? Json::string($data, 'from_number') : null,
+            name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
+            sequence: array_key_exists('sequence', $data) && $data['sequence'] !== null ? CampaignSequence::fromArray(Json::object($data, 'sequence')) : null,
             tags: array_key_exists('tags', $data) && $data['tags'] !== null ? Json::stringMap($data, 'tags') : null,
+            type: array_key_exists('type', $data) && $data['type'] !== null ? Json::enum($data, 'type', CampaignType::class) : null,
         );
     }
 
@@ -45,14 +58,32 @@ final readonly class CampaignRequest
     public function toArray(): array
     {
         $out = [];
-        $out['config_id'] = $this->configId;
-        $out['from_number'] = $this->fromNumber;
-        $out['name'] = $this->name;
+        if ($this->callingHours !== null) {
+            $out['calling_hours'] = $this->callingHours->toArray();
+        }
         if ($this->concurrency !== null) {
             $out['concurrency'] = $this->concurrency;
         }
+        if ($this->configId !== null) {
+            $out['config_id'] = $this->configId;
+        }
+        if ($this->defaultCountry !== null) {
+            $out['default_country'] = $this->defaultCountry;
+        }
+        if ($this->fromNumber !== null) {
+            $out['from_number'] = $this->fromNumber;
+        }
+        if ($this->name !== null) {
+            $out['name'] = $this->name;
+        }
+        if ($this->sequence !== null) {
+            $out['sequence'] = $this->sequence->toArray();
+        }
         if ($this->tags !== null) {
             $out['tags'] = $this->tags;
+        }
+        if ($this->type !== null) {
+            $out['type'] = Json::enumValue($this->type);
         }
         return $out;
     }

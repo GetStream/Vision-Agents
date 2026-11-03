@@ -8,12 +8,14 @@ namespace GetStream\VisionAgents\Generated;
 
 use GetStream\VisionAgents\Json;
 
-final readonly class ContactsRequestContactsItem
+final readonly class RefusedContact
 {
     public function __construct(
+        // Its place in contacts, from 0.
+        public int $index,
+        public RefusedReason|string $reason,
+        // As it was sent.
         public string $toNumber,
-        // What to say to this person, added to whatever the config already says.
-        public ?string $instructions = null,
     ) {
     }
 
@@ -23,8 +25,9 @@ final readonly class ContactsRequestContactsItem
     public static function fromArray(array $data): self
     {
         return new self(
+            index: Json::int($data, 'index'),
+            reason: Json::enum($data, 'reason', RefusedReason::class),
             toNumber: Json::string($data, 'to_number'),
-            instructions: array_key_exists('instructions', $data) && $data['instructions'] !== null ? Json::string($data, 'instructions') : null,
         );
     }
 
@@ -36,10 +39,9 @@ final readonly class ContactsRequestContactsItem
     public function toArray(): array
     {
         $out = [];
+        $out['index'] = $this->index;
+        $out['reason'] = Json::enumValue($this->reason);
         $out['to_number'] = $this->toNumber;
-        if ($this->instructions !== null) {
-            $out['instructions'] = $this->instructions;
-        }
         return $out;
     }
 }

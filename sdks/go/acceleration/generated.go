@@ -517,24 +517,84 @@ func (e CallOutcome) Valid() bool {
 	}
 }
 
+// Defines values for CampaignNextEnd.
+const (
+	Successful   CampaignNextEnd = "successful"
+	Unsuccessful CampaignNextEnd = "unsuccessful"
+)
+
+// Valid indicates whether the value is a known member of the CampaignNextEnd enum.
+func (e CampaignNextEnd) Valid() bool {
+	switch e {
+	case Successful:
+		return true
+	case Unsuccessful:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for CampaignState.
 const (
-	CampaignStateDraft    CampaignState = "draft"
-	CampaignStateFinished CampaignState = "finished"
-	CampaignStatePaused   CampaignState = "paused"
-	CampaignStateRunning  CampaignState = "running"
+	CampaignStateCompleted CampaignState = "completed"
+	CampaignStateDraft     CampaignState = "draft"
+	CampaignStatePaused    CampaignState = "paused"
+	CampaignStateRunning   CampaignState = "running"
+	CampaignStateScheduled CampaignState = "scheduled"
+	CampaignStateStopped   CampaignState = "stopped"
 )
 
 // Valid indicates whether the value is a known member of the CampaignState enum.
 func (e CampaignState) Valid() bool {
 	switch e {
-	case CampaignStateDraft:
+	case CampaignStateCompleted:
 		return true
-	case CampaignStateFinished:
+	case CampaignStateDraft:
 		return true
 	case CampaignStatePaused:
 		return true
 	case CampaignStateRunning:
+		return true
+	case CampaignStateScheduled:
+		return true
+	case CampaignStateStopped:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CampaignTimeZoneMode.
+const (
+	CampaignTimeZoneModeContact CampaignTimeZoneMode = "contact"
+	CampaignTimeZoneModeFixed   CampaignTimeZoneMode = "fixed"
+)
+
+// Valid indicates whether the value is a known member of the CampaignTimeZoneMode enum.
+func (e CampaignTimeZoneMode) Valid() bool {
+	switch e {
+	case CampaignTimeZoneModeContact:
+		return true
+	case CampaignTimeZoneModeFixed:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for CampaignType.
+const (
+	CampaignTypeAutoEnroll CampaignType = "auto_enroll"
+	CampaignTypeStandard   CampaignType = "standard"
+)
+
+// Valid indicates whether the value is a known member of the CampaignType enum.
+func (e CampaignType) Valid() bool {
+	switch e {
+	case CampaignTypeAutoEnroll:
+		return true
+	case CampaignTypeStandard:
 		return true
 	default:
 		return false
@@ -853,24 +913,30 @@ func (e ConnectorOnInterrupt) Valid() bool {
 	}
 }
 
-// Defines values for ContactState.
+// Defines values for ContactStage.
 const (
-	ContactStateCalling ContactState = "calling"
-	ContactStateDone    ContactState = "done"
-	ContactStateFailed  ContactState = "failed"
-	ContactStatePending ContactState = "pending"
+	ContactStageCompleted  ContactStage = "completed"
+	ContactStageEnrolled   ContactStage = "enrolled"
+	ContactStageFailed     ContactStage = "failed"
+	ContactStageInProgress ContactStage = "in_progress"
+	ContactStageRejected   ContactStage = "rejected"
+	ContactStageStopped    ContactStage = "stopped"
 )
 
-// Valid indicates whether the value is a known member of the ContactState enum.
-func (e ContactState) Valid() bool {
+// Valid indicates whether the value is a known member of the ContactStage enum.
+func (e ContactStage) Valid() bool {
 	switch e {
-	case ContactStateCalling:
+	case ContactStageCompleted:
 		return true
-	case ContactStateDone:
+	case ContactStageEnrolled:
 		return true
-	case ContactStateFailed:
+	case ContactStageFailed:
 		return true
-	case ContactStatePending:
+	case ContactStageInProgress:
+		return true
+	case ContactStageRejected:
+		return true
+	case ContactStageStopped:
 		return true
 	default:
 		return false
@@ -1078,6 +1144,27 @@ func (e DispatchSetting) Valid() bool {
 	}
 }
 
+// Defines values for DuplicateCampaignRequestContacts.
+const (
+	DuplicateCampaignRequestContactsAll          DuplicateCampaignRequestContacts = "all"
+	DuplicateCampaignRequestContactsNone         DuplicateCampaignRequestContacts = "none"
+	DuplicateCampaignRequestContactsNotContacted DuplicateCampaignRequestContacts = "not_contacted"
+)
+
+// Valid indicates whether the value is a known member of the DuplicateCampaignRequestContacts enum.
+func (e DuplicateCampaignRequestContacts) Valid() bool {
+	switch e {
+	case DuplicateCampaignRequestContactsAll:
+		return true
+	case DuplicateCampaignRequestContactsNone:
+		return true
+	case DuplicateCampaignRequestContactsNotContacted:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Endpointing.
 const (
 	EndpointingSemantic Endpointing = "semantic"
@@ -1090,27 +1177,6 @@ func (e Endpointing) Valid() bool {
 	case EndpointingSemantic:
 		return true
 	case EndpointingSilence:
-		return true
-	default:
-		return false
-	}
-}
-
-// Defines values for EpisodeCardsMode.
-const (
-	Off    EpisodeCardsMode = "off"
-	On     EpisodeCardsMode = "on"
-	Record EpisodeCardsMode = "record"
-)
-
-// Valid indicates whether the value is a known member of the EpisodeCardsMode enum.
-func (e EpisodeCardsMode) Valid() bool {
-	switch e {
-	case Off:
-		return true
-	case On:
-		return true
-	case Record:
 		return true
 	default:
 		return false
@@ -1987,6 +2053,30 @@ func (e RecordingStatus) Valid() bool {
 	}
 }
 
+// Defines values for RefusedReason.
+const (
+	Duplicate       RefusedReason = "duplicate"
+	InvalidNumber   RefusedReason = "invalid_number"
+	InvalidTimeZone RefusedReason = "invalid_time_zone"
+	InvalidVariable RefusedReason = "invalid_variable"
+)
+
+// Valid indicates whether the value is a known member of the RefusedReason enum.
+func (e RefusedReason) Valid() bool {
+	switch e {
+	case Duplicate:
+		return true
+	case InvalidNumber:
+		return true
+	case InvalidTimeZone:
+		return true
+	case InvalidVariable:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ReviewActor.
 const (
 	ReviewActorApp    ReviewActor = "app"
@@ -2151,22 +2241,22 @@ func (e ScheduledTaskRunTrigger) Valid() bool {
 
 // Defines values for SearchDepth.
 const (
-	Deep     SearchDepth = "deep"
-	Fast     SearchDepth = "fast"
-	Instant  SearchDepth = "instant"
-	Standard SearchDepth = "standard"
+	SearchDepthDeep     SearchDepth = "deep"
+	SearchDepthFast     SearchDepth = "fast"
+	SearchDepthInstant  SearchDepth = "instant"
+	SearchDepthStandard SearchDepth = "standard"
 )
 
 // Valid indicates whether the value is a known member of the SearchDepth enum.
 func (e SearchDepth) Valid() bool {
 	switch e {
-	case Deep:
+	case SearchDepthDeep:
 		return true
-	case Fast:
+	case SearchDepthFast:
 		return true
-	case Instant:
+	case SearchDepthInstant:
 		return true
-	case Standard:
+	case SearchDepthStandard:
 		return true
 	default:
 		return false
@@ -3076,6 +3166,23 @@ type ActivityBucket struct {
 // ActivityGranularity Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 type ActivityGranularity string
 
+// AddContactsRequest defines model for AddContactsRequest.
+type AddContactsRequest struct {
+	// Contacts Up to 1,000.
+	Contacts []ContactInput `json:"contacts"`
+
+	// DefaultCountry The region, as ISO 3166-1 alpha-2, a number without a country code is read in. Omitted is the campaign's default_country, else US.
+	DefaultCountry *string `json:"default_country,omitempty"`
+}
+
+// AddContactsResponse defines model for AddContactsResponse.
+type AddContactsResponse struct {
+	Added int `json:"added"`
+
+	// Refused In the order sent.
+	Refused []RefusedContact `json:"refused"`
+}
+
 // AddTrunkNumberRequest defines model for AddTrunkNumberRequest.
 type AddTrunkNumberRequest struct {
 	// Country Required. ISO 3166-1 alpha-2 country code.
@@ -3131,8 +3238,8 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
-	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting  *Greeting `json:"greeting,omitempty"`
@@ -3210,10 +3317,8 @@ type AgentConfigPatch struct {
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
-	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
-
-	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
-	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
+	Dispatch     *AgentDispatch `json:"dispatch,omitempty"`
+	EpisodeCards *bool          `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -3230,7 +3335,7 @@ type AgentConfigPatch struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3240,11 +3345,11 @@ type AgentConfigPatch struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]AgentConfigPatch_Plugins_Item `json:"plugins,omitempty"`
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Region Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
 	//
@@ -3289,17 +3394,6 @@ type AgentConfigPatch struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
-// AgentConfigPatchPlugins0 defines model for AgentConfigPatch.Plugins.0.
-type AgentConfigPatchPlugins0 = string
-
-// AgentConfigPatchPlugins1 defines model for AgentConfigPatch.Plugins.1.
-type AgentConfigPatchPlugins1 = map[string]interface{}
-
-// AgentConfigPatch_Plugins_Item defines model for AgentConfigPatch.plugins.Item.
-type AgentConfigPatch_Plugins_Item struct {
-	union json.RawMessage
-}
-
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
@@ -3314,8 +3408,8 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
-	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
+	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -3338,7 +3432,7 @@ type AgentConfigRequest struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3348,11 +3442,11 @@ type AgentConfigRequest struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]AgentConfigRequest_Plugins_Item `json:"plugins,omitempty"`
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Region Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
 	//
@@ -3407,17 +3501,6 @@ type AgentConfigRequest struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
-// AgentConfigRequestPlugins0 defines model for AgentConfigRequest.Plugins.0.
-type AgentConfigRequestPlugins0 = string
-
-// AgentConfigRequestPlugins1 defines model for AgentConfigRequest.Plugins.1.
-type AgentConfigRequestPlugins1 = map[string]interface{}
-
-// AgentConfigRequest_Plugins_Item defines model for AgentConfigRequest.plugins.Item.
-type AgentConfigRequest_Plugins_Item struct {
-	union json.RawMessage
-}
-
 // AgentConnectorBinding A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other.
 type AgentConnectorBinding struct {
 	// Connection Which connection a binding's tools are called through.
@@ -3459,11 +3542,11 @@ type AgentConnectorSelection struct {
 	// ConnectionId Required for fixed, and refused for session.
 	ConnectionId *string `json:"connection_id,omitempty"`
 
-	// Type fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+	// Type fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 	Type AgentConnectorSelectionType `json:"type"`
 }
 
-// AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+// AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 type AgentConnectorSelectionType string
 
 // AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
@@ -3609,37 +3692,6 @@ type AgentTools struct {
 
 	// Progressive Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
 	Progressive *bool `json:"progressive,omitempty"`
-}
-
-// AgentUser defines model for AgentUser.
-type AgentUser struct {
-	// IncludePhoneHistory true when the user reads all of what the number ever said. Left out otherwise.
-	IncludePhoneHistory *bool `json:"include_phone_history,omitempty"`
-
-	// Phone The number linked to the user, in E.164; null when none is.
-	//
-	// Example: +15551234567
-	Phone *string `json:"phone"`
-
-	// PhoneHistorySince From when on the user reads what the number said: the link's time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.
-	PhoneHistorySince *time.Time `json:"phone_history_since,omitempty"`
-
-	// UserId The Stream user id, as the app's own token signs it.
-	UserId string `json:"user_id"`
-}
-
-// AgentUserRequest Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
-type AgentUserRequest struct {
-	// IncludePhoneHistory How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies.
-	IncludePhoneHistory *bool `json:"include_phone_history,omitempty"`
-
-	// Phone The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number's SMS, WhatsApp or iMessage thread is handed none of the thread's earlier messages. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
-	//
-	// Example: +15551234567
-	Phone *string `json:"phone"`
-
-	// PhoneHistorySince The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).
-	PhoneHistorySince *time.Time `json:"phone_history_since,omitempty"`
 }
 
 // AnalyzeReviewsRequest defines model for AnalyzeReviewsRequest.
@@ -4153,38 +4205,230 @@ type CallUsage struct {
 	Requests int64 `json:"requests"`
 }
 
-// Campaign defines model for Campaign.
-type Campaign struct {
-	Concurrency int        `json:"concurrency"`
-	ConfigId    string     `json:"config_id"`
-	CreatedAt   time.Time  `json:"created_at"`
-	FinishedAt  *time.Time `json:"finished_at,omitempty"`
-	FromNumber  string     `json:"from_number"`
-	Id          string     `json:"id"`
-	Name        string     `json:"name"`
+// CallingHours defines model for CallingHours.
+type CallingHours struct {
+	// ExcludedDates YYYY-MM-DD, the contact's local date, on which nobody is rung.
+	ExcludedDates []string         `json:"excluded_dates"`
+	TimeZone      CampaignTimeZone `json:"time_zone"`
 
-	// PausedReason Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it.
-	PausedReason *string            `json:"paused_reason,omitempty"`
-	StartedAt    *time.Time         `json:"started_at,omitempty"`
-	State        CampaignState      `json:"state"`
-	Tags         *map[string]string `json:"tags,omitempty"`
+	// Windows Keyed monday to sunday. A day left out rings nobody.
+	Windows map[string]*[]CallingWindow `json:"windows"`
 }
 
-// CampaignState defines model for Campaign.State.
-type CampaignState string
+// CallingWindow defines model for CallingWindow.
+type CallingWindow struct {
+	// End HH:MM, up to 24:00. A window does not cross midnight.
+	End string `json:"end"`
+
+	// Start HH:MM, on a 15-minute step.
+	Start string `json:"start"`
+}
+
+// Campaign defines model for Campaign.
+type Campaign struct {
+	CallingHours CallingHours `json:"calling_hours"`
+
+	// CompletedAt When it had nobody left to ring.
+	CompletedAt *time.Time `json:"completed_at,omitempty"`
+
+	// Concurrency How many of these calls may be happening at once.
+	Concurrency int `json:"concurrency"`
+
+	// ConfigId The agent config the calls are made with, the same as the sequence's step names.
+	ConfigId  string        `json:"config_id"`
+	Contacts  ContactCounts `json:"contacts"`
+	CreatedAt time.Time     `json:"created_at"`
+
+	// DefaultCountry The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+	DefaultCountry string `json:"default_country"`
+
+	// FromNumber One of the app's own numbers, which is what the person sees.
+	FromNumber string     `json:"from_number"`
+	Id         string     `json:"id"`
+	LaunchedAt *time.Time `json:"launched_at,omitempty"`
+	Name       string     `json:"name"`
+
+	// PausedReason Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, session_refused when its agent config makes a session that cannot open, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it.
+	PausedReason *string          `json:"paused_reason,omitempty"`
+	Sequence     CampaignSequence `json:"sequence"`
+
+	// StartAt When it was launched to start ringing.
+	StartAt *time.Time `json:"start_at,omitempty"`
+
+	// StartedAt When it first rang anybody.
+	StartedAt *time.Time `json:"started_at,omitempty"`
+
+	// State Where a campaign is: draft until it is launched, scheduled until its start_at, running while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to ring.
+	State     CampaignState     `json:"state"`
+	StoppedAt *time.Time        `json:"stopped_at,omitempty"`
+	Tags      map[string]string `json:"tags"`
+
+	// Type What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+	Type CampaignType `json:"type"`
+}
+
+// CampaignAnalytics defines model for CampaignAnalytics.
+type CampaignAnalytics struct {
+	// Connected Contacts who answered at least one call.
+	Connected int64 `json:"connected"`
+
+	// ConversionRate converted / dialed, 0 when nobody was dialed.
+	ConversionRate float64 `json:"conversion_rate"`
+
+	// Converted Contacts that ended successfully.
+	Converted int64 `json:"converted"`
+
+	// Dialed Contacts with at least one call placed.
+	Dialed int64 `json:"dialed"`
+
+	// DialsPerDay Oldest first, only the days with a dial.
+	DialsPerDay []CampaignDialDay `json:"dials_per_day"`
+
+	// Outcomes Contacts that are done, by outcome id, no_response included.
+	Outcomes map[string]int64 `json:"outcomes"`
+}
+
+// CampaignAttempt defines model for CampaignAttempt.
+type CampaignAttempt struct {
+	// DelayMinutes Minutes after the previous attempt started, pushed into the calling hours.
+	DelayMinutes int64 `json:"delay_minutes"`
+}
+
+// CampaignDialDay defines model for CampaignDialDay.
+type CampaignDialDay struct {
+	Answered int64 `json:"answered"`
+
+	// Date YYYY-MM-DD, in UTC.
+	Date openapi_types.Date `json:"date"`
+
+	// Dials Calls placed, answering machines included.
+	Dials int64 `json:"dials"`
+
+	// Voicemail Calls an answering machine took.
+	Voicemail int64 `json:"voicemail"`
+}
+
+// CampaignNext defines model for CampaignNext.
+type CampaignNext struct {
+	// End How the contact ends: successful counts as converted.
+	End *CampaignNextEnd `json:"end,omitempty"`
+
+	// Step Reserved for branching to another step, which is refused for now.
+	Step *string `json:"step,omitempty"`
+}
+
+// CampaignNextEnd How the contact ends: successful counts as converted.
+type CampaignNextEnd string
+
+// CampaignOutcome defines model for CampaignOutcome.
+type CampaignOutcome struct {
+	// Description What the call has to have been for this outcome, which the model reading the transcript goes by.
+	Description string `json:"description"`
+
+	// Id Lowercase letters, digits and underscores, starting with a letter.
+	Id   string       `json:"id"`
+	Name string       `json:"name"`
+	Next CampaignNext `json:"next"`
+}
+
+// CampaignPage defines model for CampaignPage.
+type CampaignPage struct {
+	HasMore bool       `json:"has_more"`
+	Items   []Campaign `json:"items"`
+
+	// NextCursor Pass as cursor for the next page. Absent on the last.
+	NextCursor *string `json:"next_cursor,omitempty"`
+}
 
 // CampaignRequest defines model for CampaignRequest.
 type CampaignRequest struct {
-	// Concurrency How many of these calls may be happening at once.
+	CallingHours *CallingHours `json:"calling_hours,omitempty"`
+
+	// Concurrency How many of these calls may be happening at once. Omitted is 1 on create.
 	Concurrency *int `json:"concurrency,omitempty"`
 
-	// ConfigId The agent config the calls are made with.
+	// ConfigId The agent config the calls are made with. Setting it sets the sequence's step's too.
+	ConfigId *string `json:"config_id,omitempty"`
+
+	// DefaultCountry The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+	DefaultCountry *string `json:"default_country,omitempty"`
+
+	// FromNumber One of the app's own numbers, which is what the person sees.
+	FromNumber *string `json:"from_number,omitempty"`
+
+	// Name Required on create.
+	Name     *string            `json:"name,omitempty"`
+	Sequence *CampaignSequence  `json:"sequence,omitempty"`
+	Tags     *map[string]string `json:"tags,omitempty"`
+
+	// Type What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+	Type *CampaignType `json:"type,omitempty"`
+}
+
+// CampaignRoute defines model for CampaignRoute.
+type CampaignRoute struct {
+	Next CampaignNext `json:"next"`
+}
+
+// CampaignSequence defines model for CampaignSequence.
+type CampaignSequence struct {
+	// DoubleDial Ring again at once when the first call of an attempt is not answered.
+	DoubleDial bool `json:"double_dial"`
+
+	// Steps Exactly one step for now.
+	Steps []CampaignStep `json:"steps"`
+}
+
+// CampaignState Where a campaign is: draft until it is launched, scheduled until its start_at, running while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to ring.
+type CampaignState string
+
+// CampaignStep defines model for CampaignStep.
+type CampaignStep struct {
+	// Attempts 1 to 10. The first has a delay of 0.
+	Attempts []CampaignAttempt `json:"attempts"`
+
+	// ConfigId The agent config the step rings with, the same as the campaign's config_id.
 	ConfigId string `json:"config_id"`
 
-	// FromNumber One of your own numbers, which is what the person sees.
-	FromNumber string             `json:"from_number"`
-	Name       string             `json:"name"`
-	Tags       *map[string]string `json:"tags,omitempty"`
+	// Goal What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch.
+	Goal *string `json:"goal,omitempty"`
+
+	// Id step_1, for now.
+	Id         string        `json:"id"`
+	NoResponse CampaignRoute `json:"no_response"`
+	Other      CampaignRoute `json:"other"`
+
+	// Outcomes What an answered call can end as. do_not_call is built in.
+	Outcomes  []CampaignOutcome  `json:"outcomes"`
+	Voicemail *CampaignVoicemail `json:"voicemail,omitempty"`
+}
+
+// CampaignTimeZone defines model for CampaignTimeZone.
+type CampaignTimeZone struct {
+	// Fallback An IANA zone, used by contact mode.
+	Fallback string `json:"fallback"`
+
+	// Fixed An IANA zone, used by fixed mode.
+	Fixed *string `json:"fixed,omitempty"`
+
+	// Mode contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+	Mode CampaignTimeZoneMode `json:"mode"`
+}
+
+// CampaignTimeZoneMode contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+type CampaignTimeZoneMode string
+
+// CampaignType What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+type CampaignType string
+
+// CampaignVoicemail defines model for CampaignVoicemail.
+type CampaignVoicemail struct {
+	// Action hang_up: end the call at once, saying nothing.
+	// leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+	Action VoicemailAction `json:"action"`
+
+	// Message {{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.
+	Message *string `json:"message,omitempty"`
 }
 
 // CancelPriceChangeInput defines model for CancelPriceChangeInput.
@@ -4622,9 +4866,6 @@ type ConnectionTool struct {
 	// NeedsScopes The scopes a call of the tool needs, as the connector says. Absent when it says none.
 	NeedsScopes *[]string `json:"needs_scopes,omitempty"`
 
-	// ReadOnly Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
-	ReadOnly bool `json:"read_only"`
-
 	// SchemaDigest The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
 	SchemaDigest string `json:"schema_digest"`
 }
@@ -4740,7 +4981,7 @@ type Connector struct {
 	Setup *ConnectorSetup `json:"setup,omitempty"`
 }
 
-// ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
+// ConnectorAuditAction grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 type ConnectorAuditAction string
 
 // ConnectorAuditCredential The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
@@ -4769,7 +5010,7 @@ type ConnectorAuditCredential struct {
 
 // ConnectorAuditEvent One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
 type ConnectorAuditEvent struct {
-	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
+	// Action grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 	Action ConnectorAuditAction `json:"action"`
 
 	// AttemptId The authorization attempt a consent finished. Absent once the connection's user was deleted.
@@ -4790,7 +5031,7 @@ type ConnectorAuditEvent struct {
 	// OwnerType app is the app's own account, user one user's.
 	OwnerType ConnectionOwnerType `json:"owner_type"`
 
-	// Reason Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+	// Reason Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
 	Reason *string `json:"reason,omitempty"`
 
 	// RequestId The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -5041,40 +5282,109 @@ type ConnectorToolGrant struct {
 
 // Contact defines model for Contact.
 type Contact struct {
-	Attempts int `json:"attempts"`
+	// Attempts Every dial made to them, oldest first. Only on a contact read alone.
+	Attempts *[]ContactAttempt `json:"attempts,omitempty"`
 
-	// CallId The call this contact became, which is what the call paths take.
+	// AttemptsMade Attempts that placed at least one call.
+	AttemptsMade int `json:"attempts_made"`
+
+	// AttemptsTotal The attempts the sequence makes at most.
+	AttemptsTotal int `json:"attempts_total"`
+
+	// CallId The last call placed to them, which is what the call paths take.
 	CallId *string `json:"call_id,omitempty"`
 
-	// Error Why they could not be rung, when they could not be.
-	Error        *string `json:"error,omitempty"`
-	Id           string  `json:"id"`
+	// Converted They ended successfully.
+	Converted bool      `json:"converted"`
+	CreatedAt time.Time `json:"created_at"`
+	Id        string    `json:"id"`
+
+	// NextAttemptAt When they are next rung, while they are waiting to be.
+	NextAttemptAt *time.Time `json:"next_attempt_at,omitempty"`
+
+	// Outcome The id of the outcome they ended with, once they have.
+	Outcome *string `json:"outcome,omitempty"`
+
+	// Reason Why they were rejected, failed or stopped.
+	Reason *string `json:"reason,omitempty"`
+
+	// Stage Where a contact is: enrolled while waiting to be rung, in_progress while a call to them happens or is being read, completed once the sequence is done with them, rejected when their number was refused before any call, stopped when they were left unrung, failed when a call could not be made.
+	Stage ContactStage `json:"stage"`
+
+	// TimeZone The IANA zone they were added with.
+	TimeZone *string `json:"time_zone,omitempty"`
+
+	// ToNumber E.164.
+	ToNumber string `json:"to_number"`
+
+	// Variables Filled into the agent's {{placeholders}} on their calls.
+	Variables map[string]string `json:"variables"`
+
+	// Zone The IANA zone the calling hours are read in for them: the campaign's fixed zone, else their time_zone, else their number's, else the campaign's fallback.
+	Zone string `json:"zone"`
+}
+
+// ContactAttempt defines model for ContactAttempt.
+type ContactAttempt struct {
+	// Attempt Which attempt of the sequence, from 1.
+	Attempt int     `json:"attempt"`
+	CallId  *string `json:"call_id,omitempty"`
+
+	// Dial 1, or 2 for the second call of a double dial.
+	Dial    int        `json:"dial"`
+	EndedAt *time.Time `json:"ended_at,omitempty"`
+
+	// Outcome The outcome an answered call was read as.
+	Outcome *string `json:"outcome,omitempty"`
+
+	// Result answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or abandoned; empty while the call is happening. Only answered, unanswered and voicemail placed a call that ended.
+	Result    string    `json:"result"`
+	StartedAt time.Time `json:"started_at"`
+}
+
+// ContactCounts defines model for ContactCounts.
+type ContactCounts struct {
+	Completed int64 `json:"completed"`
+
+	// Converted Contacts that ended successfully.
+	Converted int64 `json:"converted"`
+
+	// Dialed Contacts with at least one call placed.
+	Dialed     int64 `json:"dialed"`
+	Enrolled   int64 `json:"enrolled"`
+	Failed     int64 `json:"failed"`
+	InProgress int64 `json:"in_progress"`
+	Rejected   int64 `json:"rejected"`
+	Stopped    int64 `json:"stopped"`
+	Total      int64 `json:"total"`
+}
+
+// ContactInput defines model for ContactInput.
+type ContactInput struct {
+	// Instructions What to say to this person, added to whatever the config already says. Up to 2,000 characters; longer fails the whole request with 400.
 	Instructions *string `json:"instructions,omitempty"`
 
-	// Outcome How a placed call ended.
-	// completed: the person answered and the call ended.
-	// busy: the line was busy or the person declined.
-	// no_answer: it rang and nobody answered.
-	// failed: the vendor could not place it, for a bad number or a carrier fault.
-	// canceled: the vendor says the call was hung up before an answer.
-	// unknown: the vendor reports nothing about how it ended, and the phone never joined.
-	Outcome      *CallOutcome `json:"outcome,omitempty"`
-	State        ContactState `json:"state"`
-	ToNumber     string       `json:"to_number"`
-	VendorCallId *string      `json:"vendor_call_id,omitempty"`
+	// TimeZone An IANA zone, which a campaign reading its hours where each contact is goes by before the number's.
+	TimeZone *string `json:"time_zone,omitempty"`
+
+	// ToNumber With or without a country code.
+	ToNumber string `json:"to_number"`
+
+	// Variables Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; up to 50, each value up to 1,000 characters on one line.
+	Variables *map[string]string `json:"variables,omitempty"`
 }
 
-// ContactState defines model for Contact.State.
-type ContactState string
+// ContactPage defines model for ContactPage.
+type ContactPage struct {
+	HasMore bool      `json:"has_more"`
+	Items   []Contact `json:"items"`
 
-// ContactsRequest defines model for ContactsRequest.
-type ContactsRequest struct {
-	Contacts []struct {
-		// Instructions What to say to this person, added to whatever the config already says.
-		Instructions *string `json:"instructions,omitempty"`
-		ToNumber     string  `json:"to_number"`
-	} `json:"contacts"`
+	// NextCursor Pass as cursor for the next page. Absent on the last.
+	NextCursor *string `json:"next_cursor,omitempty"`
 }
+
+// ContactStage Where a contact is: enrolled while waiting to be rung, in_progress while a call to them happens or is being read, completed once the sequence is done with them, rejected when their number was refused before any call, stopped when they were left unrung, failed when a call could not be made.
+type ContactStage string
 
 // ContentPart defines model for ContentPart.
 type ContentPart struct {
@@ -5610,6 +5920,15 @@ type DetectionStatus string
 // DispatchSetting Whether this kind of work is left to the customer's own dispatch worker.
 type DispatchSetting string
 
+// DuplicateCampaignRequest defines model for DuplicateCampaignRequest.
+type DuplicateCampaignRequest struct {
+	// Contacts none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+	Contacts DuplicateCampaignRequestContacts `json:"contacts"`
+}
+
+// DuplicateCampaignRequestContacts none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+type DuplicateCampaignRequestContacts string
+
 // EffectiveQuota The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing.
 type EffectiveQuota struct {
 	// MessagesPerUserPerDay Responses the user may ask for today. 0 is no cap.
@@ -5637,9 +5956,6 @@ type EndCallSettings struct {
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
 
-// EpisodeCardsMode What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
-type EpisodeCardsMode string
-
 // Equals Matches one value exactly: "value" is short for {"$eq": "value"}.
 type Equals struct {
 	union json.RawMessage
@@ -5655,7 +5971,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -5973,7 +6289,7 @@ type InputParts struct {
 	// Images Pictures, attached or returned by a tool.
 	Images int64 `json:"images"`
 
-	// Instructions The system prompt: the agent's instructions, skills and connector guidance.
+	// Instructions The system prompt: the agent's instructions, skills and plugin guidance.
 	Instructions int64 `json:"instructions"`
 
 	// Messages The conversation's words, from either side.
@@ -6106,6 +6422,15 @@ type KnowledgeUrlRequest struct {
 
 // KnowledgeUrlState Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 type KnowledgeUrlState string
+
+// LaunchCampaignRequest defines model for LaunchCampaignRequest.
+type LaunchCampaignRequest struct {
+	// Consent Must be true: the people on the campaign agreed to be called by it. Recorded with the time.
+	Consent bool `json:"consent"`
+
+	// StartAt When to start ringing. Omitted is now; up to a minute in the past is now too.
+	StartAt *time.Time `json:"start_at,omitempty"`
+}
 
 // LeftOutConnector A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
 type LeftOutConnector struct {
@@ -6540,6 +6865,43 @@ type ManageStatus struct {
 	Name *string `json:"name,omitempty"`
 }
 
+// McpServer An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
+type McpServer struct {
+	// Branding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
+	Branding *McpServerBranding `json:"branding,omitempty"`
+
+	// Name What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
+	Name string `json:"name"`
+
+	// NeedsLogin Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
+	NeedsLogin *bool `json:"needs_login,omitempty"`
+
+	// Scopes The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
+	Scopes *[]string `json:"scopes,omitempty"`
+
+	// Tools Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
+	Tools *[]string `json:"tools,omitempty"`
+
+	// Url Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
+	Url string `json:"url"`
+
+	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
+	User *bool `json:"user,omitempty"`
+}
+
+// McpServerBranding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
+type McpServerBranding struct {
+	Description *string `json:"description,omitempty"`
+
+	// IconUrl Its first icon served over https, as the server links it.
+	IconUrl *string `json:"icon_url,omitempty"`
+
+	// Title Its display title, or its name when it gives none.
+	Title      *string `json:"title,omitempty"`
+	Version    *string `json:"version,omitempty"`
+	WebsiteUrl *string `json:"website_url,omitempty"`
+}
+
 // MessageContent defines model for MessageContent.
 type MessageContent struct {
 	union json.RawMessage
@@ -6733,7 +7095,7 @@ type OptOut struct {
 	// Recipient The number, in E.164.
 	Recipient string `json:"recipient"`
 
-	// Source keyword when they texted STOP, otherwise api or dashboard.
+	// Source keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or dashboard.
 	Source string `json:"source"`
 }
 
@@ -6859,6 +7221,50 @@ type PlacedCall struct {
 	// Vendor Who is placing the call.
 	Vendor       *string `json:"vendor,omitempty"`
 	VendorCallId string  `json:"vendor_call_id"`
+}
+
+// PluginEntry One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
+type PluginEntry struct {
+	union json.RawMessage
+}
+
+// PluginEntry0 defines model for PluginEntry.0.
+type PluginEntry0 = string
+
+// PluginEvent One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
+type PluginEvent struct {
+	// Arguments The event's filters, as its inputSchema describes them.
+	Arguments *map[string]interface{} `json:"arguments,omitempty"`
+
+	// Event The event's name, as the server's events/list gives it, such as comment.created.
+	Event string `json:"event"`
+
+	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
+	Instructions *string `json:"instructions,omitempty"`
+
+	// Plugin A catalog plugin the config names under plugins.
+	Plugin string `json:"plugin"`
+}
+
+// PluginWithOptions One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
+type PluginWithOptions struct {
+	// Name A catalog plugin id, such as linear.
+	Name string `json:"name"`
+
+	// Readonly Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
+	Readonly *bool `json:"readonly,omitempty"`
+
+	// Scopes The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
+	Scopes *[]string `json:"scopes,omitempty"`
+
+	// Tools Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
+	Tools *[]string `json:"tools,omitempty"`
+
+	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
+	Toolsets *[]string `json:"toolsets,omitempty"`
+
+	// User Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+	User *bool `json:"user,omitempty"`
 }
 
 // Policy What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
@@ -7508,6 +7914,21 @@ type RecordingSource struct {
 // RecordingStatus Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
 type RecordingStatus string
 
+// RefusedContact defines model for RefusedContact.
+type RefusedContact struct {
+	// Index Its place in contacts, from 0.
+	Index int `json:"index"`
+
+	// Reason Why a contact was not added: invalid_number is a number that cannot be read, duplicate one the campaign already holds or the request repeats, invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, invalid_time_zone a time zone that is not an IANA one.
+	Reason RefusedReason `json:"reason"`
+
+	// ToNumber As it was sent.
+	ToNumber string `json:"to_number"`
+}
+
+// RefusedReason Why a contact was not added: invalid_number is a number that cannot be read, duplicate one the campaign already holds or the request repeats, invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, invalid_time_zone a time zone that is not an IANA one.
+type RefusedReason string
+
 // RespondRequest defines model for RespondRequest.
 type RespondRequest struct {
 	Audio *AudioSource `json:"audio,omitempty"`
@@ -7827,7 +8248,7 @@ type ScheduledTaskRun struct {
 	// DeliveredTo Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
 	DeliveredTo string `json:"delivered_to"`
 
-	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
+	// Error Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
 	Error      *string    `json:"error"`
 	FinishedAt *time.Time `json:"finished_at"`
 	Id         string     `json:"id"`
@@ -8987,7 +9408,7 @@ type SyncAgentRequest struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -8997,11 +9418,11 @@ type SyncAgentRequest struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
+	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]SyncAgentRequest_Plugins_Item `json:"plugins,omitempty"`
+	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Region agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
 	//
@@ -9043,17 +9464,6 @@ type SyncAgentRequest struct {
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`
-}
-
-// SyncAgentRequestPlugins0 defines model for SyncAgentRequest.Plugins.0.
-type SyncAgentRequestPlugins0 = string
-
-// SyncAgentRequestPlugins1 defines model for SyncAgentRequest.Plugins.1.
-type SyncAgentRequestPlugins1 = map[string]interface{}
-
-// SyncAgentRequest_Plugins_Item defines model for SyncAgentRequest.plugins.Item.
-type SyncAgentRequest_Plugins_Item struct {
-	union json.RawMessage
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -9628,6 +10038,9 @@ type UsageEvent struct {
 	// AgentId The agent the work was done for.
 	AgentId *string `json:"agent_id,omitempty"`
 
+	// ApiKey The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+	ApiKey string `json:"api_key"`
+
 	// AppId The app the work was for.
 	AppId string `json:"app_id"`
 
@@ -9654,9 +10067,6 @@ type UsageEvent struct {
 
 	// OccurredAt When the work happened.
 	OccurredAt time.Time `json:"occurred_at"`
-
-	// Origin Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
-	Origin string `json:"origin"`
 
 	// Provider Who did the work, such as openai.
 	Provider *string `json:"provider,omitempty"`
@@ -10135,6 +10545,33 @@ type GetCallEventsParams struct {
 	Limit *int `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ListCampaignsParams defines parameters for ListCampaigns.
+type ListCampaignsParams struct {
+	// State Only the campaigns in this state.
+	State *CampaignState `form:"state,omitempty" json:"state,omitempty"`
+
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page, sent with the same state.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+}
+
+// ListCampaignContactsParams defines parameters for ListCampaignContacts.
+type ListCampaignContactsParams struct {
+	// Limit Up to 200. Omitted is 50.
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor The next_cursor of the previous page, sent with the same filters.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Stage Only the contacts at this stage.
+	Stage *ContactStage `form:"stage,omitempty" json:"stage,omitempty"`
+
+	// Number Only the contacts whose number contains this.
+	Number *string `form:"number,omitempty" json:"number,omitempty"`
+}
+
 // VerifyChannelHookParams defines parameters for VerifyChannelHook.
 type VerifyChannelHookParams struct {
 	HubMode        *string `form:"hub.mode,omitempty" json:"hub.mode,omitempty"`
@@ -10436,12 +10873,6 @@ type ListDataChangesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
-// ImportDataParams defines parameters for ImportData.
-type ImportDataParams struct {
-	// Full Write an export's rows over what an app that already has data here holds.
-	Full *bool `form:"full,omitempty" json:"full,omitempty"`
-}
-
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -10524,12 +10955,10 @@ type GetPricesParams struct {
 // ListLimitsParams defines parameters for ListLimits.
 type ListLimitsParams struct {
 	// Subject Only limits on this subject. team lists the teams' limits, category every other category's.
-	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
-	Level   *LimitLevel   `form:"level,omitempty" json:"level,omitempty"`
-	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
-
-	// ApiKeyId Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
-	ApiKeyId *string        `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
+	Subject  *LimitSubject  `form:"subject,omitempty" json:"subject,omitempty"`
+	Level    *LimitLevel    `form:"level,omitempty" json:"level,omitempty"`
+	AppId    *string        `form:"app_id,omitempty" json:"app_id,omitempty"`
+	ApiKey   *string        `form:"api_key,omitempty" json:"api_key,omitempty"`
 	UserId   *string        `form:"user_id,omitempty" json:"user_id,omitempty"`
 	Team     *string        `form:"team,omitempty" json:"team,omitempty"`
 	Category *string        `form:"category,omitempty" json:"category,omitempty"`
@@ -10544,14 +10973,12 @@ type ListLimitsParams struct {
 
 // ListLimitGrantsParams defines parameters for ListLimitGrants.
 type ListLimitGrantsParams struct {
-	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
-	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
-
-	// ApiKeyId Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
-	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
-	UserId   *string `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Team     *string `form:"team,omitempty" json:"team,omitempty"`
-	Category *string `form:"category,omitempty" json:"category,omitempty"`
+	Subject  *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	AppId    *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+	ApiKey   *string       `form:"api_key,omitempty" json:"api_key,omitempty"`
+	UserId   *string       `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Team     *string       `form:"team,omitempty" json:"team,omitempty"`
+	Category *string       `form:"category,omitempty" json:"category,omitempty"`
 
 	// State Only grants in this state. Omitted is every one.
 	State *LimitGrantState `form:"state,omitempty" json:"state,omitempty"`
@@ -10570,8 +10997,8 @@ type GetLimitUsageParams struct {
 	// AppId The app of each subject, for every subject but organization, category and team. One goes with every subject.
 	AppId *[]string `form:"app_id,omitempty" json:"app_id,omitempty"`
 
-	// ApiKeyId The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
-	ApiKeyId *[]string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
+	// ApiKey The key of each subject, for subject api_key.
+	ApiKey *[]string `form:"api_key,omitempty" json:"api_key,omitempty"`
 
 	// UserId The end user of each subject, for subject user.
 	UserId *[]string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10605,7 +11032,7 @@ type GetAgentStatsParams struct {
 
 // GetSpendParams defines parameters for GetSpend.
 type GetSpendParams struct {
-	// GroupBy "modality", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by.
+	// GroupBy "modality", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.
 	GroupBy *string `form:"group_by,omitempty" json:"group_by,omitempty"`
 
 	// Limit How many values keep a series of their own.
@@ -10624,8 +11051,8 @@ type GetSpendParams struct {
 	// Tag Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
 	Tag *[]string `form:"tag,omitempty" json:"tag,omitempty"`
 
-	// Origin Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
-	Origin *string `form:"origin,omitempty" json:"origin,omitempty"`
+	// ApiKey Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
+	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
 
 	// UserId Only count usage for this end user of the app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10685,8 +11112,8 @@ type ListUsageEventsParams struct {
 	// Meter Only this kind of work, such as llm or runtime.
 	Meter *string `form:"meter,omitempty" json:"meter,omitempty"`
 
-	// Origin Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
-	Origin *string `form:"origin,omitempty" json:"origin,omitempty"`
+	// ApiKey Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
 
 	// UserId Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10746,8 +11173,17 @@ type CreateCallTokenJSONRequestBody = CallTokenRequest
 // CreateCampaignJSONRequestBody defines body for CreateCampaign for application/json ContentType.
 type CreateCampaignJSONRequestBody = CampaignRequest
 
+// UpdateCampaignJSONRequestBody defines body for UpdateCampaign for application/json ContentType.
+type UpdateCampaignJSONRequestBody = CampaignRequest
+
 // AddCampaignContactsJSONRequestBody defines body for AddCampaignContacts for application/json ContentType.
-type AddCampaignContactsJSONRequestBody = ContactsRequest
+type AddCampaignContactsJSONRequestBody = AddContactsRequest
+
+// DuplicateCampaignJSONRequestBody defines body for DuplicateCampaign for application/json ContentType.
+type DuplicateCampaignJSONRequestBody = DuplicateCampaignRequest
+
+// LaunchCampaignJSONRequestBody defines body for LaunchCampaign for application/json ContentType.
+type LaunchCampaignJSONRequestBody = LaunchCampaignRequest
 
 // ConnectChannelJSONRequestBody defines body for ConnectChannel for application/json ContentType.
 type ConnectChannelJSONRequestBody = ConnectChannelRequest
@@ -10872,9 +11308,6 @@ type UpdateSkillJSONRequestBody = SkillRequest
 // SyncAgentJSONRequestBody defines body for SyncAgent for application/json ContentType.
 type SyncAgentJSONRequestBody = SyncAgentRequest
 
-// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
-type UpdateUserJSONRequestBody = AgentUserRequest
-
 // CreateVoiceJSONRequestBody defines body for CreateVoice for application/json ContentType.
 type CreateVoiceJSONRequestBody = VoiceRequest
 
@@ -10988,130 +11421,6 @@ type TranscribeRecordingJSONRequestBody = TranscriptionRequest
 
 // RecordSpeechJSONRequestBody defines body for RecordSpeech for application/json ContentType.
 type RecordSpeechJSONRequestBody = SpeechRequest
-
-// AsAgentConfigPatchPlugins0 returns the union data inside the AgentConfigPatch_Plugins_Item as a AgentConfigPatchPlugins0
-func (t AgentConfigPatch_Plugins_Item) AsAgentConfigPatchPlugins0() (AgentConfigPatchPlugins0, error) {
-	var body AgentConfigPatchPlugins0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromAgentConfigPatchPlugins0 overwrites any union data inside the AgentConfigPatch_Plugins_Item as the provided AgentConfigPatchPlugins0
-func (t *AgentConfigPatch_Plugins_Item) FromAgentConfigPatchPlugins0(v AgentConfigPatchPlugins0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeAgentConfigPatchPlugins0 performs a merge with any union data inside the AgentConfigPatch_Plugins_Item, using the provided AgentConfigPatchPlugins0
-func (t *AgentConfigPatch_Plugins_Item) MergeAgentConfigPatchPlugins0(v AgentConfigPatchPlugins0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsAgentConfigPatchPlugins1 returns the union data inside the AgentConfigPatch_Plugins_Item as a AgentConfigPatchPlugins1
-func (t AgentConfigPatch_Plugins_Item) AsAgentConfigPatchPlugins1() (AgentConfigPatchPlugins1, error) {
-	var body AgentConfigPatchPlugins1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromAgentConfigPatchPlugins1 overwrites any union data inside the AgentConfigPatch_Plugins_Item as the provided AgentConfigPatchPlugins1
-func (t *AgentConfigPatch_Plugins_Item) FromAgentConfigPatchPlugins1(v AgentConfigPatchPlugins1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeAgentConfigPatchPlugins1 performs a merge with any union data inside the AgentConfigPatch_Plugins_Item, using the provided AgentConfigPatchPlugins1
-func (t *AgentConfigPatch_Plugins_Item) MergeAgentConfigPatchPlugins1(v AgentConfigPatchPlugins1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t AgentConfigPatch_Plugins_Item) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *AgentConfigPatch_Plugins_Item) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
-
-// AsAgentConfigRequestPlugins0 returns the union data inside the AgentConfigRequest_Plugins_Item as a AgentConfigRequestPlugins0
-func (t AgentConfigRequest_Plugins_Item) AsAgentConfigRequestPlugins0() (AgentConfigRequestPlugins0, error) {
-	var body AgentConfigRequestPlugins0
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromAgentConfigRequestPlugins0 overwrites any union data inside the AgentConfigRequest_Plugins_Item as the provided AgentConfigRequestPlugins0
-func (t *AgentConfigRequest_Plugins_Item) FromAgentConfigRequestPlugins0(v AgentConfigRequestPlugins0) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeAgentConfigRequestPlugins0 performs a merge with any union data inside the AgentConfigRequest_Plugins_Item, using the provided AgentConfigRequestPlugins0
-func (t *AgentConfigRequest_Plugins_Item) MergeAgentConfigRequestPlugins0(v AgentConfigRequestPlugins0) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-// AsAgentConfigRequestPlugins1 returns the union data inside the AgentConfigRequest_Plugins_Item as a AgentConfigRequestPlugins1
-func (t AgentConfigRequest_Plugins_Item) AsAgentConfigRequestPlugins1() (AgentConfigRequestPlugins1, error) {
-	var body AgentConfigRequestPlugins1
-	err := json.Unmarshal(t.union, &body)
-	return body, err
-}
-
-// FromAgentConfigRequestPlugins1 overwrites any union data inside the AgentConfigRequest_Plugins_Item as the provided AgentConfigRequestPlugins1
-func (t *AgentConfigRequest_Plugins_Item) FromAgentConfigRequestPlugins1(v AgentConfigRequestPlugins1) error {
-	b, err := json.Marshal(v)
-	t.union = b
-	return err
-}
-
-// MergeAgentConfigRequestPlugins1 performs a merge with any union data inside the AgentConfigRequest_Plugins_Item, using the provided AgentConfigRequestPlugins1
-func (t *AgentConfigRequest_Plugins_Item) MergeAgentConfigRequestPlugins1(v AgentConfigRequestPlugins1) error {
-	b, err := json.Marshal(v)
-	if err != nil {
-		return err
-	}
-
-	merged, err := runtime.JSONMerge(t.union, b)
-	t.union = merged
-	return err
-}
-
-func (t AgentConfigRequest_Plugins_Item) MarshalJSON() ([]byte, error) {
-	b, err := t.union.MarshalJSON()
-	return b, err
-}
-
-func (t *AgentConfigRequest_Plugins_Item) UnmarshalJSON(b []byte) error {
-	err := t.union.UnmarshalJSON(b)
-	return err
-}
 
 // AsTextContentPart returns the union data inside the ContentPart as a TextContentPart
 func (t ContentPart) AsTextContentPart() (TextContentPart, error) {
@@ -11299,22 +11608,22 @@ func (t *MessageContent) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsSyncAgentRequestPlugins0 returns the union data inside the SyncAgentRequest_Plugins_Item as a SyncAgentRequestPlugins0
-func (t SyncAgentRequest_Plugins_Item) AsSyncAgentRequestPlugins0() (SyncAgentRequestPlugins0, error) {
-	var body SyncAgentRequestPlugins0
+// AsPluginEntry0 returns the union data inside the PluginEntry as a PluginEntry0
+func (t PluginEntry) AsPluginEntry0() (PluginEntry0, error) {
+	var body PluginEntry0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromSyncAgentRequestPlugins0 overwrites any union data inside the SyncAgentRequest_Plugins_Item as the provided SyncAgentRequestPlugins0
-func (t *SyncAgentRequest_Plugins_Item) FromSyncAgentRequestPlugins0(v SyncAgentRequestPlugins0) error {
+// FromPluginEntry0 overwrites any union data inside the PluginEntry as the provided PluginEntry0
+func (t *PluginEntry) FromPluginEntry0(v PluginEntry0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeSyncAgentRequestPlugins0 performs a merge with any union data inside the SyncAgentRequest_Plugins_Item, using the provided SyncAgentRequestPlugins0
-func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins0(v SyncAgentRequestPlugins0) error {
+// MergePluginEntry0 performs a merge with any union data inside the PluginEntry, using the provided PluginEntry0
+func (t *PluginEntry) MergePluginEntry0(v PluginEntry0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11325,22 +11634,22 @@ func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins0(v SyncAgen
 	return err
 }
 
-// AsSyncAgentRequestPlugins1 returns the union data inside the SyncAgentRequest_Plugins_Item as a SyncAgentRequestPlugins1
-func (t SyncAgentRequest_Plugins_Item) AsSyncAgentRequestPlugins1() (SyncAgentRequestPlugins1, error) {
-	var body SyncAgentRequestPlugins1
+// AsPluginWithOptions returns the union data inside the PluginEntry as a PluginWithOptions
+func (t PluginEntry) AsPluginWithOptions() (PluginWithOptions, error) {
+	var body PluginWithOptions
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromSyncAgentRequestPlugins1 overwrites any union data inside the SyncAgentRequest_Plugins_Item as the provided SyncAgentRequestPlugins1
-func (t *SyncAgentRequest_Plugins_Item) FromSyncAgentRequestPlugins1(v SyncAgentRequestPlugins1) error {
+// FromPluginWithOptions overwrites any union data inside the PluginEntry as the provided PluginWithOptions
+func (t *PluginEntry) FromPluginWithOptions(v PluginWithOptions) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergeSyncAgentRequestPlugins1 performs a merge with any union data inside the SyncAgentRequest_Plugins_Item, using the provided SyncAgentRequestPlugins1
-func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins1(v SyncAgentRequestPlugins1) error {
+// MergePluginWithOptions performs a merge with any union data inside the PluginEntry, using the provided PluginWithOptions
+func (t *PluginEntry) MergePluginWithOptions(v PluginWithOptions) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11351,12 +11660,12 @@ func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins1(v SyncAgen
 	return err
 }
 
-func (t SyncAgentRequest_Plugins_Item) MarshalJSON() ([]byte, error) {
+func (t PluginEntry) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *SyncAgentRequest_Plugins_Item) UnmarshalJSON(b []byte) error {
+func (t *PluginEntry) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -11545,12 +11854,15 @@ type ClientInterface interface {
 
 	// ListCampaigns The campaigns the calling customer has
 	//
-	// Corresponds with GET /v1/agents/campaigns (the `ListCampaigns` operationId).
-	ListCampaigns(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// CreateCampaignWithBody Define a list of people to ring
+	// Newest first.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+	// Corresponds with GET /v1/agents/campaigns (the `ListCampaigns` operationId).
+	ListCampaigns(ctx context.Context, params *ListCampaignsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateCampaignWithBody Make a draft campaign
+	//
+	// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -11558,9 +11870,9 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/campaigns (the `CreateCampaign` operationId).
 	CreateCampaignWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// CreateCampaign Define a list of people to ring
+	// CreateCampaign Make a draft campaign
 	//
-	// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+	// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -11568,19 +11880,68 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/campaigns (the `CreateCampaign` operationId).
 	CreateCampaign(ctx context.Context, body CreateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// GetCampaign One campaign
+	// DeleteCampaign Delete a campaign and its contacts
+	//
+	// A draft, stopped or completed campaign only. Its calls stay.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/campaigns/{id} (the `DeleteCampaign` operationId).
+	DeleteCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCampaign One campaign, with its contacts counted by stage
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id} (the `GetCampaign` operationId).
 	GetCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListCampaignContacts Who a campaign is ringing, and how far it has got
+	// UpdateCampaignWithBody Change a campaign's settings
+	//
+	// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+	UpdateCampaignWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateCampaign Change a campaign's settings
+	//
+	// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+	UpdateCampaign(ctx context.Context, id string, body UpdateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetCampaignAnalytics How a campaign's calls went
+	//
+	// A dial is a call placed: answered, unanswered, taken by an answering machine or still happening. dialed, connected and converted count contacts, not dials.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/campaigns/{id}/analytics (the `GetCampaignAnalytics` operationId).
+	GetCampaignAnalytics(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteCampaignContacts Remove every contact of a draft
+	//
+	// A draft only: once launched, the list is fixed (409 campaign_locked).
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with DELETE /v1/agents/campaigns/{id}/contacts (the `DeleteCampaignContacts` operationId).
+	DeleteCampaignContacts(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCampaignContacts Who a campaign rings, and how far it has got
+	//
+	// In the order they are rung.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-	ListCampaignContacts(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ListCampaignContacts(ctx context.Context, id string, params *ListCampaignContactsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// AddCampaignContactsWithBody Add people to ring
 	//
-	// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+	// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type.
@@ -11590,7 +11951,7 @@ type ClientInterface interface {
 
 	// AddCampaignContacts Add people to ring
 	//
-	// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+	// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type.
@@ -11598,21 +11959,84 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
 	AddCampaignContacts(ctx context.Context, id string, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCampaignContact One contact, with every dial made to them
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/campaigns/{id}/contacts/{contact_id} (the `GetCampaignContact` operationId).
+	GetCampaignContact(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopCampaignContact Ring a contact no more
+	//
+	// One waiting for their next attempt is stopped now. One on a call is not cut off: they are stopped when the call ends. One the sequence is done with is left as it is.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/contacts/{contact_id}/stop (the `StopCampaignContact` operationId).
+	StopCampaignContact(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DuplicateCampaignWithBody Make a draft with a campaign's settings
+	//
+	// Its contacts are copied as asked, starting over with no attempts.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+	DuplicateCampaignWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DuplicateCampaign Make a draft with a campaign's settings
+	//
+	// Its contacts are copied as asked, starting over with no attempts.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+	DuplicateCampaign(ctx context.Context, id string, body DuplicateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LaunchCampaignWithBody Launch a draft
+	//
+	// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+	LaunchCampaignWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LaunchCampaign Launch a draft
+	//
+	// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+	LaunchCampaign(ctx context.Context, id string, body LaunchCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// PauseCampaign Stop ringing anybody new
 	//
-	// The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered.
+	// A running or scheduled campaign only. The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does not start at its start_at, and resuming it before then returns it to scheduled.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Corresponds with POST /v1/agents/campaigns/{id}/pause (the `PauseCampaign` operationId).
 	PauseCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// StartCampaign Start ringing
+	// ResumeCampaign Ring people again
 	//
-	// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
+	// A paused campaign only. It carries on from whoever is left, and clears paused_reason. A campaign whose start time has not come goes back to scheduled rather than running. An organization that may not pay for calls is refused as a call would be.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
-	// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-	StartCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+	// Corresponds with POST /v1/agents/campaigns/{id}/resume (the `ResumeCampaign` operationId).
+	ResumeCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// StopCampaign End a campaign for good
+	//
+	// Nobody waiting is rung; calls in progress finish.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/stop (the `StopCampaign` operationId).
+	StopCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListChannelAccounts List channel lines
 	//
@@ -11976,7 +12400,7 @@ type ClientInterface interface {
 
 	// ListConnectionTools List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12933,7 +13357,7 @@ type ClientInterface interface {
 
 	// ListSessionTools List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -13141,37 +13565,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetUser Get a user's phone link
-	//
-	// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
-	GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateUserWithBody Link a user to a phone number
-	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-	UpdateUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// UpdateUser Link a user to a phone number
-	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-	UpdateUser(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteUserConnections Delete every connection of one user
 	//
@@ -13412,7 +13805,6 @@ type ClientInterface interface {
 	//
 	// Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
 	// Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
-	// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 	//
 	// Corresponds with GET /v1/data/changes (the `ListDataChanges` operationId).
@@ -13422,7 +13814,6 @@ type ClientInterface interface {
 	//
 	// One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
 	// Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
-	// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 	// Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
 	//
 	// Corresponds with GET /v1/data/export (the `ExportData` operationId).
@@ -13431,13 +13822,13 @@ type ClientInterface interface {
 	// ImportDataWithBody Write an export, or a batch of changes, into this deployment
 	//
 	// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-	// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
+	// Importing is idempotent: the same export applied twice leaves what applying it once would.
 	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
-	ImportDataWithBody(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ImportDataWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DetectWithBody Find objects in one image, and return their boxes
 	//
@@ -14238,7 +14629,7 @@ type ClientInterface interface {
 
 	// GetLimitUsage Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -14325,7 +14716,7 @@ type ClientInterface interface {
 
 	// GetSpend What the calling customer spent, grouped
 	//
-	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
 	// scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 	// Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 	// Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
@@ -14407,7 +14798,7 @@ type ClientInterface interface {
 
 	// ListUsageEvents List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -14694,9 +15085,12 @@ func (c *Client) GetCallTranscript(ctx context.Context, id string, reqEditors ..
 
 // ListCampaigns The campaigns the calling customer has
 //
+// Newest first.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
 // Corresponds with GET /v1/agents/campaigns (the `ListCampaigns` operationId).
-func (c *Client) ListCampaigns(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListCampaignsRequest(c.Server)
+func (c *Client) ListCampaigns(ctx context.Context, params *ListCampaignsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCampaignsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -14707,9 +15101,9 @@ func (c *Client) ListCampaigns(ctx context.Context, reqEditors ...RequestEditorF
 	return c.Client.Do(req)
 }
 
-// CreateCampaignWithBody Define a list of people to ring
+// CreateCampaignWithBody Make a draft campaign
 //
-// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -14727,9 +15121,9 @@ func (c *Client) CreateCampaignWithBody(ctx context.Context, contentType string,
 	return c.Client.Do(req)
 }
 
-// CreateCampaign Define a list of people to ring
+// CreateCampaign Make a draft campaign
 //
-// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -14747,7 +15141,27 @@ func (c *Client) CreateCampaign(ctx context.Context, body CreateCampaignJSONRequ
 	return c.Client.Do(req)
 }
 
-// GetCampaign One campaign
+// DeleteCampaign Delete a campaign and its contacts
+//
+// A draft, stopped or completed campaign only. Its calls stay.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/campaigns/{id} (the `DeleteCampaign` operationId).
+func (c *Client) DeleteCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteCampaignRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCampaign One campaign, with its contacts counted by stage
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with GET /v1/agents/campaigns/{id} (the `GetCampaign` operationId).
 func (c *Client) GetCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -14762,11 +15176,90 @@ func (c *Client) GetCampaign(ctx context.Context, id string, reqEditors ...Reque
 	return c.Client.Do(req)
 }
 
-// ListCampaignContacts Who a campaign is ringing, and how far it has got
+// UpdateCampaignWithBody Change a campaign's settings
+//
+// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+func (c *Client) UpdateCampaignWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCampaignRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateCampaign Change a campaign's settings
+//
+// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+func (c *Client) UpdateCampaign(ctx context.Context, id string, body UpdateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateCampaignRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetCampaignAnalytics How a campaign's calls went
+//
+// A dial is a call placed: answered, unanswered, taken by an answering machine or still happening. dialed, connected and converted count contacts, not dials.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/campaigns/{id}/analytics (the `GetCampaignAnalytics` operationId).
+func (c *Client) GetCampaignAnalytics(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCampaignAnalyticsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteCampaignContacts Remove every contact of a draft
+//
+// A draft only: once launched, the list is fixed (409 campaign_locked).
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with DELETE /v1/agents/campaigns/{id}/contacts (the `DeleteCampaignContacts` operationId).
+func (c *Client) DeleteCampaignContacts(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteCampaignContactsRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCampaignContacts Who a campaign rings, and how far it has got
+//
+// In the order they are rung.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-func (c *Client) ListCampaignContacts(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListCampaignContactsRequest(c.Server, id)
+func (c *Client) ListCampaignContacts(ctx context.Context, id string, params *ListCampaignContactsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCampaignContactsRequest(c.Server, id, params)
 	if err != nil {
 		return nil, err
 	}
@@ -14779,7 +15272,7 @@ func (c *Client) ListCampaignContacts(ctx context.Context, id string, reqEditors
 
 // AddCampaignContactsWithBody Add people to ring
 //
-// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type.
@@ -14799,7 +15292,7 @@ func (c *Client) AddCampaignContactsWithBody(ctx context.Context, id string, con
 
 // AddCampaignContacts Add people to ring
 //
-// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type.
@@ -14817,9 +15310,124 @@ func (c *Client) AddCampaignContacts(ctx context.Context, id string, body AddCam
 	return c.Client.Do(req)
 }
 
+// GetCampaignContact One contact, with every dial made to them
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/campaigns/{id}/contacts/{contact_id} (the `GetCampaignContact` operationId).
+func (c *Client) GetCampaignContact(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCampaignContactRequest(c.Server, id, contactId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StopCampaignContact Ring a contact no more
+//
+// One waiting for their next attempt is stopped now. One on a call is not cut off: they are stopped when the call ends. One the sequence is done with is left as it is.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/contacts/{contact_id}/stop (the `StopCampaignContact` operationId).
+func (c *Client) StopCampaignContact(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopCampaignContactRequest(c.Server, id, contactId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DuplicateCampaignWithBody Make a draft with a campaign's settings
+//
+// Its contacts are copied as asked, starting over with no attempts.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+func (c *Client) DuplicateCampaignWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDuplicateCampaignRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DuplicateCampaign Make a draft with a campaign's settings
+//
+// Its contacts are copied as asked, starting over with no attempts.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+func (c *Client) DuplicateCampaign(ctx context.Context, id string, body DuplicateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDuplicateCampaignRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LaunchCampaignWithBody Launch a draft
+//
+// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+func (c *Client) LaunchCampaignWithBody(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLaunchCampaignRequestWithBody(c.Server, id, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// LaunchCampaign Launch a draft
+//
+// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+func (c *Client) LaunchCampaign(ctx context.Context, id string, body LaunchCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLaunchCampaignRequest(c.Server, id, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // PauseCampaign Stop ringing anybody new
 //
-// The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered.
+// A running or scheduled campaign only. The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does not start at its start_at, and resuming it before then returns it to scheduled.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Corresponds with POST /v1/agents/campaigns/{id}/pause (the `PauseCampaign` operationId).
@@ -14835,14 +15443,32 @@ func (c *Client) PauseCampaign(ctx context.Context, id string, reqEditors ...Req
 	return c.Client.Do(req)
 }
 
-// StartCampaign Start ringing
+// ResumeCampaign Ring people again
 //
-// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
+// A paused campaign only. It carries on from whoever is left, and clears paused_reason. A campaign whose start time has not come goes back to scheduled rather than running. An organization that may not pay for calls is refused as a call would be.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
-// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-func (c *Client) StartCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewStartCampaignRequest(c.Server, id)
+// Corresponds with POST /v1/agents/campaigns/{id}/resume (the `ResumeCampaign` operationId).
+func (c *Client) ResumeCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeCampaignRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// StopCampaign End a campaign for good
+//
+// Nobody waiting is rung; calls in progress finish.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/stop (the `StopCampaign` operationId).
+func (c *Client) StopCampaign(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewStopCampaignRequest(c.Server, id)
 	if err != nil {
 		return nil, err
 	}
@@ -15575,7 +16201,7 @@ func (c *Client) ExportConnectionToken(ctx context.Context, id string, reqEditor
 
 // ListConnectionTools List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -17552,7 +18178,7 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 
 // ListSessionTools List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -17991,67 +18617,6 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 // Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncAgentRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetUser Get a user's phone link
-//
-// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
-func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetUserRequest(c.Server, userId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateUserWithBody Link a user to a phone number
-//
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateUserRequestWithBody(c.Server, userId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// UpdateUser Link a user to a phone number
-//
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewUpdateUserRequest(c.Server, userId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -18561,7 +19126,6 @@ func (c *Client) ReceiveConnectionEvent(ctx context.Context, token string, reqEd
 //
 // Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
 // Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
-// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 // Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 //
 // Corresponds with GET /v1/data/changes (the `ListDataChanges` operationId).
@@ -18581,7 +19145,6 @@ func (c *Client) ListDataChanges(ctx context.Context, params *ListDataChangesPar
 //
 // One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
 // Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
-// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 // Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
 //
 // Corresponds with GET /v1/data/export (the `ExportData` operationId).
@@ -18600,14 +19163,14 @@ func (c *Client) ExportData(ctx context.Context, reqEditors ...RequestEditorFn) 
 // ImportDataWithBody Write an export, or a batch of changes, into this deployment
 //
 // Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
+// Importing is idempotent: the same export applied twice leaves what applying it once would.
 // Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/data/import (the `ImportData` operationId).
-func (c *Client) ImportDataWithBody(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewImportDataRequestWithBody(c.Server, params, contentType, body)
+func (c *Client) ImportDataWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportDataRequestWithBody(c.Server, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -20297,7 +20860,7 @@ func (c *Client) UnrevokeLimitGrant(ctx context.Context, grantId int64, body Unr
 
 // GetLimitUsage Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -20474,7 +21037,7 @@ func (c *Client) GetAgentStats(ctx context.Context, params *GetAgentStatsParams,
 
 // GetSpend What the calling customer spent, grouped
 //
-// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
 // scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 // Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 // Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
@@ -20656,7 +21219,7 @@ func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, r
 
 // ListUsageEvents List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //
@@ -21310,7 +21873,7 @@ func NewGetCallTranscriptRequest(server string, id string) (*http.Request, error
 }
 
 // NewListCampaignsRequest constructs an http.Request for the ListCampaigns method
-func NewListCampaignsRequest(server string) (*http.Request, error) {
+func NewListCampaignsRequest(server string, params *ListCampaignsParams) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -21326,6 +21889,57 @@ func NewListCampaignsRequest(server string) (*http.Request, error) {
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.State != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -21376,6 +21990,40 @@ func NewCreateCampaignRequestWithBody(server string, contentType string, body io
 	return req, nil
 }
 
+// NewDeleteCampaignRequest constructs an http.Request for the DeleteCampaign method
+func NewDeleteCampaignRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetCampaignRequest constructs an http.Request for the GetCampaign method
 func NewGetCampaignRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -21410,8 +22058,89 @@ func NewGetCampaignRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewListCampaignContactsRequest constructs an http.Request for the ListCampaignContacts method
-func NewListCampaignContactsRequest(server string, id string) (*http.Request, error) {
+// NewUpdateCampaignRequest calls the generic UpdateCampaign builder with application/json body
+func NewUpdateCampaignRequest(server string, id string, body UpdateCampaignJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateCampaignRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewUpdateCampaignRequestWithBody constructs an http.Request for the UpdateCampaign method, with any body, and a specified content type
+func NewUpdateCampaignRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPatch, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetCampaignAnalyticsRequest constructs an http.Request for the GetCampaignAnalytics method
+func NewGetCampaignAnalyticsRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/analytics", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteCampaignContactsRequest constructs an http.Request for the DeleteCampaignContacts method
+func NewDeleteCampaignContactsRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -21434,6 +22163,103 @@ func NewListCampaignContactsRequest(server string, id string) (*http.Request, er
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListCampaignContactsRequest constructs an http.Request for the ListCampaignContacts method
+func NewListCampaignContactsRequest(server string, id string, params *ListCampaignContactsParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/contacts", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Stage != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "stage", *params.Stage, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if params.Number != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "number", *params.Number, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
@@ -21491,6 +22317,182 @@ func NewAddCampaignContactsRequestWithBody(server string, id string, contentType
 	return req, nil
 }
 
+// NewGetCampaignContactRequest constructs an http.Request for the GetCampaignContact method
+func NewGetCampaignContactRequest(server string, id string, contactId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "contact_id", contactId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/contacts/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStopCampaignContactRequest constructs an http.Request for the StopCampaignContact method
+func NewStopCampaignContactRequest(server string, id string, contactId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "contact_id", contactId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/contacts/%s/stop", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDuplicateCampaignRequest calls the generic DuplicateCampaign builder with application/json body
+func NewDuplicateCampaignRequest(server string, id string, body DuplicateCampaignJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewDuplicateCampaignRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewDuplicateCampaignRequestWithBody constructs an http.Request for the DuplicateCampaign method, with any body, and a specified content type
+func NewDuplicateCampaignRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/duplicate", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewLaunchCampaignRequest calls the generic LaunchCampaign builder with application/json body
+func NewLaunchCampaignRequest(server string, id string, body LaunchCampaignJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLaunchCampaignRequestWithBody(server, id, "application/json", bodyReader)
+}
+
+// NewLaunchCampaignRequestWithBody constructs an http.Request for the LaunchCampaign method, with any body, and a specified content type
+func NewLaunchCampaignRequestWithBody(server string, id string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/launch", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewPauseCampaignRequest constructs an http.Request for the PauseCampaign method
 func NewPauseCampaignRequest(server string, id string) (*http.Request, error) {
 	var err error
@@ -21525,8 +22527,8 @@ func NewPauseCampaignRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
-// NewStartCampaignRequest constructs an http.Request for the StartCampaign method
-func NewStartCampaignRequest(server string, id string) (*http.Request, error) {
+// NewResumeCampaignRequest constructs an http.Request for the ResumeCampaign method
+func NewResumeCampaignRequest(server string, id string) (*http.Request, error) {
 	var err error
 
 	var pathParam0 string
@@ -21541,7 +22543,41 @@ func NewStartCampaignRequest(server string, id string) (*http.Request, error) {
 		return nil, err
 	}
 
-	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/start", pathParam0)
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/resume", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewStopCampaignRequest constructs an http.Request for the StopCampaign method
+func NewStopCampaignRequest(server string, id string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/campaigns/%s/stop", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -27341,87 +28377,6 @@ func NewSyncAgentRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
-// NewGetUserRequest constructs an http.Request for the GetUser method
-func NewGetUserRequest(server string, userId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/users/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewUpdateUserRequest calls the generic UpdateUser builder with application/json body
-func NewUpdateUserRequest(server string, userId string, body UpdateUserJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewUpdateUserRequestWithBody(server, userId, "application/json", bodyReader)
-}
-
-// NewUpdateUserRequestWithBody constructs an http.Request for the UpdateUser method, with any body, and a specified content type
-func NewUpdateUserRequestWithBody(server string, userId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/users/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewDeleteUserConnectionsRequest constructs an http.Request for the DeleteUserConnections method
 func NewDeleteUserConnectionsRequest(server string, userId string) (*http.Request, error) {
 	var err error
@@ -28303,7 +29258,7 @@ func NewExportDataRequest(server string) (*http.Request, error) {
 }
 
 // NewImportDataRequestWithBody constructs an http.Request for the ImportData method, with any body, and a specified content type
-func NewImportDataRequestWithBody(server string, params *ImportDataParams, contentType string, body io.Reader) (*http.Request, error) {
+func NewImportDataRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -28319,33 +29274,6 @@ func NewImportDataRequestWithBody(server string, params *ImportDataParams, conte
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Full != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "full", *params.Full, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
@@ -30727,9 +31655,9 @@ func NewListLimitsRequest(server string, params *ListLimitsParams) (*http.Reques
 
 		}
 
-		if params.ApiKeyId != nil {
+		if params.ApiKey != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -30917,9 +31845,9 @@ func NewListLimitGrantsRequest(server string, params *ListLimitGrantsParams) (*h
 
 		}
 
-		if params.ApiKeyId != nil {
+		if params.ApiKey != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -31197,9 +32125,9 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		}
 
-		if params.ApiKeyId != nil {
+		if params.ApiKey != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -31646,9 +32574,9 @@ func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, e
 
 		}
 
-		if params.Origin != nil {
+		if params.ApiKey != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "origin", *params.Origin, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -32150,9 +33078,9 @@ func NewListUsageEventsRequest(server string, params *ListUsageEventsParams) (*h
 
 		}
 
-		if params.Origin != nil {
+		if params.ApiKey != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "origin", *params.Origin, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -32720,14 +33648,17 @@ type ClientWithResponsesInterface interface {
 
 	// ListCampaignsWithResponse The campaigns the calling customer has
 	//
+	// Newest first.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/campaigns (the `ListCampaigns` operationId).
-	ListCampaignsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCampaignsResponse, error)
+	ListCampaignsWithResponse(ctx context.Context, params *ListCampaignsParams, reqEditors ...RequestEditorFn) (*ListCampaignsResponse, error)
 
-	// CreateCampaignWithBodyWithResponse Define a list of people to ring
+	// CreateCampaignWithBodyWithResponse Make a draft campaign
 	//
-	// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+	// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -32735,9 +33666,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/campaigns (the `CreateCampaign` operationId).
 	CreateCampaignWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateCampaignResponse, error)
 
-	// CreateCampaignWithResponse Define a list of people to ring
+	// CreateCampaignWithResponse Make a draft campaign
 	//
-	// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+	// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -32745,23 +33676,78 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/campaigns (the `CreateCampaign` operationId).
 	CreateCampaignWithResponse(ctx context.Context, body CreateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateCampaignResponse, error)
 
-	// GetCampaignWithResponse One campaign
+	// DeleteCampaignWithResponse Delete a campaign and its contacts
+	//
+	// A draft, stopped or completed campaign only. Its calls stay.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/campaigns/{id} (the `DeleteCampaign` operationId).
+	DeleteCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCampaignResponse, error)
+
+	// GetCampaignWithResponse One campaign, with its contacts counted by stage
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id} (the `GetCampaign` operationId).
 	GetCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCampaignResponse, error)
 
-	// ListCampaignContactsWithResponse Who a campaign is ringing, and how far it has got
+	// UpdateCampaignWithBodyWithResponse Change a campaign's settings
+	//
+	// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+	UpdateCampaignWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCampaignResponse, error)
+
+	// UpdateCampaignWithResponse Change a campaign's settings
+	//
+	// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+	UpdateCampaignWithResponse(ctx context.Context, id string, body UpdateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCampaignResponse, error)
+
+	// GetCampaignAnalyticsWithResponse How a campaign's calls went
+	//
+	// A dial is a call placed: answered, unanswered, taken by an answering machine or still happening. dialed, connected and converted count contacts, not dials.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/campaigns/{id}/analytics (the `GetCampaignAnalytics` operationId).
+	GetCampaignAnalyticsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCampaignAnalyticsResponse, error)
+
+	// DeleteCampaignContactsWithResponse Remove every contact of a draft
+	//
+	// A draft only: once launched, the list is fixed (409 campaign_locked).
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /v1/agents/campaigns/{id}/contacts (the `DeleteCampaignContacts` operationId).
+	DeleteCampaignContactsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCampaignContactsResponse, error)
+
+	// ListCampaignContactsWithResponse Who a campaign rings, and how far it has got
+	//
+	// In the order they are rung.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-	ListCampaignContactsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error)
+	ListCampaignContactsWithResponse(ctx context.Context, id string, params *ListCampaignContactsParams, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error)
 
 	// AddCampaignContactsWithBodyWithResponse Add people to ring
 	//
-	// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+	// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -32771,7 +33757,7 @@ type ClientWithResponsesInterface interface {
 
 	// AddCampaignContactsWithResponse Add people to ring
 	//
-	// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+	// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -32779,9 +33765,68 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/campaigns/{id}/contacts (the `AddCampaignContacts` operationId).
 	AddCampaignContactsWithResponse(ctx context.Context, id string, body AddCampaignContactsJSONRequestBody, reqEditors ...RequestEditorFn) (*AddCampaignContactsResponse, error)
 
+	// GetCampaignContactWithResponse One contact, with every dial made to them
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/campaigns/{id}/contacts/{contact_id} (the `GetCampaignContact` operationId).
+	GetCampaignContactWithResponse(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*GetCampaignContactResponse, error)
+
+	// StopCampaignContactWithResponse Ring a contact no more
+	//
+	// One waiting for their next attempt is stopped now. One on a call is not cut off: they are stopped when the call ends. One the sequence is done with is left as it is.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/contacts/{contact_id}/stop (the `StopCampaignContact` operationId).
+	StopCampaignContactWithResponse(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*StopCampaignContactResponse, error)
+
+	// DuplicateCampaignWithBodyWithResponse Make a draft with a campaign's settings
+	//
+	// Its contacts are copied as asked, starting over with no attempts.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+	DuplicateCampaignWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DuplicateCampaignResponse, error)
+
+	// DuplicateCampaignWithResponse Make a draft with a campaign's settings
+	//
+	// Its contacts are copied as asked, starting over with no attempts.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+	DuplicateCampaignWithResponse(ctx context.Context, id string, body DuplicateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*DuplicateCampaignResponse, error)
+
+	// LaunchCampaignWithBodyWithResponse Launch a draft
+	//
+	// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+	LaunchCampaignWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LaunchCampaignResponse, error)
+
+	// LaunchCampaignWithResponse Launch a draft
+	//
+	// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+	LaunchCampaignWithResponse(ctx context.Context, id string, body LaunchCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*LaunchCampaignResponse, error)
+
 	// PauseCampaignWithResponse Stop ringing anybody new
 	//
-	// The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered.
+	// A running or scheduled campaign only. The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does not start at its start_at, and resuming it before then returns it to scheduled.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -32789,15 +33834,25 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/campaigns/{id}/pause (the `PauseCampaign` operationId).
 	PauseCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*PauseCampaignResponse, error)
 
-	// StartCampaignWithResponse Start ringing
+	// ResumeCampaignWithResponse Ring people again
 	//
-	// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
+	// A paused campaign only. It carries on from whoever is left, and clears paused_reason. A campaign whose start time has not come goes back to scheduled rather than running. An organization that may not pay for calls is refused as a call would be.
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
-	// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-	StartCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartCampaignResponse, error)
+	// Corresponds with POST /v1/agents/campaigns/{id}/resume (the `ResumeCampaign` operationId).
+	ResumeCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ResumeCampaignResponse, error)
+
+	// StopCampaignWithResponse End a campaign for good
+	//
+	// Nobody waiting is rung; calls in progress finish.
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/campaigns/{id}/stop (the `StopCampaign` operationId).
+	StopCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopCampaignResponse, error)
 
 	// ListChannelAccountsWithResponse List channel lines
 	//
@@ -33191,7 +34246,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectionToolsWithResponse List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -34250,7 +35305,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListSessionToolsWithResponse List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -34482,39 +35537,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
-
-	// GetUserWithResponse Get a user's phone link
-	//
-	// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
-	GetUserWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*GetUserResponse, error)
-
-	// UpdateUserWithBodyWithResponse Link a user to a phone number
-	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-	UpdateUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error)
-
-	// UpdateUserWithResponse Link a user to a phone number
-	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-	//
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-	UpdateUserWithResponse(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error)
 
 	// DeleteUserConnectionsWithResponse Delete every connection of one user
 	//
@@ -34779,7 +35801,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
 	// Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
-	// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -34791,7 +35812,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
 	// Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
-	// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 	// Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -34802,13 +35822,13 @@ type ClientWithResponsesInterface interface {
 	// ImportDataWithBodyWithResponse Write an export, or a batch of changes, into this deployment
 	//
 	// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-	// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
+	// Importing is idempotent: the same export applied twice leaves what applying it once would.
 	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
-	ImportDataWithBodyWithResponse(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error)
+	ImportDataWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error)
 
 	// DetectWithBodyWithResponse Find objects in one image, and return their boxes
 	//
@@ -35677,7 +36697,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetLimitUsageWithResponse Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -35774,7 +36794,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetSpendWithResponse What the calling customer spent, grouped
 	//
-	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+	// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
 	// scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 	// Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 	// Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
@@ -35868,7 +36888,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListUsageEventsWithResponse List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -37111,7 +38131,7 @@ type ListCampaignsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]Campaign
+	JSON200 *CampaignPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -37131,7 +38151,7 @@ type ListCampaignsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListCampaignsResponse) GetJSON200() *[]Campaign {
+func (r ListCampaignsResponse) GetJSON200() *CampaignPage {
 	return r.JSON200
 }
 
@@ -37302,6 +38322,114 @@ func (r CreateCampaignResponse) ContentType() string {
 	return ""
 }
 
+// DeleteCampaignResponse204Headers the declared response headers of an HTTP 204 response for DeleteCampaign
+type DeleteCampaignResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// DeleteCampaignResponse402Headers the declared response headers of an HTTP 402 response for DeleteCampaign
+type DeleteCampaignResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type DeleteCampaignResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *DeleteCampaignResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *DeleteCampaignResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteCampaignResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteCampaignResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteCampaignResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteCampaignResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteCampaignResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteCampaignResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteCampaignResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteCampaignResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteCampaignResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteCampaignResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // GetCampaignResponse200Headers the declared response headers of an HTTP 200 response for GetCampaign
 type GetCampaignResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -37410,6 +38538,337 @@ func (r GetCampaignResponse) ContentType() string {
 	return ""
 }
 
+// UpdateCampaignResponse200Headers the declared response headers of an HTTP 200 response for UpdateCampaign
+type UpdateCampaignResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// UpdateCampaignResponse402Headers the declared response headers of an HTTP 402 response for UpdateCampaign
+type UpdateCampaignResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type UpdateCampaignResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Campaign
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *UpdateCampaignResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *UpdateCampaignResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateCampaignResponse) GetJSON200() *Campaign {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateCampaignResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateCampaignResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateCampaignResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r UpdateCampaignResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateCampaignResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateCampaignResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateCampaignResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateCampaignResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateCampaignResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateCampaignResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetCampaignAnalyticsResponse200Headers the declared response headers of an HTTP 200 response for GetCampaignAnalytics
+type GetCampaignAnalyticsResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetCampaignAnalyticsResponse402Headers the declared response headers of an HTTP 402 response for GetCampaignAnalytics
+type GetCampaignAnalyticsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetCampaignAnalyticsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *CampaignAnalytics
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetCampaignAnalyticsResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetCampaignAnalyticsResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON200() *CampaignAnalytics {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCampaignAnalyticsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCampaignAnalyticsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCampaignAnalyticsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCampaignAnalyticsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCampaignAnalyticsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteCampaignContactsResponse204Headers the declared response headers of an HTTP 204 response for DeleteCampaignContacts
+type DeleteCampaignContactsResponse204Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// DeleteCampaignContactsResponse402Headers the declared response headers of an HTTP 402 response for DeleteCampaignContacts
+type DeleteCampaignContactsResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type DeleteCampaignContactsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers204 the parsed response headers for an HTTP 204 response
+	Headers204 *DeleteCampaignContactsResponse204Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *DeleteCampaignContactsResponse402Headers
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DeleteCampaignContactsResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteCampaignContactsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteCampaignContactsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteCampaignContactsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteCampaignContactsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListCampaignContactsResponse200Headers the declared response headers of an HTTP 200 response for ListCampaignContacts
 type ListCampaignContactsResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -37428,7 +38887,7 @@ type ListCampaignContactsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]Contact
+	JSON200 *ContactPage
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -37450,7 +38909,7 @@ type ListCampaignContactsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListCampaignContactsResponse) GetJSON200() *[]Contact {
+func (r ListCampaignContactsResponse) GetJSON200() *ContactPage {
 	return r.JSON200
 }
 
@@ -37536,7 +38995,7 @@ type AddCampaignContactsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON201 the response for an HTTP 201 `application/json` response
-	JSON201 *[]Contact
+	JSON201 *AddContactsResponse
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -37547,6 +39006,8 @@ type AddCampaignContactsResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -37558,7 +39019,7 @@ type AddCampaignContactsResponse struct {
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
-func (r AddCampaignContactsResponse) GetJSON201() *[]Contact {
+func (r AddCampaignContactsResponse) GetJSON201() *AddContactsResponse {
 	return r.JSON201
 }
 
@@ -37585,6 +39046,11 @@ func (r AddCampaignContactsResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r AddCampaignContactsResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AddCampaignContactsResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -37626,6 +39092,459 @@ func (r AddCampaignContactsResponse) ContentType() string {
 	return ""
 }
 
+// GetCampaignContactResponse200Headers the declared response headers of an HTTP 200 response for GetCampaignContact
+type GetCampaignContactResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetCampaignContactResponse402Headers the declared response headers of an HTTP 402 response for GetCampaignContact
+type GetCampaignContactResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetCampaignContactResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Contact
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetCampaignContactResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetCampaignContactResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetCampaignContactResponse) GetJSON200() *Contact {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetCampaignContactResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetCampaignContactResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetCampaignContactResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetCampaignContactResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetCampaignContactResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetCampaignContactResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetCampaignContactResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetCampaignContactResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCampaignContactResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCampaignContactResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetCampaignContactResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StopCampaignContactResponse200Headers the declared response headers of an HTTP 200 response for StopCampaignContact
+type StopCampaignContactResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// StopCampaignContactResponse402Headers the declared response headers of an HTTP 402 response for StopCampaignContact
+type StopCampaignContactResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type StopCampaignContactResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Contact
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *StopCampaignContactResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *StopCampaignContactResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StopCampaignContactResponse) GetJSON200() *Contact {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StopCampaignContactResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StopCampaignContactResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r StopCampaignContactResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r StopCampaignContactResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StopCampaignContactResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StopCampaignContactResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StopCampaignContactResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r StopCampaignContactResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StopCampaignContactResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StopCampaignContactResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StopCampaignContactResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DuplicateCampaignResponse201Headers the declared response headers of an HTTP 201 response for DuplicateCampaign
+type DuplicateCampaignResponse201Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// DuplicateCampaignResponse402Headers the declared response headers of an HTTP 402 response for DuplicateCampaign
+type DuplicateCampaignResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type DuplicateCampaignResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *Campaign
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers201 the parsed response headers for an HTTP 201 response
+	Headers201 *DuplicateCampaignResponse201Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *DuplicateCampaignResponse402Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON201() *Campaign {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r DuplicateCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r DuplicateCampaignResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DuplicateCampaignResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DuplicateCampaignResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DuplicateCampaignResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// LaunchCampaignResponse200Headers the declared response headers of an HTTP 200 response for LaunchCampaign
+type LaunchCampaignResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// LaunchCampaignResponse402Headers the declared response headers of an HTTP 402 response for LaunchCampaign
+type LaunchCampaignResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type LaunchCampaignResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Campaign
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *LaunchCampaignResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *LaunchCampaignResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r LaunchCampaignResponse) GetJSON200() *Campaign {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r LaunchCampaignResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r LaunchCampaignResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r LaunchCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r LaunchCampaignResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r LaunchCampaignResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r LaunchCampaignResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r LaunchCampaignResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r LaunchCampaignResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r LaunchCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r LaunchCampaignResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r LaunchCampaignResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LaunchCampaignResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r LaunchCampaignResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // PauseCampaignResponse200Headers the declared response headers of an HTTP 200 response for PauseCampaign
 type PauseCampaignResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -37655,6 +39574,8 @@ type PauseCampaignResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -37693,6 +39614,11 @@ func (r PauseCampaignResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r PauseCampaignResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r PauseCampaignResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -37734,25 +39660,25 @@ func (r PauseCampaignResponse) ContentType() string {
 	return ""
 }
 
-// StartCampaignResponse202Headers the declared response headers of an HTTP 202 response for StartCampaign
-type StartCampaignResponse202Headers struct {
+// ResumeCampaignResponse200Headers the declared response headers of an HTTP 200 response for ResumeCampaign
+type ResumeCampaignResponse200Headers struct {
 	XStreamBalanceMicros  *int64
 	XStreamBalanceWarning *string
 	XStreamCostEstimated  *string
 	XStreamCostMicros     *int64
 }
 
-// StartCampaignResponse402Headers the declared response headers of an HTTP 402 response for StartCampaign
-type StartCampaignResponse402Headers struct {
+// ResumeCampaignResponse402Headers the declared response headers of an HTTP 402 response for ResumeCampaign
+type ResumeCampaignResponse402Headers struct {
 	XStreamBalanceMicros  *int64
 	XStreamBalanceWarning *string
 }
 
-type StartCampaignResponse struct {
+type ResumeCampaignResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
-	// JSON202 the response for an HTTP 202 `application/json` response
-	JSON202 *Campaign
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Campaign
 	// JSON400 the response for an HTTP 400 `application/json` response
 	JSON400 *BadRequest
 	// JSON401 the response for an HTTP 401 `application/json` response
@@ -37763,63 +39689,77 @@ type StartCampaignResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *Unavailable
-	// Headers202 the parsed response headers for an HTTP 202 response
-	Headers202 *StartCampaignResponse202Headers
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ResumeCampaignResponse200Headers
 	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *StartCampaignResponse402Headers
+	Headers402 *ResumeCampaignResponse402Headers
 }
 
-// GetJSON202 returns the response for an HTTP 202 `application/json` response
-func (r StartCampaignResponse) GetJSON202() *Campaign {
-	return r.JSON202
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeCampaignResponse) GetJSON200() *Campaign {
+	return r.JSON200
 }
 
 // GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r StartCampaignResponse) GetJSON400() *BadRequest {
+func (r ResumeCampaignResponse) GetJSON400() *BadRequest {
 	return r.JSON400
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r StartCampaignResponse) GetJSON401() *Unauthorized {
+func (r ResumeCampaignResponse) GetJSON401() *Unauthorized {
 	return r.JSON401
 }
 
 // GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r StartCampaignResponse) GetJSON402() *PaymentRequired {
+func (r ResumeCampaignResponse) GetJSON402() *PaymentRequired {
 	return r.JSON402
 }
 
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r StartCampaignResponse) GetJSON403() *Forbidden {
+func (r ResumeCampaignResponse) GetJSON403() *Forbidden {
 	return r.JSON403
 }
 
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r StartCampaignResponse) GetJSON404() *NotFound {
+func (r ResumeCampaignResponse) GetJSON404() *NotFound {
 	return r.JSON404
 }
 
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ResumeCampaignResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ResumeCampaignResponse) GetJSON429() *ErrorResponse {
+	return r.JSON429
+}
+
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r StartCampaignResponse) GetJSON500() *InternalError {
+func (r ResumeCampaignResponse) GetJSON500() *InternalError {
 	return r.JSON500
 }
 
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r StartCampaignResponse) GetJSON503() *Unavailable {
+func (r ResumeCampaignResponse) GetJSON503() *Unavailable {
 	return r.JSON503
 }
 
 // GetBody returns the raw response body bytes
-func (r StartCampaignResponse) GetBody() []byte {
+func (r ResumeCampaignResponse) GetBody() []byte {
 	return r.Body
 }
 
 // Status returns HTTPResponse.Status
-func (r StartCampaignResponse) Status() string {
+func (r ResumeCampaignResponse) Status() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Status
 	}
@@ -37827,7 +39767,7 @@ func (r StartCampaignResponse) Status() string {
 }
 
 // StatusCode returns HTTPResponse.StatusCode
-func (r StartCampaignResponse) StatusCode() int {
+func (r ResumeCampaignResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -37835,7 +39775,122 @@ func (r StartCampaignResponse) StatusCode() int {
 }
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r StartCampaignResponse) ContentType() string {
+func (r ResumeCampaignResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// StopCampaignResponse200Headers the declared response headers of an HTTP 200 response for StopCampaign
+type StopCampaignResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// StopCampaignResponse402Headers the declared response headers of an HTTP 402 response for StopCampaign
+type StopCampaignResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type StopCampaignResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Campaign
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *StopCampaignResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *StopCampaignResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r StopCampaignResponse) GetJSON200() *Campaign {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r StopCampaignResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r StopCampaignResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r StopCampaignResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r StopCampaignResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r StopCampaignResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r StopCampaignResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r StopCampaignResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r StopCampaignResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r StopCampaignResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r StopCampaignResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r StopCampaignResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r StopCampaignResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -50570,215 +52625,6 @@ func (r SyncAgentResponse) ContentType() string {
 	return ""
 }
 
-// GetUserResponse200Headers the declared response headers of an HTTP 200 response for GetUser
-type GetUserResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// GetUserResponse402Headers the declared response headers of an HTTP 402 response for GetUser
-type GetUserResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type GetUserResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AgentUser
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *GetUserResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *GetUserResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r GetUserResponse) GetJSON200() *AgentUser {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r GetUserResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r GetUserResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r GetUserResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r GetUserResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r GetUserResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r GetUserResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r GetUserResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetUserResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetUserResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetUserResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// UpdateUserResponse200Headers the declared response headers of an HTTP 200 response for UpdateUser
-type UpdateUserResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// UpdateUserResponse402Headers the declared response headers of an HTTP 402 response for UpdateUser
-type UpdateUserResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type UpdateUserResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *AgentUser
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *ErrorResponse
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *UpdateUserResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *UpdateUserResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r UpdateUserResponse) GetJSON200() *AgentUser {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r UpdateUserResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r UpdateUserResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r UpdateUserResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r UpdateUserResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r UpdateUserResponse) GetJSON409() *ErrorResponse {
-	return r.JSON409
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r UpdateUserResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r UpdateUserResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r UpdateUserResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r UpdateUserResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r UpdateUserResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r UpdateUserResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // DeleteUserConnectionsResponse204Headers the declared response headers of an HTTP 204 response for DeleteUserConnections
 type DeleteUserConnectionsResponse204Headers struct {
 	XStreamBalanceMicros  *int64
@@ -52736,8 +54582,6 @@ type ImportDataResponse struct {
 	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
-	// JSON409 the response for an HTTP 409 `application/json` response
-	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -52771,11 +54615,6 @@ func (r ImportDataResponse) GetJSON402() *PaymentRequired {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ImportDataResponse) GetJSON403() *Forbidden {
 	return r.JSON403
-}
-
-// GetJSON409 returns the response for an HTTP 409 `application/json` response
-func (r ImportDataResponse) GetJSON409() *ErrorResponse {
-	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -61472,20 +63311,23 @@ func (c *ClientWithResponses) GetCallTranscriptWithResponse(ctx context.Context,
 
 // ListCampaignsWithResponse The campaigns the calling customer has
 //
+// Newest first.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/campaigns (the `ListCampaigns` operationId).
-func (c *ClientWithResponses) ListCampaignsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCampaignsResponse, error) {
-	rsp, err := c.ListCampaigns(ctx, reqEditors...)
+func (c *ClientWithResponses) ListCampaignsWithResponse(ctx context.Context, params *ListCampaignsParams, reqEditors ...RequestEditorFn) (*ListCampaignsResponse, error) {
+	rsp, err := c.ListCampaigns(ctx, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
 	return ParseListCampaignsResponse(rsp)
 }
 
-// CreateCampaignWithBodyWithResponse Define a list of people to ring
+// CreateCampaignWithBodyWithResponse Make a draft campaign
 //
-// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -61499,9 +63341,9 @@ func (c *ClientWithResponses) CreateCampaignWithBodyWithResponse(ctx context.Con
 	return ParseCreateCampaignResponse(rsp)
 }
 
-// CreateCampaignWithResponse Define a list of people to ring
+// CreateCampaignWithResponse Make a draft campaign
 //
-// A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of these calls may be happening at once, and every call is a conversation this service is running.
+// A campaign rings a list of people with one agent config. It is made a draft, with the default sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -61515,7 +63357,25 @@ func (c *ClientWithResponses) CreateCampaignWithResponse(ctx context.Context, bo
 	return ParseCreateCampaignResponse(rsp)
 }
 
-// GetCampaignWithResponse One campaign
+// DeleteCampaignWithResponse Delete a campaign and its contacts
+//
+// A draft, stopped or completed campaign only. Its calls stay.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/campaigns/{id} (the `DeleteCampaign` operationId).
+func (c *ClientWithResponses) DeleteCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCampaignResponse, error) {
+	rsp, err := c.DeleteCampaign(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteCampaignResponse(rsp)
+}
+
+// GetCampaignWithResponse One campaign, with its contacts counted by stage
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -61528,13 +63388,80 @@ func (c *ClientWithResponses) GetCampaignWithResponse(ctx context.Context, id st
 	return ParseGetCampaignResponse(rsp)
 }
 
-// ListCampaignContactsWithResponse Who a campaign is ringing, and how far it has got
+// UpdateCampaignWithBodyWithResponse Change a campaign's settings
+//
+// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+func (c *ClientWithResponses) UpdateCampaignWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateCampaignResponse, error) {
+	rsp, err := c.UpdateCampaignWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCampaignResponse(rsp)
+}
+
+// UpdateCampaignWithResponse Change a campaign's settings
+//
+// Sets only what it sends. Once a campaign is launched only its name, number and concurrency change: any other field sent must be what it already is, or the change is refused with 409 campaign_locked.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PATCH /v1/agents/campaigns/{id} (the `UpdateCampaign` operationId).
+func (c *ClientWithResponses) UpdateCampaignWithResponse(ctx context.Context, id string, body UpdateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCampaignResponse, error) {
+	rsp, err := c.UpdateCampaign(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateCampaignResponse(rsp)
+}
+
+// GetCampaignAnalyticsWithResponse How a campaign's calls went
+//
+// A dial is a call placed: answered, unanswered, taken by an answering machine or still happening. dialed, connected and converted count contacts, not dials.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/campaigns/{id}/analytics (the `GetCampaignAnalytics` operationId).
+func (c *ClientWithResponses) GetCampaignAnalyticsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetCampaignAnalyticsResponse, error) {
+	rsp, err := c.GetCampaignAnalytics(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCampaignAnalyticsResponse(rsp)
+}
+
+// DeleteCampaignContactsWithResponse Remove every contact of a draft
+//
+// A draft only: once launched, the list is fixed (409 campaign_locked).
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /v1/agents/campaigns/{id}/contacts (the `DeleteCampaignContacts` operationId).
+func (c *ClientWithResponses) DeleteCampaignContactsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*DeleteCampaignContactsResponse, error) {
+	rsp, err := c.DeleteCampaignContacts(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteCampaignContactsResponse(rsp)
+}
+
+// ListCampaignContactsWithResponse Who a campaign rings, and how far it has got
+//
+// In the order they are rung.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
 //
 // Corresponds with GET /v1/agents/campaigns/{id}/contacts (the `ListCampaignContacts` operationId).
-func (c *ClientWithResponses) ListCampaignContactsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error) {
-	rsp, err := c.ListCampaignContacts(ctx, id, reqEditors...)
+func (c *ClientWithResponses) ListCampaignContactsWithResponse(ctx context.Context, id string, params *ListCampaignContactsParams, reqEditors ...RequestEditorFn) (*ListCampaignContactsResponse, error) {
+	rsp, err := c.ListCampaignContacts(ctx, id, params, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -61543,7 +63470,7 @@ func (c *ClientWithResponses) ListCampaignContactsWithResponse(ctx context.Conte
 
 // AddCampaignContactsWithBodyWithResponse Add people to ring
 //
-// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -61559,7 +63486,7 @@ func (c *ClientWithResponses) AddCampaignContactsWithBodyWithResponse(ctx contex
 
 // AddCampaignContactsWithResponse Add people to ring
 //
-// Contacts are added rather than replaced, so a campaign can be topped up while it is running. Each may carry instructions of their own, which the agent is told along with whatever its config already says.
+// A draft only: once launched, the list is fixed (409 campaign_locked). Up to 1,000 a request. Each number is stored in E.164, read in default_country when it has no country code. A row that cannot be rung, or repeats a number the campaign holds, is refused and the rest are added: refused says which and why.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -61573,9 +63500,104 @@ func (c *ClientWithResponses) AddCampaignContactsWithResponse(ctx context.Contex
 	return ParseAddCampaignContactsResponse(rsp)
 }
 
+// GetCampaignContactWithResponse One contact, with every dial made to them
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/campaigns/{id}/contacts/{contact_id} (the `GetCampaignContact` operationId).
+func (c *ClientWithResponses) GetCampaignContactWithResponse(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*GetCampaignContactResponse, error) {
+	rsp, err := c.GetCampaignContact(ctx, id, contactId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCampaignContactResponse(rsp)
+}
+
+// StopCampaignContactWithResponse Ring a contact no more
+//
+// One waiting for their next attempt is stopped now. One on a call is not cut off: they are stopped when the call ends. One the sequence is done with is left as it is.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/contacts/{contact_id}/stop (the `StopCampaignContact` operationId).
+func (c *ClientWithResponses) StopCampaignContactWithResponse(ctx context.Context, id string, contactId string, reqEditors ...RequestEditorFn) (*StopCampaignContactResponse, error) {
+	rsp, err := c.StopCampaignContact(ctx, id, contactId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopCampaignContactResponse(rsp)
+}
+
+// DuplicateCampaignWithBodyWithResponse Make a draft with a campaign's settings
+//
+// Its contacts are copied as asked, starting over with no attempts.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+func (c *ClientWithResponses) DuplicateCampaignWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*DuplicateCampaignResponse, error) {
+	rsp, err := c.DuplicateCampaignWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDuplicateCampaignResponse(rsp)
+}
+
+// DuplicateCampaignWithResponse Make a draft with a campaign's settings
+//
+// Its contacts are copied as asked, starting over with no attempts.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/duplicate (the `DuplicateCampaign` operationId).
+func (c *ClientWithResponses) DuplicateCampaignWithResponse(ctx context.Context, id string, body DuplicateCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*DuplicateCampaignResponse, error) {
+	rsp, err := c.DuplicateCampaign(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDuplicateCampaignResponse(rsp)
+}
+
+// LaunchCampaignWithBodyWithResponse Launch a draft
+//
+// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+func (c *ClientWithResponses) LaunchCampaignWithBodyWithResponse(ctx context.Context, id string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LaunchCampaignResponse, error) {
+	rsp, err := c.LaunchCampaignWithBody(ctx, id, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLaunchCampaignResponse(rsp)
+}
+
+// LaunchCampaignWithResponse Launch a draft
+//
+// Records the customer's consent and rings the contacts from start_at. A draft missing what it needs (contacts, one of the app's numbers, an agent config, a ready sequence) is refused with campaign_not_ready, saying what. An organization that may not pay for calls is refused here as a call would be, and a campaign refused midway is paused with paused_reason set. Contacts who opted out of calls are rejected without a call.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/launch (the `LaunchCampaign` operationId).
+func (c *ClientWithResponses) LaunchCampaignWithResponse(ctx context.Context, id string, body LaunchCampaignJSONRequestBody, reqEditors ...RequestEditorFn) (*LaunchCampaignResponse, error) {
+	rsp, err := c.LaunchCampaign(ctx, id, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLaunchCampaignResponse(rsp)
+}
+
 // PauseCampaignWithResponse Stop ringing anybody new
 //
-// The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered.
+// A running or scheduled campaign only. The calls already happening are left alone: a campaign is paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused does not start at its start_at, and resuming it before then returns it to scheduled.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -61589,20 +63611,36 @@ func (c *ClientWithResponses) PauseCampaignWithResponse(ctx context.Context, id 
 	return ParsePauseCampaignResponse(rsp)
 }
 
-// StartCampaignWithResponse Start ringing
+// ResumeCampaignWithResponse Ring people again
 //
-// Returns once the campaign is running rather than once it is over. A campaign that was paused carries on from whoever is left. An organization that may not pay for calls is refused here as a call would be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
+// A paused campaign only. It carries on from whoever is left, and clears paused_reason. A campaign whose start time has not come goes back to scheduled rather than running. An organization that may not pay for calls is refused as a call would be.
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
 // Returns a wrapper object for the known response body format(s).
 //
-// Corresponds with POST /v1/agents/campaigns/{id}/start (the `StartCampaign` operationId).
-func (c *ClientWithResponses) StartCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StartCampaignResponse, error) {
-	rsp, err := c.StartCampaign(ctx, id, reqEditors...)
+// Corresponds with POST /v1/agents/campaigns/{id}/resume (the `ResumeCampaign` operationId).
+func (c *ClientWithResponses) ResumeCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ResumeCampaignResponse, error) {
+	rsp, err := c.ResumeCampaign(ctx, id, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
-	return ParseStartCampaignResponse(rsp)
+	return ParseResumeCampaignResponse(rsp)
+}
+
+// StopCampaignWithResponse End a campaign for good
+//
+// Nobody waiting is rung; calls in progress finish.
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/campaigns/{id}/stop (the `StopCampaign` operationId).
+func (c *ClientWithResponses) StopCampaignWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*StopCampaignResponse, error) {
+	rsp, err := c.StopCampaign(ctx, id, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseStopCampaignResponse(rsp)
 }
 
 // ListChannelAccountsWithResponse List channel lines
@@ -62213,7 +64251,7 @@ func (c *ClientWithResponses) ExportConnectionTokenWithResponse(ctx context.Cont
 
 // ListConnectionToolsWithResponse List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -63884,7 +65922,7 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 
 // ListSessionToolsWithResponse List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -64259,57 +66297,6 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 		return nil, err
 	}
 	return ParseSyncAgentResponse(rsp)
-}
-
-// GetUserWithResponse Get a user's phone link
-//
-// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
-func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*GetUserResponse, error) {
-	rsp, err := c.GetUser(ctx, userId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetUserResponse(rsp)
-}
-
-// UpdateUserWithBodyWithResponse Link a user to a phone number
-//
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error) {
-	rsp, err := c.UpdateUserWithBody(ctx, userId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateUserResponse(rsp)
-}
-
-// UpdateUserWithResponse Link a user to a phone number
-//
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
-//
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
-func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error) {
-	rsp, err := c.UpdateUser(ctx, userId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseUpdateUserResponse(rsp)
 }
 
 // DeleteUserConnectionsWithResponse Delete every connection of one user
@@ -64731,7 +66718,6 @@ func (c *ClientWithResponses) ReceiveConnectionEventWithResponse(ctx context.Con
 //
 // Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
 // Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
-// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 // Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -64749,7 +66735,6 @@ func (c *ClientWithResponses) ListDataChangesWithResponse(ctx context.Context, p
 //
 // One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
 // Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
-// A router with shards cannot be the source of a move and answers 400 `not_configured`.
 // Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
 //
 // Returns a wrapper object for the known response body format(s).
@@ -64766,14 +66751,14 @@ func (c *ClientWithResponses) ExportDataWithResponse(ctx context.Context, reqEdi
 // ImportDataWithBodyWithResponse Write an export, or a batch of changes, into this deployment
 //
 // Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
+// Importing is idempotent: the same export applied twice leaves what applying it once would.
 // Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/data/import (the `ImportData` operationId).
-func (c *ClientWithResponses) ImportDataWithBodyWithResponse(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error) {
-	rsp, err := c.ImportDataWithBody(ctx, params, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ImportDataWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error) {
+	rsp, err := c.ImportDataWithBody(ctx, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -66175,7 +68160,7 @@ func (c *ClientWithResponses) UnrevokeLimitGrantWithResponse(ctx context.Context
 
 // GetLimitUsageWithResponse Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -66326,7 +68311,7 @@ func (c *ClientWithResponses) GetAgentStatsWithResponse(ctx context.Context, par
 
 // GetSpendWithResponse What the calling customer spent, grouped
 //
-// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+// Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
 // scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
 // Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
 // Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
@@ -66480,7 +68465,7 @@ func (c *ClientWithResponses) GetTurnStatsWithResponse(ctx context.Context, para
 
 // ListUsageEventsWithResponse List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //
@@ -67905,7 +69890,7 @@ func ParseListCampaignsResponse(rsp *http.Response) (*ListCampaignsResponse, err
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []Campaign
+		var dest CampaignPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -68135,6 +70120,135 @@ func ParseCreateCampaignResponse(rsp *http.Response) (*CreateCampaignResponse, e
 	return response, nil
 }
 
+// ParseDeleteCampaignResponse parses an HTTP response from a DeleteCampaignWithResponse call
+func ParseDeleteCampaignResponse(rsp *http.Response) (*DeleteCampaignResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteCampaignResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers DeleteCampaignResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers DeleteCampaignResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseGetCampaignResponse parses an HTTP response from a GetCampaignWithResponse call
 func ParseGetCampaignResponse(rsp *http.Response) (*GetCampaignResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -68261,6 +70375,394 @@ func ParseGetCampaignResponse(rsp *http.Response) (*GetCampaignResponse, error) 
 	return response, nil
 }
 
+// ParseUpdateCampaignResponse parses an HTTP response from a UpdateCampaignWithResponse call
+func ParseUpdateCampaignResponse(rsp *http.Response) (*UpdateCampaignResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateCampaignResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Campaign
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers UpdateCampaignResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers UpdateCampaignResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetCampaignAnalyticsResponse parses an HTTP response from a GetCampaignAnalyticsWithResponse call
+func ParseGetCampaignAnalyticsResponse(rsp *http.Response) (*GetCampaignAnalyticsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCampaignAnalyticsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CampaignAnalytics
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetCampaignAnalyticsResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetCampaignAnalyticsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteCampaignContactsResponse parses an HTTP response from a DeleteCampaignContactsWithResponse call
+func ParseDeleteCampaignContactsResponse(rsp *http.Response) (*DeleteCampaignContactsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteCampaignContactsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		var headers DeleteCampaignContactsResponse204Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers204 = &headers
+	case rsp.StatusCode == 402:
+		var headers DeleteCampaignContactsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListCampaignContactsResponse parses an HTTP response from a ListCampaignContactsWithResponse call
 func ParseListCampaignContactsResponse(rsp *http.Response) (*ListCampaignContactsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -68276,7 +70778,7 @@ func ParseListCampaignContactsResponse(rsp *http.Response) (*ListCampaignContact
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []Contact
+		var dest ContactPage
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -68402,11 +70904,144 @@ func ParseAddCampaignContactsResponse(rsp *http.Response) (*AddCampaignContactsR
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
-		var dest []Contact
+		var dest AddContactsResponse
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
 		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 201:
+		var headers AddCampaignContactsResponse201Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers201 = &headers
+	case rsp.StatusCode == 402:
+		var headers AddCampaignContactsResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetCampaignContactResponse parses an HTTP response from a GetCampaignContactWithResponse call
+func ParseGetCampaignContactResponse(rsp *http.Response) (*GetCampaignContactResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCampaignContactResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Contact
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest
@@ -68460,8 +71095,267 @@ func ParseAddCampaignContactsResponse(rsp *http.Response) (*AddCampaignContactsR
 	}
 
 	switch {
+	case rsp.StatusCode == 200:
+		var headers GetCampaignContactResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetCampaignContactResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStopCampaignContactResponse parses an HTTP response from a StopCampaignContactWithResponse call
+func ParseStopCampaignContactResponse(rsp *http.Response) (*StopCampaignContactResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StopCampaignContactResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Contact
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers StopCampaignContactResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers StopCampaignContactResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDuplicateCampaignResponse parses an HTTP response from a DuplicateCampaignWithResponse call
+func ParseDuplicateCampaignResponse(rsp *http.Response) (*DuplicateCampaignResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DuplicateCampaignResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest Campaign
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
 	case rsp.StatusCode == 201:
-		var headers AddCampaignContactsResponse201Headers
+		var headers DuplicateCampaignResponse201Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -68492,7 +71386,147 @@ func ParseAddCampaignContactsResponse(rsp *http.Response) (*AddCampaignContactsR
 		}
 		response.Headers201 = &headers
 	case rsp.StatusCode == 402:
-		var headers AddCampaignContactsResponse402Headers
+		var headers DuplicateCampaignResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseLaunchCampaignResponse parses an HTTP response from a LaunchCampaignWithResponse call
+func ParseLaunchCampaignResponse(rsp *http.Response) (*LaunchCampaignResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LaunchCampaignResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Campaign
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers LaunchCampaignResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers LaunchCampaignResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -68569,6 +71603,13 @@ func ParsePauseCampaignResponse(rsp *http.Response) (*PauseCampaignResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -68639,26 +71680,26 @@ func ParsePauseCampaignResponse(rsp *http.Response) (*PauseCampaignResponse, err
 	return response, nil
 }
 
-// ParseStartCampaignResponse parses an HTTP response from a StartCampaignWithResponse call
-func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, error) {
+// ParseResumeCampaignResponse parses an HTTP response from a ResumeCampaignWithResponse call
+func ParseResumeCampaignResponse(rsp *http.Response) (*ResumeCampaignResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
 	defer func() { _ = rsp.Body.Close() }()
 	if err != nil {
 		return nil, err
 	}
 
-	response := &StartCampaignResponse{
+	response := &ResumeCampaignResponse{
 		Body:         bodyBytes,
 		HTTPResponse: rsp,
 	}
 
 	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Campaign
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
-		response.JSON202 = &dest
+		response.JSON200 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
 		var dest BadRequest
@@ -68695,6 +71736,20 @@ func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, err
 		}
 		response.JSON404 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
@@ -68712,8 +71767,8 @@ func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, err
 	}
 
 	switch {
-	case rsp.StatusCode == 202:
-		var headers StartCampaignResponse202Headers
+	case rsp.StatusCode == 200:
+		var headers ResumeCampaignResponse200Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -68742,9 +71797,142 @@ func ParseStartCampaignResponse(rsp *http.Response) (*StartCampaignResponse, err
 			}
 			headers.XStreamCostMicros = &value
 		}
-		response.Headers202 = &headers
+		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
-		var headers StartCampaignResponse402Headers
+		var headers ResumeCampaignResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseStopCampaignResponse parses an HTTP response from a StopCampaignWithResponse call
+func ParseStopCampaignResponse(rsp *http.Response) (*StopCampaignResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &StopCampaignResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Campaign
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers StopCampaignResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers StopCampaignResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -83683,251 +86871,6 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 	return response, nil
 }
 
-// ParseGetUserResponse parses an HTTP response from a GetUserWithResponse call
-func ParseGetUserResponse(rsp *http.Response) (*GetUserResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetUserResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AgentUser
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers GetUserResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers GetUserResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseUpdateUserResponse parses an HTTP response from a UpdateUserWithResponse call
-func ParseUpdateUserResponse(rsp *http.Response) (*UpdateUserResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &UpdateUserResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AgentUser
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers UpdateUserResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers UpdateUserResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
 // ParseDeleteUserConnectionsResponse parses an HTTP response from a DeleteUserConnectionsWithResponse call
 func ParseDeleteUserConnectionsResponse(rsp *http.Response) (*DeleteUserConnectionsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -86212,13 +89155,6 @@ func ParseImportDataResponse(rsp *http.Response) (*ImportDataResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
-		var dest ErrorResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

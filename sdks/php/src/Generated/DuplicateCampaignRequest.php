@@ -8,11 +8,11 @@ namespace GetStream\VisionAgents\Generated;
 
 use GetStream\VisionAgents\Json;
 
-final readonly class ContactsRequest
+final readonly class DuplicateCampaignRequest
 {
     public function __construct(
-        /** @var list<ContactsRequestContactsItem> */
-        public array $contacts,
+        // none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+        public string $contacts,
     ) {
     }
 
@@ -22,7 +22,7 @@ final readonly class ContactsRequest
     public static function fromArray(array $data): self
     {
         return new self(
-            contacts: array_map(ContactsRequestContactsItem::fromArray(...), Json::objects($data, 'contacts')),
+            contacts: Json::string($data, 'contacts'),
         );
     }
 
@@ -34,7 +34,7 @@ final readonly class ContactsRequest
     public function toArray(): array
     {
         $out = [];
-        $out['contacts'] = array_map(static fn (ContactsRequestContactsItem $each): array => $each->toArray(), $this->contacts);
+        $out['contacts'] = $this->contacts;
         return $out;
     }
 }
