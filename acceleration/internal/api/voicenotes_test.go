@@ -381,6 +381,173 @@ func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeard() 
 	s.Equal(said, s.lastAsked(said))
 }
 
+func (s *VoiceNotesSuite) TestAVoiceNoteSentToRespondIsTheQuestionAndShownOnThePersonsMessage() {
+	opened := s.noting()
+	command, typed, said := s.utils.uuid(), "From the morning shift", "the dish machine is leaking "+s.utils.uuid()
+	audio := wavOf(said)
+	before := len(s.chat.Uploads())
+
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened),
+		map[string]any{"request_id": command, "text": typed, "audio": map[string]string{"url": s.serve(audio)}}, &receipt))
+
+	s.False(receipt.Duplicate)
+	s.Equal(typed+"\n\n"+said, s.lastAsked(said), "the model is asked what was typed, then what was said")
+	s.shownWithItsNote(opened, command, typed+"\n\n"+said, audio, before)
+}
+
+func (s *VoiceNotesSuite) TestAVoiceNoteRespondRefusesIsAnsweredAsCreateResponseAnswersAndNothingIsAsked() {
+	opened := s.noting()
+
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened),
+		map[string]any{"text": "", "audio": map[string]string{"url": s.serve(wavOf(refuseForMoney))}})
+
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+	s.Equal(http.StatusPaymentRequired, status)
+	s.Equal(codeSpendLimitReached, answered.Error.Code)
+	s.nothingWasAsked(opened)
+}
+
+func (s *VoiceNotesSuite) TestARetryOfAVoiceNoteOnRespondIsHeardOnceAndMatchedOnWhatWasSent() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	command, typed, note := s.utils.uuid(), "From the morning shift", s.serve(wavOf("the fryer is out "+s.utils.uuid()))
+	sent := map[string]any{"request_id": command, "text": typed, "audio": map[string]string{"url": note}}
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened), sent, nil))
+
+	var retried CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened), sent, &retried))
+	s.True(retried.Duplicate, "a retry starts no second turn")
+	status, _ := s.serverClient.call(http.MethodPost, s.respond(opened),
+		map[string]any{"request_id": command, "text": "From the evening shift", "audio": map[string]string{"url": note}})
+	s.Equal(http.StatusConflict, status, "other typed text under the same request id")
+	s.heard(since, 1)
+}
+
+// Without a request id the question is answered as one too, in a body as big as
+// createResponse takes.
+func (s *VoiceNotesSuite) TestAVoiceNoteWithoutARequestIDIsAskedOnRespond() {
+	opened := s.noting()
+	posted := "big " + s.utils.uuid()
+	atLimit := wavOf(posted + strings.Repeat(" ", maxInlineAudio-len(wavOf(posted))))
+
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": "",
+		"audio": map[string]string{"url": "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(atLimit)}})
+	s.Require().Equal(http.StatusNoContent, status, "%.300s", payload)
+	s.Equal(posted, s.lastAsked(posted))
+}
+
+// Text alone is answered on respond as it was before voice notes: a 204 without a request id,
+// a receipt with one, and the text asked as sent.
+func (s *VoiceNotesSuite) TestTextAloneOnRespondIsAnsweredAsBefore() {
+	opened := s.noting()
+	since := time.Now().UTC()
+	plain, kept, command := "Is the fryer fixed? "+s.utils.uuid(), "Is the ice machine fixed? "+s.utils.uuid(), s.utils.uuid()
+
+	s.Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost, s.respond(opened), map[string]any{"text": plain}, nil))
+	s.Equal(plain, s.lastAsked(plain))
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, s.respond(opened),
+		map[string]any{"request_id": command, "text": kept}, &receipt))
+	s.Equal(command, receipt.RequestId)
+	s.Equal(kept, s.lastAsked(kept))
+	s.heard(since, 0)
+}
+
+// Empty text without a voice note is refused as createResponse refuses it, a 400
+// invalid_request: it was a validation_failed while the text had a minimum length.
+func (s *VoiceNotesSuite) TestEmptyTextWithoutAVoiceNoteOnRespondIsAnInvalidRequest() {
+	opened := s.noting()
+
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": ""})
+
+	var refused ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &refused), string(payload))
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("invalid_request", refused.Error.Code)
+	s.Equal("there is nothing to answer", refused.Error.Message)
+}
+
+// Text with no voice note keeps the 1 MiB limit a request had before voice notes, on respond
+// and on createResponse, answered as Huma answers a body over its limit.
+func (s *VoiceNotesSuite) TestTextOverTheDefaultLimitWithoutAVoiceNoteIsRefusedAndNothingIsAsked() {
+	big := strings.Repeat("a", 2<<20)
+	for name, send := range map[string]func(opened Session) (int, []byte){
+		"respond": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": big})
+		},
+		"respond with a request id": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": big, "request_id": s.utils.uuid()})
+		},
+		"createResponse": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{Text: big})
+		},
+		"createResponse with a photo": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{
+				Text: big[:1<<20], Images: &[]ImageSource{{Url: "data:image/png;base64," + big[:1<<10]}}})
+		},
+		"createResponse with a video": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{
+				Text: "watch this", Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + big}}})
+		},
+	} {
+		s.Run(name, func() {
+			s.forgetNoted()
+			opened := s.noting()
+
+			status, payload := send(opened)
+
+			var refused ErrorResponse
+			s.Require().NoError(json.Unmarshal(payload, &refused), "%.300s", payload)
+			s.Equal(http.StatusRequestEntityTooLarge, status)
+			s.Equal("payload_too_large", refused.Error.Code)
+			s.Equal("request body is too large limit=1048576 bytes", refused.Error.Message)
+			s.nothingWasAsked(opened)
+		})
+	}
+}
+
+// A voice note raises the limit: text under it, and a voice note of the inline limit sent as
+// a data URI, are answered on respond.
+func (s *VoiceNotesSuite) TestAVoiceNoteSentAsADataURIOfTheInlineLimitIsHeardOnRespond() {
+	opened := s.noting()
+	said := "big " + s.utils.uuid()
+	atLimit := wavOf(said + strings.Repeat(" ", maxInlineAudio-len(wavOf(said))))
+
+	status, payload := s.serverClient.call(http.MethodPost, s.respond(opened),
+		RespondRequest{Audio: &AudioSource{Url: "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(atLimit)}})
+
+	s.Require().Equal(http.StatusNoContent, status, "%.300s", payload)
+	s.Equal(said, s.lastAsked(said))
+}
+
+// shownWithItsNote checks that the person's message of command carries text and the voice
+// note audio, uploaded once since before uploads.
+func (s *VoiceNotesSuite) shownWithItsNote(opened Session, command, text string, audio []byte, before int) {
+	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
+	var message map[string]any
+	s.Require().Eventually(func() bool {
+		for _, stored := range s.chat.Stored(channel) {
+			if stored["id"] == command {
+				message = stored
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the person's message was never written")
+	s.Equal(text, message["text"], "the message carries what was said")
+	attachments, _ := json.Marshal(message["attachments"])
+	s.Contains(string(attachments), `"type":"voiceRecording"`, "the voice note is played where it is shown")
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1, "the voice note is uploaded once")
+	s.Equal(audio, uploads[0].Data, "what is shown is the voice note as sent")
+}
+
+func (s *VoiceNotesSuite) respond(opened Session) string {
+	return "/v1/agents/sessions/" + opened.Id + "/respond"
+}
+
 // heard checks that n voice notes were transcribed for the suite's app since since. It hears
 // one more on a session tagged its own, and counts once that one's row is written: one writer
 // writes the rows in the order they were recorded, so theirs are written by then.

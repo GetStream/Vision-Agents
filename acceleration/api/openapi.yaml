@@ -7109,16 +7109,19 @@ components:
       type: string
     RespondRequest:
       properties:
+        audio:
+          $ref: '#/components/schemas/AudioSource'
+          description: A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
         client_id:
           description: The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
           pattern: ^[A-Za-z0-9_.:-]{1,128}$
           type: string
         request_id:
-          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
           pattern: ^[A-Za-z0-9_-]{1,128}$
           type: string
         text:
-          minLength: 1
+          description: What to answer, as though it had been said. May be empty when audio carries the question.
           type: string
       required:
         - text
@@ -17412,7 +17415,9 @@ paths:
       summary: Delete what one session remembered
   /v1/agents/sessions/{id}/respond:
     post:
-      description: 'A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.'
+      description: |-
+        A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+        A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
       operationId: respondSession
       parameters:
         - description: The session, as returned when it was created.

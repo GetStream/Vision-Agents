@@ -24,6 +24,18 @@ var errNoStore = notConfigured("this deployment does not record what sessions sa
 // inside the hundred images the strictest vision provider takes in one request.
 const maxVideos = 2
 
+// sizeOfResponse is the bytes of the text, images and videos a response carries.
+func sizeOfResponse(body *CreateResponseRequest) int {
+	size := len(body.Text)
+	for _, image := range value(body.Images) {
+		size += len(image.Url)
+	}
+	for _, clip := range value(body.Videos) {
+		size += len(clip.Url)
+	}
+	return size
+}
+
 // createResponse asks the agent something and names the turn it answers as.
 //
 // It is respond with an id back, which is the whole of the difference. Without one a caller
@@ -33,6 +45,11 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	// A response is asked of a running session rather than a stored one: a call that ended
 	// can be read and forked, but not talked to. A chat that ended is reopened.
 	leaveUncosted(ctx)
+	if request.Body != nil {
+		if err := refuseOversizeWithoutAudio(request.Body.Audio, sizeOfResponse(request.Body)); err != nil {
+			return nil, err
+		}
+	}
 	found, sent, failure := s.sessionToAnswer(ctx, request.Id)
 	if failure != nil {
 		return nil, failure
@@ -70,23 +87,9 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 
 	asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
 	commandID := value(request.Body.RequestId)
-	// Heard after every check that can refuse the question beforehand, since hearing it is
-	// billed. Three refusals can still come after it is heard, and the note is billed then: the
-	// transcript pushes a typed text over the 1 MiB command limit, a second turn starts between
-	// the check and the start of this one, or the note fails to upload to Chat. A retry of a
-	// question carries what its first hearing heard.
-	text := request.Body.Text
-	var notes []conversation.VoiceNote
-	if request.Body.Audio != nil {
-		heard, err := found.CheckRespond(ctx, commandID, text, len(parts) > 0, asked)
-		if err != nil {
-			return nil, refusedResponse(err)
-		}
-		note, failure := s.hearVoiceNote(ctx, found.Spec(), request.Body.Audio.Url, heard)
-		if failure != nil {
-			return nil, failure
-		}
-		text, notes = withVoiceNote(text, note.Heard), []conversation.VoiceNote{note}
+	text, notes, failure := s.withHeardNote(ctx, found, commandID, request.Body.Text, request.Body.Audio, len(parts) > 0, asked)
+	if failure != nil {
+		return nil, failure
 	}
 
 	var responseID string

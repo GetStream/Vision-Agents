@@ -7452,12 +7452,16 @@ type RecordingStatus string
 
 // RespondRequest defines model for RespondRequest.
 type RespondRequest struct {
+	Audio *AudioSource `json:"audio,omitempty"`
+
 	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
 	ClientId *string `json:"client_id,omitempty"`
 
-	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. A retry with the same id and text does not restart inference.
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
 	RequestId *string `json:"request_id,omitempty"`
-	Text      string  `json:"text"`
+
+	// Text What to answer, as though it had been said. May be empty when audio carries the question.
+	Text string `json:"text"`
 }
 
 // ResumeHistory How a conversation is handed back to the model when a session carries it on.
@@ -12697,6 +12701,7 @@ type ClientInterface interface {
 	// RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type.
 	//
@@ -12706,6 +12711,7 @@ type ClientInterface interface {
 	// RespondSession Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type.
 	//
@@ -17313,6 +17319,7 @@ func (c *Client) DeleteSessionMemories(ctx context.Context, id string, reqEditor
 // RespondSessionWithBody Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type.
 //
@@ -17332,6 +17339,7 @@ func (c *Client) RespondSessionWithBody(ctx context.Context, id string, contentT
 // RespondSession Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type.
 //
@@ -34305,6 +34313,7 @@ type ClientWithResponsesInterface interface {
 	// RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -34314,6 +34323,7 @@ type ClientWithResponsesInterface interface {
 	// RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
 	//
 	// A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+	// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 	//
@@ -64244,6 +64254,7 @@ func (c *ClientWithResponses) DeleteSessionMemoriesWithResponse(ctx context.Cont
 // RespondSessionWithBodyWithResponse Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
@@ -64259,6 +64270,7 @@ func (c *ClientWithResponses) RespondSessionWithBodyWithResponse(ctx context.Con
 // RespondSessionWithResponse Answer a piece of text through the model, as though it had been said
 //
 // A text session that ended is reopened under the same id, on the config it was opened with: a chat is never over for the person writing in it. A call that ended is not found.
+// A voice note in audio is transcribed before the turn starts, and what was said is the question, after any text. A voice note that cannot be heard is refused and no turn starts.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
 //
