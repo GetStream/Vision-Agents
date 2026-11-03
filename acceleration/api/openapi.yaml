@@ -8072,7 +8072,7 @@ components:
           type: string
         voicemail:
           $ref: '#/components/schemas/SessionVoicemail'
-          description: What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person.
+          description: What the agent does when an answering machine picks up the call placed. It acts only on a call placed with detect_voicemail, on a vendor that reports a machine. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
       required:
         - number
       type: object
@@ -8264,7 +8264,7 @@ components:
         action:
           $ref: '#/components/schemas/VoicemailAction'
         message:
-          description: Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message.
+          description: Said word for word once the machine's greeting has ended, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
           maxLength: 1000
           type: string
       required:

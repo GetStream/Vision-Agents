@@ -97,6 +97,13 @@ func (s *Session) endsFor(reason EndReason) bool {
 	return true
 }
 
+// closingNow reports whether the session has begun to close.
+func (s *Session) closingNow() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closing
+}
+
 // endReason is why the session ended, empty while nothing has said.
 func (s *Session) endReason() EndReason {
 	s.mu.Lock()

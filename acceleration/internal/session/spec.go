@@ -505,6 +505,8 @@ func (s *Spec) Normalize() error {
 		return stack.Wrap(errors.New("session: a text session holds no call, so it cannot join one"))
 	case s.Text && s.Native():
 		return stack.Wrap(errors.New("session: a text session has no voice, so it cannot run a speech-to-speech model"))
+	case s.Native() && s.Voicemail != nil && s.Voicemail.Message != "":
+		return stack.Wrap(errors.New("session: a speech-to-speech agent cannot say a fixed voicemail message; use hang_up"))
 	}
 	if s.CustomerID == "" {
 		return stack.Wrap(errors.New("session: a customer id is required"))
