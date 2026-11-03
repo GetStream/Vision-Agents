@@ -197,8 +197,8 @@ func (i Image) attachTo(request *acceleration.CreateResponseRequest) {
 	request.Images = appended(request.Images, source)
 }
 
-// Clip is a recorded video to show the agent, by public HTTPS URL or as a base64 data URI,
-// at most 50 MB either way.
+// Clip is a recorded video to show the agent, an MP4, MOV, 3GP, MKV or WebM file, by public
+// HTTPS URL or as a base64 data URI, at most 50 MB either way.
 //
 // No model takes a video whole, so the router samples it into frames spread evenly across
 // the clip and shows the agent those, each with the moment it was taken.
@@ -292,9 +292,10 @@ func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*
 	for _, input := range inputs {
 		input.attachTo(&request)
 	}
-	// A request id is what makes a retried question answered once. It carries text only, so a
-	// question showing the agent something goes without one.
-	if request.RequestId == nil && request.Images == nil && request.Videos == nil {
+	// A request id is what makes a retried question answered once, and a personal conversation
+	// takes a question by one alone. Photos sent with one must be data URIs, so a question with
+	// photos goes without one.
+	if request.RequestId == nil && request.Images == nil {
 		id := make([]byte, 16)
 		if _, err := rand.Read(id); err != nil {
 			return nil, err
