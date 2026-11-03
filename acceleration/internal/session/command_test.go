@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -15,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	getstream "github.com/GetStream/getstream-go/v5"
 )
 
@@ -309,6 +311,88 @@ func (s *SessionSuite) TestACommandsPhotoIsShownToTheModelAndOnThePersonsMessage
 	s.Require().NoError(err)
 	s.True(retry.Duplicate)
 	s.Len(chat.Uploads(), 1, "a retry uploads its photo no second time")
+}
+
+// A question of photos alone needs no command to be shown on the person's message (AI-2550);
+// the frames of a video sent with it are the model's alone, and a personal conversation still
+// takes questions by command only, uploading nothing.
+func (s *SessionSuite) TestPhotosWithoutTextAreShownOnTheMessageOfAQuestionWithoutACommand() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	s.model.sees = true
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+	frame := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x02}, Caption: "video 1, 0.0s of 1.0s"}
+
+	_, err = s.commands().Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+	s.ErrorIs(err, errPersonalNeedsCommand)
+	s.Empty(chat.Uploads(), "a question its conversation refuses uploads nothing")
+
+	_, err = shared.Respond(s.ctx, "", []llm.ImagePart{frame}, options.LLM{})
+	s.Error(err, "a video's frames alone leave the person's message nothing to show")
+	s.Empty(chat.Uploads(), "a video's frames are not uploaded")
+
+	_, err = shared.Respond(s.ctx, "", []llm.ImagePart{photo, frame}, options.LLM{}, photo)
+	s.Require().NoError(err)
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if request.HasImage() {
+				return true
+			}
+		}
+		return false
+	}, "the model was never shown the photo")
+	s.eventually(func() bool {
+		for _, message := range s.stored(shared) {
+			if message.Role == "user" && message.Text == "" && len(message.Files) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the person's message never showed the photo")
+	uploads := chat.Uploads()
+	s.Require().Len(uploads, 1, "the photo alone is uploaded, not the video's frame")
+	s.Equal(photo.Data, uploads[0].Data)
+}
+
+// Controls, as on base: a worker's session answers what is already in its channel, and a call
+// is written by its transcript, so neither uploads the photos of a question with no text.
+func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessageIsWritten() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: chat.URL,
+	}), streamapp.ClientsOptions{})
+	s.manages()
+	s.model.sees = true
+	creator := "worker-agent"
+	_, err := chat.Client.Chat().GetOrCreateChannel(s.ctx, "agent", "worker-agent", &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
+	})
+	s.Require().NoError(err)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true)
+	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
+		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = worker.Close() })
+	s.Require().True(worker.Spec().Dispatched, "the session a worker opens in the channel handed out")
+	call := s.joins(Spec{CallID: "call-photos", PersistConversation: true})
+	s.T().Cleanup(func() { _ = call.Close() })
+	s.Require().True(call.Durable(), "a call kept in Stream Chat")
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+
+	_, err = worker.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+	s.Require().NoError(err)
+	_, _ = call.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+
+	s.Empty(chat.Uploads())
 }
 
 func (s *SessionSuite) TestACommandsVoiceNoteIsShownOnThePersonsMessageOnce() {
