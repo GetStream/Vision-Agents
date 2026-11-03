@@ -169,8 +169,6 @@ public sealed record Declaration
     /// <summary>How the sandbox is built and what it may reach, null when agent.yaml has no <c>sandbox_options:</c> block.</summary>
     public SandboxDeclaration? SandboxOptions { get; init; }
 
-    /// <summary>The plugins the agent may use.</summary>
-    public IReadOnlyList<string> Plugins { get; init; } = [];
 
     /// <summary>
     /// The connectors whose tools the agent may call. Null when agent.yaml says nothing, which
@@ -573,12 +571,12 @@ public sealed class Folder
             }
             video = new VideoDeclaration(declared.Source ?? "", frames);
         }
-        var connectors = read.Connectors?.Items?.Select(entry => ConnectorOf(entry, path)).ToList();
-        // The model is offered each as <name>__<tool>, so the same name would be two tools.
-        if (connectors?.Find(connector => read.Plugins?.Contains(connector.Name) == true) is { } clash)
+        // An empty or null list was never sent, so the file syncs as it did.
+        if (read.Plugins is not (null or List<object> { Count: 0 }))
         {
-            throw new ConfigurationException($"{path}: \"{clash.Name}\" is named under both connectors and plugins");
+            throw new ConfigurationException($"{path}: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors");
         }
+        var connectors = read.Connectors?.Items?.Select(entry => ConnectorOf(entry, path)).ToList();
         return new Declaration
         {
             Name = read.Name ?? "",
@@ -595,7 +593,6 @@ public sealed class Folder
             Greeting = read.Greeting is { } greeting ? new GreetingDeclaration(greeting.Text ?? "", greeting.Mode ?? "") : null,
             Sandbox = read.Sandbox ?? "",
             SandboxOptions = read.SandboxOptions is { } options ? SandboxOf(options, path) : null,
-            Plugins = read.Plugins ?? [],
             Connectors = connectors,
             Keyterms = read.Keyterms ?? [],
             Tags = read.Tags ?? [],
@@ -1084,7 +1081,7 @@ public sealed class Folder
         [YamlMember(Alias = "greeting")] public WrittenGreeting? Greeting { get; set; }
         [YamlMember(Alias = "sandbox")] public string? Sandbox { get; set; }
         [YamlMember(Alias = "sandbox_options")] public WrittenSandboxOptions? SandboxOptions { get; set; }
-        [YamlMember(Alias = "plugins")] public List<string>? Plugins { get; set; }
+        [YamlMember(Alias = "plugins")] public object? Plugins { get; set; }
         [YamlMember(Alias = "connectors")] public WrittenConnectorList? Connectors { get; set; }
         [YamlMember(Alias = "keyterms")] public List<string>? Keyterms { get; set; }
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
