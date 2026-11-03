@@ -954,6 +954,17 @@ type Placed struct {
 // names the call on its leg goes out on the number's shared line instead, since Stream lets a
 // number be on one trunk only.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
+	sent := false
+	placed, err := s.call(ctx, request, &sent)
+	if err != nil && !sent && ctx.Err() != nil {
+		return Placed{}, fmt.Errorf("%w: %w", ErrNotPlaced, err)
+	}
+	return placed, err
+}
+
+// call is Call. It sets sent once the vendor is asked to dial: from then on the phone may ring
+// whatever the call returns.
+func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Placed, error) {
 	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
 		return Placed{}, err
 	}
@@ -1155,6 +1166,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 
 	dialed, err := routing.Call(ctx, s.dialMeter(held.Vendor, request.Owner), func(ctx context.Context) (Dialed, error) {
+		*sent = true
 		return provider.Dial(ctx, outbound)
 	})
 	if err != nil {
@@ -1366,6 +1378,10 @@ func (s *Service) Answer(ctx context.Context, token string) (Plan, error) {
 		Password: bridge.TrunkPassword,
 	}, bridge.InitialDigits)
 }
+
+// ErrNotPlaced is a call whose context ended before the vendor was asked to dial it: nobody
+// was rung.
+var ErrNotPlaced = errors.New("phone: the call was cancelled before it was placed")
 
 // ErrUnknownStatus is a status post for no call waiting for one: its token is unknown or swept,
 // or its vendor reports no status.

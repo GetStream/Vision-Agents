@@ -52,6 +52,10 @@ var ErrDestinationRefused = errors.New("phone: calls to this number are refused"
 // ErrSuspended is an app Stream staff stopped from using the phone. Why stays with Stream.
 var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact Stream support")
 
+// ErrNotDialable is a number no call may be placed to: not a full E.164 number, or one refused
+// as a destination. A caller that holds a list of numbers can tell it from a failed call.
+var ErrNotDialable = errors.New("phone: not dialable")
+
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
 // is how toll fraud turns a stolen account into money.
 var premiumPrefixes = []string{"+1900", "+1976"}
@@ -60,15 +64,22 @@ var premiumPrefixes = []string{"+1900", "+1976"}
 // which also keeps short codes such as 911, 112 or 988 from being dialled as they are.
 func Dialable(to string) error {
 	if !store.IsE164(to) {
-		return stack.Wrap(fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to))
+		return stack.Wrap(notDialable{fmt.Errorf("phone: %q is not a full number in E.164 form, such as +15125550123", to)})
 	}
 	for _, prefix := range premiumPrefixes {
 		if strings.HasPrefix(to, prefix) {
-			return stack.Wrap(fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to))
+			return stack.Wrap(notDialable{fmt.Errorf("%w: %s is a premium-rate number", ErrDestinationRefused, to)})
 		}
 	}
 	return nil
 }
+
+// notDialable marks a Dialable failure as ErrNotDialable without changing its message.
+type notDialable struct{ err error }
+
+func (e notDialable) Error() string        { return e.err.Error() }
+func (e notDialable) Unwrap() error        { return e.err }
+func (e notDialable) Is(target error) bool { return target == ErrNotDialable }
 
 // VendorError is a vendor's API refusing a request or not answering it. It carries what
 // debugging needs, so it is logged in full, and none of it is shown to a client: the path can
