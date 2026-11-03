@@ -14,6 +14,8 @@ const (
 	NoAnswer  Outcome = "no_answer"
 	Failed    Outcome = "failed"
 	Canceled  Outcome = "canceled"
+	// Voicemail is a call an answering machine picked up.
+	Voicemail Outcome = "voicemail"
 	// Unknown is a call that ended never joined, from a vendor that does not report.
 	Unknown Outcome = "unknown"
 )
@@ -77,6 +79,7 @@ const (
 	reportedEvent eventKind = iota
 	answeredEvent
 	endedEvent
+	voicemailEvent
 )
 
 // event is one thing learned about a call. reported and word are a vendor's report's: reported
@@ -112,10 +115,15 @@ func decide(c Call, e event) Call {
 				c.Outcome = NoAnswer
 			}
 		}
+	case voicemailEvent:
+		// A call that was busy or rang out was picked up by nothing, a machine included.
+		if c.Outcome == "" || c.Outcome == Completed {
+			c.Outcome = Voicemail
+		}
 	}
 	// Stream saw the phone join, which outranks whatever the vendor said. A call still under
 	// way stays undecided until it ends.
-	if c.AnsweredAt != nil && c.Outcome != "" {
+	if c.AnsweredAt != nil && c.Outcome != "" && c.Outcome != Voicemail {
 		c.Outcome = Completed
 	}
 	if c.Outcome != was {

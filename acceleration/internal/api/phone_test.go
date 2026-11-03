@@ -975,6 +975,31 @@ func (s *CallStatusSuite) TestASessionAskedToLeaveAMessageLeavesItWhenAMachineAn
 	s.endedForVoicemail(id)
 }
 
+func (s *CallStatusSuite) TestACallAMachineAnsweredEndsAsVoicemail() {
+	id := s.utils.uuid()
+	token, key := s.placedFor(id)
+	answered := time.Now().UTC().Truncate(time.Second)
+	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, answered))
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{Action: VoicemailActionHangUp})
+	s.Require().Equal(http.StatusCreated, status, payload)
+
+	machine, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+	s.Require().Equal(http.StatusNoContent, machine)
+	// The outcome is kept as the session closes, which may be after its end reason shows.
+	s.Require().Eventually(func() bool {
+		shown := s.serverClient.getSession(id).CallOutcome
+		return shown != nil && value(shown.Outcome) == CallOutcomeVoicemail
+	}, 10*time.Second, 50*time.Millisecond, "the call never showed it went to voicemail")
+	s.Require().NoError(s.router.phone.Outcomes().Ended(context.Background(), key, answered.Add(20*time.Second)))
+
+	read := s.serverClient.getSession(id)
+	s.Require().NotNil(read.CallOutcome)
+	s.Equal(CallOutcomeVoicemail, value(read.CallOutcome.Outcome))
+	s.Require().NotNil(read.CallOutcome.AnsweredAt)
+	s.True(answered.Equal(*read.CallOutcome.AnsweredAt))
+	s.Equal(20, value(read.CallOutcome.DurationSeconds))
+}
+
 func (s *CallStatusSuite) TestAVoicemailPlanWithAnUnknownActionIsRefused() {
 	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{Action: "call_back"})
 

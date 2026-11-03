@@ -35,6 +35,10 @@ func (s *DecideSuite) end(call Call, at time.Time) Call {
 	return decide(call, event{kind: endedEvent, at: at})
 }
 
+func (s *DecideSuite) voicemail(call Call, at time.Time) Call {
+	return decide(call, event{kind: voicemailEvent, at: at})
+}
+
 func (s *DecideSuite) TestTheFirstFinalOutcomeIsKept() {
 	call := s.report(s.call, Busy, "busy", s.at(1))
 	call = s.report(call, Completed, "completed", s.at(2))
@@ -118,6 +122,50 @@ func (s *DecideSuite) TestASecondJoinOrEndKeepsTheFirstTime() {
 	s.Equal(s.at(3), *call.EndedAt)
 }
 
+func (s *DecideSuite) TestAMachineTakingACompletedCallMakesItVoicemail() {
+	call := s.answer(s.call, s.at(1))
+	call = s.end(call, s.at(31))
+	call = s.voicemail(call, s.at(32))
+
+	s.Equal(Voicemail, call.Outcome)
+	s.Equal(s.at(32), *call.DecidedAt)
+	duration, known := call.Duration()
+	s.True(known)
+	s.Equal(30*time.Second, duration)
+}
+
+func (s *DecideSuite) TestAVoicemailStaysWhenTheLegEndsOrTheVendorReportsAfter() {
+	call := s.answer(s.call, s.at(1))
+	call = s.voicemail(call, s.at(2))
+	call = s.end(call, s.at(3))
+	call = s.report(call, Completed, "completed", s.at(4))
+
+	s.Equal(Voicemail, call.Outcome)
+	s.Equal(s.at(2), *call.DecidedAt)
+}
+
+func (s *DecideSuite) TestAVoicemailStaysWhenThePhoneIsSeenJoiningAfter() {
+	call := s.voicemail(s.call, s.at(1))
+	call = s.answer(call, s.at(2))
+
+	s.Equal(Voicemail, call.Outcome)
+}
+
+func (s *DecideSuite) TestAMachineDoesNotOverwriteABusyCall() {
+	call := s.report(s.call, Busy, "busy", s.at(1))
+	call = s.voicemail(call, s.at(2))
+
+	s.Equal(Busy, call.Outcome)
+	s.Equal(s.at(1), *call.DecidedAt)
+}
+
+func (s *DecideSuite) TestAMachineDoesNotOverwriteACallThatRangOut() {
+	call := s.end(s.call, s.at(1))
+	call = s.voicemail(call, s.at(2))
+
+	s.Equal(NoAnswer, call.Outcome)
+}
+
 func (s *DecideSuite) TestOnlyBusyNoAnswerFailedAndCanceledAreUnanswered() {
 	s.True(Busy.Unanswered())
 	s.True(NoAnswer.Unanswered())
@@ -125,6 +173,7 @@ func (s *DecideSuite) TestOnlyBusyNoAnswerFailedAndCanceledAreUnanswered() {
 	s.True(Canceled.Unanswered())
 	s.False(Completed.Unanswered())
 	s.False(Unknown.Unanswered())
+	s.False(Voicemail.Unanswered())
 	s.False(Outcome("").Unanswered())
 }
 

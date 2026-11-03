@@ -983,6 +983,7 @@ const (
 	CallOutcomeFailed    CallOutcome = "failed"
 	CallOutcomeCanceled  CallOutcome = "canceled"
 	CallOutcomeUnknown   CallOutcome = "unknown"
+	CallOutcomeVoicemail CallOutcome = "voicemail"
 )
 
 func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
@@ -992,8 +993,9 @@ func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
 		"no_answer: it rang and nobody answered.\n"+
 		"failed: the vendor could not place it, for a bad number or a carrier fault.\n"+
 		"canceled: the vendor says the call was hung up before an answer.\n"+
-		"unknown: the vendor reports nothing about how it ended, and the phone never joined.",
-		"completed", "busy", "no_answer", "failed", "canceled", "unknown")
+		"unknown: the vendor reports nothing about how it ended, and the phone never joined.\n"+
+		"voicemail: an answering machine picked up, and the agent left its message or hung up.",
+		"completed", "busy", "no_answer", "failed", "canceled", "unknown", "voicemail")
 }
 
 // SessionRespondCommand is the SessionRespondCommand schema.

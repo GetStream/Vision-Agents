@@ -138,7 +138,7 @@ leg, so its `<SendDtmf>` presses keys at them rather than at the trunk.
 
 ## How a placed call ended
 
-Each call the router places ends with one of six outcomes:
+Each call the router places ends with one of seven outcomes:
 
 - `completed`: the person answered and the call ended.
 - `busy`: the line was busy or the person declined.
@@ -146,6 +146,7 @@ Each call the router places ends with one of six outcomes:
 - `failed`: the vendor could not place it, for a bad number or a carrier fault.
 - `canceled`: the vendor says it was hung up before an answer.
 - `unknown`: the vendor reports nothing about how it ended, and the phone never joined.
+- `voicemail`: an answering machine picked up, and the agent left its message or hung up.
 
 The router learns it three ways:
 
@@ -162,6 +163,10 @@ The router learns it three ways:
 Two rules decide. The first final outcome wins, and a later post changes nothing. A join forces
 `completed`: once Stream saw the phone in the call, no vendor's word outranks it. A call that
 ends without a join or a report is `no_answer` when its vendor reports, else `unknown`.
+A session that ends because a machine answered (end reason `voicemail`) turns its call's
+`completed`, or a call not yet decided, into `voicemail`. It never replaces `busy`, `no_answer`,
+`failed`, `canceled` or `unknown`: nothing picked those up. When the phone joined and how long
+it stayed are kept as they were.
 
 Without `ROUTER_PUBLIC_URL` no status URL is sent. A call through Twilio, Telnyx, Vonage, Plivo
 or Bandwidth then knows only the join and leave, and an unanswered one is `unknown`. A

@@ -133,3 +133,33 @@ func (s *KeeperSuite) TestReadManyOmitsCallsWithNoRow() {
 	s.Len(calls, 1)
 	s.Equal(s.call.Key, calls[s.call.CallID].Key)
 }
+
+func (s *KeeperSuite) TestAMachineTakingACompletedCallIsKeptAsVoicemail() {
+	s.placed()
+	s.Require().NoError(s.keeper.Answered(s.ctx, s.call.Key, s.now))
+	s.Require().NoError(s.keeper.Ended(s.ctx, s.call.Key, s.now.Add(20*time.Second)))
+
+	s.Require().NoError(s.keeper.Voicemail(s.ctx, s.call.CustomerID, s.call.CallID))
+
+	call, err := s.keeper.Read(s.ctx, s.call.CustomerID, s.call.CallID)
+	s.Require().NoError(err)
+	s.Equal(Voicemail, call.Outcome)
+	s.Require().NotNil(call.AnsweredAt)
+	s.Equal(s.now, call.AnsweredAt.UTC())
+}
+
+func (s *KeeperSuite) TestAMachineDoesNotOverwriteABusyCall() {
+	token := s.placed()
+	_, err := s.keeper.Reported(s.ctx, token, Busy, "busy")
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.keeper.Voicemail(s.ctx, s.call.CustomerID, s.call.CallID))
+
+	call, err := s.keeper.Read(s.ctx, s.call.CustomerID, s.call.CallID)
+	s.Require().NoError(err)
+	s.Equal(Busy, call.Outcome)
+}
+
+func (s *KeeperSuite) TestAVoicemailOnACallWithNoRowIsNothing() {
+	s.NoError(s.keeper.Voicemail(s.ctx, s.call.CustomerID, s.call.CallID))
+}

@@ -943,6 +943,14 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		m.calls.Started(row(created))
 	}
 
+	if spec.Phone != nil && m.outcomes != nil {
+		created.closers = append(created.closers, func() {
+			if created.endReason() == EndVoicemail {
+				m.keepVoicemail(spec)
+			}
+		})
+	}
+
 	// The row is queued once the session has joined, so a call that refused it leaves no
 	// session behind, and once search has started, so its tool is among the ones stored.
 	// The turns held until now, the greeting's among them, are written after it.
@@ -1707,6 +1715,19 @@ func (m *Manager) leaveVoicemail(found *Session, spec Spec, message string) {
 	}
 	m.hangUp(found, EndVoicemail)
 }
+
+// keepVoicemail keeps that an answering machine took the session's placed call. A failure is
+// logged: the session has ended, and the call's outcome is all that is lost.
+func (m *Manager) keepVoicemail(spec Spec) {
+	ctx, cancel := context.WithTimeout(context.Background(), outcomeTimeout)
+	defer cancel()
+	if err := m.outcomes.Voicemail(ctx, spec.CustomerID, spec.ID); err != nil {
+		m.logger.Error("could not keep that a call went to voicemail", "session", spec.ID, "error", err)
+	}
+}
+
+// outcomeTimeout bounds keeping a call's outcome as its session closes.
+const outcomeTimeout = 5 * time.Second
 
 // hangUpTimeout bounds ending a call at Stream once the voicemail is left.
 const hangUpTimeout = 5 * time.Second

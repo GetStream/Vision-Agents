@@ -79,6 +79,20 @@ func (k *Keeper) Ended(ctx context.Context, key Key, at time.Time) error {
 	return skipRowless(err)
 }
 
+// Voicemail is an answering machine having taken the customer's placed call callID. A call
+// with no row is nothing to keep, as in Answered.
+func (k *Keeper) Voicemail(ctx context.Context, customerID, callID string) error {
+	call, err := k.Read(ctx, customerID, callID)
+	if errors.Is(err, ErrUnknownCall) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	_, err = k.decide(ctx, where(call.Key), event{kind: voicemailEvent, at: k.now()})
+	return skipRowless(err)
+}
+
 // ByToken reads the call a token was made for.
 func (k *Keeper) ByToken(ctx context.Context, token string) (Call, error) {
 	row, err := k.store.PhoneCallByToken(ctx, token)
