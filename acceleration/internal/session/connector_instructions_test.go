@@ -42,6 +42,19 @@ func (s *ConnectorInstructionsSuite) TestAServerThatSaysNothingAddsNothing() {
 	s.Equal("Be brief.", s.told(s.fixed("crm", s.connection("", "primary"), "whoami")))
 }
 
+func (s *ConnectorInstructionsSuite) TestAServerThatSaysOnlyWhitespaceAddsNothing() {
+	s.provider.instruct("primary", "  \n\t ")
+
+	s.Equal("Be brief.", s.told(s.fixed("crm", s.connection("", "primary"), "whoami")))
+}
+
+func (s *ConnectorInstructionsSuite) TestWhatAServerSaysIsAddedWithoutItsPadding() {
+	s.provider.instruct("primary", "\n  Quote ticket ids whole. \t\n")
+
+	s.Equal("Be brief.\n\nThe crm tools (crm__*) come with these instructions from their server:\n\nQuote ticket ids whole.",
+		s.told(s.fixed("crm", s.connection("", "primary"), "whoami")))
+}
+
 // A server none of whose tools the model is offered has nothing to advise on.
 func (s *ConnectorInstructionsSuite) TestAServerWhoseToolsAreAllLeftOutAddsNothing() {
 	s.provider.instruct("primary", "Quote ticket ids whole.")
