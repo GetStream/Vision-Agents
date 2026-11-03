@@ -28,7 +28,8 @@ class PlaceCallRequest:
             Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be
             set. A call into a session whose call already carries other custom data is refused before it rings, so omit
             custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this
-            custom.
+            custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into
+            that session with the same custom, or use a new session.
         headers (PlaceCallRequestHeaders | Unset): Carried to the person's leg as custom SIP headers. Only some vendors
             can express these, and one that cannot refuses the call.
         initial_digits (str | Unset): Digits pressed once the person answers, for reaching an extension behind a menu,
