@@ -515,6 +515,8 @@ type Agent struct {
 	// turnImages are the images that last thing came with, kept the same way, so the reply
 	// after a tool still sees what it was asked about. The next turn drops them.
 	turnImages []llm.ImagePart
+	// turnSaid is the words the last turn was kept with, before the note of its photos.
+	turnSaid string
 
 	joined bool
 	closed bool
@@ -926,10 +928,10 @@ func (a *Agent) RespondTo(ctx context.Context, text string, images []llm.ImagePa
 				return "", err
 			}
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: len(attached)}, "Visual analysis has been requested. Wait for its findings before answering the visual question.", nil, asked, sender, scheduled, "")
 		case model != nil && model.Capabilities().Accepts(llm.ModalityImage):
 			typed()
-			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author}, "", attached, asked, sender, scheduled, "")
+			return id, a.respondTurn(id, caller, text, heard{at: time.Now(), typed: true, author: author, photos: len(attached)}, "", attached, asked, sender, scheduled, "")
 		default:
 			return "", stack.Wrap(ErrCannotSeeImages)
 		}
@@ -945,7 +947,7 @@ const imagesAlone = "The caller sent these images without a message. Describe wh
 
 // PhotoNote is said as history keeps it once the photos sent with it have been seen: followed
 // by a note that they were sent, rather than the photos again, or the note alone for photos
-// sent with no words. said is as it is with no photos.
+// sent with no words or only blanks. said is as it is with no photos.
 func PhotoNote(said string, photos int) string {
 	var note string
 	switch {
@@ -956,7 +958,7 @@ func PhotoNote(said string, photos int) string {
 	default:
 		note = fmt.Sprintf("[sent with %d photos, not shown again]", photos)
 	}
-	if said == "" {
+	if strings.TrimSpace(said) == "" {
 		return note
 	}
 	return said + "\n\n" + note
@@ -1986,6 +1988,9 @@ type heard struct {
 	typed bool
 	// author is the Stream user who wrote a typed turn in a thread channel (WithAuthor).
 	author string
+	// photos is how many photos a typed turn came with, whether the model or the vision
+	// skill looks at them.
+	photos int
 }
 
 func lastAssistantSaid(history []llm.Message) string {
@@ -2099,7 +2104,7 @@ func (a *Agent) respondAfterTool(turnID string) error {
 	if question := a.takeApprovalQuestionsLocked(); question != "" {
 		return a.askLocked(turnID, question)
 	}
-	history := a.replayLocked()
+	history := a.turnReplayLocked()
 	participant := a.lastParticipant
 	a.speakingTurn = turnID
 	a.generating = true
@@ -2157,8 +2162,8 @@ func (a *Agent) respondTurn(
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
 		a.writers = true
 	}
-	a.keepTurnLocked(said, text, images)
-	history := a.replayLocked()
+	a.keepTurnLocked(said, text, listened.photos, images)
+	history := a.turnReplayLocked()
 	// This turn is answered, however it was asked, so what is speculated on next is a turn
 	// of its own.
 	a.speculating = ""
@@ -2239,9 +2244,14 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 
 // keepTurnLocked adds a turn being answered to the conversation and counts who said it.
 // What tools showed the model before it stand as a note from here on (toolPicturesSeen),
-// and only this turn's images go with its replies.
-func (a *Agent) keepTurnLocked(participant stt.Participant, text string, images []llm.ImagePart) {
-	a.history = append(toolPicturesSeen(a.history), a.userTurnLocked(participant, text))
+// and only this turn's images go with its replies. The turn is kept with a note of its
+// photos (PhotoNote), as an aside and a thread's history are; turnReplayLocked sends its
+// words alone while its images go with it.
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos int, images []llm.ImagePart) {
+	turn := a.userTurnLocked(participant, text)
+	a.turnSaid = turn.Content
+	turn.Content = PhotoNote(turn.Content, photos)
+	a.history = append(toolPicturesSeen(a.history), turn)
 	a.turnImages = images
 	if a.missed.participant == participant.ID {
 		a.missed = unheardReply{}
@@ -2312,6 +2322,30 @@ func personOf(participant stt.Participant) string {
 // of another person's line, so they go.
 func speakerLabel(participant stt.Participant) string {
 	return strings.Join(strings.Fields(strings.ReplaceAll(participant.Name, ":", "")), " ")
+}
+
+// turnReplayLocked is replayLocked for a reply sent with the last turn's images. The message
+// they go with is the turn's words alone: its note stands for the images once they are gone,
+// and says they are not shown, which is untrue while they are.
+func (a *Agent) turnReplayLocked() []llm.Message {
+	replay := a.replayLocked()
+	if len(a.turnImages) == 0 {
+		return replay
+	}
+	// The images go with the last message from the caller (harness.WithImages), which is
+	// the turn's unless something written in as theirs came after it.
+	for at := len(a.history) - 1; at >= 0; at-- {
+		if a.history[at].Role != llm.User {
+			continue
+		}
+		if a.history[at].Content == PhotoNote(a.turnSaid, len(a.turnImages)) {
+			said := a.history[at]
+			said.Content = a.turnSaid
+			replay[at] = named(said)
+		}
+		break
+	}
+	return replay
 }
 
 func (a *Agent) replayLocked() []llm.Message {
