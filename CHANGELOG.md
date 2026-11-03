@@ -270,6 +270,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Respond says no cost for a voice note, as responses.create does
+
+`POST /v1/agents/sessions/{id}/respond` with a voice note answered with `X-Stream-Cost-Micros` holding only the note's transcription, while `POST /v1/agents/sessions/{id}/responses` with the same note sent no cost header. Both answer before their turn runs, so neither says a cost now; the transcription is still billed and recorded under the session. `X-Stream-Balance-Micros` is sent as before.
+
 ### A session search matches the word still being typed
 
 A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.search` in the SDKs) matched whole words only, so a search box that searched as the person typed showed nothing until a word was finished: `Lis` found no "Weekend in Lisbon". The last word now matches as the start of one. A word followed by a space, inside quotes or excluded with a minus is still matched as written (#1659).
