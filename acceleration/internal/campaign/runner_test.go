@@ -573,6 +573,54 @@ func (s *RunnerSuite) TestCloseWaitsForACallInFlight() {
 	s.Equal(2, contact.Attempt)
 }
 
+func (s *RunnerSuite) TestAStoppingRouterDoesNotDialAgainAfterAnUnansweredFirstDial() {
+	// Its session is ended at the stop, which is why dial 1 comes back unanswered.
+	s.dialer.hold = make(chan struct{})
+	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
+	ctx, stop := context.WithCancel(s.ctx)
+	defer stop()
+	runner, err := New(Options{
+		Store: s.store, Dialer: s.dialer, Transcripts: s.transcripts, Classifier: s.classifier,
+		Owner: "router-d", Now: s.clock.now, Tick: 10 * time.Millisecond, Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(runner.Close)
+	s.Require().NoError(runner.Start(ctx))
+	s.Require().Eventually(func() bool { return s.dialer.inFlight() == 1 }, 5*time.Second, 10*time.Millisecond)
+
+	stop()
+	close(s.dialer.hold)
+	s.Require().Eventually(func() bool { return runner.Running() == 0 }, 5*time.Second, 10*time.Millisecond)
+
+	s.Len(s.dialer.dialed(), 1, "nobody is rung again by a router whose sessions are ending")
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Require().Len(attempts, 1)
+	s.Equal(1, attempts[0].Dial)
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Require().NotNil(contact.NextAttemptAt)
+	s.True(contact.NextAttemptAt.After(s.clock.now()), "dial 1 rang them, so the attempt is used and the next one waits")
+}
+
+func (s *RunnerSuite) TestAStoppingRouterRingsNoContactItAlreadyClaimed() {
+	campaign := s.launched(s.single(), 1, "UTC", "+15550000001")
+	stopped, stop := context.WithCancel(s.ctx)
+	stop()
+	runner := s.newRunner("router-e")
+	s.Require().NoError(runner.Start(stopped))
+	s.Require().Eventually(runner.stopping, 5*time.Second, 10*time.Millisecond)
+	claimed, err := s.store.ClaimDueContacts(s.ctx, "router-e", s.clock.now(), lease, 10)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+
+	runner.attempt(s.ctx, claimed[0])
+
+	s.Empty(s.dialer.dialed())
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Equal(store.Enrolled, contact.Stage, "given back, to be rung by a router that is not stopping")
+	s.Equal(0, contact.Attempt)
+	s.Empty(attempts)
+}
+
 // clock is a time the test moves by hand.
 type clock struct {
 	mu sync.Mutex

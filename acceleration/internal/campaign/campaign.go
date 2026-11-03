@@ -137,7 +137,9 @@ type Runner struct {
 	mu       sync.Mutex
 	inFlight int
 	stop     context.CancelFunc
-	closed   bool
+	// stopped closes when the ticking ends, at the stop signal or Close. Nil before Start.
+	stopped <-chan struct{}
+	closed  bool
 
 	ticking sync.WaitGroup
 	dialing sync.WaitGroup
@@ -203,6 +205,7 @@ func (r *Runner) Start(ctx context.Context) error {
 	}
 	ticking, stop := context.WithCancel(ctx)
 	r.stop = stop
+	r.stopped = ticking.Done()
 	r.ticking.Add(1)
 	go func() {
 		defer r.ticking.Done()
@@ -345,6 +348,13 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 		return
 	}
 
+	// A router stopping ends its sessions, so a call it placed now would ring with no agent.
+	if r.stopping() {
+		unused.Stage, unused.NextAttemptAt = store.Enrolled, &now
+		r.settle(ctx, contact, unused)
+		return
+	}
+
 	started := r.now()
 	for number := 1; ; number++ {
 		dialed, err := r.ring(ctx, current, contact, step, number)
@@ -366,12 +376,29 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 			}
 			if current.State != store.Running {
 				settle, again = afterDial(sequence, hours, zone, contact, 2, Dialed{Result: Paused}, started, r.now())
+			} else if r.stopping() {
+				// Dial 1 may have come back unanswered only because its session was ended.
+				settle, again = afterDial(sequence, hours, zone, contact, 2, Dialed{Result: Canceled}, started, r.now())
 			}
 		}
 		if !again {
 			r.settle(ctx, contact, settle)
 			return
 		}
+	}
+}
+
+// stopping reports whether this router has stopped claiming work, after which it rings
+// nobody: its sessions are being ended.
+func (r *Runner) stopping() bool {
+	r.mu.Lock()
+	stopped := r.stopped
+	r.mu.Unlock()
+	select {
+	case <-stopped:
+		return true
+	default:
+		return false
 	}
 }
 

@@ -1666,7 +1666,7 @@ type stopping struct {
 	// drainWork sends away the work that reconnects, the dispatch workers.
 	drainWork func()
 	// held is how many sessions, scheduled deliveries, inbound writes and
-	// turns, and chat answers the process is still running.
+	// turns, chat answers and campaign calls the process is still running.
 	held      func() int
 	telephony *phone.Service
 	// handOverMetrics stops the metrics listener when a drain starts, so the router taking

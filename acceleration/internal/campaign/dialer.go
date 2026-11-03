@@ -59,6 +59,12 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 		return dialed, nil
 	}
 	if err != nil {
+		// The person is being rung with no agent to answer them, and nothing else hangs up.
+		hangUp, cancel := context.WithTimeout(context.WithoutCancel(ctx), writeTimeout)
+		defer cancel()
+		if ended := d.phone.EndCall(hangUp, dial.Campaign.CustomerID, placed.StreamApp, placed.CallType, placed.CallID); ended != nil {
+			d.logger.Error("could not hang up a campaign call with no session", "session", placed.SessionID, "error", ended)
+		}
 		return dialed, err
 	}
 
