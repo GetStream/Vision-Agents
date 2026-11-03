@@ -1,0 +1,28 @@
+{
+  "name": "react-assistant",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@stream-io/calypso": "file:../../../sdks/js",
+    "@stream-io/video-client": "^1.64.0",
+    "react": "19.2.0",
+    "react-dom": "19.2.0",
+    "stream-chat": "^9.54.0",
+    "stream-chat-react": "file:vendor/stream-chat-react.tgz",
+    "zod": "^4.1.0"
+  },
+  "devDependencies": {
+    "@types/react": "19.2.2",
+    "@types/react-dom": "19.2.2",
+    "@vitejs/plugin-react": "5.0.4",
+    "typescript": "5.9.3",
+    "vite": "7.1.12",
+    "vitest": "3.2.4"
+  }
+}

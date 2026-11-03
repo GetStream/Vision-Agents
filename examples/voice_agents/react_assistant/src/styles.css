@@ -1,0 +1,412 @@
+:root {
+  --bg: #ffffff;
+  --surface: #f4f5f7;
+  --text: #17181c;
+  --muted: #6b6f7a;
+  --border: #e3e5ea;
+  --accent: #005fff;
+  --danger: #d92f26;
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #101114;
+    --surface: #1c1e23;
+    --text: #eceef2;
+    --muted: #9aa0ab;
+    --border: #2c2f36;
+    color-scheme: dark;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+}
+
+button {
+  font: inherit;
+  color: inherit;
+  cursor: pointer;
+}
+
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.top-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+
+.top-bar h1 {
+  flex: 1;
+  margin: 0;
+  font-size: 1rem;
+  font-weight: 600;
+  text-align: center;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  /* Centred on the bar, not on what is left beside the menu button. */
+  margin-right: 40px;
+}
+
+.icon-button {
+  width: 40px;
+  height: 40px;
+  border: none;
+  border-radius: 50%;
+  background: transparent;
+  font-size: 1.1rem;
+}
+
+.icon-button:hover {
+  background: var(--surface);
+}
+
+.content {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+}
+
+/* The drawer slides over the conversation. */
+.drawer {
+  position: fixed;
+  inset: 0 auto 0 0;
+  width: min(320px, 85vw);
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  transform: translateX(-100%);
+  transition: transform 0.2s ease;
+  z-index: 20;
+}
+
+.drawer.open {
+  transform: none;
+}
+
+.scrim {
+  position: fixed;
+  inset: 0;
+  background: rgb(0 0 0 / 0.3);
+  z-index: 10;
+}
+
+.conversation-list {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  padding: 12px;
+  gap: 8px;
+}
+
+.new-chat {
+  text-align: left;
+  font-weight: 600;
+  padding: 10px;
+  border: none;
+  border-radius: 10px;
+  background: transparent;
+}
+
+.new-chat:hover {
+  background: var(--surface);
+}
+
+.search {
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--surface);
+  color: var(--text);
+}
+
+.sections {
+  overflow-y: auto;
+  flex: 1;
+}
+
+.sections h3 {
+  margin: 12px 8px 4px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.sections ul {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.sections li {
+  display: flex;
+  align-items: center;
+  border-radius: 8px;
+}
+
+.sections li:hover,
+.sections li.selected {
+  background: var(--surface);
+}
+
+.sections li.selected .open {
+  font-weight: 600;
+}
+
+.sections .open {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  padding: 8px;
+  border: none;
+  background: transparent;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.sections .delete {
+  border: none;
+  background: transparent;
+  opacity: 0;
+  padding: 6px 8px;
+}
+
+.sections li:hover .delete,
+.sections .delete:focus-visible {
+  opacity: 1;
+}
+
+.list-failure,
+.failure-pill,
+.voice-failure {
+  color: var(--danger);
+  font-size: 0.85rem;
+}
+
+/* One conversation, with the composer floating over its bottom edge. */
+.chat {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  max-width: 820px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.chat > :first-child {
+  flex: 1;
+  min-height: 0;
+}
+
+.composer-bar {
+  position: absolute;
+  inset: auto 0 0 0;
+  padding: 24px 12px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  background: linear-gradient(to bottom, transparent, color-mix(in srgb, var(--bg) 85%, transparent) 30%, var(--bg));
+}
+
+.failure-pill {
+  align-self: center;
+  margin: 0;
+  padding: 6px 12px;
+  border-radius: 999px;
+  background: var(--surface);
+}
+
+.composer-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-row textarea,
+.composer-row input[type="text"] {
+  flex: 1;
+}
+
+.round-button {
+  width: 40px;
+  height: 40px;
+  flex: none;
+  border: none;
+  border-radius: 50%;
+  background: var(--surface);
+  display: grid;
+  place-items: center;
+}
+
+.round-button.talk {
+  background: var(--accent);
+  color: white;
+}
+
+.welcome {
+  text-align: center;
+  padding: 32px;
+}
+
+.welcome-icon {
+  font-size: 44px;
+  color: var(--accent);
+}
+
+.welcome h2 {
+  margin: 8px 0;
+}
+
+.welcome p {
+  color: var(--muted);
+}
+
+.notice {
+  max-width: 480px;
+  margin: 20vh auto;
+  padding: 0 24px;
+  text-align: center;
+}
+
+.notice p {
+  color: var(--muted);
+}
+
+/* Voice mode, over everything. */
+.voice-mode {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  background: var(--bg);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  padding: 16px;
+}
+
+.voice-top {
+  align-self: stretch;
+  display: flex;
+  justify-content: flex-end;
+}
+
+.camera-preview {
+  width: min(480px, 100%);
+  height: 260px;
+  object-fit: cover;
+  border-radius: 20px;
+  background: var(--surface);
+}
+
+.presence {
+  flex: 1;
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 0;
+}
+
+.glow {
+  width: min(320px, 70vw);
+  aspect-ratio: 1;
+}
+
+.voice-status {
+  margin: 0;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+/* Two lines' room whether or not a caption is up, so the glow never moves. */
+.caption-band {
+  height: 72px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: center;
+  width: min(640px, 100%);
+}
+
+.caption {
+  margin: 0;
+  padding: 8px 14px;
+  border-radius: 10px;
+  background: rgb(0 0 0 / 0.7);
+  color: white;
+  font-weight: 500;
+  text-align: center;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  opacity: 0;
+  transition: opacity 0.35s ease-out;
+}
+
+.caption.visible {
+  opacity: 1;
+}
+
+.caption.person {
+  font-style: italic;
+}
+
+.voice-approval {
+  width: min(480px, 100%);
+}
+
+.voice-failure {
+  margin: 0;
+  text-align: center;
+  max-width: 480px;
+}
+
+.call-controls {
+  display: flex;
+  gap: 16px;
+  padding-bottom: 16px;
+}
+
+.control {
+  min-width: 96px;
+  height: 56px;
+  padding: 0 16px;
+  border: none;
+  border-radius: 28px;
+  background: var(--surface);
+}
+
+.control:disabled {
+  opacity: 0.5;
+}
+
+.control.hang-up {
+  background: var(--danger);
+  color: white;
+}
