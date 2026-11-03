@@ -13,6 +13,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -46,6 +48,8 @@ type VoiceNoteAudioSuite struct {
 	served  map[string]cdnFile
 	cdn     *httptest.Server
 	fetches atomic.Int32
+	// named is the User-Agent of the CDN's last request.
+	named atomic.Pointer[string]
 }
 
 type cdnFile struct {
@@ -60,8 +64,11 @@ func TestVoiceNoteAudioSuite(t *testing.T) {
 func (s *VoiceNoteAudioSuite) SetupTest() {
 	s.served = map[string]cdnFile{}
 	s.fetches.Store(0)
+	s.named.Store(nil)
 	s.cdn = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		s.fetches.Add(1)
+		named := r.UserAgent()
+		s.named.Store(&named)
 		file, ok := s.served[r.URL.Path]
 		if !ok {
 			http.NotFound(w, r)
@@ -221,6 +228,24 @@ func (s *VoiceNoteAudioSuite) TestAnImageARunFetchesIsHeldToTheImageLimit() {
 	s.served["/photo"] = cdnFile{kind: "image/png", body: append(at, 0)}
 	_, _, err = fetchImage(context.Background(), s.cdn.Client(), s.cdn.URL+"/photo")
 	s.EqualError(err, "it is over 5 MB", "an image is held to what a vision provider takes, not to a voice note's limit")
+}
+
+func (s *VoiceNoteAudioSuite) TestAVoiceNoteIsFetchedUnderTheRoutersName() {
+	_, err := s.fetched(wavOf("hola"), "audio/wav")
+
+	s.Require().NoError(err)
+	s.Require().NotNil(s.named.Load(), "the note was never fetched")
+	s.Equal(egress.UserAgent, *s.named.Load(), "a host that refuses Go's own User-Agent still serves the note")
+}
+
+func (s *VoiceNoteAudioSuite) TestAPhotoIsFetchedUnderTheRoutersName() {
+	s.served["/photo"] = cdnFile{kind: "image/png", body: []byte("\x89PNG\r\n\x1a\n")}
+	images := []llm.ImagePart{{URL: s.cdn.URL + "/photo"}}
+
+	s.Require().NoError(fetchImages(context.Background(), s.cdn.Client(), images))
+
+	s.Require().NotNil(s.named.Load(), "the photo was never fetched")
+	s.Equal(egress.UserAgent, *s.named.Load(), "a host that refuses Go's own User-Agent still serves the photo")
 }
 
 func (s *VoiceNoteAudioSuite) TestWhatWasSaidFollowsWhatWasTyped() {

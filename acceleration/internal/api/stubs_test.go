@@ -527,7 +527,7 @@ func transcriberRegistry() *sttrouter.Transcribers {
 	registry := sttrouter.NewTranscriberRegistry()
 	registry.Register("stub", func(spec routing.Spec) (stt.Transcriber, error) {
 		return &recordedTranscriber{model: spec.Model}, nil
-	})
+	}, routing.OverrideRegion)
 	return registry
 }
 

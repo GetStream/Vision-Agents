@@ -15,6 +15,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/suite"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 )
 
 type VideoSuite struct {
@@ -300,6 +302,22 @@ func (s *PublicOnlySuite) TestOnlyThePublicInternetIsPublic() {
 			s.ErrorIs(err, errPrivate, address)
 		}
 	}
+}
+
+func (s *PublicOnlySuite) TestAClipIsFetchedUnderTheRoutersName() {
+	var named atomic.Pointer[string]
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		agent := r.UserAgent()
+		named.Store(&agent)
+		_, _ = w.Write([]byte("clip"))
+	}))
+	defer server.Close()
+
+	_, err := load(s.T().Context(), server.Client(), server.URL+"/clip.mp4")
+
+	s.Require().NoError(err)
+	s.Require().NotNil(named.Load(), "the clip was never fetched")
+	s.Equal(egress.UserAgent, *named.Load(), "a host that refuses Go's own User-Agent still serves the clip")
 }
 
 func (s *PublicOnlySuite) TestTheFetchRefusesAServerOnThisMachine() {

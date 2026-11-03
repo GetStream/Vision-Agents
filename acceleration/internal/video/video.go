@@ -152,6 +152,7 @@ func load(ctx context.Context, client *http.Client, source string) ([]byte, erro
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
+	request.Header.Set("User-Agent", egress.UserAgent)
 	response, err := client.Do(request)
 	if err != nil {
 		if errors.Is(err, errPrivate) {
