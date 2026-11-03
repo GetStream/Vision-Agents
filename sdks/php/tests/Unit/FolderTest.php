@@ -264,7 +264,6 @@ final class FolderTest extends TestCase
         yield 'empty connection' => ["connectors:\n  - name: linear\n    connection: ''\n", 'connector "linear": connection must be a connection id or label'];
         yield 'unknown key' => ["connectors:\n  - name: linear\n    tool: [search]\n", '"connectors.tool" is not something agent.yaml declares'];
         yield 'not a list' => ["connectors: linear\n", 'connectors must be a list'];
-        yield 'alias of a plugin' => ["plugins: [linear]\nconnectors: [linear]\n", '"linear" is named under both connectors and plugins'];
     }
 
     #[DataProvider('refusedConnectors')]
@@ -305,6 +304,57 @@ final class FolderTest extends TestCase
         $this->write('agent.yaml', "name: jean\nllm: openai/gpt-5.6\nconnectors: [linear]\n");
 
         self::assertNotSame($before, Folder::load($this->dir)->hash());
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function namedPlugins(): iterable
+    {
+        yield 'a list' => ["plugins: [sentry]\n"];
+        yield 'a list beside connectors' => ["plugins: [linear]\nconnectors: [linear]\n"];
+        yield 'a block list' => ["plugins:\n  - sentry\n"];
+        yield 'a name' => ["plugins: sentry\n"];
+        yield 'a mapping' => ["plugins:\n  sentry: {}\n"];
+        yield 'an empty mapping' => ["plugins: {}\n"];
+        yield 'a list of an empty name' => ["plugins: ['']\n"];
+    }
+
+    #[DataProvider('namedPlugins')]
+    public function testRefusesPluginsAndPointsToConnectors(string $declaration): void
+    {
+        $this->write('agent.yaml', "name: jean\n" . $declaration);
+
+        try {
+            Folder::load($this->dir);
+            self::fail('a folder that names plugins loaded');
+        } catch (ConfigurationException $refused) {
+            self::assertSame(
+                $this->dir . '/agent.yaml: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors',
+                $refused->getMessage(),
+            );
+        }
+    }
+
+    /**
+     * @return iterable<string, array{string}>
+     */
+    public static function emptyPlugins(): iterable
+    {
+        yield 'an empty list' => ["plugins: []\n"];
+        yield 'no value' => ["plugins:\n"];
+        yield 'null' => ["plugins: null\n"];
+    }
+
+    #[DataProvider('emptyPlugins')]
+    public function testAnEmptyPluginsKeyStillLoads(string $declaration): void
+    {
+        $this->write('agent.yaml', "name: jean\nllm: openai/gpt-5.6\n" . $declaration);
+
+        $settings = Folder::load($this->dir)->settings;
+
+        self::assertSame('openai/gpt-5.6', $settings->llm);
+        self::assertNull($settings->connectors);
     }
 
     public function testStampRoundTrips(): void
