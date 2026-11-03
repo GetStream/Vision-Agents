@@ -950,8 +950,14 @@ func (s *PolicySuite) TestADebitIsCountedForAUserWhoseOwnQuotaCannotBeRead() {
 
 	limiter.Debit(s.ctx, s.app, caller, 10)
 
-	messages, tokens, _, err := limiter.Today(s.ctx, s.app, "vip")
-	s.Require().NoError(err)
+	// The limiter stops waiting for a debit after two seconds, so when this process stalls the
+	// debit goes on after Debit has returned.
+	var messages, tokens int64
+	s.eventually(func() bool {
+		var err error
+		messages, tokens, _, err = limiter.Today(s.ctx, s.app, "vip")
+		return err == nil && messages > 0 && tokens > 0
+	}, 10*time.Second, 10*time.Millisecond, "the debit was never counted")
 	s.EqualValues(1, messages)
 	s.EqualValues(10, tokens)
 	_, err = limiter.Allow(s.ctx, s.app, caller)
