@@ -61,6 +61,21 @@ func (s *ConnectorApprovalSuite) TestACallIsSentOnlyOnceTheUserAllowsIt() {
 	s.Empty(s.rows(connection)[0].ErrorType)
 }
 
+// TestACallStillWaitingWhenItsTestEndsIsJoined: a test that fails while its call waits for
+// the person must not leave the call running, where its late invocation record would meet
+// the closed queue of the fixture's cleanup.
+func (s *ConnectorApprovalSuite) TestACallStillWaitingWhenItsTestEndsIsJoined() {
+	d, _ := s.holding("whoami")
+	var answer chan answered
+
+	s.Run("the test that starts the call", func() {
+		answer = s.callInBackground(s.ctx, d, "call-1", "crm__whoami", "{}")
+		s.Require().Eventually(func() bool { return s.questionOf("call-1") != nil }, 5*time.Second, 10*time.Millisecond)
+	})
+
+	s.Len(answer, 1, "the call was still running when its test ended")
+}
+
 func (s *ConnectorApprovalSuite) TestADeclinedCallIsNotSentAndTheModelIsTold() {
 	d, connection := s.holding("whoami")
 
