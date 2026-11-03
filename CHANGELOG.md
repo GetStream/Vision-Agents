@@ -270,6 +270,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A Muse model answers a reply that may call no tool
+
+A reply that must not call a tool (an answer after a tool result, a reply with no tools offered, a question for a colleague) was sent to Meta's API with `tool_choice: "none"`, which it refuses with a 400. Those replies now go out with no tools and no tool choice, as they already did for Ollama. A request for `required` or a named tool on a Muse model is still refused before it is sent (AI-2542).
+
 ### A session search matches the word still being typed
 
 A text search (`filter.text.$q` on `POST /v1/agents/sessions/query`, `sessions.search` in the SDKs) matched whole words only, so a search box that searched as the person typed showed nothing until a word was finished: `Lis` found no "Weekend in Lisbon". The last word now matches as the start of one. A word followed by a space, inside quotes or excluded with a minus is still matched as written (#1659).
