@@ -33,6 +33,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
@@ -1535,6 +1536,29 @@ func run(settings config.Config, logger *slog.Logger) error {
 		server.SetSchedulerKick(scheduler.Kick)
 		scheduler.Start(ctx)
 		defer scheduler.Close()
+	}
+	// Every router runs the campaign dialer: running campaigns are in Postgres, and each
+	// contact's next call is claimed by one router at a time. Deferred after sessions and the
+	// phone service, so it closes before them and its calls in flight end first.
+	if pgStore != nil && sessions != nil && streams.LLM != nil {
+		dialer, err := campaign.New(campaign.Options{
+			Store:       pgStore,
+			Dialer:      campaign.NewPhoneDialer(telephony, sessions, pgStore, logger),
+			Transcripts: server,
+			Classifier:  campaign.NewClassifier(streams.LLM),
+			Logger:      logger,
+		})
+		if err != nil {
+			return err
+		}
+		if err := dialer.Start(ctx); err != nil {
+			return err
+		}
+		defer dialer.Close()
+		logger.Info("campaign dialer started", "owner", dialer.Owner())
+	} else {
+		logger.Warn("campaigns will not dial: the dialer needs postgres, sessions and an llm",
+			"postgres", pgStore != nil, "sessions", sessions != nil, "llm", streams.LLM != nil)
 	}
 	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
 	// where Stream Chat deliveries are set up (chat.inbound_keys): nothing else queues one.

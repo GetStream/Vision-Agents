@@ -785,6 +785,9 @@ func (s *RouterSuite) SetupSuite() {
 	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
 		bridge.Start(context.Background(), s.answerQueued)
 	}
+	// No campaign dialer, unlike cmd/router: suites share a database, and one suite's dialer
+	// would ring every other suite's running campaigns. A suite that dials builds its own over
+	// a database of its own (AdmissionSuite.dialer).
 }
 
 // answerQueued is the hand-off cmd/router gives the inbound worker (Server.AnswerQueued). It

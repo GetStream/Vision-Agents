@@ -180,6 +180,9 @@ func New(options Options) (*Runner, error) {
 	}, nil
 }
 
+// Owner is this router in the leases it takes.
+func (r *Runner) Owner() string { return r.owner }
+
 // Start ticks until ctx is cancelled or Close is called.
 func (r *Runner) Start(ctx context.Context) error {
 	r.mu.Lock()

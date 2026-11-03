@@ -676,7 +676,7 @@ func (s *AdmissionSuite) dialer() *campaign.Runner {
 	runner, err := campaign.New(campaign.Options{
 		Store:       s.store,
 		Dialer:      campaign.NewPhoneDialer(s.router.phone, s.manager, s.store, slog.New(slog.DiscardHandler)),
-		Transcripts: unreadTranscripts{},
+		Transcripts: s.router,
 		Classifier:  noOutcome{},
 		Tick:        50 * time.Millisecond,
 		Logger:      slog.New(slog.DiscardHandler),
@@ -687,13 +687,7 @@ func (s *AdmissionSuite) dialer() *campaign.Runner {
 	return runner
 }
 
-// unreadTranscripts and noOutcome stand in for reading an answered call, which no call here is.
-type unreadTranscripts struct{}
-
-func (unreadTranscripts) CallTranscript(context.Context, string, string) ([]chatlog.Spoken, error) {
-	return nil, nil
-}
-
+// noOutcome stands in for classifying an answered call, which no call here is.
 type noOutcome struct{}
 
 func (noOutcome) Classify(context.Context, store.Campaign, string, campaign.Step, []chatlog.Spoken) (string, error) {
