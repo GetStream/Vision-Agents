@@ -103,6 +103,70 @@ class TestDispatch < LocalRouterTest
     assert_raises(VA::ConfigurationError) { worker.answer(VA::InboundMessage.from({ "text" => "hi" })) }
   end
 
+  def test_a_message_frame_carries_its_photos_in_order
+    message = VA::InboundMessage.from(
+      { "text" => "what is this?",
+        "images" => [{ "url" => "https://example.com/a.png", "mime_type" => "image/png" },
+                     "https://example.com/skipped.png",
+                     { "url" => "https://example.com/b.jpg" },
+                     { "url" => "https://example.com/c.webp", "mime_type" => 5 }] }
+    )
+
+    assert_equal [VA::InboundImage.new(url: "https://example.com/a.png", mime_type: "image/png"),
+                  VA::InboundImage.new(url: "https://example.com/b.jpg", mime_type: ""),
+                  VA::InboundImage.new(url: "https://example.com/c.webp", mime_type: "")],
+                 message.images
+  end
+
+  def test_a_message_frame_with_no_photo_to_fetch_carries_none
+    [
+      { "text" => "hi" },
+      { "images" => nil },
+      { "images" => [] },
+      { "images" => {} },
+      { "images" => { "url" => "https://example.com/a.png" } },
+      { "images" => "https://example.com/a.png" },
+      { "images" => [nil, 3, "https://example.com/a.png", [], {}] },
+      { "images" => [{ "url" => "" }, { "url" => 7 }, { "url" => nil }, { "mime_type" => "image/png" }] }
+    ].each do |frame|
+      assert_equal [], VA::InboundMessage.from(frame).images, frame.inspect
+    end
+  end
+
+  def test_a_message_built_without_photos_has_none
+    message = VA::InboundMessage.new(channel_id: "", channel_type: "agent", agent_id: "", config_id: "",
+                                     session_id: "sess_1", request_id: "", text: "hi", message_id: "",
+                                     user_id: "ada", user_name: "", custom: {}, at: nil)
+
+    assert_equal [], message.images
+  end
+
+  def test_answer_shows_the_photos_to_the_model_on_its_request_id
+    @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
+    message = VA::InboundMessage.from(
+      { "session_id" => "sess_1", "request_id" => "req_1", "text" => "what is this?", "user_id" => "ada",
+        "images" => [{ "url" => "https://example.com/a.png", "mime_type" => "image/png" },
+                     { "url" => "https://example.com/b.jpg" }] }
+    )
+
+    VA::Dispatch.new(client: client).answer(message)
+
+    assert_equal({ "text" => "what is this?", "request_id" => "req_1",
+                   "images" => [{ "url" => "https://example.com/a.png" }, { "url" => "https://example.com/b.jpg" }] },
+                 @router.last(:post, "/v1/agents/sessions/sess_1/responses").json)
+  end
+
+  def test_answer_with_photos_and_no_request_id_sends_none
+    @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
+    message = VA::InboundMessage.from({ "session_id" => "sess_1", "text" => "", "user_id" => "ada",
+                                        "images" => [{ "url" => "https://example.com/a.png" }] })
+
+    VA::Dispatch.new(client: client).answer(message)
+
+    assert_equal({ "text" => "", "images" => [{ "url" => "https://example.com/a.png" }] },
+                 @router.last(:post, "/v1/agents/sessions/sess_1/responses").json)
+  end
+
   def test_answer_behind_the_proxy_keeps_the_server_token
     @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
     server = VA::Client.new(url: @router.url, api_key: "key", api_secret: "secret", authenticate: true)
