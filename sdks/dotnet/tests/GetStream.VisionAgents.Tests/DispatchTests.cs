@@ -176,7 +176,11 @@ public sealed class DispatchTests
         await dispatch.AnswerAsync(
             new InboundMessage
             {
-                ChannelId = "", SessionId = "s1", RequestId = "req-1", UserId = "ada", Text = "what is this?",
+                ChannelId = "",
+                SessionId = "s1",
+                RequestId = "req-1",
+                UserId = "ada",
+                Text = "what is this?",
                 Images = [new InboundImage("https://example.com/a.png", "image/png"), new InboundImage("https://example.com/b.jpg")],
             },
             TestContext.Current.CancellationToken);
