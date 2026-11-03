@@ -89,7 +89,7 @@ func (s *LimitsSuite) searchedUntil(client *testClient, status int) ErrorDetail 
 			s.Require().NoError(json.Unmarshal(payload, &body), string(payload))
 			failure = body.Error
 		}
-		return true
+		return !unreadLimits(failure)
 	}, 10*time.Second, 50*time.Millisecond, "searching answers %d", status)
 	return failure
 }
@@ -362,6 +362,26 @@ func (s *LimitsSuite) TestASystemFieldIsAnUnknownField() {
 	s.Equal(http.StatusBadRequest, status)
 	s.Equal(codeValidationFailed, failure.Code)
 	s.Contains(failure.Message, "system")
+}
+
+// TestALimitWhoseSpendIsUnreadIsNoSpentLimit has the app's spend unreadable when its limit
+// lands: the tier fails closed with a refusal that says nothing of the limit, which
+// searchedUntil waits past.
+func (s *LimitsSuite) TestALimitWhoseSpendIsUnreadIsNoSpentLimit() {
+	s.T().Cleanup(func() { s.usageFront.down.Store(false) })
+	s.usageFront.down.Store(true)
+	s.create(map[string]any{"subject": "app", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1_000_000})
+	s.spend(1_000_000, nil)
+	s.Require().Eventually(func() bool {
+		status, failure := s.refusal(s.serverClient, http.MethodPost, "/v1/search", SearchRequest{Query: "what is the time"})
+		return status == http.StatusPaymentRequired && unreadLimits(failure)
+	}, 10*time.Second, 50*time.Millisecond, "refused while the spend cannot be read")
+
+	// Keep the outage open past the helper's first polls: a read that lands before them would answer the real refusal at once.
+	time.AfterFunc(time.Second, func() { s.usageFront.down.Store(false) })
+	failure := s.searchedUntil(s.serverClient, http.StatusPaymentRequired)
+
+	s.Contains(failure.Message, "the daily limit of $1.00 on app "+s.customerID()+" is spent")
 }
 
 func (s *LimitsSuite) TestACustomerResetLetsItSpendAgain() {
