@@ -3,6 +3,7 @@
 package store
 
 import (
+	"context"
 	"encoding/json"
 	"time"
 )
@@ -92,6 +93,29 @@ func (s *StoreSuite) TestLaunchingInTheFutureSchedules() {
 	s.Require().NotNil(launched.LaunchedAt)
 	s.Equal(s.base, launched.LaunchedAt.UTC())
 	s.Equal(start, s.contactsOf(campaign)[0].NextAttemptAt.UTC())
+}
+
+func (s *StoreSuite) TestAScheduledCampaignCanBePausedAndResumesToScheduled() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+	s.launch(campaign, time.Now().Add(2*time.Hour))
+
+	s.Require().NoError(s.store.PauseCampaign(s.ctx, campaign.CustomerID, campaign.ID, ""))
+	s.Equal(Paused, s.campaignNow(campaign).State)
+	s.Require().NoError(s.store.ResumeCampaign(s.ctx, campaign.CustomerID, campaign.ID))
+
+	s.Equal(Scheduled, s.campaignNow(campaign).State, "its start time has not come")
+}
+
+func (s *StoreSuite) TestAMissingCampaignIsToldApartFromAReadThatFailed() {
+	_, err := s.store.Campaign(s.ctx, newID(), newID())
+	s.ErrorIs(err, ErrNoCampaign)
+
+	campaign := s.draftCampaign(newID())
+	cancelled, cancel := context.WithCancel(s.ctx)
+	cancel()
+	_, err = s.store.Campaign(cancelled, campaign.CustomerID, campaign.ID)
+	s.Require().Error(err)
+	s.NotErrorIs(err, ErrNoCampaign, "a read that failed says nothing about whether the campaign is there")
 }
 
 func (s *StoreSuite) TestALaunchedCampaignCannotBeLaunchedAgain() {

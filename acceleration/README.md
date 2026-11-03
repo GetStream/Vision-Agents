@@ -1733,10 +1733,20 @@ the contacts, the sequence and the calling hours are fixed. The sequence says ho
 attempts each contact gets, how far apart, and whether to ring again at once when nobody
 answered. Nobody is rung outside calling hours, judged in the contact's own time zone.
 
+Each call is told the step's `goal`, with the contact's variables filled in, right after the
+config's instructions, and opens with why it is calling. Last comes the closing rule: the
+step's outcomes are listed, and once the call reaches one the agent says goodbye and hangs up.
 After an answered call, one model call reads the transcript and picks one of the step's
 outcomes, or none, which counts as `other`. `do_not_call` also opts the number out of every
-call the app makes. There is no voicemail detection yet (AI-2077): a call a voicemail
-answered counts as answered, and gets an outcome like any other.
+call the app makes.
+
+A step's `voicemail` says what happens when an answering machine picks up: `hang_up` (the
+default) ends the call saying nothing, and `leave_message` says the step's message, variables
+filled in, once the greeting ends, then hangs up. Telnyx and Twilio are asked who answered. A
+verdict they cannot make counts as a machine while nobody has spoken to the agent, and with no
+verdict at all, so does a call where nobody speaks for 40 seconds after answering. Such a dial
+ends as `voicemail`: it uses the attempt like one nobody answered, gets no outcome, and is not
+dialed again at once.
 
 Every router runs the dialer, and its state is all in Postgres. A router claims a contact
 that is due under a lease, and the claim counts the campaign's calls in progress in the same

@@ -21,6 +21,9 @@ var ErrCampaignLocked = errors.New("store: the campaign is in a state that does 
 // ErrTooManyContacts is a campaign that would hold more than MaxCampaignContacts.
 var ErrTooManyContacts = errors.New("store: a campaign holds at most 100000 contacts")
 
+// ErrNoCampaign is a campaign the customer does not hold.
+var ErrNoCampaign = errors.New("store: there is no campaign")
+
 // ErrNoCampaignContact is a contact the campaign does not hold.
 var ErrNoCampaignContact = errors.New("store: the campaign holds no such contact")
 
@@ -383,10 +386,10 @@ func (s *Store) LaunchCampaign(ctx context.Context, customerID, id string, launc
 	return launched, nil
 }
 
-// PauseCampaign pauses a running campaign. A reason names what refused its next call when the
+// PauseCampaign pauses a running or scheduled campaign. A reason names what refused its next call when the
 // router paused it itself; empty means somebody paused it.
 func (s *Store) PauseCampaign(ctx context.Context, customerID, id, reason string) error {
-	return s.transition(ctx, customerID, id, []string{Running}, Paused, func(query *bun.UpdateQuery) *bun.UpdateQuery {
+	return s.transition(ctx, customerID, id, []string{Running, Scheduled}, Paused, func(query *bun.UpdateQuery) *bun.UpdateQuery {
 		return query.Set("paused_reason = NULLIF(?, '')", reason)
 	})
 }
@@ -461,48 +464,6 @@ func (s *Store) transitionIn(ctx context.Context, db bun.IDB, customerID, id str
 	}
 	if affected == 0 {
 		return s.whyNotChanged(ctx, db, customerID, id)
-	}
-	return nil
-}
-
-// SetCampaignState records what a campaign is now doing. Starting one stamps when it
-// first started, and finishing one stamps when it stopped having anybody left to ring. Either
-// clears why the router last paused it, and that a data move did (ResumeMovedRows): the
-// customer has decided what it does here.
-func (s *Store) SetCampaignState(ctx context.Context, customerID, id, state string) error {
-	return s.setCampaignState(ctx, customerID, id, state, "")
-}
-
-func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, reason string) error {
-	if customerID == "" || id == "" {
-		return stack.Wrap(errors.New("store: a customer and a campaign id are required"))
-	}
-
-	now := time.Now().UTC()
-	query := s.db.NewUpdate().Model((*Campaign)(nil)).
-		Set("state = ?", state).
-		Set("paused_reason = NULLIF(?, '')", reason).
-		Set("move_paused = false").
-		Where("id = ?", id).
-		Where("customer_id = ?", customerID)
-	switch state {
-	case Running:
-		query = query.Set("started_at = COALESCE(started_at, ?)", now).
-			Set("finished_at = NULL")
-	case Completed:
-		query = query.Set("finished_at = ?", now)
-	}
-
-	result, err := query.Exec(ctx)
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: set campaign state: %w", err))
-	}
-	affected, err := result.RowsAffected()
-	if err != nil {
-		return stack.Wrap(fmt.Errorf("store: set campaign state: %w", err))
-	}
-	if affected == 0 {
-		return unknownCampaign(id)
 	}
 	return nil
 }
@@ -711,5 +672,5 @@ func unknownContact(id string) error {
 }
 
 func unknownCampaign(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no campaign %s", id))
+	return stack.Wrap(fmt.Errorf("%w %s", ErrNoCampaign, id))
 }

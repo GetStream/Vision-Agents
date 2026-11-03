@@ -208,7 +208,8 @@ func (s *Store) settleContact(ctx context.Context, owner, contactID string, sett
 	}
 
 	// Only a stage that would ring the contact again gives way to a stop. An answered call
-	// still gets its outcome read, and settles stopped from there, so it keeps the stop mark.
+	// still gets its outcome read, and keeps the stop mark until then: a classified outcome
+	// ends it completed, and one read as nobody answering is stopped rather than rung again.
 	// A contact the sequence ended says why in its own reason.
 	stoppable := settle.Stage == Enrolled
 	keepsMark := stoppable || settle.Stage == AwaitingOutcome

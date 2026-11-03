@@ -176,8 +176,11 @@ func (s *Server) campaign(ctx context.Context, id string) (string, store.Campaig
 		return "", store.Campaign{}, errNoCampaigns
 	}
 	found, err := s.store.Campaign(ctx, customerID, id)
-	if err != nil {
+	if errors.Is(err, store.ErrNoCampaign) {
 		return "", store.Campaign{}, errUnknownCampaign
+	}
+	if err != nil {
+		return "", store.Campaign{}, err
 	}
 	return customerID, found, nil
 }
@@ -749,8 +752,9 @@ func (s *Server) registerCampaigns(api huma.API) {
 		Method:      http.MethodPost,
 		Path:        "/v1/agents/campaigns/{id}/pause",
 		Summary:     "Stop ringing anybody new",
-		Description: "A running campaign only. The calls already happening are left alone: a campaign is " +
-			"paused to stop ringing people, not to hang up on the ones who answered.\n" + serverSideOnly,
+		Description: "A running or scheduled campaign only. The calls already happening are left alone: a campaign is " +
+			"paused to stop ringing people, not to hang up on the ones who answered. A scheduled one paused " +
+			"does not start at its start_at, and resuming it before then returns it to scheduled.\n" + serverSideOnly,
 		Responses: map[string]*huma.Response{
 			"200": {Description: "The campaign is paused"},
 		},
@@ -889,7 +893,7 @@ type Campaign struct {
 	Sequence       CampaignSequence  `json:"sequence"`
 	CallingHours   CallingHours      `json:"calling_hours"`
 	Tags           map[string]string `json:"tags" nullable:"false"`
-	PausedReason   *string           `json:"paused_reason,omitempty" doc:"Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it."`
+	PausedReason   *string           `json:"paused_reason,omitempty" doc:"Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, session_refused when its agent config makes a session that cannot open, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it."`
 	StartAt        *time.Time        `json:"start_at,omitempty" doc:"When it was launched to start ringing."`
 	LaunchedAt     *time.Time        `json:"launched_at,omitempty"`
 	StartedAt      *time.Time        `json:"started_at,omitempty" doc:"When it first rang anybody."`
