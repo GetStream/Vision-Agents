@@ -212,7 +212,8 @@ func (s *AdmissionSuite) TestALimitWhoseSpendIsUnreadIsNoSpentLimit() {
 	s.Equal(codeSpendLimitReached, unread.Code)
 	s.True(unreadLimits(unread), "the refusal unreadLimits knows: %s", unread.Message)
 
-	s.usageFront.down.Store(false)
+	// Keep the outage open past the helper's first polls: a read that lands before them would answer the real refusal at once.
+	time.AfterFunc(time.Second, func() { s.usageFront.down.Store(false) })
 	_, failure := s.refused(http.MethodPost, "/v1/search", SearchRequest{Query: "again"})
 
 	s.Contains(failure.Message, "the daily limit of $0.01 on app "+s.customerID()+" is spent")

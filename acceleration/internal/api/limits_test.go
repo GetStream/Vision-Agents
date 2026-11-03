@@ -377,7 +377,8 @@ func (s *LimitsSuite) TestALimitWhoseSpendIsUnreadIsNoSpentLimit() {
 		return status == http.StatusPaymentRequired && unreadLimits(failure)
 	}, 10*time.Second, 50*time.Millisecond, "refused while the spend cannot be read")
 
-	s.usageFront.down.Store(false)
+	// Keep the outage open past the helper's first polls: a read that lands before them would answer the real refusal at once.
+	time.AfterFunc(time.Second, func() { s.usageFront.down.Store(false) })
 	failure := s.searchedUntil(s.serverClient, http.StatusPaymentRequired)
 
 	s.Contains(failure.Message, "the daily limit of $1.00 on app "+s.customerID()+" is spent")
