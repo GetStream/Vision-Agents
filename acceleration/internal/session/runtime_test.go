@@ -291,7 +291,11 @@ func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny
 	}
 
 	down := make(chan error, 1)
-	go func() { down <- s.manager.Shutdown() }()
+	finished := make(chan struct{})
+	go func() {
+		down <- s.manager.Shutdown()
+		close(finished)
+	}()
 	// A session is halted when its own close begins, and every runtime is stopped before the
 	// first close, so a row that ends after this instant is a session billed while another
 	// is closing.
@@ -301,6 +305,13 @@ func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny
 		return first.Halted() || second.Halted()
 	}, settleFor, time.Millisecond, "shutdown never began closing the sessions")
 	time.Sleep(10 * runtimeSlice)
+	// A shutdown that has already returned gave up on the speech, which it does only once
+	// finishWithin has run out, so a slow host cannot fail this.
+	select {
+	case <-finished:
+		s.Require().GreaterOrEqual(time.Since(closing), finishWithin/2, "shutdown should still be waiting on a call that is speaking")
+	default:
+	}
 
 	// Rows are queued and written to Postgres later, in the order they were queued. The marker
 	// is queued after every row the sessions made while the closing went on, so once it is
@@ -311,11 +322,7 @@ func (s *RuntimeSuite) TestShuttingDownStopsEverySessionsRuntimeBeforeClosingAny
 		StartedAt: time.Now().UTC(),
 		Success:   true,
 	})
-	landed := time.Now().Add(shutdownWithin)
-	for len(s.written(marker)) == 0 {
-		s.Require().True(time.Now().Before(landed), "the writer never caught up")
-		time.Sleep(runtimeSlice)
-	}
+	s.Require().Eventually(func() bool { return len(s.written(marker)) > 0 }, shutdownWithin, runtimeSlice, "the writer never caught up")
 	for _, id := range []string{first.ID(), second.ID()} {
 		for _, row := range s.written(id) {
 			s.False(rowEnd(row).After(closing.Add(time.Millisecond)),
