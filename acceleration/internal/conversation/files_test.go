@@ -255,6 +255,17 @@ func TestAPersonsVoiceNoteIsPlayedOnTheirMessageAndReadBackAsWhatItSaid(t *testi
 		"the voice note is in the text already, and is no photo")
 }
 
+func TestAMessageUpdatedLaterShowsAVoiceNoteAsItWasSent(t *testing.T) {
+	note := []sandbox.Attachment{{Name: "voice-note.mp4", MIME: "audio/mp4", URL: "https://cdn.fake/file/voice-note.mp4", Size: 3}}
+
+	sent := chatFileAttachments(note, true)
+	updated := fileAttachments(note, true)
+
+	require.Equal(t, "voiceRecording", *sent[0].Type)
+	require.Equal(t, *sent[0].Type, updated[0]["type"], "an update would turn the player into a download")
+	require.Equal(t, *sent[0].AssetUrl, updated[0]["asset_url"])
+}
+
 func TestAudioTheAgentMadeIsOfferedAsAFile(t *testing.T) {
 	db, client := newChat(t)
 	s := NewForChat(client)
