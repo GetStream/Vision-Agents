@@ -196,23 +196,6 @@ func (s *Store) ConnectorOAuthClientByProviderApp(ctx context.Context, connector
 	return client, nil
 }
 
-// PinnedProviderApps returns every customer's provider app record pinned to a Stream app, by
-// customer and connector, without its secrets: what a router checks the message hooks of at
-// startup (api.Server.WarnWithoutMessageHooks).
-func (s *Store) PinnedProviderApps(ctx context.Context) ([]ConnectorOAuthClient, error) {
-	var clients []ConnectorOAuthClient
-	err := s.db.NewSelect().Model(&clients).
-		Column("customer_id", "connector_id", "provider_app_id", "stream_app_pk").
-		Where("provider_app_id <> ''").
-		Where("stream_app_pk IS NOT NULL").
-		Order("customer_id", "connector_id").
-		Scan(ctx)
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: pinned provider apps: %w", err))
-	}
-	return clients, nil
-}
-
 // RewrapConnectorOAuthClientSecret replaces the record's sealed client secret with the same
 // secret sealed under a newer key encryption key.
 // It changes nothing when the secret was replaced meanwhile, and reports whether it applied.
