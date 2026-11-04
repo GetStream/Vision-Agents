@@ -18,9 +18,13 @@ a mistake that actually happened.
     `model_router_test_<slug>_test`) and `ROUTER_REDIS_ADDR` to its own Redis. It sets the Redis
     address in its `testing.yaml` copy as well (see below).
   - `internal/testenv` replaces both variables with the `testing.yaml` values in every package that
-    imports it. `internal/imagerouter` and `internal/testenv/redisready` do not import it, so they
-    read the shell's values. With database `model_router_test_<slug>`, `imagerouter` failed: that
-    database does not exist, and the lookup below does not find it.
+    imports it. With `-tags integration`, `internal/imagerouter` and `internal/testenv/redisready`
+    do not import it, so they read the shell's values. Without the tag, `cmd/router`
+    (`sandboxproxy_test.go:65`, `main_test.go:58`) and `internal/session` (`timeout_test.go:108`)
+    also read `ROUTER_REDIS_ADDR` from the shell: set your own Redis there.
+  - `imagerouter` does not create its database. On a fresh slug it fails with
+    `database "model_router_test_<slug>_test" does not exist`. Run a package that imports
+    `internal/testenv` first, on the same `testing.yaml`: it creates the database.
   - It restores `testing.yaml` before it commits. Never commit it.
   - Two agents on `model_router_test` drop each other's schema in the middle of a run.
 - **One Postgres server for all agents.** Agents share one test Postgres and each uses its own
