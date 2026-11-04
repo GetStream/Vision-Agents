@@ -363,6 +363,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A repeat copy keeps a connection authorized again where it moved to
+
+`router replicate --once` and `POST /v1/data/import` reset each connector connection to `needs_reauthorization`, even one the owner had authorized again on the destination, whose credentials then no longer opened. A connection that is `connected` on the destination now keeps its state and credentials: a rename, a disconnect or a soft delete at the source no longer reaches it, while a hard delete still does. A connection not authorized there still arrives needing it, with the source's edits (AI-2656).
+
+### A WhatsApp photo's, video's and document's caption is answered
+
+A WhatsApp photo, video or document sent with a caption reaches the agent as its caption, and the agent answers it; before, the whole message was dropped. A caption that is STOP, START or HELP is the keyword, as the same text is. A photo, video or document without a caption, and a voice note, sticker, reaction or location, still get no reply, and the file itself does not reach the agent yet. A connection takes `whatsapp` revision 2 at its next credential save; until then its captioned files are dropped, as before. A channel manifest reads another kind of message by its own text with `messages.also` (AI-2133).
+
 ### A photo sent to a worker's running session reaches its model
 
 A message written in an agent channel whose worker's session is still open is answered by that session. Its photos were dropped: a photo sent alone became a turn with nothing in it, which Gemini refuses, and the person got an empty reply. The model now gets the photos with the text and with what a voice recording says. A model that cannot see is told of the photo, as a running session answering in writing is, and a photo that cannot be fetched is said so. A follow-up with no text and no photo, such as a message of blanks, is not answered (AI-2679).

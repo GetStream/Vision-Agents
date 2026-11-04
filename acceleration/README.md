@@ -2395,7 +2395,10 @@ any other edit keeps it.
 
 Until the last `--once`, the source is the truth: each change carried writes the row as the source
 has it, over whatever was done to that row here, a delete included. A config deleted here comes
-back if the source edits it afterwards. So once SDKs point here, stop writing at the source.
+back if the source edits it afterwards. The exception is a connector connection the owner
+authorized again here: it keeps its state and credentials, so a rename, a disconnect or a soft
+delete at the source does not reach it. A hard delete at the source still does. So once SDKs
+point here, stop writing at the source.
 
 Cut over once SDKs point here:
 
