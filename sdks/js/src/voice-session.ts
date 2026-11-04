@@ -2,8 +2,9 @@ import type { Call, StreamVideoClient, StreamVideoParticipant } from "@stream-io
 
 import { ConfigurationError } from "./errors.js";
 import { CameraFrames } from "./frames.js";
+import type { Client } from "./client.js";
 import type { AgentHandle } from "./handle.js";
-import type { Session } from "./session.js";
+import { Session } from "./session.js";
 import type { CreateSessionOptions } from "./sessions.js";
 
 /**
@@ -36,6 +37,11 @@ export interface VoiceSnapshot {
    * voice; idle otherwise, and once this device has left.
    */
   readonly status: VoiceStatus;
+  /**
+   * Why joining, muting or the camera last failed, or undefined. Each of those still rejects;
+   * this is the same error kept for a page to show, and the next of them that works clears it.
+   */
+  readonly failure?: Error | undefined;
 }
 
 /**
@@ -66,10 +72,11 @@ export class VoiceSession {
   readonly session: Session;
 
   /**
-   * True when `start` created the session, false when it was handed over with `of`. Leaving
-   * closes only a session this device owns.
+   * How this device holds the session: `owned` when `start` created it, `handed` when it came
+   * with `of`, `watching` when `attach` opened a watcher of its own. Leaving closes only an owned
+   * session, and stops an attached watcher without ending the conversation.
    */
-  private readonly owned: boolean;
+  private readonly holding: "owned" | "handed" | "watching";
   /** What the camera showed lately, while it is on, for the agent to look at. */
   private readonly frames = new CameraFrames();
   private readonly listeners = new Set<() => void>();
@@ -90,9 +97,9 @@ export class VoiceSession {
   private readonly stops: (() => void)[] = [];
   private sampler: FrameSampler | undefined;
 
-  private constructor(session: Session, owned: boolean) {
+  private constructor(session: Session, holding: "owned" | "handed" | "watching") {
     this.session = session;
-    this.owned = owned;
+    this.holding = holding;
   }
 
   /**
@@ -106,7 +113,26 @@ export class VoiceSession {
    */
   static async start(agent: AgentHandle, options: CreateSessionOptions = {}): Promise<VoiceSession> {
     const session = await agent.sessions.create({ ...options, start_voice: true });
-    return new VoiceSession(session, true);
+    return new VoiceSession(session, "owned");
+  }
+
+  /**
+   * Joins the call of a session that already has voice on, by its id alone, as the phones do:
+   * one opened in another tab, or switched to voice by the page's own chat. It watches the
+   * session with a socket of its own that runs no tools, so the chat's watcher stays the one
+   * that runs them. Leaving stops that watcher and leaves the session running; `end` closes it.
+   */
+  static async attach(client: Client, sessionId: string): Promise<VoiceSession> {
+    const created = await client.get("/v1/agents/sessions/{id}", { path: { id: sessionId } });
+    const session = await Session.watching(client, created);
+    if (!session.voice.started) {
+      await session.stopWatching();
+      throw new ConfigurationError(
+        "this conversation is held in writing, so there is no call to join: start voice with " +
+          "session.voice.start() first",
+      );
+    }
+    return new VoiceSession(session, "watching");
   }
 
   /**
@@ -121,7 +147,7 @@ export class VoiceSession {
           "session.voice.start() first",
       );
     }
-    return new VoiceSession(session, false);
+    return new VoiceSession(session, "handed");
   }
 
   /** Where the voice session is now. */
@@ -154,6 +180,7 @@ export class VoiceSession {
   join(options: { camera?: boolean } = {}): Promise<void> {
     this.joining ??= this.connect(options.camera ?? false).catch((cause: unknown) => {
       this.joining = undefined;
+      this.failed(cause);
       throw cause;
     });
     return this.joining;
@@ -165,8 +192,13 @@ export class VoiceSession {
     if (!call) {
       return;
     }
-    await (muted ? call.microphone.disable() : call.microphone.enable());
-    this.change({ muted });
+    try {
+      await (muted ? call.microphone.disable() : call.microphone.enable());
+    } catch (cause) {
+      this.failed(cause);
+      throw cause;
+    }
+    this.change({ muted, failure: undefined });
   }
 
   /**
@@ -180,15 +212,20 @@ export class VoiceSession {
     if (!call) {
       return;
     }
-    if (enabled) {
-      await call.camera.selectDirection("back", { enableCamera: false });
-      await call.camera.enable();
-      this.look(call);
-    } else {
-      await call.camera.disable();
-      this.stopLooking();
+    try {
+      if (enabled) {
+        await call.camera.selectDirection("back", { enableCamera: false });
+        await call.camera.enable();
+        this.look(call);
+      } else {
+        await call.camera.disable();
+        this.stopLooking();
+      }
+    } catch (cause) {
+      this.failed(cause);
+      throw cause;
     }
-    this.change({ cameraEnabled: enabled });
+    this.change({ cameraEnabled: enabled, failure: undefined });
   }
 
   /**
@@ -196,12 +233,12 @@ export class VoiceSession {
    * with `of` is left running, for whoever else is on it.
    */
   leave(): Promise<void> {
-    return this.hangUp(this.owned);
+    return this.hangUp(this.holding === "owned" ? "close" : this.holding === "watching" ? "stop-watching" : "keep");
   }
 
   /** Hangs up: leaves the call and ends the session, whoever started it. */
   end(): Promise<void> {
-    return this.hangUp(true);
+    return this.hangUp("close");
   }
 
   private async connect(camera: boolean): Promise<void> {
@@ -238,7 +275,12 @@ export class VoiceSession {
     if (camera) {
       this.look(call);
     }
-    this.change({ call, client, muted: false, cameraEnabled: camera });
+    this.change({ call, client, muted: false, cameraEnabled: camera, failure: undefined });
+  }
+
+  /** Keeps what went wrong for the snapshot, as an Error whatever was thrown. */
+  private failed(cause: unknown): void {
+    this.change({ failure: cause instanceof Error ? cause : new Error(String(cause)) });
   }
 
   /** Follows who is speaking on the call and what the conversation is doing, for `status`. */
@@ -294,7 +336,7 @@ export class VoiceSession {
     this.starting = undefined;
   }
 
-  private async hangUp(close: boolean): Promise<void> {
+  private async hangUp(then: "close" | "stop-watching" | "keep"): Promise<void> {
     await this.joining?.catch(() => undefined);
     const call = this.snapshot.call;
     this.stopLooking();
@@ -310,8 +352,10 @@ export class VoiceSession {
     try {
       await call?.leave();
     } finally {
-      if (close) {
+      if (then === "close") {
         await this.session.close();
+      } else if (then === "stop-watching") {
+        await this.session.stopWatching();
       }
     }
   }
@@ -363,7 +407,8 @@ export class VoiceSession {
       next.client === current.client &&
       next.muted === current.muted &&
       next.cameraEnabled === current.cameraEnabled &&
-      next.status === current.status
+      next.status === current.status &&
+      next.failure === current.failure
     ) {
       return;
     }
