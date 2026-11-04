@@ -47,12 +47,8 @@ connector's sign-in comes back only to the origin a conversation named, and the 
 `http` one only on a loopback host. `VITE_ROUTER_URL` points it at another router.
 
 The AI components it uses (`AIConversation`, the reply's steps, the approval and sign-in cards,
-suggestions, reply actions and the composer's chat options) are not in a released
-`stream-chat-react` yet. Until 14.x has them, build the package from its
-`feat/ai-components-juno` branch (`yarn install && yarn build && npm pack`) and put the tarball
-here as `vendor/stream-chat-react.tgz`, which git ignores, then run
-`npm install ./vendor/stream-chat-react.tgz`: a plain `npm install` keeps the copy it cached for
-the old tarball. The page moves to the release that has them.
+suggestions, reply actions and the composer's chat options) come from
+`stream-chat-react/ai-components`, released in 14.15.0.
 
 The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
 `XAI_API_KEY`, and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY` and `INWORLD_API_KEY` for a call. Web
