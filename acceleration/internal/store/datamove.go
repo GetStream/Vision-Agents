@@ -570,6 +570,13 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		conflict = "DO UPDATE SET " + strings.Join(assignments, ", ") + " WHERE " + spec.owned(spec.name)
 		args = append(args, customerID)
 	}
+	// A connection connected here holds credentials sealed here, at this row's revision and key
+	// version, which an import would reset to a connection needing them. The owner authorized it
+	// here, and the source can send nothing it could use instead: not even a newer row, since a
+	// refresh at a source still live during the move rewrites the row there.
+	if table == "connector_connections" {
+		conflict += fmt.Sprintf(" AND %s.status <> '%s'", spec.name, ConnectionConnected)
+	}
 
 	// Every writer of a log draws its id under its customer's lock (RecordAgentLog), so ids
 	// commit in order and a reader resuming after one misses none. The row is read through the
