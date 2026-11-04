@@ -8,6 +8,8 @@ import androidx.lifecycle.viewModelScope
 import io.getstream.chat.android.ai.compose.conversation.AIMessageAttachment
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRating
 import io.getstream.chat.android.ai.compose.conversation.AIPendingMessage
+import io.getstream.chat.android.ai.compose.generativeui.AIUIAction
+import io.getstream.chat.android.ai.compose.generativeui.AIUIHost
 import io.getstream.visionagents.android.core.AgentsException
 import io.getstream.visionagents.android.core.Conversation
 import io.getstream.visionagents.android.core.SessionOptions
@@ -120,6 +122,50 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
 
     /** The tools the agent may call, which run on this phone. */
     private val tools = DeviceTools(application).all
+
+    private val format = MutableStateFlow(ReplyFormat.stored(application))
+
+    /** How the agent writes its replies, which picks the renderer for their generated UI. */
+    val replyFormat: StateFlow<ReplyFormat> = format.asStateFlow()
+
+    private val host = MutableStateFlow(makeHost(format.value))
+
+    /** What renders the generated UI of replies and sends back what the person does in it. */
+    val uiHost: StateFlow<AIUIHost> = host.asStateFlow()
+
+    init {
+        // The backend's agent decides the format; follow it when it can say.
+        viewModelScope.launch {
+            ReplyFormat.fetch()?.takeIf { it != format.value }?.let(::useFormat)
+        }
+    }
+
+    /** Has the agent write in [chosen] from the next new conversation, and renders it here. */
+    fun chooseReplyFormat(chosen: ReplyFormat) {
+        useFormat(chosen)
+        viewModelScope.launch {
+            if (!ReplyFormat.save(chosen)) failed.value = "The backend would not change the reply format."
+        }
+    }
+
+    private fun useFormat(chosen: ReplyFormat) {
+        if (chosen == format.value) return
+        format.value = chosen
+        ReplyFormat.store(getApplication(), chosen)
+        host.value = makeHost(chosen)
+    }
+
+    private fun makeHost(chosen: ReplyFormat): AIUIHost =
+        AIUIHost(renderers = chosen.renderers()) { action -> answer(action) }
+
+    /** Sends what the person did in a reply's generated UI, as Swift's `answer(_:)` does. */
+    private fun answer(action: AIUIAction) {
+        screenScope.launch {
+            val chat = open() ?: return@launch
+            markUsed(chat)
+            chat.answer(action)
+        }
+    }
 
     // What belongs to the conversation on screen, and goes when another is picked.
     private var screenScope = newScreenScope()

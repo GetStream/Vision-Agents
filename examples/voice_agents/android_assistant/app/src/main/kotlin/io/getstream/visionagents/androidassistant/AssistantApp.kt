@@ -28,6 +28,11 @@ import androidx.compose.material3.ModalNavigationDrawer
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
+import androidx.compose.foundation.layout.Box
+import androidx.compose.material.icons.outlined.Settings
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.RadioButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -136,6 +141,7 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
                             Icon(Icons.Outlined.Menu, contentDescription = "Conversations")
                         }
                     },
+                    actions = { ReplyFormatMenu(chat) },
                 )
             },
             // The conversation runs on under the navigation bar and the keyboard, which the
@@ -206,5 +212,34 @@ private fun Notice(icon: ImageVector, title: String, message: String) {
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             textAlign = TextAlign.Center,
         )
+    }
+}
+
+/** Settings: how the agent writes its replies, Markdown or a generated UI in A2UI or OpenUI. */
+@Composable
+private fun ReplyFormatMenu(chat: ChatViewModel) {
+    val format by chat.replyFormat.collectAsStateWithLifecycle()
+    var expanded by remember { mutableStateOf(false) }
+    Box {
+        IconButton(onClick = { expanded = true }) {
+            Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+        }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            Text(
+                "Replies (next new conversation)",
+                style = MaterialTheme.typography.labelMedium,
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+            )
+            ReplyFormat.entries.forEach { option ->
+                DropdownMenuItem(
+                    text = { Text(option.title) },
+                    leadingIcon = { RadioButton(selected = option == format, onClick = null) },
+                    onClick = {
+                        expanded = false
+                        chat.chooseReplyFormat(option)
+                    },
+                )
+            }
+        }
     }
 }
