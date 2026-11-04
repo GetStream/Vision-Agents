@@ -53,7 +53,7 @@ const cardsAttribution = "The person's earlier episodes with this agent on other
 
 // Reading is whose episode cards a session reads. A text session names its own thread
 // channel or its app chat's agent channel; a voice session names the person on its call and
-// its own session.
+// its own session; a session the person's own device opened names that person's Stream user.
 type Reading struct {
 	CustomerID    string
 	AgentConfigID string
@@ -74,6 +74,11 @@ type Reading struct {
 	// episode is left out.
 	Person    Person
 	SessionID string
+	// User is the Stream user whose own device opened the session, as its verified caller,
+	// and Own the conversation it carries on, if any, whose episodes are left out, as a
+	// thread's are. The person is User, in the session's app.
+	User string
+	Own  string
 }
 
 // told is one card as the model is handed it.
@@ -119,7 +124,7 @@ func (c *Cards) Context(ctx context.Context, reading Reading) ([]llm.Message, er
 	}
 	cards, err := c.store.EpisodeCards(ctx, store.CardsQuery{
 		CustomerID: reading.CustomerID, AgentConfigID: reading.AgentConfigID, ConversationID: contact.ConversationID,
-		ExceptThread: cmp.Or(reading.Thread, reading.Chat), ExceptSession: reading.SessionID, Limit: maxCards,
+		ExceptThread: cmp.Or(reading.Thread, reading.Chat, reading.Own), ExceptSession: reading.SessionID, Limit: maxCards,
 	})
 	if err != nil {
 		return nil, err
@@ -141,6 +146,9 @@ func (c *Cards) Context(ctx context.Context, reading Reading) ([]llm.Message, er
 func (c *Cards) whose(ctx context.Context, reading Reading) (store.ContactMapEntry, error) {
 	if reading.Chat != "" {
 		return c.chatContact(ctx, reading)
+	}
+	if reading.User != "" {
+		return c.deviceContact(ctx, reading)
 	}
 	if reading.Thread == "" {
 		return c.store.Contact(ctx, reading.CustomerID, reading.AgentConfigID, reading.Person.Kind, reading.Person.Address)
@@ -194,13 +202,9 @@ func (c *Cards) alone(ctx context.Context, reading Reading) (bool, error) {
 // hand-out naming nobody has none either. A row made in another Stream app of the customer is
 // another person (samePin): the same user id there is somebody else's.
 func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.ContactMapEntry, error) {
-	app := reading.StreamAppPK
-	if app == 0 {
-		app = c.stream.DeploymentApp()
-	}
-	person, err := StreamUser(app, reading.ChatUser)
+	person, err := c.streamUser(reading, reading.ChatUser)
 	if err != nil {
-		return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
+		return store.ContactMapEntry{}, err
 	}
 	window, err := c.window(ctx, reading, reading.Chat)
 	if err != nil {
@@ -223,6 +227,36 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 			return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
 		}
 	}
+	return c.pinnedContact(ctx, reading, person)
+}
+
+// deviceContact is the contact map row of the Stream user whose own device opened the session
+// (Reading.User), keyed as chatContact keys the app chat's person.
+func (c *Cards) deviceContact(ctx context.Context, reading Reading) (store.ContactMapEntry, error) {
+	person, err := c.streamUser(reading, reading.User)
+	if err != nil {
+		return store.ContactMapEntry{}, err
+	}
+	return c.pinnedContact(ctx, reading, person)
+}
+
+// streamUser is a Stream user of the session's app as the contact map keys them (StreamUser),
+// the deployment's own app being zero for a session (samePin). No user, or no app, is nobody.
+func (c *Cards) streamUser(reading Reading, user string) (Person, error) {
+	app := reading.StreamAppPK
+	if app == 0 {
+		app = c.stream.DeploymentApp()
+	}
+	person, err := StreamUser(app, user)
+	if err != nil {
+		return Person{}, stack.Wrap(store.ErrNoContact)
+	}
+	return person, nil
+}
+
+// pinnedContact is the contact map row of a Stream user, unless it was made in another Stream
+// app of the customer than the session's, where the same user id is somebody else (samePin).
+func (c *Cards) pinnedContact(ctx context.Context, reading Reading, person Person) (store.ContactMapEntry, error) {
 	contact, err := c.store.Contact(ctx, reading.CustomerID, reading.AgentConfigID, person.Kind, person.Address)
 	if err != nil {
 		return store.ContactMapEntry{}, err
