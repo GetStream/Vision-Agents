@@ -568,11 +568,13 @@ func (s *ChatEpisodesSuite) says(configID, text string, worker <-chan dispatch.M
 }
 
 // inChat writes, as the test's user, text in the test's channel, which names the config given,
-// and delivers it as Stream Chat does.
+// and delivers it as Stream Chat does. The channel's first writer makes it, with that user and
+// the agent, who writes as the channel's id (session.Manager.handedOut), its members.
 func (s *ChatEpisodesSuite) inChat(configID, text string) int {
 	ctx := context.Background()
 	_, err := s.chat.Client.Chat().GetOrCreateChannel(ctx, "agent", s.channelID, &getstream.GetOrCreateChannelRequest{
-		Data: &getstream.ChannelInput{CreatedByID: &s.user, Custom: map[string]any{ConfigField: configID}},
+		Data: &getstream.ChannelInput{CreatedByID: &s.user, Custom: map[string]any{ConfigField: configID},
+			Members: []getstream.ChannelMemberRequest{{UserID: s.user}, {UserID: s.channelID}}},
 	})
 	s.Require().NoError(err)
 	_, err = s.chat.Client.Chat().SendMessage(ctx, "agent", s.channelID, &getstream.SendMessageRequest{

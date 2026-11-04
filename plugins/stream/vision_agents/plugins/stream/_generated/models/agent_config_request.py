@@ -54,10 +54,11 @@ class AgentConfigRequest:
         episode_cards (bool | Unset): Whether each phone call under this agent, and each run of messages a Stream user
             writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an
             agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id.
-            On, a session on a thread channel, on an app chat's agent channel or on a phone call under this agent also
-            starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there
-            is none. An app chat's agent channel that more than one person wrote in reads none. Off by default, and then a
-            session runs as it always did. Left out on an update, the stored setting stays.
+            On, a session on a thread channel, on an app chat's agent channel whose members are the person and the agent
+            alone, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the
+            last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a
+            member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an
+            update, the stored setting stays.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the

@@ -325,7 +325,7 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel or a phone call starts with the person's other cards.
+    ///Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -498,7 +498,7 @@ pub struct AgentConfigRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that more than one person wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+    ///Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person and the agent alone, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]

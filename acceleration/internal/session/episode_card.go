@@ -84,8 +84,10 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 //     is with, the thread itself left out, since it reads that word for word;
 //   - a text session a worker opened to answer a message in an app chat's agent channel
 //     (Spec.Dispatched) reads the cards of the Stream user who wrote the message handed out
-//     (Spec.HandedOutBy), when every person's message in the channel is theirs, the channel
-//     itself left out for the same reason. UserID is who the agent writes as, and Caller is
+//     (Spec.HandedOutBy), when the channel's members are that user and the agent alone (AgentID,
+//     whom the conversation writes its replies as) and every person's message in the channel is
+//     theirs, the channel itself left out for the same reason. UserID is who the agent joins a
+//     call as, and Caller is
 //     empty, since the worker opens the session with its own server key (Manager.handedOut),
 //     so neither names that person. person is that user, once cards were read for them;
 //   - a voice session reads the cards of the number on its call (calledParty), its own
@@ -112,7 +114,7 @@ func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound)
 	case spec.Text && spec.PersistConversation && spec.Shared():
 		reading.Thread = spec.ConversationID
 	case spec.Text && spec.PersistConversation && spec.Dispatched:
-		reading.Chat, reading.ChatUser = spec.ConversationID, spec.HandedOutBy
+		reading.Chat, reading.ChatUser, reading.ChatAgent = spec.ConversationID, spec.HandedOutBy, spec.AgentID
 	case !spec.Text && spec.CallID != "" && stream.Client != nil:
 		number, err := calledParty(ctx, spec, stream)
 		if err != nil {

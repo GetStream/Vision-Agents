@@ -26,11 +26,22 @@ import (
 // (Manager.HandOut, Spec.Dispatched), as api.routeArrivingMessage hands one out.
 
 // chatChannel is an agent channel of the app chat as the customer's own app makes it: by the
-// person, naming the agent config that answers in it, with none of the router's stamps.
+// person, naming the agent config that answers in it, with none of the router's stamps, and
+// the person and the agent its members. The agent writes there as the channel's id: the
+// worker's session names it as its agent id (Manager.handedOut).
 func (s *EpisodeReadingSuite) chatChannel(person string) string {
+	return s.chatChannelOf(person, func(agent string) []string { return []string{person, agent} })
+}
+
+// chatChannelOf is chatChannel with the members members names, given the agent's user id.
+func (s *EpisodeReadingSuite) chatChannelOf(person string, members func(agent string) []string) string {
 	id := "chat-" + uuid.NewString()
+	var entries []getstream.ChannelMemberRequest
+	for _, member := range members(id) {
+		entries = append(entries, getstream.ChannelMemberRequest{UserID: member})
+	}
 	_, err := s.chat.Client.Chat().GetOrCreateChannel(s.ctx, "agent", id, &getstream.GetOrCreateChannelRequest{
-		Data: &getstream.ChannelInput{CreatedByID: &person, Custom: map[string]any{"agent_config_id": s.configID}},
+		Data: &getstream.ChannelInput{CreatedByID: &person, Members: entries, Custom: map[string]any{"agent_config_id": s.configID}},
 	})
 	s.Require().NoError(err)
 	return "agent:" + id
@@ -371,5 +382,40 @@ func (s *EpisodeReadingSuite) TestAChatSessionNamesThePersonWhoseCardsItRead() {
 		created, _ := s.workerSession(chat, 0, true, "anya_123", c.cards, "hello "+uuid.NewString())
 
 		s.Equal(c.holds, created.CardsFor(), name)
+	}
+}
+
+// Defect (R1.7): a chat session reads a person's cards in a channel others are members of,
+// who read the agent's answers built from them without ever writing there. Only a channel
+// whose members are Anya and the agent alone reads her card; a third member, a second member
+// who is not the agent, Anya alone, or a channel whose members Stream does not list reads none.
+func (s *EpisodeReadingSuite) TestAChatSessionReadsCardsOnlyInAChannelOfThePersonAndTheAgent() {
+	s.at(-3600)
+	earlier := s.chatChannel("anya_123")
+	s.write(earlier, "anya_123", "my address is 1 Main St", nil)
+	s.summarize(s.chatEpisode("anya_123", earlier, 0), "Gave her address: 1 Main St.")
+	s.at(0)
+	for name, c := range map[string]struct {
+		members func(agent string) []string
+		reads   bool
+	}{
+		"Anya and the agent":            {func(agent string) []string { return []string{"anya_123", agent} }, true},
+		"a third member":                {func(agent string) []string { return []string{"anya_123", agent, "carl_789"} }, false},
+		"another member, not the agent": {func(string) []string { return []string{"anya_123", "carl_789"} }, false},
+		"Anya alone":                    {func(string) []string { return []string{"anya_123"} }, false},
+		"no members listed":             {func(string) []string { return nil }, false},
+	} {
+		chat := s.chatChannelOf("anya_123", c.members)
+		s.write(chat, "anya_123", "hello", nil)
+
+		created, params := s.workerSession(chat, 0, true, "anya_123", true, "hello "+uuid.NewString())
+
+		if c.reads {
+			s.Len(s.handed(params), 1, name)
+			s.Equal("anya_123", created.CardsFor(), name)
+		} else {
+			s.Nil(s.handed(params), name)
+			s.Empty(created.CardsFor(), name)
+		}
 	}
 }
