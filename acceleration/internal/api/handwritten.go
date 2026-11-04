@@ -93,10 +93,7 @@ func documentHandWritten(api huma.API) {
 			"persistence_error, refused (true on a reply the prompt injection screen refused) and " +
 			"attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
-			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
-			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
-			"a client shows it as a button opening authorize_url. Once the user finishes that login " +
-			"the message is sent again with the attachment's status set to connected. " +
+			"and duration_ms. " +
 			"A connector_authorization attachment asks the end user to connect a connector binding " +
 			"the reply needed with their own account, with name (the binding's alias), connector_id, " +
 			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page " +
@@ -903,6 +900,48 @@ func documentHandWritten(api huma.API) {
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
 			"503": {Description: "This deployment has no database to import into.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "uploadKnowledgeFile",
+		Method:      http.MethodPost,
+		Path:        knowledgeFilesPath,
+		Summary:     "Upload a file to a knowledge base, to be read in the background",
+		Description: "A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument " +
+			"text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part " +
+			"named file. It is read by its bytes, whatever it is called. A file whose first bytes are none " +
+			"of these, such as a photo, is refused at once.\n" +
+			"The answer is 202 once the file is kept: the document is pending, and is read in the " +
+			"background into Markdown that keeps its headings, lists and tables, each passage saying the " +
+			"page it is from. A page that is only a scan is read from its picture through the router's " +
+			"ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or " +
+			"failed with an error saying why: a password, a damaged file, or no text at all.\n" +
+			"The passages are keyed by `source`, the file's name unless it is given, so uploading the " +
+			"same source again replaces the document; its old passages are still looked up until the " +
+			"new file has been read. The file itself is deleted once read. Server-side only.",
+		Parameters: []*huma.Param{
+			{Name: "namespace", In: "query", Required: true, Description: "The knowledge base to read the file into.", Schema: &huma.Schema{Type: huma.TypeString, MinLength: itemLimit(1)}},
+			{Name: "source", In: "query", Description: "What the document is called and its passages keyed by. The file part's filename when left out.", Schema: &huma.Schema{Type: huma.TypeString, MaxLength: itemLimit(maxKnowledgeSource)}},
+		},
+		RequestBody: &huma.RequestBody{
+			Required: true,
+			Content: map[string]*huma.MediaType{
+				"multipart/form-data": {Schema: &huma.Schema{
+					Type:     huma.TypeObject,
+					Required: []string{"file"},
+					Properties: map[string]*huma.Schema{
+						"file": {Type: huma.TypeString, Format: "binary", Description: "The file, at most 50 MB."},
+					},
+				}},
+			},
+		},
+		Responses: map[string]*huma.Response{
+			"202": {Description: "The document, pending until its file is read", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[IndexedKnowledgeDocument](), true, "")}}},
+			"400": {Ref: "#/components/responses/BadRequest"},
+			"401": {Ref: "#/components/responses/Unauthorized"},
+			"403": {Ref: "#/components/responses/Forbidden"},
+			"413": {Description: "The file is over 50 MB.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment does not take files for knowledge, or could not keep this one.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{

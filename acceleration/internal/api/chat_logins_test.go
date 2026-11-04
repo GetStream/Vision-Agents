@@ -415,8 +415,8 @@ func (s *ChatLoginsSuite) TestAConsentFinishedWithoutAHandBackIsPickedUpByTheWai
 
 // TestANewChatUsesTheCallersOneConnectedConnection is AI-994 (F41 of the plugin migration
 // run): three chats with no selection. The first asks, and its login connects the caller's
-// connection; the second and third run the tool on it with no login, as a chat did with
-// user_plugins. One connection and one consent.
+// connection; the second and third run the tool on it with no login, as a chat did before
+// connectors. One connection and one consent.
 func (s *ChatLoginsSuite) TestANewChatUsesTheCallersOneConnectedConnection() {
 	connector, grant := s.connector()
 	config := s.config(connector, grant)

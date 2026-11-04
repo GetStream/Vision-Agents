@@ -59,7 +59,7 @@ class ErrorDetail:
             nobody, or the caller's app is in no organization it bills, so there is no account to read),
             provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key
             here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign,
-            channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key,
+            channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key,
             router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has
             invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does
             not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year

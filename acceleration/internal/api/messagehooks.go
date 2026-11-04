@@ -40,10 +40,16 @@ type messageEvent struct {
 	// here, for a channel no agent has ever run on, where it is the only thing that says
 	// who should answer; see ownerOf. The rest is carried to the worker unread.
 	ChannelCustom map[string]any `json:"channel_custom"`
-	Message       struct {
+	// Channel is the channel as Stream sends it with the message, its members included
+	// (members). Raw, and read only for a chat episode, so a message under a config without
+	// episode cards costs nothing more, and a value of another shape costs only the card.
+	Channel json.RawMessage `json:"channel"`
+	Message struct {
 		ID   string `json:"id"`
 		Text string `json:"text"`
-		User struct {
+		// CreatedAt is when Stream made the message (created). Raw, as Channel is.
+		CreatedAt json.RawMessage `json:"created_at"`
+		User      struct {
 			ID   string `json:"id"`
 			Name string `json:"name"`
 		} `json:"user"`
@@ -70,6 +76,39 @@ type messageEvent struct {
 func (e messageEvent) bridged() bool {
 	var bridged bool
 	return json.Unmarshal(e.Message.Bridged, &bridged) == nil && bridged
+}
+
+// members are the user ids of the channel's members as Stream sends them with the message, in
+// the channel of the event, as the app's webhook carries it: «For message and channel events
+// the webhook request body will also include the list of channel members»
+// (https://getstream.io/chat/docs/go-golang/webhook_events/). The docs say «truncated up to 50
+// members»; the delivery loads up to 100 (DefaultMemberLimit, chat send_message.go:418,
+// channel_cache.go:39). A list cut short is longer than two, so omnichannel.Between reads it as
+// the channel of more than one person it is. A channel sent with no members, or none sent, has none, and so no person.
+func (e messageEvent) members() []string {
+	var channel struct {
+		Members []struct {
+			UserID string `json:"user_id"`
+		} `json:"members"`
+	}
+	if json.Unmarshal(e.Channel, &channel) != nil {
+		return nil
+	}
+	ids := make([]string, 0, len(channel.Members))
+	for _, member := range channel.Members {
+		ids = append(ids, member.UserID)
+	}
+	return ids
+}
+
+// created is when Stream made the message, as its created_at says, in RFC 3339 as Stream
+// writes it (2020-03-30T07:54:46.255628Z); zero when it says no time.
+func (e messageEvent) created() time.Time {
+	var at time.Time
+	if json.Unmarshal(e.Message.CreatedAt, &at) != nil {
+		return time.Time{}
+	}
+	return at
 }
 
 // messageAttachment is the part of a Stream Chat attachment that says whether it is a photo
@@ -270,14 +309,27 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		if err != nil {
 			return false
 		}
+		// A session that started with a person's episode cards answers that person alone: a
+		// message by anybody else gets a session of its own, handed out below, which reads
+		// none of the first person's cards. The first session takes no new message from then
+		// on, and closes once it has answered what it was handed (retire).
+		if running && found.CardsFor() != "" && (found.CardsFor() != event.Message.User.ID || found.Retiring()) {
+			s.retire(found)
+			running = false
+		}
 		if running {
+			s.chatEpisode(ctx, origin, event, found.Spec())
 			// The session a worker opened to answer this channel answers in it, as a thread's
 			// does: the message is already there, so only the reply is written.
 			if found.Spec().Dispatched {
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}
-				origin.answer(func() { s.followUpMessage(origin, found, event) })
+				owed := s.owing.owe(found.ID())
+				origin.answer(func() {
+					defer owed()
+					s.followUpMessage(origin, found, event)
+				})
 				return true
 			}
 			if found.Spec().PersistConversation {
@@ -330,7 +382,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 
 	// Nothing is running, so this has to be given to a worker, and that needs to know
 	// whose channel it is and which agent answers in it.
-	customerID, configID, found, err := s.ownerOf(ctx, origin, event)
+	customerID, configID, declared, found, err := s.ownerOf(ctx, origin, event)
 	if err != nil {
 		return false
 	}
@@ -375,6 +427,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			return false
 		}
 	}
+	s.chatEpisodeUnopened(ctx, origin, event, declared, heardFor, recorded)
 
 	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 		return settled
@@ -386,7 +439,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			message.Text = s.heardText(ctx, heardFor, origin, event)
 		}
 		// Said before the worker has the message, so the session it opens for it finds it said.
-		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
+		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID, event.Message.User.ID)
 		worker, err := s.dispatch.AssignMessage(customerID, message)
 		if err != nil {
 			// Somebody has written to an agent that nothing is going to answer, which is the
@@ -560,21 +613,46 @@ const ConfigField = "agent_config_id"
 // Both are looked for only within the app the hook came from: the channel's last call has to
 // have been in that app, and a config the channel names has to be the app's own customer's.
 //
+// declared is the config, when it was read: the one the channel names, and for a channel with
+// a row, that config again when the row ran under it (heldConfigOf).
+//
 // err is a read that failed, which a later try may get through: the queue's worker tries again.
-func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool, err error) {
+func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string,
+	declared *store.AgentConfig, found bool, err error) {
 	previous, held, err := s.lastCallOn(ctx, origin, event.ChannelID)
 	if err != nil && !errors.Is(err, store.ErrAmbiguousHook) {
-		return "", "", false, err
+		return "", "", nil, false, err
 	}
 	if held && (origin.deployment || previous.CustomerID == origin.customer) {
-		return previous.CustomerID, previous.ConfigID, true, nil
+		return previous.CustomerID, previous.ConfigID, s.heldConfigOf(ctx, origin, event, previous), true, nil
 	}
 
 	config, named, err := s.declaredConfigOf(ctx, origin, event)
 	if err != nil || !named {
-		return "", "", false, err
+		return "", "", nil, false, err
 	}
-	return config.CustomerID, config.ID, true, nil
+	return config.CustomerID, config.ID, &config, true, nil
+}
+
+// heldConfigOf is the config a channel with a row names, when it is the one the row ran under,
+// so a chat the worker's session answered before goes on writing episode cards
+// (chatEpisodeUnopened). It is the one read of the config such a message makes, as a channel
+// with no row makes in ownerOf: base c9a61fc90 made none here, and whether the cards are on is
+// not known without it. A channel naming no config, or another one than the row's, is not
+// read, nor one with a voice recording, which unopenedSpec reads. A read that fails costs the
+// card, not the answer: nil.
+func (s *Server) heldConfigOf(ctx context.Context, origin hookOrigin, event messageEvent, previous store.Call) *store.AgentConfig {
+	if _, recorded := event.recording(); recorded {
+		return nil
+	}
+	if named, _ := event.ChannelCustom[ConfigField].(string); named != previous.ConfigID {
+		return nil
+	}
+	config, named, err := s.declaredConfigOf(ctx, origin, event)
+	if err != nil || !named {
+		return nil
+	}
+	return &config
 }
 
 // declaredConfigOf is the config a channel names, when the store says a customer of the hook's

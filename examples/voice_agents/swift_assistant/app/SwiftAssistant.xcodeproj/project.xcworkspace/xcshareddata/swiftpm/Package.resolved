@@ -1,5 +1,5 @@
 {
-  "originHash" : "a514df01e2884673ec3f441445d6404a2cb0ddafcb0cdccb5f76c97e3a49da74",
+  "originHash" : "a804a3ac9b33779d4d8e9598ae2943572e770eb5f0c8e5f8eda544367c031bc4",
   "pins" : [
     {
       "identity" : "stream-chat-swift",
@@ -7,7 +7,7 @@
       "location" : "https://github.com/GetStream/stream-chat-swift",
       "state" : {
         "branch" : "develop",
-        "revision" : "2cdca0c9d17b03e8603f4e065964aac631dce08d"
+        "revision" : "be3e9db9a5ad93a36f4b6e2ddfe45c63edc1e4d9"
       }
     },
     {

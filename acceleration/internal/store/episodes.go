@@ -19,6 +19,9 @@ const (
 	EpisodeIMessage = "imessage"
 	EpisodeSMS      = "sms"
 	EpisodeWhatsApp = "whatsapp"
+	// EpisodeChat is a run of messages in one agent channel of the app chat
+	// (20261212090000_chat_episodes.sql).
+	EpisodeChat = "chat"
 )
 
 // episodeInProgress is an episode not closed yet, the status its card is written with.
@@ -130,7 +133,9 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 // touchThreadEpisodeQuery sets the last message of the thread's episode in progress, and
 // reads the episode. open holds the episode's row until the message commits, so a sweep
 // skips it meanwhile (closeIdleEpisodesQuery), and a touch that waited for a close finds the
-// episode no longer open.
+// episode no longer open. A message's time is when it was made or queued, so a message tried
+// again after a later one keeps the later one's time: the episode stays open from its last
+// message on.
 const touchThreadEpisodeQuery = `
 WITH open AS (
     SELECT id FROM episodes
@@ -139,7 +144,8 @@ WITH open AS (
 ), touched AS (
     INSERT INTO episode_activity (episode_id, last_message_at)
     SELECT id, ? FROM open
-    ON CONFLICT (episode_id) DO UPDATE SET last_message_at = excluded.last_message_at
+    ON CONFLICT (episode_id) DO UPDATE
+    SET last_message_at = GREATEST(episode_activity.last_message_at, excluded.last_message_at)
     RETURNING episode_id
 )
 SELECT ep.* FROM episodes AS ep JOIN touched ON touched.episode_id = ep.id`
@@ -341,6 +347,9 @@ type EpisodeCard struct {
 	// map row: for a call, the caller's number, which is whose lines the card's are.
 	ContactKind    string `bun:"contact_kind,scanonly"`
 	ContactAddress string `bun:"contact_address,scanonly"`
+	// AgentConfigID is the agent config of the episode's contact map row, which an app chat's
+	// channel names.
+	AgentConfigID string `bun:"agent_config_id,scanonly"`
 }
 
 // CardsQuery is whose episode cards a session reads, and which of them it leaves out
@@ -368,7 +377,7 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 	var cards []EpisodeCard
 	err := s.db.NewSelect().Model(&cards).
 		ColumnExpr("ep.*").
-		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address").
+		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address, cm.agent_config_id").
 		// LEAST ignores NULLs, so Until is nil only when both are.
 		ColumnExpr(`LEAST(ep.ended_at, (SELECT min(nx.started_at) FROM episodes AS nx
 			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel

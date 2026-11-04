@@ -133,7 +133,7 @@ type File struct {
 	URL      string
 }
 
-// Link is somewhere the person has to go, such as a plugin login.
+// Link is somewhere the person has to go, such as a connector login.
 type Link struct {
 	Text string
 	URL  string

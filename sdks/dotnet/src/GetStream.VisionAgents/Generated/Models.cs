@@ -328,7 +328,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+        /// Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
         public bool? EpisodeCards { get; set; } = default!;
@@ -631,7 +631,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+        /// Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
         public bool? EpisodeCards { get; set; } = default!;
@@ -1297,6 +1297,57 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("progressive")]
         public bool? Progressive { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentUser
+    {
+
+        /// <summary>
+        /// The number linked to the user, in E.164; null when none is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone")]
+        public string? Phone { get; set; } = default!;
+
+        /// <summary>
+        /// The Stream user id, as the app's own token signs it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentUserRequest
+    {
+
+        /// <summary>
+        /// The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone")]
+        public string? Phone { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -4017,7 +4068,7 @@ namespace GetStream.VisionAgents.Models
         public string OwnerType { get; set; } = default!;
 
         /// <summary>
-        /// Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+        /// Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("reason")]
         public string? Reason { get; set; } = default!;
@@ -4817,6 +4868,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
+
+        /// <summary>
+        /// What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_action")]
+        public System.Collections.Generic.Dictionary<string, object>? UiAction { get; set; } = default!;
 
         /// <summary>
         /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
@@ -5970,7 +6027,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -6522,8 +6579,26 @@ namespace GetStream.VisionAgents.Models
     public partial class IndexedKnowledgeDocument
     {
 
+        /// <summary>
+        /// The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("bytes")]
+        public long Bytes { get; set; } = default!;
+
+        /// <summary>
+        /// The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("content_type")]
+        public string ContentType { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("created_at")]
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
@@ -6532,7 +6607,13 @@ namespace GetStream.VisionAgents.Models
         public string Namespace { get; set; } = default!;
 
         /// <summary>
-        /// How many passages it was last cut into.
+        /// How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("pages")]
+        public int Pages { get; set; } = default!;
+
+        /// <summary>
+        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("passages")]
         public int Passages { get; set; } = default!;
@@ -6543,8 +6624,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string Source { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string State { get; set; } = default!;
+
         /// <summary>
-        /// The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+        /// The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an &lt;!-- page N --&gt; comment. Only reading one document fills it in, and one written before its text was kept has none.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string? Text { get; set; } = default!;
@@ -6640,7 +6724,7 @@ namespace GetStream.VisionAgents.Models
         public long Images { get; set; } = default!;
 
         /// <summary>
-        /// The system prompt: the agent's instructions, skills and plugin guidance.
+        /// The system prompt: the agent's instructions, skills and connector guidance.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public long Instructions { get; set; } = default!;
@@ -8219,6 +8303,126 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
+    /// Who reads the page, and what may happen to it afterwards.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrOptions
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("data_policy")]
+        public DataPolicy? DataPolicy { get; set; } = default!;
+
+        /// <summary>
+        /// Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("figures")]
+        public bool? Figures { get; set; } = default!;
+
+        /// <summary>
+        /// A priority list of where to try, in the order given, which wins over target when it holds anything.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("providers")]
+        public System.Collections.Generic.List<string>? Providers { get; set; } = default!;
+
+        /// <summary>
+        /// A provider/model or a shortcut. Defaults to ocr-default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrRequest
+    {
+
+        /// <summary>
+        /// The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public byte[] Image { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public OcrOptions? Options { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrResult
+    {
+
+        /// <summary>
+        /// Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// What went wrong, in words. Absent when the page was read.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// This response's own id, for logs. Nothing is stored under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markdown")]
+        public string Markdown { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// Who read it, or who failed to. Absent when nothing got as far as a provider.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
     /// One tool as the model sees it.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -8712,7 +8916,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? Toolsets { get; set; } = default!;
 
         /// <summary>
-        /// Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+        /// Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user")]
         public bool? User { get; set; } = default!;

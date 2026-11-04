@@ -5,10 +5,16 @@ package main
 import (
 	"context"
 	"crypto/ed25519"
+	"crypto/hmac"
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
+	"fmt"
 	"log/slog"
 	"net"
+	"net/http"
 	"os"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -17,6 +23,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	chathooks "github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatinbound"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -78,11 +85,11 @@ func (s *DrainSuite) TestTheDrainWaitsForAScheduledDeliveryInFlight() {
 	s.T().Cleanup(scheduler.Close)
 
 	s.Require().Eventually(func() bool { return scheduler.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
-	s.Positive(running(nil, scheduler, nil, nil), "the drain counts the delivery in flight")
-	s.Equal(scheduler.Running(), running(nil, scheduler, nil, nil))
+	s.Positive(running(nil, scheduler, nil, nil, nil), "the drain counts the delivery in flight")
+	s.Equal(scheduler.Running(), running(nil, scheduler, nil, nil, nil))
 
 	close(release)
-	s.Require().Eventually(func() bool { return running(nil, scheduler, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return running(nil, scheduler, nil, nil, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
 }
 
 func (s *DrainSuite) TestTheDrainWaitsForAChatAnswerInFlight() {
@@ -106,11 +113,11 @@ func (s *DrainSuite) TestTheDrainWaitsForAChatAnswerInFlight() {
 	s.T().Cleanup(deliveries.Close)
 
 	s.Require().Eventually(func() bool { return deliveries.Running() > 0 }, 10*time.Second, 10*time.Millisecond)
-	s.Positive(running(nil, nil, nil, deliveries), "the drain counts the answer in flight")
-	s.Equal(deliveries.Running(), running(nil, nil, nil, deliveries))
+	s.Positive(running(nil, nil, nil, deliveries, nil), "the drain counts the answer in flight")
+	s.Equal(deliveries.Running(), running(nil, nil, nil, deliveries, nil))
 
 	close(release)
-	s.Require().Eventually(func() bool { return running(nil, nil, nil, deliveries) == 0 }, 10*time.Second, 10*time.Millisecond)
+	s.Require().Eventually(func() bool { return running(nil, nil, nil, deliveries, nil) == 0 }, 10*time.Second, 10*time.Millisecond)
 }
 
 // A router told to stop while it writes an inbound message takes no other message, of the
@@ -205,6 +212,80 @@ func (s *DrainSuite) TestARouterDrainingAnInboundWriteTakesNoMoreMessages() {
 	s.Equal([]any{store.ChannelInboundQueued, 0}, []any{left.State, left.Attempts})
 	chatLeft := s.chatInbound(message)
 	s.Equal([]any{store.ChatInboundQueued, 0}, []any{chatLeft.State, chatLeft.Attempts})
+}
+
+// A router told to stop while it writes the episode card of an app chat's message, which a
+// message hook started off its request, drains until that card is written: a card lost then
+// is lost for good, as the next message finds its episode open. Catches the server's chat
+// cards left out of what the drain counts (running).
+func (s *DrainSuite) TestARouterDrainsAChatCardInFlight() {
+	chat := chattest.NewServer(s.T())
+	settings := config.Defaults()
+	settings.Postgres.DSN = s.dsn
+	settings.Auth.Mode = string(auth.NoAuth)
+	settings.Stream.APIKey, settings.Stream.APISecret, settings.Stream.BaseURL = "deploy-key", "deploy-secret", chat.URL
+	settings.Stream.AppID = 1
+	settings.Shutdown.Drain = time.Minute
+	for _, address := range []*string{&settings.Addr, &settings.Node.Listen} {
+		free, err := net.Listen("tcp", "127.0.0.1:0")
+		s.Require().NoError(err)
+		*address = free.Addr().String()
+		s.Require().NoError(free.Close())
+	}
+	agent := store.AgentConfig{CustomerID: "customer-" + uuid.NewString(), Name: "chat-" + uuid.NewString(),
+		Mode: store.AgentModeText, LLM: "llm-flow", EpisodeCards: true}
+	s.Require().NoError(s.db.CreateAgentConfig(s.ctx, &agent))
+	waiting, release := chat.Hold("/message")
+
+	stopped := make(chan struct{})
+	var runErr error
+	go func() {
+		runErr = run(settings, slog.New(slog.DiscardHandler))
+		close(stopped)
+	}()
+	s.T().Cleanup(func() {
+		release()
+		if isClosed(stopped) {
+			return
+		}
+		s.NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+		select {
+		case <-stopped:
+		case <-time.After(30 * time.Second):
+			s.Fail("the router did not stop on SIGTERM")
+		}
+	})
+	s.Require().Eventually(func() bool { return serving(settings.Addr) }, 15*time.Second, 10*time.Millisecond)
+	body := fmt.Sprintf(`{"type":"message.new","app_id":1,"channel_id":%q,"channel_type":"agent","created_at":%q,
+"channel_custom":{"agent_config_id":%q},"channel":{"members":[{"user_id":"anya_123"}]},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
+		"chat-"+uuid.NewString(), time.Now().UTC().Format(time.RFC3339Nano), agent.ID, "message-"+uuid.NewString())
+	mac := hmac.New(sha256.New, []byte(settings.Stream.APISecret))
+	mac.Write([]byte(body))
+	request, err := http.NewRequest(http.MethodPost, "http://"+settings.Addr+chathooks.MessageHookPath, strings.NewReader(body))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("X-Signature", hex.EncodeToString(mac.Sum(nil)))
+	response, err := http.DefaultClient.Do(request)
+	s.Require().NoError(err)
+	s.Require().NoError(response.Body.Close())
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	select {
+	case <-waiting:
+	case <-time.After(15 * time.Second):
+		s.Require().Fail("the router never wrote the card")
+	}
+
+	s.Require().NoError(syscall.Kill(os.Getpid(), syscall.SIGTERM))
+	s.Never(func() bool { return isClosed(stopped) || !serving(settings.Node.Listen) }, 3*time.Second, 50*time.Millisecond,
+		"the drain ended with the card in flight")
+	release()
+
+	select {
+	case <-stopped:
+		s.Require().NoError(runErr)
+	case <-time.After(30 * time.Second):
+		s.Require().Fail("the drain did not end with the card")
+	}
 }
 
 // thread links a thread channel of customer's, on a connector the router has no scheme for.

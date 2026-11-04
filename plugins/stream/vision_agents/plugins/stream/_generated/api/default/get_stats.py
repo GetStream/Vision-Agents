@@ -133,14 +133,15 @@ def sync_detailed(
     """Aggregated usage for the calling customer
 
     Args:
-        modality (Modality): What kind of work was done. The first seven are routed across
+        modality (Modality): What kind of work was done. The first nine are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
-            recorded but not routed, since there is one memory store, one knowledge base and one
-            vendor per number, so the provider paths do not serve them while the statistics paths do.
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -183,14 +184,15 @@ def sync(
     """Aggregated usage for the calling customer
 
     Args:
-        modality (Modality): What kind of work was done. The first seven are routed across
+        modality (Modality): What kind of work was done. The first nine are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
-            recorded but not routed, since there is one memory store, one knowledge base and one
-            vendor per number, so the provider paths do not serve them while the statistics paths do.
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -228,14 +230,15 @@ async def asyncio_detailed(
     """Aggregated usage for the calling customer
 
     Args:
-        modality (Modality): What kind of work was done. The first seven are routed across
+        modality (Modality): What kind of work was done. The first nine are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
-            recorded but not routed, since there is one memory store, one knowledge base and one
-            vendor per number, so the provider paths do not serve them while the statistics paths do.
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.
@@ -276,14 +279,15 @@ async def asyncio(
     """Aggregated usage for the calling customer
 
     Args:
-        modality (Modality): What kind of work was done. The first seven are routed across
+        modality (Modality): What kind of work was done. The first nine are routed across
             providers; sts is speech to speech, one native audio model in place of a transcriber, a
             text model and a voice. decision_model is a decision model: it answers named questions
             about a piece of text with a typed value and the probability behind it rather than with
             prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn
-            from a prompt, and detection is boxes found in one. Memory, knowledge and phone are
-            recorded but not routed, since there is one memory store, one knowledge base and one
-            vendor per number, so the provider paths do not serve them while the statistics paths do.
+            from a prompt, detection is boxes found in one, and ocr is the text of a page read from a
+            picture of it. Memory, knowledge and phone are recorded but not routed, since there is one
+            memory store, one knowledge base and one vendor per number, so the provider paths do not
+            serve them while the statistics paths do.
         granularity (Granularity | Unset):
         from_ (datetime.datetime): Start of the window, inclusive.
         to (datetime.datetime): End of the window, exclusive.

@@ -59,6 +59,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -68,11 +70,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
@@ -1038,6 +1040,27 @@ func run(settings config.Config, logger *slog.Logger) error {
 		streams.Detection = detecting
 	}
 
+	// OCR is served the same way. Its vision language models are built the way the LLM
+	// router builds them, so they read the same keys.
+	if section, ok := capabilities[routing.OCR]; ok {
+		reading, err := ocrrouter.New(ocrrouter.Options{
+			Config:   section,
+			Registry: ocrrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer reading.Close()
+		routers[routing.OCR] = reading
+		streams.OCR = reading
+	}
+
 	// Every Stream action taken for a customer, a call joined, a line made, a transcript
 	// written, a token minted, is taken in the app this resolves for them.
 	streamClients, err := newStreamClients(settings, pgStore, secrets, logger)
@@ -1108,12 +1131,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	pluginAuth := &plugins.Auth{
-		PublicURL:    settings.PublicURL,
-		DashboardURL: settings.DashboardURL,
-		Clients:      session.PluginClients(pgStore, secrets),
-	}
-
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
 	sessionConnectors := session.Connectors{Registry: connectors, Transports: connectorTransports,
@@ -1124,7 +1141,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1195,6 +1212,35 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer pages.Close()
+	}
+
+	// A file uploaded to a knowledge base waits in its own bucket until a worker reads it.
+	// Without the bucket, or any of what the urls need, uploads say so.
+	knowledgeBucket, err := blob.Open(ctx, settings.KnowledgeBucketURL)
+	if err != nil {
+		return err
+	}
+	if knowledgeBucket != nil {
+		defer knowledgeBucket.Close()
+	}
+	var scans files.Reader
+	if streams.OCR != nil {
+		scans = streams.OCR
+	}
+	var shardHolds rueidis.Client
+	if liveClient != nil {
+		shardHolds = liveClient.ShardRedis()
+	}
+	uploads, err := buildKnowledgeFiles(pgStore, shardRedis(settings.Redis), shardHolds, base, knowledgeBucket, scans,
+		knowledgeLimits(settings.Knowledge), logger)
+	if err != nil {
+		return err
+	}
+	if uploads != nil {
+		if err := uploads.Start(); err != nil {
+			return err
+		}
+		defer uploads.Close()
 	}
 
 	// Inbound calls are answered by whoever is connected to the dispatch socket, so the
@@ -1307,6 +1353,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
+		KnowledgeFiles:        uploads,
 		Store:                 pgStore,
 		Configs:               configs,
 		Users:                 endUsers,
@@ -1572,7 +1619,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1687,10 +1734,11 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, and chat answers a router holds; one without one of them holds none of its work. A
-// turn counts until it ends, also before the session it opens is counted.
+// over, chat answers and the app chat's episode cards a router holds; one without one of them
+// holds none of its work. A turn counts until it ends, also before the session it opens is
+// counted.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker) int {
+	deliveries *chatinbound.Worker, server *api.Server) int {
 	held := 0
 	if sessions != nil {
 		held += sessions.Len()
@@ -1703,6 +1751,9 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge 
 	}
 	if deliveries != nil {
 		held += deliveries.Running()
+	}
+	if server != nil {
+		held += server.ChatCardsRunning()
 	}
 	return held
 }
@@ -1924,7 +1975,6 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	stream *streamapp.Clients,
-	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
@@ -1971,7 +2021,6 @@ func buildSessions(
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,
-		PluginAuth:         pluginAuth,
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
@@ -2024,6 +2073,49 @@ func buildKnowledgeURLs(
 		Limits:    limits,
 		Logger:    logger,
 	})
+}
+
+// buildKnowledgeFiles is the service that reads files uploaded to a knowledge base, or nil
+// when a file would have nowhere to wait, nowhere to be queued or nowhere to be written.
+// Without scans, a file whose pages are all scans is refused as having no text.
+//
+// redis and shared are this shard's own Redis, not the one every shard shares: a task names
+// a row of this shard's database and a file in this shard's bucket, so a worker of another
+// shard would find no row, take the upload for one overtaken and delete its file.
+func buildKnowledgeFiles(
+	pgStore *store.Store,
+	redis config.Redis,
+	shared rueidis.Client,
+	base *metered.Knowledge,
+	bucket *blob.Bucket,
+	scans files.Reader,
+	limits ingest.Limits,
+	logger *slog.Logger,
+) (*files.Service, error) {
+	if pgStore == nil || shared == nil || base == nil || bucket == nil {
+		logger.Debug("not taking knowledge files",
+			"database", pgStore != nil, "redis", shared != nil, "knowledge", base != nil, "bucket", bucket != nil)
+		return nil, nil
+	}
+	return files.New(files.Options{
+		Store:     pgStore,
+		Redis:     queueRedis(redis, shared),
+		Bucket:    bucket,
+		Extractor: extract.New(extract.Options{Logger: logger}),
+		Knowledge: base,
+		OCR:       scans,
+		Limits:    limits,
+		Logger:    logger,
+	})
+}
+
+// shardRedis is this shard's own Redis, or the shared one when the shard has none, as
+// live.New picks it.
+func shardRedis(redis config.Redis) config.Redis {
+	if redis.Shard.Addr == "" {
+		return redis
+	}
+	return config.Redis{Addr: redis.Shard.Addr, Username: redis.Shard.Username, Password: redis.Shard.Password}
 }
 
 // queueRedis is how asynq reaches redis, the Redis shared is a client of. asynq does not find

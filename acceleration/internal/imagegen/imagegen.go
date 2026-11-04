@@ -224,14 +224,25 @@ func Accepted(err error) bool {
 // Result is what a provider drew.
 type Result struct {
 	Images []Image
+	// InputTokens and OutputTokens are what a model billed by the token read and wrote
+	// besides its pictures: the prompt, and any words or thinking it answered with.
+	InputTokens  int64
+	OutputTokens int64
 }
 
-// Used is the pictures counted as they came back, not as they were asked for, and the pixels
-// they hold between them for a model billed by the megapixel.
+// Used is the pictures counted as they came back, not as they were asked for, the pixels
+// they hold between them for a model billed by the megapixel, and the tokens around them for
+// one billed by the token.
 func (r Result) Used() pricing.Quantities {
 	used := pricing.Quantities{pricing.Images: int64(len(r.Images))}
 	for _, picture := range r.Images {
 		used[pricing.Pixels] += int64(picture.Width) * int64(picture.Height)
+	}
+	if r.InputTokens > 0 {
+		used[pricing.InputTokens] = r.InputTokens
+	}
+	if r.OutputTokens > 0 {
+		used[pricing.OutputTokens] = r.OutputTokens
 	}
 	return used
 }

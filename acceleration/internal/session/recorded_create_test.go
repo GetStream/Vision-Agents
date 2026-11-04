@@ -18,7 +18,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -94,30 +93,6 @@ func (s *RecordedCreateSuite) TestTheStoredToolsKeepSearch() {
 		names = append(names, tool.Name)
 	}
 	s.Contains(names, "search", "search starts on joining, and its tool is offered from then on")
-}
-
-// A plugin a config's row still names, one its end user would connect with their own account,
-// is not offered: plugins are no longer read, and GET /v1/agents/sessions/{id}/tools serves
-// what is stored here.
-func (s *RecordedCreateSuite) TestAUserPluginTheSpecStillNamesIsNotOffered() {
-	m := s.manager(newQuietEdge(), &stubTTS{emitter: tts.NewEmitter(64)}, nil)
-	spec := s.spec(Spec{
-		ConfigID:   "config-1",
-		Caller:     routing.Caller{UserID: "employee-1"},
-		CallerKind: auth.KindAuthenticated,
-		Plugins:    []store.PluginEntry{{Name: "slack", User: true}},
-	})
-
-	created, err := m.Create(s.ctx, spec)
-	s.Require().NoError(err)
-	s.Require().NoError(created.Close())
-	s.Require().NoError(m.records.Flush(s.ctx))
-
-	stored, err := s.store.SessionTools(s.ctx, created.ID())
-	s.Require().NoError(err)
-	for _, tool := range stored {
-		s.NotContains(tool.Name, "slack__", "a plugin tool is offered to the session")
-	}
 }
 
 func (s *RecordedCreateSuite) TestASessionWhoseCallRefusedItLeavesNoRow() {

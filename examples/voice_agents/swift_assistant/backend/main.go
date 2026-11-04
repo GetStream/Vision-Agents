@@ -7,6 +7,11 @@
 // router adds the person's Google credential, which neither this nor the phone sees. The
 // person connects Gmail in the chat, where the router asks for the sign-in itself.
 //
+// It also says how the agent answers, which the app's settings choose: in Markdown, or with
+// interactive UI in A2UI or OpenUI. Writing an agent's config is server-side only, so this
+// rewrites the agent's instructions: instructions.md, and for a UI format what teaches the
+// model to write it with the app's components, a2ui/instructions.md or openui/instructions.md.
+//
 // A demo has nobody signed in, so it acts for whichever user the phone names. A real one
 // would act for the user its own sign-in vouched for.
 //
@@ -31,12 +36,14 @@ import (
 	"net/mail"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/golang-jwt/jwt/v5"
 
 	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
@@ -47,27 +54,41 @@ const tokenValidity = time.Hour
 // gmail is the built-in connector the agent binds as each user's own.
 const gmail = "gmail"
 
+// markdown is the reply format with no UI, which every client shows.
+const markdown = "markdown"
+
+// uiFormats are the formats the agent can write a reply's UI in, by what each is called in the
+// heading that adds what teaches it to the agent's instructions.
+var uiFormats = map[string]string{"a2ui": "A2UI", "openui": "OpenUI"}
+
 func main() {
 	addr := flag.String("addr", ":8098", "where to listen")
+	dir := flag.String("dir", ".", "the agent directory configure stored the agent from")
 	flag.Parse()
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer stop()
 
-	if err := run(ctx, *addr); err != nil && !errors.Is(err, http.ErrServerClosed) {
+	if err := run(ctx, *addr, *dir); err != nil && !errors.Is(err, http.ErrServerClosed) {
 		log.Fatal(err)
 	}
 }
 
-func run(ctx context.Context, addr string) error {
+func run(ctx context.Context, addr, dir string) error {
 	secret := os.Getenv("STREAM_API_SECRET")
 	if secret == "" {
 		return errors.New("STREAM_API_SECRET is needed: the secret of the Stream app the router runs in")
+	}
+	agent, err := agents.New(agents.Options{Dir: dir})
+	if err != nil {
+		return err
 	}
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /stream-token", streamToken(secret))
 	mux.HandleFunc("POST /gmail/send", gmailSend)
+	mux.HandleFunc("GET /reply-format", replyFormat(agent))
+	mux.HandleFunc("PUT /reply-format", setReplyFormat(agent, dir))
 
 	server := &http.Server{Addr: addr, Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() {
@@ -77,7 +98,7 @@ func run(ctx context.Context, addr string) error {
 		_ = server.Shutdown(closing)
 	}()
 
-	log.Printf("minting Stream user tokens and reaching Gmail on %s", addr)
+	log.Printf("minting Stream user tokens, reaching Gmail and setting how %s answers on %s", agent.Name(), addr)
 	return server.ListenAndServe()
 }
 
@@ -238,6 +259,104 @@ func plainMail(to, subject, body string) ([]byte, error) {
 	message.WriteString("Content-Transfer-Encoding: 8bit\r\n\r\n")
 	message.WriteString(strings.ReplaceAll(body, "\n", "\r\n"))
 	return message.Bytes(), nil
+}
+
+// replyFormat answers with how the agent answers: the UI format its instructions teach it, or
+// markdown when they teach it none.
+func replyFormat(agent *agents.Agent) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		_, config, err := agentConfig(r.Context(), agent)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		format := markdown
+		for id, name := range uiFormats {
+			if config.Instructions != nil && strings.Contains(*config.Instructions, "\n"+uiHeading(name)+"\n") {
+				format = id
+			}
+		}
+		answer(w, map[string]string{"format": format})
+	}
+}
+
+// setReplyFormat has the agent answer in the format asked for. A conversation keeps the
+// instructions it started with, so the next one is the first to answer this way.
+func setReplyFormat(agent *agents.Agent, dir string) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		var asked struct {
+			Format string `json:"format"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&asked); err != nil || (asked.Format != markdown && uiFormats[asked.Format] == "") {
+			http.Error(w, "a format is required: markdown, a2ui or openui", http.StatusBadRequest)
+			return
+		}
+		instructions, err := instructionsFor(dir, asked.Format)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+			return
+		}
+		ctx := r.Context()
+		client, config, err := agentConfig(ctx, agent)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		patched, err := client.PatchAgentConfigWithResponse(ctx, config.Id,
+			acceleration.PatchAgentConfigJSONRequestBody{Instructions: &instructions})
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadGateway)
+			return
+		}
+		if patched.JSON200 == nil {
+			http.Error(w, refused("changing the agent's instructions", patched.StatusCode(), patched.Body), http.StatusBadGateway)
+			return
+		}
+		answer(w, map[string]string{"format": asked.Format})
+	}
+}
+
+// instructionsFor are what the agent is told to answer in format: instructions.md, and for a UI
+// format what teaches the model to write it, generated from the app's components by the
+// format's prompt writer (a2ui-prompt or openui-prompt).
+func instructionsFor(dir, format string) (string, error) {
+	told, err := os.ReadFile(filepath.Join(dir, "instructions.md"))
+	if err != nil {
+		return "", err
+	}
+	if format == markdown {
+		return string(told), nil
+	}
+	ui, err := os.ReadFile(filepath.Join(dir, format, "instructions.md"))
+	if err != nil {
+		return "", err
+	}
+	return string(told) + "\n\n" + uiHeading(uiFormats[format]) + "\n\n" + string(ui), nil
+}
+
+// uiHeading introduces what teaches the agent a UI format, and is how its instructions say which.
+func uiHeading(name string) string {
+	return "## Interactive UI in " + name
+}
+
+// agentConfig is the router's config of the agent configure stored from the directory.
+func agentConfig(ctx context.Context, agent *agents.Agent) (*acceleration.ClientWithResponses, *acceleration.AgentConfig, error) {
+	client, err := agent.Client()
+	if err != nil {
+		return nil, nil, err
+	}
+	name := agent.Name()
+	listed, err := client.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
+	if err != nil {
+		return nil, nil, err
+	}
+	if listed.JSON200 == nil {
+		return nil, nil, errors.New(refused("finding the agent", listed.StatusCode(), listed.Body))
+	}
+	if len(*listed.JSON200) == 0 {
+		return nil, nil, fmt.Errorf("the router has no agent named %s: run go run ./configure", name)
+	}
+	return client, &(*listed.JSON200)[0], nil
 }
 
 // refused says what the router or Google answered instead of the success it was asked for:

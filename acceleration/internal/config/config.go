@@ -66,7 +66,8 @@ type Config struct {
 	ListenFD  int    `koanf:"listen_fd"`
 	PublicURL string `koanf:"public_url"`
 	LogLevel  string `koanf:"log_level"`
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is where a finished connector consent sends the browser when no return_url
+	// was given, and the page a consent is launched from.
 	DashboardURL string `koanf:"dashboard_url"`
 	// TrustedProxies are the CIDR ranges this deployment's own proxies sit in, and they
 	// decide how much of X-Forwarded-For is believed. Empty means none of it is.
@@ -80,6 +81,9 @@ type Config struct {
 	PricesFile string `koanf:"prices_file"`
 	// VoicesBucketURL is where the recordings behind a customer's own voice are kept.
 	VoicesBucketURL string `koanf:"voices_bucket_url"`
+	// KnowledgeBucketURL is where a file uploaded to a knowledge base waits until it is read.
+	// It is deleted once read, so the bucket holds only what is still to be read.
+	KnowledgeBucketURL string `koanf:"knowledge_bucket_url"`
 	// MockProviders builds the mock/* speech, voice and language models the load
 	// benchmark runs against. They reach no vendor, recognise nothing and say nothing, so
 	// a thousand conversations cost what one does. Off by default: with it off the
@@ -487,25 +491,26 @@ type Telnyx struct {
 // Both directions are read from here: the variable wins over the file on the way in, and
 // the effective value is written back to it on the way out.
 var variables = map[string]string{
-	"addr":               "ROUTER_ADDR",
-	"public_url":         "ROUTER_PUBLIC_URL",
-	"log_level":          "ROUTER_LOG_LEVEL",
-	"dashboard_url":      "DASHBOARD_BASE_URL",
-	"trusted_proxies":    "ROUTER_TRUSTED_PROXIES",
-	"routing_config":     "ROUTER_CONFIG",
-	"phone_config":       "ROUTER_PHONE_CONFIG",
-	"prices_file":        "ROUTER_PRICES_FILE",
-	"voices_bucket_url":  "ROUTER_VOICES_BUCKET_URL",
-	"mock_providers":     "ROUTER_MOCK_PROVIDERS",
-	"pprof_addr":         "ROUTER_PPROF_ADDR",
-	"metrics_addr":       "ROUTER_METRICS_ADDR",
-	"shard":              "ROUTER_SHARD",
-	"postgres.dsn":       "ROUTER_POSTGRES_DSN",
-	"postgres.shard_dsn": "ROUTER_POSTGRES_SHARD_DSN",
-	"postgres.shards":    "ROUTER_POSTGRES_SHARDS",
-	"redis.addr":         "ROUTER_REDIS_ADDR",
-	"redis.username":     "ROUTER_REDIS_USERNAME",
-	"redis.password":     "ROUTER_REDIS_PASSWORD",
+	"addr":                 "ROUTER_ADDR",
+	"public_url":           "ROUTER_PUBLIC_URL",
+	"log_level":            "ROUTER_LOG_LEVEL",
+	"dashboard_url":        "DASHBOARD_BASE_URL",
+	"trusted_proxies":      "ROUTER_TRUSTED_PROXIES",
+	"routing_config":       "ROUTER_CONFIG",
+	"phone_config":         "ROUTER_PHONE_CONFIG",
+	"prices_file":          "ROUTER_PRICES_FILE",
+	"voices_bucket_url":    "ROUTER_VOICES_BUCKET_URL",
+	"knowledge_bucket_url": "ROUTER_KNOWLEDGE_BUCKET_URL",
+	"mock_providers":       "ROUTER_MOCK_PROVIDERS",
+	"pprof_addr":           "ROUTER_PPROF_ADDR",
+	"metrics_addr":         "ROUTER_METRICS_ADDR",
+	"shard":                "ROUTER_SHARD",
+	"postgres.dsn":         "ROUTER_POSTGRES_DSN",
+	"postgres.shard_dsn":   "ROUTER_POSTGRES_SHARD_DSN",
+	"postgres.shards":      "ROUTER_POSTGRES_SHARDS",
+	"redis.addr":           "ROUTER_REDIS_ADDR",
+	"redis.username":       "ROUTER_REDIS_USERNAME",
+	"redis.password":       "ROUTER_REDIS_PASSWORD",
 
 	"redis.shard.addr":     "ROUTER_REDIS_SHARD_ADDR",
 	"redis.shard.username": "ROUTER_REDIS_SHARD_USERNAME",
@@ -1021,6 +1026,7 @@ func (c Config) export() error {
 		"phone_config":                  c.PhoneConfig,
 		"prices_file":                   c.PricesFile,
 		"voices_bucket_url":             c.VoicesBucketURL,
+		"knowledge_bucket_url":          c.KnowledgeBucketURL,
 		"mock_providers":                fmt.Sprint(c.MockProviders),
 		"pprof_addr":                    c.PprofAddr,
 		"metrics_addr":                  c.MetricsAddr,

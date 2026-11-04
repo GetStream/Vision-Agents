@@ -195,6 +195,13 @@ type Session struct {
 	// carded is whether the session started with the person's episode cards
 	// (callCards.read). Set once, before the session can be reached.
 	carded bool
+	// cardsFor is the Stream user whose cards a session on an app chat's agent channel started
+	// with (callCards.read), the only person it answers (CardsFor). Set once, before the
+	// session can be reached.
+	cardsFor string
+	// retiring is set once the session takes no new message and closes after the replies it
+	// owes (Manager.Retire).
+	retiring atomic.Bool
 	// transcribedInto is the channel a call's transcript is written into: the conversation's,
 	// else the agent id's. Empty when it is written nowhere the call may write, a device's
 	// call under a thread channel's agent id (persistent.Barred). Set once, before the
@@ -326,6 +333,14 @@ func (s *Session) ID() string { return s.id }
 
 // current is the agent holding the conversation now.
 func (s *Session) current() *agent.Agent { return s.held.Load() }
+
+// CardsFor is the Stream user whose episode cards the session started with in an app chat's
+// agent channel, empty when it started with none there. Their cards are in its context, so it
+// answers nobody else (api.routeArrivingMessage).
+func (s *Session) CardsFor() string { return s.cardsFor }
+
+// Retiring reports whether the session was retired (Manager.Retire).
+func (s *Session) Retiring() bool { return s.retiring.Load() }
 
 // Spec is what the session was asked for.
 func (s *Session) Spec() Spec {
@@ -596,6 +611,13 @@ func (s *Session) abandon() {
 
 // unwatchedFor reports whether the session holds the persistent conversation cid and
 // nobody is watching it.
+// holds reports whether the session holds the persistent conversation cid.
+func (s *Session) holds(cid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persisted != nil && s.persisted.CID() == cid && s.state != Ended
+}
+
 func (s *Session) unwatchedFor(cid string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -749,6 +771,12 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // alone. notes are voice notes sent with it, shown on the person's message; text already holds
 // what they said.
 func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
+	return s.RespondCommandWithAction(ctx, id, text, clientID, images, asked, nil, notes...)
+}
+
+// RespondCommandWithAction is RespondCommand for a person's message that says what they did in
+// a reply's UI. Their message carries the action, and the model is told it after their words.
+func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, action map[string]any, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
@@ -771,13 +799,17 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
+	told := text
+	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
+		told += "\n\n" + note
+	}
 	if handedOn {
-		if nothingToAnswer(text, images) {
+		if nothingToAnswer(told, images) {
 			return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
 		}
-		return s.followUp(ctx, id, text, images, asked, true)
+		return s.followUp(ctx, id, told, images, asked, true)
 	}
-	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
+	receipt, err := s.persisted.BeginCommandWithAction(id, text, clientID, action, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}
@@ -793,7 +825,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, images, asked)
+	turnID, err := s.current().RespondTo(ctx, told, images, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)

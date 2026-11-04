@@ -1280,6 +1280,12 @@ module GetStream
           body: "SessionQuery", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "readPage" => {
+          method: :post, path: "/v1/ocr",
+          path_params: [].freeze, query: [].freeze,
+          body: "OcrRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "receiveCallMachine" => {
           method: :post, path: "/v1/phone/machine/{token}",
           path_params: %w[token].freeze, query: [].freeze,
@@ -1640,6 +1646,12 @@ module GetStream
           body: "UseCaseRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "updateUser" => {
+          method: :put, path: "/v1/agents/users/{user_id}",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: "AgentUserRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "updateUserPolicy" => {
           method: :put, path: "/v1/policies/users/{user_id}",
           path_params: %w[user_id].freeze, query: [].freeze,
@@ -1650,6 +1662,12 @@ module GetStream
           method: :put, path: "/v1/agents/voices/{id}",
           path_params: %w[id].freeze, query: [].freeze,
           body: "VoiceRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
+        "uploadKnowledgeFile" => {
+          method: :post, path: "/v1/agents/knowledge/files",
+          path_params: [].freeze, query: %w[namespace source].freeze,
+          body: nil, body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "validateConnection" => {
@@ -1760,6 +1778,14 @@ module GetStream
         "AgentTools" => {
           properties: %w[output_retention progressive].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "AgentUser" => {
+          properties: %w[phone user_id].freeze,
+          required: %w[user_id phone].freeze, open: false
+        }.freeze,
+        "AgentUserRequest" => {
+          properties: %w[phone].freeze,
+          required: %w[phone].freeze, open: false
         }.freeze,
         "AnalyzeReviewsRequest" => {
           properties: %w[from target to].freeze,
@@ -2102,7 +2128,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[audio images max_output_tokens reasoning_effort request_id text videos].freeze,
+          properties: %w[audio images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
@@ -2250,8 +2276,8 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "IndexedKnowledgeDocument" => {
-          properties: %w[created_at id namespace passages source text updated_at].freeze,
-          required: %w[created_at id namespace passages source updated_at].freeze, open: false
+          properties: %w[bytes content_type created_at error id namespace pages passages source state text updated_at].freeze,
+          required: %w[bytes content_type created_at id namespace pages passages source state updated_at].freeze, open: false
         }.freeze,
         "IngestKnowledgeRequest" => {
           properties: %w[chunk_size documents namespace].freeze,
@@ -2400,6 +2426,18 @@ module GetStream
         "NumberSearchResult" => {
           properties: %w[numbers skipped].freeze,
           required: %w[numbers skipped].freeze, open: false
+        }.freeze,
+        "OcrOptions" => {
+          properties: %w[data_policy figures providers target].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "OcrRequest" => {
+          properties: %w[image options tags].freeze,
+          required: %w[image].freeze, open: false
+        }.freeze,
+        "OcrResult" => {
+          properties: %w[cost_micros error error_code id markdown model provider status].freeze,
+          required: %w[cost_micros id markdown status].freeze, open: false
         }.freeze,
         "OfferedTool" => {
           properties: %w[description name parameters tokens].freeze,

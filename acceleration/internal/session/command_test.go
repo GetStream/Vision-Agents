@@ -14,9 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	getstream "github.com/GetStream/getstream-go/v5"
 )
@@ -522,7 +520,7 @@ func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessag
 		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
 	})
 	s.Require().NoError(err)
-	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true, "")
 	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
 		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
 	s.Require().NoError(err)
@@ -542,6 +540,53 @@ func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessag
 	_, _ = incognito.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
 
 	s.Empty(chat.Uploads())
+}
+
+// A worker's session answers what the person wrote in the channel it was handed, so it writes
+// nothing of theirs, but the model still has to be told what they did in a reply's UI: without
+// it, "Update the plan" is all the model hears, and it cannot know what to update it to.
+func (s *SessionSuite) TestAHandedOnCommandTellsTheModelWhatThePersonDidInTheUI() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: chat.URL,
+	}), streamapp.ClientsOptions{})
+	s.manages()
+	creator := "worker-agent"
+	_, err := chat.Client.Chat().GetOrCreateChannel(s.ctx, "agent", "worker-agent", &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
+	})
+	s.Require().NoError(err)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true, "")
+	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
+		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = worker.Close() })
+	s.Require().True(worker.Spec().Dispatched, "the session a worker opens in the channel handed out")
+	action := map[string]any{
+		"v": 1, "message_id": "reply-1", "format": "a2ui", "name": "update_plan",
+		"payload": map[string]any{"context": map[string]any{"pace": []any{"packed"}}},
+	}
+
+	_, _, err = worker.RespondCommandWithAction(s.ctx, "command-w", "Update the plan", "", nil, options.LLM{}, action)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		s.model.mu.Lock()
+		defer s.model.mu.Unlock()
+		for _, params := range s.model.asked {
+			for _, message := range params.Input {
+				if message.Role == llm.User && strings.HasPrefix(message.Content, "Update the plan\n\n") &&
+					strings.Contains(message.Content, `update_plan, with {"context":{"pace":["packed"]}}`) {
+					return true
+				}
+			}
+		}
+		return false
+	}, "the model was never told what the person did in the reply's UI")
+	s.Empty(chat.Uploads(), "the person's message is already in the channel")
 }
 
 func (s *SessionSuite) TestACommandsVoiceNoteIsShownOnThePersonsMessageOnce() {
@@ -673,36 +718,6 @@ func (s *SessionSuite) TestAVoiceNoteToAConversationNoLongerTheCallersIsRefusedB
 	s.ErrorIs(err, persistent.ErrCommandNotFound, "an old session must not act as bob")
 }
 
-// TestALoginCardForAPluginTheSpecStillNamesIsNotShown: a session no longer accepts plugin
-// logins in its conversation, so a tool result shaped as one for a user plugin a stored row
-// still names is kept as a result and draws no login card.
-func (s *SessionSuite) TestALoginCardForAPluginTheSpecStillNamesIsNotShown() {
-	s.persists()
-	running, err := s.manager.Create(s.ctx, Spec{
-		CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency",
-		Caller:  routing.Caller{UserID: "employee-1"},
-		Plugins: []store.PluginEntry{{Name: "slack", User: true}},
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(func() { _ = running.Close() })
-	_, _, err = running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", nil, options.LLM{})
-	s.Require().NoError(err)
-	slack, ok := plugins.Lookup("slack")
-	s.Require().True(ok)
-	running.persisted.Observe(agent.ToolStarted{ID: "list", Tool: "slack__list_tools", StartedAt: time.Now().UTC()})
-	running.persisted.Observe(agent.ToolRan{ID: "list", Tool: "slack__list_tools",
-		Result: plugins.AuthorizationResult(slack, "https://slack.com/oauth/v2_user/authorize?state=s1", "")})
-	s.gated.answers(1)
-	s.eventually(func() bool {
-		receipt, err := running.Command("command-a")
-		return err == nil && receipt.State == "completed"
-	}, "the reply should finish")
-
-	saved := s.stored(running)
-	s.Require().Len(saved, 2)
-	s.Empty(saved[1].Authorizations)
-}
-
 func (s *SessionSuite) TestAWatcherComingBackKeepsTheConversationOpen() {
 	s.grace = 50 * time.Millisecond
 	s.persists()
@@ -744,6 +759,61 @@ func (s *SessionSuite) TestReopeningAConversationNobodyWatchesDoesNotWaitForItsG
 	s.T().Cleanup(func() { _ = reopened.Close() })
 	s.Equal(Ended, running.State(), "the session nobody watched should hand the conversation over")
 	s.Equal(running.Spec().ConversationID, reopened.Spec().ConversationID)
+}
+
+// Defect (AI-2632 R2.1): a session opened on the conversation of one retiring, closing once
+// it has written the replies it owes (Retire), is refused the conversation as open, or takes
+// it over, while that one's close still lets its reply finish. It waits for it to end
+// instead, its close included: Close takes it off the map at once.
+func (s *SessionSuite) TestASessionOpenedOnARetiringOnesConversationWaitsForItToEnd() {
+	s.persists()
+	running := s.commands()
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.Equal("First question", s.asked())
+	s.Require().True(s.manager.Retire(running))
+	s.False(s.manager.Retire(running), "a session retiring already is retired again")
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_, _ = s.manager.Close(running.ID(), OwnerOf(running.Spec()))
+	}()
+	s.eventually(func() bool {
+		_, held := s.manager.Get(running.ID(), OwnerOf(running.Spec()))
+		return !held
+	}, "the retiring session was never closed")
+	s.Require().NotEqual(Ended, running.State(), "its close no longer waits for the reply it is writing")
+
+	reopened, err := s.manager.Create(s.ctx, Spec{
+		CustomerID:          "acme",
+		Text:                true,
+		PersistConversation: true,
+		ConversationID:      running.Spec().ConversationID,
+		LLMTarget:           "en-low-latency",
+		Caller:              routing.Caller{UserID: "employee-1"},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = reopened.Close() })
+	s.Equal(Ended, running.State(), "the session was opened before the retiring one ended")
+	<-closed
+}
+
+// Defect (AI-2632 R3.2): a retired session, once closed, stays referenced by the manager
+// until the next session opened on some persistent conversation of the router looks at it.
+func (s *SessionSuite) TestARetiredSessionIsForgottenOnceClosed() {
+	s.persists()
+	running := s.commands()
+	s.Require().True(s.manager.Retire(running))
+
+	closed, err := s.manager.CloseRetired(running)
+
+	s.Require().NoError(err)
+	s.True(closed)
+	s.Equal(Ended, running.State())
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	s.NotContains(s.manager.retiring, running, "the closed session is still held as retiring")
 }
 
 func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestion() {

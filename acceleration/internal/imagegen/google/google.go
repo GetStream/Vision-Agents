@@ -42,7 +42,8 @@ const (
 	responseLimit = imagegen.MaxBytes/3*4 + 1<<20
 	// errorBodyLimit caps how much of a refusal is repeated in an error.
 	errorBodyLimit = 512
-	// imageSize is the resolution asked for, which is the one the configured price is for.
+	// imageSize is the resolution asked for, which is the one the price per image is for:
+	// Gemini bills a picture by its tokens, and a 1K one is always 1120 of them.
 	imageSize = "1K"
 )
 
@@ -151,6 +152,29 @@ type generateResponse struct {
 	PromptFeedback struct {
 		BlockReason string `json:"blockReason"`
 	} `json:"promptFeedback"`
+	UsageMetadata usage `json:"usageMetadata"`
+}
+
+// usage is what Gemini says a call billed, in tokens.
+type usage struct {
+	PromptTokenCount        int64 `json:"promptTokenCount"`
+	ThoughtsTokenCount      int64 `json:"thoughtsTokenCount"`
+	CandidatesTokensDetails []struct {
+		Modality   string `json:"modality"`
+		TokenCount int64  `json:"tokenCount"`
+	} `json:"candidatesTokensDetails"`
+}
+
+// output is the tokens Gemini wrote that are not a picture: its thinking, and any words it
+// answered with. The picture's own tokens are what the price per image already prices.
+func (u usage) output() int64 {
+	tokens := u.ThoughtsTokenCount
+	for _, detail := range u.CandidatesTokensDetails {
+		if detail.Modality != "IMAGE" {
+			tokens += detail.TokenCount
+		}
+	}
+	return tokens
 }
 
 // Generate draws the request, one call a picture.
@@ -183,52 +207,54 @@ func (p *Provider) Generate(ctx context.Context, request imagegen.Request) (imag
 	for drawn := range request.Count() {
 		// Once one picture has been drawn the request has been billed for, so a later
 		// failure is not worth asking anybody else about.
-		picture, err := p.draw(ctx, body, drawn > 0)
+		picture, used, err := p.draw(ctx, body, drawn > 0)
 		if err != nil {
 			return imagegen.Result{}, err
 		}
 		result.Images = append(result.Images, picture)
+		result.InputTokens += used.PromptTokenCount
+		result.OutputTokens += used.output()
 	}
 	return result, nil
 }
 
-// draw asks Gemini for one picture.
-func (p *Provider) draw(ctx context.Context, body []byte, accepted bool) (imagegen.Image, error) {
+// draw asks Gemini for one picture, and says what the call billed.
+func (p *Provider) draw(ctx context.Context, body []byte, accepted bool) (imagegen.Image, usage, error) {
 	endpoint := p.baseURL + "/models/" + p.model + ":generateContent"
 	request, err := http.NewRequestWithContext(ctx, http.MethodPost, endpoint, bytes.NewReader(body))
 	if err != nil {
-		return imagegen.Image{}, imagegen.Fail(imagegen.ProviderFailed, accepted, fmt.Errorf("google: %w", err))
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ProviderFailed, accepted, fmt.Errorf("google: %w", err))
 	}
 	request.Header.Set("Content-Type", "application/json")
 	request.Header.Set("x-goog-api-key", p.apiKey)
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return imagegen.Image{}, imagegen.Fail(imagegen.CodeOf(err), accepted, fmt.Errorf("google: %w", err))
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.CodeOf(err), accepted, fmt.Errorf("google: %w", err))
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
 		refusal, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return imagegen.Image{}, imagegen.Fail(imagegen.ProviderFailed, accepted,
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ProviderFailed, accepted,
 			fmt.Errorf("google: Gemini answered %d: %s", response.StatusCode, strings.TrimSpace(string(refusal))))
 	}
 
 	// From here Gemini has drawn, and billed, whatever it drew.
 	answer, err := io.ReadAll(io.LimitReader(response.Body, responseLimit+1))
 	if err != nil {
-		return imagegen.Image{}, imagegen.Fail(imagegen.CodeOf(err), true, fmt.Errorf("google: reading the answer: %w", err))
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.CodeOf(err), true, fmt.Errorf("google: reading the answer: %w", err))
 	}
 	if len(answer) > responseLimit {
-		return imagegen.Image{}, imagegen.Fail(imagegen.ProviderFailed, true,
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ProviderFailed, true,
 			fmt.Errorf("google: the answer is larger than %d bytes", responseLimit))
 	}
 	var output generateResponse
 	if err := json.Unmarshal(answer, &output); err != nil {
-		return imagegen.Image{}, imagegen.Fail(imagegen.ProviderFailed, true, fmt.Errorf("google: the answer is not JSON: %w", err))
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ProviderFailed, true, fmt.Errorf("google: the answer is not JSON: %w", err))
 	}
 	if reason := output.PromptFeedback.BlockReason; reason != "" {
-		return imagegen.Image{}, imagegen.Fail(imagegen.ContentFiltered, true,
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ContentFiltered, true,
 			fmt.Errorf("google: Gemini refused the prompt: %s", reason))
 	}
 
@@ -254,18 +280,18 @@ func (p *Provider) draw(ctx context.Context, body []byte, accepted bool) (imageg
 				unusable = fmt.Errorf("google: a picture labelled %s is %s", part.InlineData.MimeType, picture.MediaType)
 				continue
 			}
-			return picture, nil
+			return picture, output.UsageMetadata, nil
 		}
 		reasons = append(reasons, candidate.FinishReason)
 	}
 
 	if slices.ContainsFunc(reasons, func(reason string) bool { return slices.Contains(filtered, reason) }) {
-		return imagegen.Image{}, imagegen.Fail(imagegen.ContentFiltered, true,
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ContentFiltered, true,
 			fmt.Errorf("google: Gemini stopped drawing on a safety rule: %s", strings.Join(reasons, ", ")))
 	}
 	if unusable != nil {
-		return imagegen.Image{}, imagegen.Fail(imagegen.ProviderFailed, true, unusable)
+		return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ProviderFailed, true, unusable)
 	}
-	return imagegen.Image{}, imagegen.Fail(imagegen.ProviderFailed, true,
+	return imagegen.Image{}, usage{}, imagegen.Fail(imagegen.ProviderFailed, true,
 		fmt.Errorf("google: Gemini drew nothing (finished with %s)", strings.Join(reasons, ", ")))
 }

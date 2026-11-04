@@ -377,6 +377,20 @@ func (s *StoreSuite) TestAnyEpisodeCardsIsWhetherAConfigTurnedThemOn() {
 	s.False(any, "a deleted config writes no card")
 }
 
+// Catches an episode closed early by a message tried again: a message is touched at the time
+// it was made or queued, so one tried again after a later message is older than the episode's
+// last message, and the episode stays open from that later one on.
+func (s *StoreSuite) TestAMessageTriedAgainAfterALaterOneKeepsTheEpisodeOpenFromTheLaterOne() {
+	person := s.mapped("+15550100")
+	episode := s.threadAt(person, "agent:thread-one", s.base)
+	s.threadAt(person, "agent:thread-one", s.base.Add(30*time.Minute))
+	s.threadAt(person, "agent:thread-one", s.base.Add(time.Minute))
+
+	s.Empty(s.closeIdle(s.store, s.base.Add(80*time.Minute)), "closed an hour after the message tried again, not the later one")
+	s.Equal(episodeInProgress, s.episodeStatus(episode.ID))
+	s.Len(s.closeIdle(s.store, s.base.Add(90*time.Minute)), 1, "the later message's hour is over")
+}
+
 // A message being written holds its episode open: a sweep that runs meanwhile leaves it to
 // the message, however long it has been since the one before.
 func (s *StoreSuite) TestAnEpisodeAMessageIsTouchingIsNotClosed() {

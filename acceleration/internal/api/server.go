@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -46,6 +47,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -55,8 +57,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
@@ -174,10 +174,6 @@ type Options struct {
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
 	Simulations *simulation.Runner
-	// PluginEvents subscribes agents to their plugins' MCP events and answers deliveries.
-	// Absent without a database or sessions, in which case a config's plugin_events are
-	// stored but nothing subscribes to them.
-	PluginEvents *pluginevents.Service
 	// Channels answers what arrives on the app's WhatsApp, text and iMessage lines. Absent
 	// without a database, sessions or a key encryption key, in which case a line cannot be
 	// connected and nothing is delivered.
@@ -203,6 +199,9 @@ type Options struct {
 	// without a database or without something that can read a page, in which case the url
 	// paths say so rather than accepting a subscription nothing would honour.
 	KnowledgeURLs *urls.Service
+	// KnowledgeFiles takes files uploaded to those bases and reads them in the background.
+	// Absent, an upload is refused as not configured.
+	KnowledgeFiles *files.Service
 	// Voices holds the voices customers brought with them. Absent when the deployment has
 	// no object storage, in which case there is nowhere to keep a recording and the voice
 	// paths say so.
@@ -240,9 +239,10 @@ type Options struct {
 	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
 	// which only a router no other tenant shares should allow.
 	PrivateModelEndpoints bool
-	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
+	// PublicURL is where this process is reachable, which connector OAuth callbacks need.
 	PublicURL string
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is where a finished connector consent sends the browser when no return_url
+	// was given, and the page a consent is launched from.
 	DashboardURL string
 	// AuthMode is how this deployment decided that, which a handler needs when the mode
 	// itself is the answer: moving a customer's data is refused outright in noauth,
@@ -326,10 +326,7 @@ type Options struct {
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
 	TrustedProxies []netip.Prefix
-	// PluginHTTP reaches plugins' MCP servers and their auth servers: a login, its callback,
-	// and a config's MCP servers describing themselves. Absent reaches only public hosts.
-	PluginHTTP *http.Client
-	Logger     *slog.Logger
+	Logger         *slog.Logger
 }
 
 // Server serves the router's HTTP API.
@@ -361,6 +358,7 @@ type Server struct {
 	knowledge          *metered.Knowledge
 	knowledgeLimits    ingest.Limits
 	pages              *urls.Service
+	knowledgeFiles     *files.Service
 	voices             *voices.Service
 	library            *voices.Catalogue
 	dispatch           *dispatch.Pool
@@ -369,8 +367,6 @@ type Server struct {
 	corsOrigins        []string
 	publicURL          string
 	dashboardURL       string
-	oauth              *plugins.Auth
-	pluginEvents       *pluginevents.Service
 	channels           *channels.Service
 	dlc                *dlc.Service
 	gate               *dlc.Gate
@@ -401,6 +397,14 @@ type Server struct {
 	mcpEvents       *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
+	// chatCards opens the episodes of the app chat and writes their cards (chatEpisode); nil
+	// without a store or Stream clients.
+	chatCards *omnichannel.Cards
+	// chatCardsWriting counts the chat cards being written off a hook's request
+	// (ChatCardsRunning).
+	chatCardsWriting atomic.Int32
+	// owing is what each running session still owes an app chat's channel (retire).
+	owing owedReplies
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
 	// Stream, and how long to wait before each read. Tests replace both.
 	readCallStats  readCallStats
@@ -546,6 +550,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		knowledge:          options.Knowledge,
 		knowledgeLimits:    options.KnowledgeLimits,
 		pages:              options.KnowledgeURLs,
+		knowledgeFiles:     options.KnowledgeFiles,
 		voices:             options.Voices,
 		library:            options.VoiceLibrary,
 		dispatch:           options.Dispatch,
@@ -572,21 +577,14 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,
 		upgrader:           newUpgrader(authMode),
-		oauth: &plugins.Auth{
-			HTTP:         options.PluginHTTP,
-			PublicURL:    options.PublicURL,
-			DashboardURL: options.DashboardURL,
-			Clients:      session.PluginClients(options.Store, options.Secrets),
-		},
-		pluginEvents: options.PluginEvents,
-		channels:     options.Channels,
-		dlc:          options.DLC,
-		gate:         options.Gate,
-		opsKey:       options.OpsKey,
-		manageKey:    options.ManageKey,
-		popularity:   newPopularity(options.Store, logger),
-		logger:       logger,
-		draining:     make(chan struct{}),
+		channels:           options.Channels,
+		dlc:                options.DLC,
+		gate:               options.Gate,
+		opsKey:             options.OpsKey,
+		manageKey:          options.ManageKey,
+		popularity:         newPopularity(options.Store, logger),
+		logger:             logger,
+		draining:           make(chan struct{}),
 	}
 	if options.Store != nil && options.ConnectorSecrets != nil {
 		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)
@@ -614,6 +612,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
+	}
+	if cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream}); err == nil {
+		server.chatCards = cards
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
@@ -704,6 +705,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
 	mux.HandleFunc("GET /v1/data/export", s.exportData)
 	mux.HandleFunc("POST /v1/data/import", s.importData)
+	mux.HandleFunc("POST "+knowledgeFilesPath, s.uploadKnowledgeFile)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
 	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)

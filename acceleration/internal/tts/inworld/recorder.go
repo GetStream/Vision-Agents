@@ -155,16 +155,25 @@ func (r *Recorder) Model() string { return r.options.Model }
 // tts.Voiced: the recording router reads it to report the voice that spoke.
 func (r *Recorder) Voice() string { return r.options.VoiceID }
 
+// Check refuses a text longer than one request takes, which makes the recorder a
+// tts.Checked.
+func (r *Recorder) Check(recording tts.Recording) error {
+	// One request is one file, and files are not joined: mp3 and wav cannot be cut
+	// together byte for byte, so a longer text goes to a vendor that takes it.
+	if units := utf16Length(recording.Text); units > MaxRecordingText {
+		return stack.Wrap(fmt.Errorf("%w: %d UTF-16 code units, at most %d",
+			ErrTextTooLong, units, MaxRecordingText))
+	}
+	return nil
+}
+
 // Record speaks the text and returns the file.
 func (r *Recorder) Record(ctx context.Context, recording tts.Recording) (tts.Recorded, error) {
 	if err := recording.Validate(); err != nil {
 		return tts.Recorded{}, stack.Wrap(err)
 	}
-	// One request is one file, and files are not joined: mp3 and wav cannot be cut
-	// together byte for byte, so a longer text goes to a vendor that takes it.
-	if units := utf16Length(recording.Text); units > MaxRecordingText {
-		return tts.Recorded{}, stack.Wrap(fmt.Errorf("%w: %d UTF-16 code units, at most %d",
-			ErrTextTooLong, units, MaxRecordingText))
+	if err := r.Check(recording); err != nil {
+		return tts.Recorded{}, err
 	}
 	name := recording.Format
 	if name == "" {

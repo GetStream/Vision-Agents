@@ -325,7 +325,7 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+    ///Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -498,7 +498,7 @@ pub struct AgentConfigRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+    ///Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -626,7 +626,7 @@ pub struct AgentConnectorSelection {
     #[serde(rename = "type")]
     pub type_: AgentConnectorSelectionType,
 }
-///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1157,6 +1157,22 @@ pub struct AgentTools {
     ///Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub progressive: ::std::option::Option<bool>,
+}
+///`AgentUser`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AgentUser {
+    ///The number linked to the user, in E.164; null when none is.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub phone: ::std::option::Option<::std::string::String>,
+    ///The Stream user id, as the app's own token signs it.
+    pub user_id: ::std::string::String,
+}
+///Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AgentUserRequest {
+    ///The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub phone: ::std::option::Option<::std::string::String>,
 }
 ///`AnalyzeReviewsRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -3264,7 +3280,7 @@ pub struct Connector {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub setup: ::std::option::Option<ConnectorSetup>,
 }
-///grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
+///grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3374,7 +3390,7 @@ pub struct ConnectorAuditEvent {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub latency_ms: ::std::option::Option<i64>,
     pub owner_type: ConnectionOwnerType,
-    ///Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+    ///Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reason: ::std::option::Option<::std::string::String>,
     ///The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -4144,6 +4160,9 @@ pub struct CreateResponseRequest {
     pub request_id: ::std::option::Option<::std::string::String>,
     ///What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
     pub text: ::std::string::String,
+    ///What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub ui_action: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ///Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub videos: ::std::option::Option<::std::vec::Vec<VideoSource>>,
@@ -5104,7 +5123,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -5981,16 +6000,26 @@ impl ::std::convert::TryFrom<::std::string::String> for ImageSourceDetail {
     }
 }
 ///`IndexedKnowledgeDocument`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct IndexedKnowledgeDocument {
+    ///The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+    pub bytes: i64,
+    ///The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+    pub content_type: ::std::string::String,
     pub created_at: ::std::string::String,
+    ///Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
     pub namespace: ::std::string::String,
-    ///How many passages it was last cut into.
+    ///How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+    pub pages: i64,
+    ///How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
     pub passages: i64,
     ///What the document was posted as, and what its passages are keyed by.
     pub source: ::std::string::String,
-    ///The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+    pub state: KnowledgeDocumentState,
+    ///The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<::std::string::String>,
     ///When it was last written.
@@ -6020,7 +6049,7 @@ pub struct IngestedKnowledge {
 pub struct InputParts {
     ///Pictures, attached or returned by a tool.
     pub images: i64,
-    ///The system prompt: the agent's instructions, skills and plugin guidance.
+    ///The system prompt: the agent's instructions, skills and connector guidance.
     pub instructions: i64,
     ///The conversation's words, from either side.
     pub messages: i64,
@@ -6180,6 +6209,61 @@ pub struct KnowledgeDocument {
     pub source: ::std::string::String,
     ///The document, whole. It is cut into passages here.
     pub text: ::std::string::String,
+}
+///Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeDocumentState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "indexed")]
+    Indexed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for KnowledgeDocumentState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Indexed => f.write_str("indexed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeDocumentState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "indexed" => Ok(Self::Indexed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`KnowledgePassage`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -7187,7 +7271,7 @@ impl ::std::convert::From<::std::vec::Vec<ContentPart>> for MessageContent {
         Self::Array(value)
     }
 }
-///What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+///What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7217,6 +7301,8 @@ pub enum Modality {
     Image,
     #[serde(rename = "detection")]
     Detection,
+    #[serde(rename = "ocr")]
+    Ocr,
     #[serde(rename = "memory")]
     Memory,
     #[serde(rename = "knowledge")]
@@ -7235,6 +7321,7 @@ impl ::std::fmt::Display for Modality {
             Self::DecisionModel => f.write_str("decision_model"),
             Self::Image => f.write_str("image"),
             Self::Detection => f.write_str("detection"),
+            Self::Ocr => f.write_str("ocr"),
             Self::Memory => f.write_str("memory"),
             Self::Knowledge => f.write_str("knowledge"),
             Self::Phone => f.write_str("phone"),
@@ -7253,6 +7340,7 @@ impl ::std::str::FromStr for Modality {
             "decision_model" => Ok(Self::DecisionModel),
             "image" => Ok(Self::Image),
             "detection" => Ok(Self::Detection),
+            "ocr" => Ok(Self::Ocr),
             "memory" => Ok(Self::Memory),
             "knowledge" => Ok(Self::Knowledge),
             "phone" => Ok(Self::Phone),
@@ -7469,6 +7557,161 @@ pub struct NumberSearchResult {
     pub numbers: ::std::vec::Vec<AvailableNumber>,
     ///Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
     pub skipped: ::std::vec::Vec<SkippedVendor>,
+}
+///Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OcrErrorCode {
+    #[serde(rename = "provider_failed")]
+    ProviderFailed,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for OcrErrorCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ProviderFailed => f.write_str("provider_failed"),
+            Self::Timeout => f.write_str("timeout"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrErrorCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "provider_failed" => Ok(Self::ProviderFailed),
+            "timeout" => Ok(Self::Timeout),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Who reads the page, and what may happen to it afterwards.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct OcrOptions {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub data_policy: ::std::option::Option<DataPolicy>,
+    ///Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub figures: ::std::option::Option<bool>,
+    ///A priority list of where to try, in the order given, which wins over target when it holds anything.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub providers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///A provider/model or a shortcut. Defaults to ocr-default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+///`OcrRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct OcrRequest {
+    ///The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+    pub image: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<OcrOptions>,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+}
+///`OcrResult`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct OcrResult {
+    ///Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+    pub cost_micros: i64,
+    ///What went wrong, in words. Absent when the page was read.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<OcrErrorCode>,
+    ///This response's own id, for logs. Nothing is stored under it.
+    pub id: ::std::string::String,
+    ///The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+    pub markdown: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///Who read it, or who failed to. Absent when nothing got as far as a provider.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    pub status: OcrStatus,
+}
+///Whether the page was read. A failed reading says why in error_code and error.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OcrStatus {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for OcrStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///One tool as the model sees it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -7924,7 +8167,7 @@ pub struct PluginWithOptions {
     ///Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub toolsets: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+    ///Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user: ::std::option::Option<bool>,
 }
