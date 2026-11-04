@@ -35,8 +35,9 @@ PUT /v1/agents/users/{user_id} {"phone": "+15551234567" | null}    api.putUser, 
   phone: omnichannel.Phone, else 400; null unlinks
   store.LinkUserPhone   user_phones (customer, app, user_id, phone), one pair per app;
                         a number another user of the app holds: 409 phone_taken
-    joinLinked          each agent config of the customer: the stream_user row and the phone
-                        row of the pair, in that app, point at the older omni-channel
+    joinLinked          each agent config of the customer: the stream_user row
+                        («<app pk>:<user id>») and the phone row of the pair, pinned to that
+                        app, point at the older omni-channel
                         (whose oldest row was made first) and take its pin; no card moves
 ```
 
@@ -119,7 +120,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **One chat episode per run of messages.** Every message calls `Open`, which keeps the episode open; only the message that opened it writes a card. A delivery Stream makes again, or the queue tries again, finds the open episode (`episodes_open_thread`) and writes nothing. A card that fails costs the card, not the answer: logged at ERROR, and the message is answered. A hook's card is written off its request, as its answer is.
 - **An app chat's channel is the customer's by the config it names.** The customer's app makes it with `agent_config_id` and none of the router's stamps, so `linesOf` reads it for a chat card of that config (`theirs`); a stamped channel is read only for the customer it names.
 - **A link makes one omni-channel of two.** The customer's backend says a Stream user of its app and a number are one person (`PUT /v1/agents/users/{user_id}`); under each agent the user's `stream_user` row and the number's `phone` row then point at the older of their omni-channels, and a row made later takes its partner's (`store.MapContact`). One number per user and one user per number within a Stream app: the same user id in another app is another person, and a number another user holds is a 409. No message moves: the cards written before stay where they were, and are read by their message id from any omni-channel, as long as its own agent wrote them (`writtenAsCard`). A link and a first sighting at once each read after their own write, so one sees the other. Unlinking (`"phone": null`), or a new number, stops the joining; rows already joined stay so. Example: Anya's SMS made `omni-A` on Monday and her app chat `omni-B` on Tuesday; once linked, both rows point at `omni-A`, and her next SMS reads the chat's card from `omni-B`.
-- **The deployment's own app is one app, whatever its pin.** A chat row from it carries its id (the message hook), an SMS row none, and a request acting in it 0 (`store.linkApp`).
+- **The deployment's own app is one app, whatever its pin.** A chat row from it carries its id (the message hook), in its pin and its address, an SMS row none, and a request acting in it 0 (`store.linkApp`, `streamUserAddresses`).
 - **Reading cards is opt-in too.** Off, `callCards.read` returns before any read, and the session is handed what it was before. Example: an SMS thread session under a config without `episode_cards` reads its thread as before and nothing else.
 - **A person's cards are their omni-channel's.** `store.EpisodeCards` takes the contact rows of the same customer and agent that point at the omni-channel, so a linked Slack row and a phone row are one person, and the same number under another agent or customer is another. Example: `+15550100199`'s cards are never read for `+15550100100`.
 - **A shared thread reads no cards.** A thread's cards are of the one who started it. Example: Bob writes in Alice's Slack thread; the session reads none of Alice's cards.

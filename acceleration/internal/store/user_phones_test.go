@@ -10,8 +10,14 @@ import (
 // streamUser is a contact map row of the acme-app customer's agent for a Stream user of app
 // 4242, which a test changes one part of.
 func streamUser(userID, conversationID string) *ContactMapEntry {
-	entry := contact(userID, conversationID)
-	entry.Kind = ContactStreamUser
+	return streamUserOf(4242, userID, conversationID)
+}
+
+// streamUserOf is streamUser for a user of the app given, its row pinned there, as the message
+// hook makes it.
+func streamUserOf(app int64, userID, conversationID string) *ContactMapEntry {
+	entry := contact(streamUserAddress(app, userID), conversationID)
+	entry.Kind, entry.StreamAppPK = ContactStreamUser, app
 	return entry
 }
 
@@ -118,8 +124,7 @@ func (s *StoreSuite) TestTheDeploymentsOwnAppIsOneAppWhateverItsPin() {
 // Catches a link keyed by user id alone: anya of app 7 is not anya of app 4242.
 func (s *StoreSuite) TestTheSameUserIdInAnotherAppIsAnotherPerson() {
 	s.made(contact("+15550100", "agent:omni-sms"))
-	other := streamUser("anya", "agent:omni-chat")
-	other.StreamAppPK = 7
+	other := streamUserOf(7, "anya", "agent:omni-chat")
 	s.made(other)
 
 	s.Require().NoError(s.link("anya", "+15550100"))
@@ -128,8 +133,8 @@ func (s *StoreSuite) TestTheSameUserIdInAnotherAppIsAnotherPerson() {
 	smsTwo := contact("+15550100", "agent:omni-sms-two")
 	smsTwo.AgentConfigID = "agent-two"
 	s.made(smsTwo)
-	later := streamUser("anya", "agent:omni-chat-two")
-	later.AgentConfigID, later.StreamAppPK = "agent-two", 7
+	later := streamUserOf(7, "anya", "agent:omni-chat-two")
+	later.AgentConfigID = "agent-two"
 	s.Equal("agent:omni-chat-two", s.made(later).ConversationID, "a row made later in app 7")
 	// App 7 sorts before 4242, as the links' primary key does.
 	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "acme-app", StreamAppPK: 7, UserID: "anya", Phone: "+15550177"}))
@@ -139,6 +144,34 @@ func (s *StoreSuite) TestTheSameUserIdInAnotherAppIsAnotherPerson() {
 	chatThree := streamUser("anya", "agent:omni-chat-three")
 	chatThree.AgentConfigID = "agent-three"
 	s.Equal("agent:omni-sms-three", s.made(chatThree).ConversationID, "anya of app 4242 is found by app 4242's link")
+}
+
+// Catches a number's row of another app joined to this app's link: the link is the app's
+// word about its user, and the number's row of app 7 is in app 7's omni-channel.
+func (s *StoreSuite) TestANumbersRowInAnotherAppIsNotJoined() {
+	sms := contact("+15550100", "agent:omni-sms")
+	sms.StreamAppPK = 7
+	s.made(sms)
+	chat := s.made(streamUser("anya", "agent:omni-chat"))
+
+	s.Require().NoError(s.link("anya", "+15550100"))
+
+	s.Equal("agent:omni-sms", s.omniOf(sms))
+	s.Equal("agent:omni-chat", s.omniOf(chat))
+	later := contact("+15550100", "agent:omni-later")
+	later.AgentConfigID, later.StreamAppPK = "agent-two", 7
+	chatTwo := streamUser("anya", "agent:omni-chat-two-4242")
+	chatTwo.AgentConfigID = "agent-two"
+	s.made(chatTwo)
+	s.Equal("agent:omni-later", s.made(later).ConversationID, "a number's row made later in app 7")
+	// App 7 sorts before 4242, as the links' index does.
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "acme-app", StreamAppPK: 7, UserID: "bob", Phone: "+15550100"}))
+	chatThree := streamUser("anya", "agent:omni-chat-three")
+	chatThree.AgentConfigID = "agent-three"
+	s.made(chatThree)
+	smsThree := contact("+15550100", "agent:omni-sms-three")
+	smsThree.AgentConfigID = "agent-three"
+	s.Equal("agent:omni-chat-three", s.made(smsThree).ConversationID, "app 4242's link, not app 7's")
 }
 
 // Catches a number linked to two users of one app, a second app refused the number, and a

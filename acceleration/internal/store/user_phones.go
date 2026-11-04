@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/uptrace/bun"
@@ -70,27 +72,47 @@ func (s *Store) UnlinkUserPhone(ctx context.Context, customerID string, app int6
 	return nil
 }
 
-// linkOf is the link a contact map address is one half of, in the app the row is pinned to. A
-// row of another kind, or with no link, has none.
+// linkOf is the link a contact map address is one half of: a Stream user's in the app its
+// address names, a number's in the app the row is pinned to. A row of another kind, or with no
+// link, has none.
 func (s *Store) linkOf(ctx context.Context, entry *ContactMapEntry) (UserPhone, bool, error) {
-	column := map[string]string{ContactStreamUser: "user_id", ContactPhone: "phone"}[entry.Kind]
-	if column == "" {
+	query := s.db.NewSelect().Model((*UserPhone)(nil)).Where("customer_id = ?", entry.CustomerID)
+	switch entry.Kind {
+	case ContactStreamUser:
+		app, userID, ok := splitStreamUserAddress(entry.Address)
+		if !ok {
+			return UserPhone{}, false, nil
+		}
+		query = query.Where("user_id = ?", userID).Where("stream_app_pk = ?", s.linkApp(app))
+	case ContactPhone:
+		query = query.Where("phone = ?", entry.Address).Where("stream_app_pk = ?", s.linkApp(entry.StreamAppPK))
+	default:
 		return UserPhone{}, false, nil
 	}
 	var links []UserPhone
-	err := s.db.NewSelect().Model(&links).
-		Where("customer_id = ?", entry.CustomerID).
-		Where("? = ?", bun.Ident(column), entry.Address).
-		Where("stream_app_pk = ?", s.linkApp(entry.StreamAppPK)).
-		Limit(1).
-		Scan(ctx)
-	if err != nil {
+	if err := query.Limit(1).Scan(ctx, &links); err != nil {
 		return UserPhone{}, false, stack.Wrap(fmt.Errorf("store: link of a contact: %w", err))
 	}
 	if len(links) == 0 {
 		return UserPhone{}, false, nil
 	}
 	return links[0], true, nil
+}
+
+// streamUserAddress is a stream_user row's address, «<app pk>:<user id>», as
+// omnichannel.StreamUser writes it: a user id is a person only within its Stream app.
+func streamUserAddress(app int64, userID string) string {
+	return strconv.FormatInt(app, 10) + ":" + userID
+}
+
+// splitStreamUserAddress reads a stream_user row's address back into its app and user id.
+func splitStreamUserAddress(address string) (int64, string, bool) {
+	pin, userID, ok := strings.Cut(address, ":")
+	app, err := strconv.ParseInt(pin, 10, 64)
+	if !ok || err != nil || userID == "" {
+		return 0, "", false
+	}
+	return app, userID, true
 }
 
 // linkApp is the app a pin names as a link keeps it: 0 for the deployment's own, which a row
@@ -104,6 +126,17 @@ func (s *Store) linkApp(pin int64) int64 {
 	return pin
 }
 
+// streamUserAddresses are the addresses a link's Stream user has in the contact map: in the
+// deployment's own app, as 0 and as the app's id, which the message hook names it by once it is
+// known (linkApp).
+func (s *Store) streamUserAddresses(link UserPhone) []string {
+	addresses := []string{streamUserAddress(link.StreamAppPK, link.UserID)}
+	if deployment := s.streamPins().deployment(); link.StreamAppPK == 0 && deployment != 0 {
+		addresses = append(addresses, streamUserAddress(deployment, link.UserID))
+	}
+	return addresses
+}
+
 // joinLinked points the Stream user's row and the number's row of the link at one omni-channel,
 // for each agent config of the customer: the older one, whose oldest row
 // was made first, and its pin with it. No card moves: a card is read by its message id
@@ -115,7 +148,7 @@ func (s *Store) joinLinked(ctx context.Context, link UserPhone) error {
 	_, err := s.db.NewRaw(`WITH pair AS (
 	SELECT cm.id, cm.agent_config_id, cm.conversation_id, cm.stream_app_pk FROM contact_map AS cm
 	WHERE cm.customer_id = ?0
-		AND ((cm.kind = ?1 AND cm.address = ?2) OR (cm.kind = ?3 AND cm.address = ?4))
+		AND ((cm.kind = ?1 AND cm.address IN (?2)) OR (cm.kind = ?3 AND cm.address = ?4))
 		AND COALESCE(NULLIF(cm.stream_app_pk, ?5), 0) = ?6
 ), born AS (
 	SELECT o.agent_config_id, o.conversation_id, min(o.created_at) AS at FROM contact_map AS o
@@ -130,7 +163,7 @@ UPDATE contact_map AS cm
 SET conversation_id = oldest.conversation_id, stream_app_pk = oldest.stream_app_pk, updated_at = ?7
 FROM pair JOIN oldest USING (agent_config_id)
 WHERE cm.id = pair.id AND cm.conversation_id <> oldest.conversation_id`,
-		link.CustomerID, ContactStreamUser, link.UserID, ContactPhone, link.Phone,
+		link.CustomerID, ContactStreamUser, bun.In(s.streamUserAddresses(link)), ContactPhone, link.Phone,
 		deployment, link.StreamAppPK, time.Now().UTC()).
 		Exec(ctx)
 	if err != nil {

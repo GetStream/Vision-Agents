@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -212,10 +213,10 @@ func (s *UserPhonesSuite) chatCard() string {
 	ctx := context.Background()
 	cards, err := omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.stream})
 	s.Require().NoError(err)
-	person, err := omnichannel.StreamUser(s.user)
-	s.Require().NoError(err)
 	pin, err := s.stream.Pin(ctx, s.customerID())
 	s.Require().NoError(err)
+	// The address #1701's review makes a Stream user's, «<app pk>:<user id>».
+	person := omnichannel.Person{Kind: store.ContactStreamUser, Address: s.streamUserAddress(pin)}
 	opened, err := cards.Open(ctx, omnichannel.Episode{
 		CustomerID: s.customerID(), AgentConfigID: s.config.ID, AgentName: s.config.Name, Person: person,
 		Source: store.EpisodeChat, ThreadChannel: "agent:chat-" + s.utils.uuid(), StreamAppPK: pin,
@@ -237,7 +238,14 @@ func (s *UserPhonesSuite) chatCard() string {
 
 // chatOmniChannel is the omni-channel the test's user's chat row points at now.
 func (s *UserPhonesSuite) chatOmniChannel() string {
-	contact, err := s.store.Contact(context.Background(), s.customerID(), s.config.ID, store.ContactStreamUser, s.user)
+	pin, err := s.stream.Pin(context.Background(), s.customerID())
+	s.Require().NoError(err)
+	contact, err := s.store.Contact(context.Background(), s.customerID(), s.config.ID, store.ContactStreamUser, s.streamUserAddress(pin))
 	s.Require().NoError(err)
 	return strings.TrimPrefix(contact.ConversationID, "agent:")
+}
+
+// streamUserAddress is the test's user's contact map address in an app.
+func (s *UserPhonesSuite) streamUserAddress(app int64) string {
+	return strconv.FormatInt(app, 10) + ":" + s.user
 }
