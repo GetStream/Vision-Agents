@@ -3444,8 +3444,9 @@ image:
       supports: [size, aspect_ratio, seed, negative_prompt, format]
 
     # Gemini 3.1 Flash Image, asked for 1K pictures. Google bills output images at $60 per
-    # million tokens, which it quotes as $0.067 a 1K picture on the standard tier
-    # (ai.google.dev/gemini-api/docs/pricing, read 2026-09-24). It takes a shape and
+    # million tokens, 1120 of them a 1K picture, so $0.0672, and the prompt at $0.50 and any
+    # thinking or words at $3 per million tokens on the standard tier
+    # (ai.google.dev/gemini-api/docs/pricing, read 2026-11-04). It takes a shape and
     # nothing else. input_modalities records that it can also be shown a picture, for the
     # edit endpoint that is not built yet.
     - provider: google
