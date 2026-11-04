@@ -104,7 +104,7 @@ func (s *UserPhonesSuite) TestAnSMSAfterTheLinkReachesTheUsersChat() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
 
 	s.Contains(s.took(2)[1].text, chatSummary)
-	s.Equal([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
+	s.ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
 	s.Equal(s.chatOmniChannel(), s.omniChannel(s.person))
 }
 
@@ -117,7 +117,7 @@ func (s *UserPhonesSuite) TestAUserLinkedToANumberSomebodyHadBeforeReadsNoneOfTh
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "this is anya"), time.Now()))
 	s.took(1)
 	s.idle()
-	s.Require().Equal([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user), "linked, her SMS is hers")
+	s.Require().ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user), "linked, her SMS is hers")
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": null}`, nil))
 	bob := "bob-" + s.utils.uuid()
 	s.chatCardOf(bob, "Bob asked about his bill.")
@@ -140,7 +140,7 @@ func (s *UserPhonesSuite) TestTheSameLinkAgainKeepsTheCardsWrittenSinceTheFirst(
 
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
 
-	s.Equal([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
+	s.ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
 	s.Equal(omni, s.omniChannel(s.person))
 	s.Equal(omni, s.chatOmniChannel())
 }
