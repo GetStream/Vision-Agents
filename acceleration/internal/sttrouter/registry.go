@@ -3,6 +3,7 @@ package sttrouter
 import (
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -288,6 +289,14 @@ func DefaultRegistry() *Registry {
 	})
 
 	return registry
+}
+
+// RegisterAudioFloor adds the audio floor server's transcriber. A deployment without one
+// never calls this, so audiofloor/audio-floor is a target nothing can be built for.
+func RegisterAudioFloor(registry *Registry, client *audiofloor.Client) {
+	registry.Register(audiofloor.ProviderName, func(spec routing.Spec) (stt.STT, error) {
+		return audiofloor.NewTranscriber(client, spec.Model, spec.Logger), nil
+	})
 }
 
 // RegisterMock adds the load-test transcriber, which reaches no vendor and recognises

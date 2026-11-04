@@ -2488,3 +2488,32 @@ func TestWordsGoneBackOverAreJoinedOnce(t *testing.T) {
 		}
 	}
 }
+
+// A Hearer that waits says when to put the same words again, and the cadence's own retry is
+// for everyone else.
+func (s *ConverseSuite) TestAHearersWaitPutsTheWordsAgainAfterItsInterval() {
+	ready := s.settle("could you", s.quiet())
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Wait, Floor: harness.Continue, Again: 10 * testRetry,
+	}, s.quiet())
+	waited := time.Now()
+	again := s.held()
+	s.Equal(ready.Text, again.Text)
+	s.GreaterOrEqual(time.Since(waited), 10*testRetry)
+}
+
+// A turn's first pause is the one before any wait, however often it is put; words that go on
+// after a wait are a later pause.
+func (s *ConverseSuite) TestOnlyTheFirstPauseOfATurnIsItsFirst() {
+	s.start(DuplexOptions{}, time.Minute)
+	ready := s.settle("my number is", s.quiet())
+	s.True(s.converse.firstPause(ready))
+	s.converse.Ruled(harness.Decided{CandidateID: ready.ID, Disposition: harness.Wait, Floor: harness.Continue}, s.quiet())
+	again := s.held()
+	s.True(s.converse.firstPause(again))
+
+	s.converse.Settled(again, s.quiet())
+	s.converse.Ruled(harness.Decided{CandidateID: again.ID, Disposition: harness.Wait, Floor: harness.Continue}, s.quiet())
+	more := s.settle("my number is four one", s.quiet())
+	s.False(s.converse.firstPause(more))
+}

@@ -370,6 +370,13 @@ type Agent struct {
 	// FlowJudge routes the flow controller to a decision model, such as
 	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
 	FlowJudge string `koanf:"flow_judge"`
+	// AudioFloorURL is an audio floor server (internal/audiofloor). Its model transcribes
+	// for an agent that names audiofloor/audio-floor as its transcriber, and AudioFloorMode
+	// says what the flow controller does with its rulings: off (the default), shadow (asks
+	// it beside the flow controller and acts on nothing it says) or act (asks it first, and
+	// the flow controller decides the turns it doesn't answer in time).
+	AudioFloorURL  string `koanf:"audio_floor_url"`
+	AudioFloorMode string `koanf:"audio_floor_mode"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -547,6 +554,8 @@ var variables = map[string]string{
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
 	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
+	"agent.audio_floor_url":     "ROUTER_AUDIO_FLOOR_URL",
+	"agent.audio_floor_mode":    "ROUTER_AUDIO_FLOOR_MODE",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -759,6 +768,15 @@ func (c Config) validate() error {
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
+	}
+	switch c.Agent.AudioFloorMode {
+	case "", "off":
+	case "shadow", "act":
+		if c.Agent.AudioFloorURL == "" {
+			return fmt.Errorf("config: agent.audio_floor_mode %q needs agent.audio_floor_url (ROUTER_AUDIO_FLOOR_URL)", c.Agent.AudioFloorMode)
+		}
+	default:
+		return fmt.Errorf("config: agent.audio_floor_mode (ROUTER_AUDIO_FLOOR_MODE) is off, shadow or act, got %q", c.Agent.AudioFloorMode)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:

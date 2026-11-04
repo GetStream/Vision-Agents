@@ -24,6 +24,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/guardrail"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -141,6 +142,10 @@ type Options struct {
 	// when JudgeTarget names one. Nil or an empty JudgeTarget keeps the language model.
 	Judge       *decisionrouter.Router
 	JudgeTarget string
+	// AudioFloor is an audio floor model the flow controller asks first when
+	// AudioFloorMode is Act, or beside it when Shadow. Nil or another mode asks it nothing.
+	AudioFloor     *audiofloor.Client
+	AudioFloorMode audiofloor.Mode
 	// Skills are what the voice model may hand over to the subagent. A written
 	// conversation with no subagent loads them itself, with load_skill.
 	Skills harness.Skills
@@ -355,6 +360,9 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
+	// audioFloor keeps what the audio floor model hears, and asks it beside the flow
+	// controller in shadow mode. Nil unless Options.AudioFloorMode asks it.
+	audioFloor *audioFloor
 	// decisionStore keeps what the conversation decided for an hour, so a call can be read
 	// back after the process that held it is gone.
 	decisionStore *decisionRecorder
@@ -696,6 +704,7 @@ func New(options Options) (*Agent, error) {
 	agent := &Agent{
 		options:          options,
 		logger:           logger,
+		audioFloor:       newAudioFloor(options.AudioFloor, options.AudioFloorMode, logger),
 		emitter:          emitter,
 		prompt:           options.Instructions,
 		zone:             zone,
@@ -1457,6 +1466,7 @@ func (a *Agent) close() error {
 		p.running.Wait()
 	}
 	a.running.Wait()
+	a.audioFloor.close()
 	a.mu.Lock()
 	a.forgetUtterancesLocked()
 	a.mu.Unlock()
@@ -1493,6 +1503,7 @@ func (a *Agent) consumeEdge() {
 			tallies[inbound.Participant.ID] = tally
 		}
 		tally.heardAudio(inbound.Audio)
+		a.audioFloor.heard(inbound)
 		if a.switching.Load() {
 			continue
 		}
@@ -1928,16 +1939,14 @@ func (a *Agent) ask(ready candidate) {
 	if participant == "" {
 		participant = a.speakerLocked(ready.Participant).label
 	}
+	tools := a.options.Tools.Tools
 	a.mu.Unlock()
 
 	// Speech the voice has finished sending is still on its way out of the edge, so the
 	// agent counts as speaking until it has drained.
 	speaking = speaking || a.speechPending()
 
-	if a.speculate(current, ready, speaking, anotherVoice) {
-		return
-	}
-	if err := current.Decide(harness.FlowTurn{
+	turn := harness.FlowTurn{
 		ID:           ready.ID,
 		Instructions: instructions,
 		History:      history,
@@ -1950,7 +1959,15 @@ func (a *Agent) ask(ready candidate) {
 		Waited:       a.converse.waitedOn(ready),
 		Ended:        ready.Ended,
 		InParts:      a.converse.inParts(ready.Participant.ID),
-	}); err != nil {
+		Paused:       time.Since(ready.RevisedAt),
+		FirstPause:   a.converse.firstPause(ready),
+	}
+	a.audioFloor.listen(&turn, ready.Participant.ID, tools)
+	a.audioFloor.ask(turn)
+	if a.speculate(current, ready, speaking, anotherVoice) {
+		return
+	}
+	if err := current.Decide(turn); err != nil {
 		a.dropSpeculation(ready.ID)
 		a.converse.Unasked(ready.ID)
 		a.fail(err, "flow")
@@ -3381,6 +3398,7 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 			}
 			flowDecisions.WithLabelValues(disposition, ruler).Inc()
 			flowDecisionSeconds.WithLabelValues(ruler).Observe(typed.TookMs / 1000)
+			a.audioFloor.ruled(typed)
 			a.act(a.converse.Ruled(typed, a.floor()))
 			// An answer took the reply started for these words; any other ruling leaves it
 			// unwanted.

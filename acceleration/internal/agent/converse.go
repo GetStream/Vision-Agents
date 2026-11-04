@@ -285,6 +285,8 @@ type queuedCandidate struct {
 type unfinished struct {
 	text  string
 	since time.Time
+	// resumed says the speaker went on after an earlier pause of the same turn was waited out.
+	resumed bool
 }
 
 // judged is what a judgement was about: who was speaking and what they said.
@@ -668,7 +670,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 
 	if ruling.Disposition == harness.Wait {
 		if c.patient(ready) {
-			c.cadence.Resolve(ruling.CandidateID, true)
+			c.cadence.Retry(ruling.CandidateID, ruling.Again)
 			return []Action{c.decide(Action{
 				Kind:        ActWait,
 				Reason:      "the caller has not finished the thought",
@@ -1209,10 +1211,19 @@ func (c *converse) patient(ready candidate) bool {
 
 	waiting, known := c.waiting[ready.Participant.ID]
 	if !known || !sameWords(waiting.text, ready.Text) {
-		c.waiting[ready.Participant.ID] = unfinished{text: ready.Text, since: time.Now()}
+		c.waiting[ready.Participant.ID] = unfinished{text: ready.Text, since: time.Now(), resumed: known}
 		return true
 	}
 	return time.Since(waiting.since) < c.patience
+}
+
+// firstPause says no earlier pause in the speaker's turn was waited out: these words were
+// never waited on, or are still being waited on in the turn's first pause.
+func (c *converse) firstPause(ready candidate) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	waiting, known := c.waiting[ready.Participant.ID]
+	return !known || (sameWords(waiting.text, ready.Text) && !waiting.resumed)
 }
 
 // forgetQueuedRevisedByLocked drops the turn queued behind a reply when the words being dealt

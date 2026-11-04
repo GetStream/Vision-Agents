@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"log/slog"
 	"os"
 	"regexp"
@@ -317,6 +318,16 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 // Resolve records what became of a candidate. Waiting retries the same words after a
 // longer pause; every other decision commits them and starts the next utterance cleanly.
 func (c *cadence) Resolve(candidateID string, wait bool) bool {
+	return c.resolve(candidateID, wait, 0)
+}
+
+// Retry waits on a candidate as Resolve does, but puts the same words again after again
+// rather than the usual retry, when it is set.
+func (c *cadence) Retry(candidateID string, again time.Duration) bool {
+	return c.resolve(candidateID, true, again)
+}
+
+func (c *cadence) resolve(candidateID string, wait bool, again time.Duration) bool {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 
@@ -326,7 +337,7 @@ func (c *cadence) Resolve(candidateID string, wait bool) bool {
 		}
 		current.candidateID = ""
 		if wait {
-			retry := c.retry
+			retry := cmp.Or(again, c.retry)
 			// The end the transcriber marked while the words were being judged is the
 			// longer pause the wait was for.
 			if current.ended && !current.askedEnded {

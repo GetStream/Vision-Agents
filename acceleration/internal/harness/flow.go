@@ -90,12 +90,22 @@ type FlowTurn struct {
 	// what they had said, so they are giving one thought in parts and a part that sounds
 	// complete may not be the end of it.
 	InParts bool
+	// Audio and Tools are for a Hearer: the speaker's last 16 s at 16 kHz, and the tools
+	// the customer declared.
+	Audio []int16
+	Tools []llm.Tool
+	// Paused is how long the words had held still when they were put, and FirstPause says
+	// no earlier pause in the speaker's turn was waited out: what a Hearer ends a turn on.
+	Paused     time.Duration
+	FirstPause bool
 }
 
 type flow struct {
 	model *llmrouter.Session
 	// judge, when set, is asked in place of model.
-	judge       Judge
+	judge Judge
+	// hearer, when set, is asked first, and judge or model only when it can't answer.
+	hearer      Hearer
 	emitter     *Emitter
 	logger      *slog.Logger
 	onModelCall func(llm.CallTiming)
@@ -250,6 +260,9 @@ func (f *flow) run(asked *candidate) {
 	defer f.running.Done()
 	defer f.advance(turn.ID)
 
+	if f.hearer != nil && f.runHearer(asked) {
+		return
+	}
 	if f.judge != nil {
 		f.runJudge(asked)
 		return

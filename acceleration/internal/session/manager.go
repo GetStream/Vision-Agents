@@ -18,6 +18,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -101,6 +102,10 @@ type ManagerOptions struct {
 	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
 	// language model. Empty keeps the language model.
 	FlowJudge string
+	// AudioFloor is optional, and is the audio floor model every agent's flow controller
+	// asks as AudioFloorMode says.
+	AudioFloor     *audiofloor.Client
+	AudioFloorMode audiofloor.Mode
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -780,6 +785,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			ControllerTarget:   spec.ControllerTarget,
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
+			AudioFloor:         m.options.AudioFloor,
+			AudioFloorMode:     m.options.AudioFloorMode,
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),

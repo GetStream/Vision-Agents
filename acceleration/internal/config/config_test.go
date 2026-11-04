@@ -846,6 +846,24 @@ func (s *ConfigSuite) TestStreamTenancyIsDeploymentOrApp() {
 	s.ErrorContains(err, "stream.tenancy")
 }
 
+func (s *ConfigSuite) TestAnAudioFloorModeIsOffShadowOrAct() {
+	s.T().Setenv("ROUTER_AUDIO_FLOOR_URL", "http://floor:8080")
+	s.T().Setenv("ROUTER_AUDIO_FLOOR_MODE", "on")
+	_, _, err := Load("")
+	s.ErrorContains(err, "agent.audio_floor_mode")
+}
+
+func (s *ConfigSuite) TestAnAudioFloorModeNeedsAServer() {
+	s.T().Setenv("ROUTER_AUDIO_FLOOR_MODE", "act")
+	_, _, err := Load("")
+	s.ErrorContains(err, "ROUTER_AUDIO_FLOOR_URL")
+
+	s.T().Setenv("ROUTER_AUDIO_FLOOR_URL", "http://floor:8080")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("act", settings.Agent.AudioFloorMode)
+}
+
 func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {
 	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
 	s.T().Setenv("ROUTER_POSTGRES_DSN", "")

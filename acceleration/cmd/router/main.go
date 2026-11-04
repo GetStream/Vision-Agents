@@ -30,6 +30,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
@@ -811,10 +812,20 @@ func run(settings config.Config, logger *slog.Logger) error {
 	routers := map[routing.Modality]routing.Inspector{}
 	streams := &api.Streams{}
 
+	// One audio floor server serves every agent: as a transcriber where one names it, and
+	// to the flow controller as the mode says.
+	var floor *audiofloor.Client
+	if settings.Agent.AudioFloorURL != "" {
+		floor = audiofloor.New(settings.Agent.AudioFloorURL, nil)
+	}
+
 	if section, ok := capabilities[routing.STT]; ok {
 		transcribers := sttrouter.DefaultRegistry()
 		if settings.MockProviders {
 			sttrouter.RegisterMock(transcribers)
+		}
+		if floor != nil {
+			sttrouter.RegisterAudioFloor(transcribers, floor)
 		}
 		speech, err := sttrouter.New(sttrouter.Options{
 			Config:   section,
@@ -1141,7 +1152,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1974,6 +1985,7 @@ func buildSessions(
 	base *metered.Knowledge,
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
+	floor *audiofloor.Client,
 	stream *streamapp.Clients,
 	connectors session.Connectors,
 	prices pricing.Pricer,
@@ -2006,7 +2018,10 @@ func buildSessions(
 		Search:     finding,
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
+		AudioFloor: floor,
 		Phone:      telephony,
+		// Validated as off, shadow or act when the settings were read.
+		AudioFloorMode: audiofloor.Mode(settings.Agent.AudioFloorMode),
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,
