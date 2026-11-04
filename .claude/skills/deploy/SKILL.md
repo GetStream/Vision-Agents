@@ -125,17 +125,16 @@ Verify after an apply, on each shard (AI-2461, AI-2464):
 3. A CONNECT without a credential gets `407 Proxy Authentication Required`.
 4. One `run_code` `GET api.github.com/user` through a binding with `sandbox: true` answers 200.
 
-Every prod region has a public hostname, `https://accelerate-<region>.gcp.stream-io-api.com`:
-all three are behind the global load balancer (`accelerate_prod_regions` in
-`infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`). To test a region, call its hostname
-as the app. Prod runs `authMode: proxy` with
-`proxyDeclaresKind: true`, so send `X-Stream-App-Id: <app>` and `Stream-Auth-Type: server`
-(`acceleration/internal/auth/auth.go`, `proxied.Authenticate`). Also send
-`X-Stream-Api-Key-Id: <the app's public key>` (`APIKeyIDHeader`, `auth.go:112-118`) and
-`X-Stream-Actor-Name: <your name>`. Without the key header, the router records the run's usage
-with no API key and raises the `unattributed` usage alert. This happened on prod us-west1 and
-europe-west4 on 2026-11-03 21:28Z (AI-2464 E2E). The sandbox still reaches the shard's proxy on
-its public address.
+Every prod region has a public hostname, `https://accelerate-<region>.gcp.stream-io-api.com`: all
+three are behind the global load balancer (`accelerate_prod_regions` in
+`infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`). To test a region, call its hostname as
+the app. Prod runs `authMode: proxy` with `proxyDeclaresKind: true`, so send `X-Stream-App-Id:
+<app>` and `Stream-Auth-Type: server` (`acceleration/internal/auth/auth.go`,
+`proxied.Authenticate`). Also send `X-Stream-Api-Key-Id: <the app's public key>` (`APIKeyIDHeader`,
+`auth.go:112-118`) and `X-Stream-Actor-Name: <your name>`. Without the key header, the router
+records the run's usage with no API key and raises the `unattributed` usage alert. This happened on
+prod us-west1 and europe-west4 on 2026-11-03 21:28Z (AI-2464 E2E). The sandbox still reaches the
+shard's proxy on its public address.
 
 Datadog (AI-2463, chat #20097, `infra/shards/us-east4-acceleration/datadog/sandbox_egress.tf`):
 
@@ -158,12 +157,12 @@ AI-2461 and AI-2464 apply plan. The chart renders the hold only while `sandboxPr
 
 ## Production
 
-Production is three shards, us-east4, us-west1 and europe-west4. Each region has its own
-hostname, `accelerate-<region>.gcp.stream-io-api.com`, that reaches only that shard. All three
-are published (`local.accelerate_prod_regions`); us-east4's is the SDKs' default
-(`DefaultURL`, `sdks/go/stream/backend.go:57`). Any shard serves any app. Each runs the router with its own Postgres and Redis
-beside the global ones in us-east4 (`acceleration/README.md`, "Shards"). The runbook is
-`infra/docs/accelerate_shards_rollout.md` in the private repo.
+Production is three shards, us-east4, us-west1 and europe-west4. Each region has its own hostname,
+`accelerate-<region>.gcp.stream-io-api.com`, that reaches only that shard. All three are published
+(`local.accelerate_prod_regions`); us-east4's is the SDKs' default (`DefaultURL`,
+`sdks/go/stream/backend.go:57`). Any shard serves any app. Each runs the router with its own
+Postgres and Redis beside the global ones in us-east4 (`acceleration/README.md`, "Shards"). The
+runbook is `infra/docs/accelerate_shards_rollout.md` in the private repo.
 
 A release is a tagged build, published once, then deployed per shard:
 
