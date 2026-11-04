@@ -645,6 +645,19 @@ func (s *ChannelSuite) TestTheFirstAlsoEntryThatMatchesReadsTheMessage() {
 	}
 }
 
+// An also match that cannot be read, such as a member of a value, is a kind the message is
+// not: the next entry is tried, and the body is still read.
+func (s *ChannelSuite) TestAnAlsoMatchThatCannotBeReadIsNotTheKind() {
+	entries := "text: $.text\n    match:\n      $.type: text\n    also:\n      - match:\n          $.media.kind: photo\n        text: $.media.caption" +
+		"\n      - match:\n          $.type: image\n        text: $.image.caption"
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", entries, 1)))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, []byte(`{"chat":"c","from":"u","id":"1","type":"image","media":"x","image":{"caption":"a photo"}}`))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Equal("a photo", read.Messages[0].Text)
+}
+
 // In a batch, a message also cannot read is left out and the messages beside it are read.
 func (s *ChannelSuite) TestAMessageAlsoCannotReadLeavesTheBatchRead() {
 	batch := strings.NewReplacer(
