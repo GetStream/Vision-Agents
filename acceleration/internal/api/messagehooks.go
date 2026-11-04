@@ -562,6 +562,9 @@ const ConfigField = "agent_config_id"
 // Both are looked for only within the app the hook came from: the channel's last call has to
 // have been in that app, and a config the channel names has to be the app's own customer's.
 //
+// declared is the config, when it was read: the one the channel names, and for a channel with
+// a row, that config again when the row ran under it (heldConfigOf).
+//
 // err is a read that failed, which a later try may get through: the queue's worker tries again.
 func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string,
 	declared *store.AgentConfig, found bool, err error) {
@@ -570,7 +573,7 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 		return "", "", nil, false, err
 	}
 	if held && (origin.deployment || previous.CustomerID == origin.customer) {
-		return previous.CustomerID, previous.ConfigID, nil, true, nil
+		return previous.CustomerID, previous.ConfigID, s.heldConfigOf(ctx, origin, event, previous), true, nil
 	}
 
 	config, named, err := s.declaredConfigOf(ctx, origin, event)
@@ -578,6 +581,27 @@ func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEv
 		return "", "", nil, false, err
 	}
 	return config.CustomerID, config.ID, &config, true, nil
+}
+
+// heldConfigOf is the config a channel with a row names, when it is the one the row ran under,
+// so a chat the worker's session answered before goes on writing episode cards
+// (chatEpisodeUnopened). It is the one read of the config such a message makes, as a channel
+// with no row makes in ownerOf: base c9a61fc90 made none here, and whether the cards are on is
+// not known without it. A channel naming no config, or another one than the row's, is not
+// read, nor one with a voice recording, which unopenedSpec reads. A read that fails costs the
+// card, not the answer: nil.
+func (s *Server) heldConfigOf(ctx context.Context, origin hookOrigin, event messageEvent, previous store.Call) *store.AgentConfig {
+	if _, recorded := event.recording(); recorded {
+		return nil
+	}
+	if named, _ := event.ChannelCustom[ConfigField].(string); named != previous.ConfigID {
+		return nil
+	}
+	config, named, err := s.declaredConfigOf(ctx, origin, event)
+	if err != nil || !named {
+		return nil
+	}
+	return &config
 }
 
 // declaredConfigOf is the config a channel names, when the store says a customer of the hook's
