@@ -103,8 +103,14 @@ type MessageRule struct {
 	// the same place in Each, so a message is read together with the entries around it.
 	Each string `yaml:"each,omitempty" json:"each,omitempty"`
 	// Match is values a message must have to be read, compared as exact strings, such as an
-	// event type. A message that differs is not one this block reads.
+	// event type. A message that differs is not one this block reads, unless Also reads it.
 	Match map[string]string `yaml:"match,omitempty" json:"match,omitempty"`
+	// Also is other kinds of message the block reads, each by its own match and text, such as
+	// WhatsApp's photo, whose text is its caption (AI-2133). A message that differs from Match
+	// is read by the first whose match it has, with that one's text, and only when that text
+	// is not empty: a photo without a caption gives the agent nothing to answer. Every other
+	// path is the block's. A build before Also (a rollback) ignores it and reads Match alone.
+	Also []MessageKind `yaml:"also,omitempty" json:"also,omitempty"`
 	// SkipIfPresent is paths whose presence means the message is not a person's, such as
 	// one the connector's own bot posted.
 	SkipIfPresent []string `yaml:"skip_if_present,omitempty" json:"skip_if_present,omitempty"`
@@ -133,6 +139,13 @@ type MessageRule struct {
 	// a channel of people. A message that does not starts no thread: it is answered only on a
 	// thread already linked. Empty: every message does, as before (AI-989).
 	Addressed *AddressRule `yaml:"addressed,omitempty" json:"addressed,omitempty"`
+}
+
+// MessageKind is one kind of message MessageRule.Also reads: the values it has, compared as
+// MessageRule.Match's, and the path of its text.
+type MessageKind struct {
+	Match map[string]string `yaml:"match" json:"match"`
+	Text  string            `yaml:"text" json:"text"`
 }
 
 // MediaRule is where each file of a message is: URL and MIMEType are paths through the same
@@ -207,7 +220,7 @@ func (rule MessageRule) mention(metadata map[string]string) (string, bool) {
 // IsZero is whether the block declares no messages, so encoding/json (omitzero) and yaml.v3
 // (omitempty) leave it out.
 func (rule MessageRule) IsZero() bool {
-	return rule.Each == "" && len(rule.Match) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
+	return rule.Each == "" && len(rule.Match) == 0 && len(rule.Also) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
 		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == "" &&
 		rule.TextParts == "" && rule.Media == nil && rule.Addressed == nil
 }
@@ -588,6 +601,22 @@ func (m Manifest) checkChannel(fail func(field, format string, args ...any), inp
 			fail("channel.messages.match."+path, "is empty: an absent value is skip_if_present's")
 		}
 	}
+	if len(msgs.Also) > 0 && len(msgs.Match) == 0 {
+		fail("channel.messages.also", "needs messages.match: without one every message is read by it")
+	}
+	for i, kind := range msgs.Also {
+		field := fmt.Sprintf("channel.messages.also[%d]", i)
+		if len(kind.Match) == 0 {
+			fail(field+".match", "is empty: without one every message is this kind")
+		}
+		for _, path := range slices.Sorted(maps.Keys(kind.Match)) {
+			checkPath(field+".match."+path, path)
+			if kind.Match[path] == "" {
+				fail(field+".match."+path, "is empty: an absent value is skip_if_present's")
+			}
+		}
+		checkPath(field+".text", kind.Text)
+	}
 	for i, path := range msgs.SkipIfPresent {
 		checkPath(fmt.Sprintf("channel.messages.skip_if_present[%d]", i), path)
 	}
@@ -962,13 +991,25 @@ func (rule SignalRule) read(root any, connectorID string) ([]Signal, error) {
 // read reads the message at one binding of the each path. skipped is set when the message is
 // not one the block reads, naming the rule that left it out.
 func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, skipped string, err error) {
-	for _, path := range slices.Sorted(maps.Keys(rule.Match)) {
-		value, found, err := readPath(root, path, bound)
-		if err != nil {
-			return ChannelMessage{}, "", err
+	differs, err := mismatch(root, bound, rule.Match)
+	if err != nil {
+		return ChannelMessage{}, "", err
+	}
+	// caption is the text of the also entry that reads the message, when one does. A message
+	// that differs from match was never read before also, so a shape also cannot read, such as
+	// a caption that is an object, leaves it out as before instead of failing the delivery
+	// with the messages beside it, as media leaves out a file it cannot read.
+	caption := ""
+	if differs != "" {
+		for _, kind := range rule.Also {
+			if other, err := mismatch(root, bound, kind.Match); err != nil || other != "" {
+				continue
+			}
+			caption, _, _ = readPath(root, kind.Text, bound)
+			break
 		}
-		if !found || value != rule.Match[path] {
-			return ChannelMessage{}, "match " + path, nil
+		if caption == "" {
+			return ChannelMessage{}, "match " + differs, nil
 		}
 	}
 	for _, path := range rule.SkipIfPresent {
@@ -1023,9 +1064,11 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 	case missingPart != "":
 		return ChannelMessage{}, "no thread_key part " + missingPart, nil
 	}
-	text, err := rule.text(root, bound)
-	if err != nil {
-		return ChannelMessage{}, "", err
+	text := caption
+	if text == "" {
+		if text, err = rule.text(root, bound); err != nil {
+			return ChannelMessage{}, "", err
+		}
 	}
 	media, err := rule.media(root, bound)
 	if err != nil {
@@ -1054,6 +1097,21 @@ func (rule MessageRule) read(root any, bound []int) (message ChannelMessage, ski
 		ThreadParts: parts,
 		Direct:      direct,
 	}, "", nil
+}
+
+// mismatch is the first path of match, in order, whose value the message bound gives does
+// not have, or "" when it has them all.
+func mismatch(root any, bound []int, match map[string]string) (string, error) {
+	for _, path := range slices.Sorted(maps.Keys(match)) {
+		value, found, err := readPath(root, path, bound)
+		if err != nil {
+			return "", err
+		}
+		if !found || value != match[path] {
+			return path, nil
+		}
+	}
+	return "", nil
 }
 
 // text is a message's text: every value at text_parts joined by a newline when it is set,
