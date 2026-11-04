@@ -189,6 +189,12 @@ struct ToolFailure: LocalizedError {
 }
 
 /// One reading of where the phone is.
+///
+/// The router gives a call 30 seconds from when the model makes it, and in a chat that includes
+/// the time the person takes to tap Share. Core Location may give nothing at all, such as indoors
+/// or while its own prompt waits, so the wait for a fix has a deadline of its own rather than one
+/// checked only when an update arrives: the tool always answers, with where the phone is or why
+/// it could not tell.
 @MainActor
 private enum Locator {
     private static let manager = CLLocationManager()
@@ -197,14 +203,34 @@ private enum Locator {
         if manager.authorizationStatus == .notDetermined {
             manager.requestWhenInUseAuthorization()
         }
-        let deadline = ContinuousClock.now + .seconds(15)
-        for try await update in CLLocationUpdate.liveUpdates() {
-            if let location = update.location { return location }
-            if [.denied, .restricted].contains(manager.authorizationStatus) {
-                throw ToolFailure("They have not let Juno see where they are. It is in Settings.")
+        if [.denied, .restricted].contains(manager.authorizationStatus) {
+            throw ToolFailure("They have not let Juno see where they are. It is in Settings.")
+        }
+        // A fix from the last minute answers at once.
+        if let recent = manager.location, recent.timestamp.timeIntervalSinceNow > -60 {
+            return recent
+        }
+        let found = try await withThrowingTaskGroup(of: CLLocation?.self) { group in
+            group.addTask { try await nextFix() }
+            group.addTask {
+                try await Task.sleep(for: .seconds(10))
+                return nil
             }
-            if ContinuousClock.now > deadline { break }
+            defer { group.cancelAll() }
+            return try await group.next() ?? nil
+        }
+        if let found { return found }
+        if [.denied, .restricted].contains(manager.authorizationStatus) {
+            throw ToolFailure("They have not let Juno see where they are. It is in Settings.")
         }
         throw ToolFailure("The phone could not tell where it is just now.")
+    }
+
+    /// The next location Core Location gives, or nil when it stops without one.
+    private nonisolated static func nextFix() async throws -> CLLocation? {
+        for try await update in CLLocationUpdate.liveUpdates() {
+            if let location = update.location { return location }
+        }
+        return nil
     }
 }
