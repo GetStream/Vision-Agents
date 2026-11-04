@@ -65,6 +65,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -297,7 +299,9 @@ type RouterSuite struct {
 	vision    *scriptedLLM
 	holding   *scriptedLLM
 	knowledge *knowledgeBase
-	memories  *keptMemories
+	// knowledgeBucket is where an uploaded knowledge file waits to be read.
+	knowledgeBucket *blob.Bucket
+	memories        *keptMemories
 	// voice keeps what every stub voice was told to say. Each socket is given a stub voice
 	// and transcriber of its own, so one a test left open cannot read what the next test
 	// sends; newestVoice and newestEars are the last the router started, read through
@@ -710,6 +714,7 @@ func (s *RouterSuite) SetupSuite() {
 	if s.manageOff {
 		manageKey = ""
 	}
+	knowledgeBase := s.knowledgeWriter(policies)
 	server := s.newNode(s.shard, logger, Options{
 		Routers:   s.modalities,
 		Pricer:    s.serverPricer(logger),
@@ -733,9 +738,10 @@ func (s *RouterSuite) SetupSuite() {
 		OpsKey:            suiteOpsKey,
 		ManageKey:         manageKey,
 		Secrets:           s.sealer,
-		Knowledge:         s.knowledgeWriter(policies),
+		Knowledge:         knowledgeBase,
 		KnowledgeLimits:   s.knowledgeLimits,
 		KnowledgeURLs:     s.pages(redisAddr),
+		KnowledgeFiles:    s.knowledgeFiles(redisAddr, knowledgeBase, streams.OCR),
 		Voices:            s.voiceService(),
 		VoiceLibrary:      voices.NewCatalogue(),
 		Dispatch:          s.dispatch,
@@ -1657,6 +1663,33 @@ func (s *RouterSuite) pages(redisAddr string) *urls.Service {
 		Queue:         fmt.Sprintf("knowledge-%d", n),
 		Reader:        pageReader{},
 		Knowledge:     metered.NewKnowledge(newKnowledgeBase(), s.metering, nil),
+		Limits:        s.knowledgeLimits,
+		CheckInterval: 10 * time.Millisecond,
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(service.Start())
+	s.T().Cleanup(func() { s.Require().NoError(service.Close()) })
+	return service
+}
+
+// knowledgeFiles reads the files uploaded to the suite's knowledge bases into the same base
+// the knowledge API writes, from a bucket in a directory of its own, on a queue of its own
+// as pages' is, with scans read by the suite's OCR stubs.
+func (s *RouterSuite) knowledgeFiles(redisAddr string, base *metered.Knowledge, scans *ocrrouter.Router) *files.Service {
+	bucket, err := blob.Open(context.Background(), "file://"+s.T().TempDir())
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(bucket.Close()) })
+	s.knowledgeBucket = bucket
+
+	n := redisDB.Add(1)
+	service, err := files.New(files.Options{
+		Store:         s.store,
+		Redis:         asynq.RedisClientOpt{Addr: redisAddr, DB: int(n)%15 + 1},
+		Queue:         fmt.Sprintf("knowledge-files-%d", n),
+		Bucket:        bucket,
+		Extractor:     extract.New(extract.Options{}),
+		Knowledge:     base,
+		OCR:           scans,
 		Limits:        s.knowledgeLimits,
 		CheckInterval: 10 * time.Millisecond,
 	})

@@ -4410,33 +4410,53 @@ components:
       type: object
     IndexedKnowledgeDocument:
       properties:
+        bytes:
+          description: The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+          format: int64
+          type: integer
+        content_type:
+          description: The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+          example: application/pdf
+          type: string
         created_at:
           format: date-time
+          type: string
+        error:
+          description: Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
           type: string
         id:
           type: string
         namespace:
           type: string
+        pages:
+          description: How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+          type: integer
         passages:
-          description: How many passages it was last cut into.
+          description: How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
           type: integer
         source:
           description: What the document was posted as, and what its passages are keyed by.
           example: pricing.md
           type: string
+        state:
+          $ref: '#/components/schemas/KnowledgeDocumentState'
         text:
-          description: The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+          description: 'The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.'
           type: string
         updated_at:
           description: When it was last written.
           format: date-time
           type: string
       required:
+        - bytes
+        - content_type
         - created_at
         - id
         - namespace
+        - pages
         - passages
         - source
+        - state
         - updated_at
       type: object
     IngestKnowledgeRequest:
@@ -4554,6 +4574,13 @@ components:
         - source
         - text
       type: object
+    KnowledgeDocumentState:
+      description: Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+      enum:
+        - pending
+        - indexed
+        - failed
+      type: string
     KnowledgePassage:
       properties:
         id:
@@ -15045,6 +15072,80 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: What a document was cut into, in order
+  /v1/agents/knowledge/files:
+    post:
+      description: |-
+        A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+        The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+        The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+      operationId: uploadKnowledgeFile
+      parameters:
+        - description: The knowledge base to read the file into.
+          in: query
+          name: namespace
+          required: true
+          schema:
+            minLength: 1
+            type: string
+        - description: What the document is called and its passages keyed by. The file part's filename when left out.
+          in: query
+          name: source
+          schema:
+            maxLength: 256
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  description: The file, at most 50 MB.
+                  format: binary
+                  type: string
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedKnowledgeDocument'
+          description: The document, pending until its file is read
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The file is over 50 MB.
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: This deployment does not take files for knowledge, or could not keep this one.
+      summary: Upload a file to a knowledge base, to be read in the background
   /v1/agents/knowledge/urls:
     get:
       operationId: listKnowledgeUrls

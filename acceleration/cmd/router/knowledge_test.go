@@ -77,3 +77,18 @@ func (s *KnowledgeLimitsSuite) TestNoMinimumChunkIsWarnedOf() {
 	s.Contains(s.logs.String(), "level=WARN")
 	s.Contains(s.logs.String(), "ROUTER_KNOWLEDGE_MIN_CHUNK")
 }
+
+func (s *KnowledgeLimitsSuite) TestUploadedFilesAreQueuedOnTheShardsOwnRedis() {
+	s.settings.Redis = config.Redis{
+		Addr:  "global:6379",
+		Shard: config.ShardRedis{Addr: "europe-west4:6379", Username: "router", Password: "secret"},
+	}
+
+	s.Equal(config.Redis{Addr: "europe-west4:6379", Username: "router", Password: "secret"}, shardRedis(s.settings.Redis))
+}
+
+func (s *KnowledgeLimitsSuite) TestAShardWithoutItsOwnRedisQueuesUploadedFilesOnTheSharedOne() {
+	s.settings.Redis = config.Redis{Addr: "global:6379", Username: "router"}
+
+	s.Equal(s.settings.Redis, shardRedis(s.settings.Redis))
+}

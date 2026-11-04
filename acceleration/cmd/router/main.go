@@ -59,6 +59,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/extract"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/turbopuffer"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
@@ -1212,6 +1214,35 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer pages.Close()
 	}
 
+	// A file uploaded to a knowledge base waits in its own bucket until a worker reads it.
+	// Without the bucket, or any of what the urls need, uploads say so.
+	knowledgeBucket, err := blob.Open(ctx, settings.KnowledgeBucketURL)
+	if err != nil {
+		return err
+	}
+	if knowledgeBucket != nil {
+		defer knowledgeBucket.Close()
+	}
+	var scans files.Reader
+	if streams.OCR != nil {
+		scans = streams.OCR
+	}
+	var shardHolds rueidis.Client
+	if liveClient != nil {
+		shardHolds = liveClient.ShardRedis()
+	}
+	uploads, err := buildKnowledgeFiles(pgStore, shardRedis(settings.Redis), shardHolds, base, knowledgeBucket, scans,
+		knowledgeLimits(settings.Knowledge), logger)
+	if err != nil {
+		return err
+	}
+	if uploads != nil {
+		if err := uploads.Start(); err != nil {
+			return err
+		}
+		defer uploads.Close()
+	}
+
 	// Inbound calls are answered by whoever is connected to the dispatch socket, so the
 	// pool exists whether or not anybody is: an empty pool is a call nobody answers, which
 	// is a different thing from a deployment that does not dispatch at all.
@@ -1322,6 +1353,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
+		KnowledgeFiles:        uploads,
 		Store:                 pgStore,
 		Configs:               configs,
 		Users:                 endUsers,
@@ -2041,6 +2073,49 @@ func buildKnowledgeURLs(
 		Limits:    limits,
 		Logger:    logger,
 	})
+}
+
+// buildKnowledgeFiles is the service that reads files uploaded to a knowledge base, or nil
+// when a file would have nowhere to wait, nowhere to be queued or nowhere to be written.
+// Without scans, a file whose pages are all scans is refused as having no text.
+//
+// redis and shared are this shard's own Redis, not the one every shard shares: a task names
+// a row of this shard's database and a file in this shard's bucket, so a worker of another
+// shard would find no row, take the upload for one overtaken and delete its file.
+func buildKnowledgeFiles(
+	pgStore *store.Store,
+	redis config.Redis,
+	shared rueidis.Client,
+	base *metered.Knowledge,
+	bucket *blob.Bucket,
+	scans files.Reader,
+	limits ingest.Limits,
+	logger *slog.Logger,
+) (*files.Service, error) {
+	if pgStore == nil || shared == nil || base == nil || bucket == nil {
+		logger.Debug("not taking knowledge files",
+			"database", pgStore != nil, "redis", shared != nil, "knowledge", base != nil, "bucket", bucket != nil)
+		return nil, nil
+	}
+	return files.New(files.Options{
+		Store:     pgStore,
+		Redis:     queueRedis(redis, shared),
+		Bucket:    bucket,
+		Extractor: extract.New(extract.Options{Logger: logger}),
+		Knowledge: base,
+		OCR:       scans,
+		Limits:    limits,
+		Logger:    logger,
+	})
+}
+
+// shardRedis is this shard's own Redis, or the shared one when the shard has none, as
+// live.New picks it.
+func shardRedis(redis config.Redis) config.Redis {
+	if redis.Shard.Addr == "" {
+		return redis
+	}
+	return config.Redis{Addr: redis.Shard.Addr, Username: redis.Shard.Username, Password: redis.Shard.Password}
 }
 
 // queueRedis is how asynq reaches redis, the Redis shared is a client of. asynq does not find

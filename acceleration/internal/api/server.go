@@ -47,6 +47,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/eventforward"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/files"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/ingest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge/urls"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -198,6 +199,9 @@ type Options struct {
 	// without a database or without something that can read a page, in which case the url
 	// paths say so rather than accepting a subscription nothing would honour.
 	KnowledgeURLs *urls.Service
+	// KnowledgeFiles takes files uploaded to those bases and reads them in the background.
+	// Absent, an upload is refused as not configured.
+	KnowledgeFiles *files.Service
 	// Voices holds the voices customers brought with them. Absent when the deployment has
 	// no object storage, in which case there is nowhere to keep a recording and the voice
 	// paths say so.
@@ -354,6 +358,7 @@ type Server struct {
 	knowledge          *metered.Knowledge
 	knowledgeLimits    ingest.Limits
 	pages              *urls.Service
+	knowledgeFiles     *files.Service
 	voices             *voices.Service
 	library            *voices.Catalogue
 	dispatch           *dispatch.Pool
@@ -543,6 +548,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		knowledge:          options.Knowledge,
 		knowledgeLimits:    options.KnowledgeLimits,
 		pages:              options.KnowledgeURLs,
+		knowledgeFiles:     options.KnowledgeFiles,
 		voices:             options.Voices,
 		library:            options.VoiceLibrary,
 		dispatch:           options.Dispatch,
@@ -697,6 +703,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/agents/logs/{id}", s.getAgentLog)
 	mux.HandleFunc("GET /v1/data/export", s.exportData)
 	mux.HandleFunc("POST /v1/data/import", s.importData)
+	mux.HandleFunc("POST "+knowledgeFilesPath, s.uploadKnowledgeFile)
 	mux.HandleFunc("GET /v1/data/changes", s.listDataChanges)
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
 	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)
