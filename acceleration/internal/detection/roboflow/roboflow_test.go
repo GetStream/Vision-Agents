@@ -42,6 +42,8 @@ type RoboflowSuite struct {
 	calls  []asked
 	// limitedKey, when set, is a key the server answers 429 to.
 	limitedKey string
+	// processing, when set, is the model calls the server lists in its answer's header.
+	processing string
 }
 
 func TestRoboflowSuite(t *testing.T) {
@@ -62,6 +64,9 @@ func (s *RoboflowSuite) SetupSuite() {
 			http.Error(w, "slow down", http.StatusTooManyRequests)
 			return
 		}
+		if s.processing != "" {
+			w.Header().Set("X-Remote-Processing-Times", s.processing)
+		}
 		_, _ = w.Write(s.answer)
 	}))
 }
@@ -72,6 +77,7 @@ func (s *RoboflowSuite) SetupTest() {
 	s.answer = modelTwoPeople
 	s.calls = nil
 	s.limitedKey = ""
+	s.processing = ""
 }
 
 func (s *RoboflowSuite) answering(body []byte) {
@@ -140,6 +146,28 @@ func (s *RoboflowSuite) TestTheFaceWorkflowGivesEveryFaceItsOwnEmbedding() {
 	s.Equal("/workflows/run", s.seen()[0].path)
 	s.Contains(sent, "specification", "the face Workflow is sent whole")
 	s.Equal("rf-key", sent["api_key"])
+}
+
+func (s *RoboflowSuite) TestAWorkflowIsBilledAnImageForEveryModelCallRoboflowLists() {
+	s.answering(workflowTwoFaces)
+	s.processing = `[{"m": "coco/3", "t": 0.012}, {"m": "face-detection-mik1i/18", "t": 0.017}, ` +
+		`{"m": "clip/embed_image", "t": 0.007}, {"m": "clip/embed_image", "t": 0.005}]`
+	request := frame()
+	request.Overwrite = json.RawMessage(`{"workspace": "acme", "workflow_id": "doorbell"}`)
+
+	found, err := s.provider(ModelWorkflow).Detect(context.Background(), request)
+
+	s.Require().NoError(err)
+	s.Equal(4, found.Billed, "two detectors over the image, and CLIP once for each face's crop")
+}
+
+func (s *RoboflowSuite) TestAWorkflowWhoseCallsAreNotListedIsBilledTheImageAndEachEmbedding() {
+	s.answering(workflowTwoFaces)
+
+	found, err := s.provider(ModelFaces).Detect(context.Background(), frame())
+
+	s.Require().NoError(err)
+	s.Equal(3, found.Billed)
 }
 
 func (s *RoboflowSuite) TestARateLimitedKeyHandsTheWorkflowToTheNextKey() {
