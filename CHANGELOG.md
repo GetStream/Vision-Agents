@@ -361,6 +361,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A new phone link starts the number clean
+
+`PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716).
+
 ### Pausing a campaign stops its calls on every router
 
 `POST /v1/agents/campaigns/{id}/pause` stopped the campaign only on the router that answered it. A router behind the same load balancer that was running the campaign went on ringing people, and finished the campaign over the pause when nobody was left. Now no router takes another contact from a campaign that is not running. A router whose loop outlived a pause made elsewhere exits that loop at its next claim and writes no state. A start on that router before then runs the campaign again (AI-2681).

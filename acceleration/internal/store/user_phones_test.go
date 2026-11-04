@@ -443,6 +443,41 @@ func (s *StoreSuite) TestALinkAndAFirstSightingAtOnceEndOnOneOmniChannel() {
 	}
 }
 
+// Catches a link and the number's next sighting at once that join the number's earlier SMS to
+// the user, or leave the number's new row off the user's omni-channel: the sighting takes the
+// set-aside row or makes one of its own, and either way the user reads none of the earlier
+// episode. Two routers, twenty numbers.
+func (s *StoreSuite) TestALinkAndTheNumbersNextSightingAtOnceJoinNoneOfItsHistory() {
+	s.agentConfigs()
+	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true")
+	s.Require().NoError(err)
+	pools := s.pools(2)
+	for i := range 20 {
+		user, phone := fmt.Sprintf("user-%d", i), fmt.Sprintf("+1555040%04d", i)
+		chat := s.made(streamUser(user, "agent:omni-chat-"+newID()))
+		earlier := s.made(contact(phone, "agent:omni-sms-"+newID()))
+		s.smsEpisode(earlier)
+		next := contact(phone, "agent:omni-next-"+newID())
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			s.NoError(pools[0].LinkUserPhone(s.ctx, &UserPhone{CustomerID: "acme-app", StreamAppPK: 4242, UserID: user, Phone: phone}))
+		}()
+		go func() {
+			defer wg.Done()
+			_, err := pools[1].MapContact(s.ctx, next)
+			s.NoError(err)
+		}()
+		wg.Wait()
+
+		s.Empty(ids(s.cardsOf(s.omniOf(chat), CardsQuery{})), "pair %d", i)
+		if next.ID != earlier.ID && next.ConversationID != s.omniOf(chat) {
+			s.Fail("the number's new row is off the user's omni-channel", "pair %d", i)
+		}
+	}
+}
+
 // rows is the one number a query answers.
 func (s *StoreSuite) rows(query string) int {
 	var n int
