@@ -1599,6 +1599,29 @@ func (s *AppsSuite) TestARuleMadeAgainForALineThatThenFailsIsDeleted() {
 	s.Equal(attached.RouteID, s.number().StreamRouteID)
 }
 
+func (s *AppsSuite) TestACallFromANumberAnotherRuleAnswersPlacesOnATrunkOfItsOwn() {
+	s.sealed()
+	s.deployment.OneTrunkPerNumber()
+	stream, attached, _ := s.onItsOwnTrunk()
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+	s.Require().NoError(stream.DeleteTrunk(s.ctx, attached.TrunkID))
+	elsewhere, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "theirs", Numbers: []string{aNumber()}})
+	s.Require().NoError(err)
+	theirs, err := stream.CreateRoute(s.ctx, Route{
+		Name: "theirs", TrunkIDs: []string{elsewhere}, CalledNumbers: []string{s.e164}, CallID: "{{uuid}}",
+	})
+	s.Require().NoError(err)
+
+	_, err = s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	trunks := s.deployment.Trunks()
+	s.Len(trunks, 2, "the call has a trunk of its own beside theirs")
+	s.Contains(trunks, elsewhere)
+	s.Contains(s.deployment.Rules(), theirs)
+	s.Equal(attached.TrunkID, s.number().StreamTrunkID, "the row is left as it was")
+}
+
 func (s *AppsSuite) TestTwoNumbersJoiningAtOnceMakeOneTrunk() {
 	s.sealed()
 	second := s.anotherNumber(s.customer, s.vendor.vendor)
