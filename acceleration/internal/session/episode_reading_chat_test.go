@@ -3,6 +3,7 @@
 package session
 
 import (
+	"cmp"
 	"context"
 	"strings"
 	"time"
@@ -34,17 +35,14 @@ func (s *EpisodeReadingSuite) chatChannel(person string) string {
 	return "agent:" + id
 }
 
-// streamUser is the person a Stream user of the app chat is.
-func (s *EpisodeReadingSuite) streamUser(id string) omnichannel.Person {
-	person, err := omnichannel.StreamUser(id)
-	s.Require().NoError(err)
-	return person
-}
-
 // chatEpisode is the episode a person's message in an app chat's channel opens and its card,
-// as api.chatEpisode writes them, in the Stream app app.
+// as api.chatEpisode writes them, in the Stream app app: zero is the deployment's own, whose
+// hook names it by its id.
 func (s *EpisodeReadingSuite) chatEpisode(person, cid string, app int64) omnichannel.Opened {
-	return s.episode(omnichannel.Episode{Person: s.streamUser(person), Source: store.EpisodeChat, ThreadChannel: cid,
+	app = cmp.Or(app, s.apps.DeploymentApp())
+	stream, err := omnichannel.StreamUser(app, person)
+	s.Require().NoError(err)
+	return s.episode(omnichannel.Episode{Person: stream, Source: store.EpisodeChat, ThreadChannel: cid,
 		StartedAt: s.chatNow(), StreamAppPK: app})
 }
 
@@ -180,7 +178,7 @@ func (s *EpisodeReadingSuite) inApp(app, own int64) {
 
 // Defect: a Stream user id is read as one person in every Stream app of the customer. Anya's
 // card from app 7 is not read for anya_123 in the deployment's app, while a session in app 7
-// reads it; a card a deployment hook pinned to the deployment app's id (5) is read in the
+// reads it; a card a deployment hook wrote in the deployment app's id (5) is read in the
 // deployment's app, which a session pins as zero, and not in app 3.
 func (s *EpisodeReadingSuite) TestAChatSessionReadsTheCardsOfTheSameUserInItsOwnAppOnly() {
 	const own, other = 5, 7
@@ -201,13 +199,16 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsTheCardsOfTheSameUserInItsOwn
 	s.Require().Len(handed, 1, "a session in app 7 reads app 7's card")
 	s.Equal("Gave her address in the other app.", handed[0]["summary"])
 
-	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE contact_map SET stream_app_pk = ? WHERE customer_id = ? AND kind = ?",
-		own, s.customerID, store.ContactStreamUser)
-	s.Require().NoError(err)
 	s.inApp(0, own)
+	s.at(-1800)
+	earlier := s.chatChannel("anya_123")
+	s.write(earlier, "anya_123", "my address is 2 Oak Ave", nil)
+	s.summarize(s.chatEpisode("anya_123", earlier, own), "Gave her address in the deployment's app.")
+	s.at(0)
 	s.write(chat, "anya_123", "and now?", nil)
 	handed = s.handed(s.deploymentChat(chat, "anya_123", true, "and now?"))
 	s.Require().Len(handed, 1, "the deployment app's id and zero are one app")
+	s.Equal("Gave her address in the deployment's app.", handed[0]["summary"])
 
 	s.inApp(3, own)
 	s.write(chat, "anya_123", "and in app 3?", nil)

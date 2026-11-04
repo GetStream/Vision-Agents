@@ -37,7 +37,7 @@ session.Manager.Create, before the history is restored       callCards.read
                |   worker's text session on an app chat's agent channel (Spec.Dispatched)
                |     chatContact: the author of the message handed out (Spec.HandedOutBy),
                |     when every person's or source-less message there is theirs
-               |     -> StreamUser -> store.Contact; a row of another Stream app: none
+               |     -> StreamUser(session's app, author) -> store.Contact
                |  /
                Cards.Context
                  store.EpisodeCards   same customer, same agent, same omni-channel;

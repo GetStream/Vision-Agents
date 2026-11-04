@@ -45,6 +45,10 @@ import (
 // with.
 const streamKey = "deploy-key"
 
+// suiteDeploymentApp is the id the suite's deployment app is configured with: the app a
+// deployment hook names, and so the one its Stream users' cards are keyed by.
+const suiteDeploymentApp = 4
+
 // cardsNote starts the system message the cards are handed behind.
 const cardsNote = "The person's earlier episodes with this agent on other channels follow"
 
@@ -88,7 +92,7 @@ func (s *EpisodeReadingSuite) SetupSuite() {
 func (s *EpisodeReadingSuite) SetupTest() {
 	s.chat = chattest.NewServer(s.T())
 	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
-		APIKey: streamKey, Secret: "deploy-secret", BaseURL: s.chat.URL,
+		APIKey: streamKey, Secret: "deploy-secret", BaseURL: s.chat.URL, App: suiteDeploymentApp,
 	}), streamapp.ClientsOptions{})
 	var err error
 	s.cards, err = omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.apps})

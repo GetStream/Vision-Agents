@@ -179,7 +179,8 @@ func (c *Cards) alone(ctx context.Context, reading Reading) (bool, error) {
 
 // chatContact is the contact map row of the person an app chat's agent channel is with: the
 // Stream user who wrote the message the session was opened for (Reading.ChatUser), keyed by
-// message.user.id as api.chatEpisode keys their cards (StreamUser). The channel is the
+// the session's Stream app and message.user.id as api.chatEpisode keys their cards
+// (StreamUser); the deployment's own app is zero for a session (samePin). The channel is the
 // customer's app's, so who made it says nothing. Every person's message the session reads
 // there, and every message with no source, which the router hands out whether it is a line or
 // not (a voice recording alone, api.addressed), must be by that user: a channel somebody else
@@ -187,7 +188,11 @@ func (c *Cards) alone(ctx context.Context, reading Reading) (bool, error) {
 // has none either. A row made in another Stream app of the customer is another person
 // (samePin): the same user id there is somebody else's.
 func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.ContactMapEntry, error) {
-	person, err := StreamUser(reading.ChatUser)
+	app := reading.StreamAppPK
+	if app == 0 {
+		app = c.stream.DeploymentApp()
+	}
+	person, err := StreamUser(app, reading.ChatUser)
 	if err != nil {
 		return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
 	}
