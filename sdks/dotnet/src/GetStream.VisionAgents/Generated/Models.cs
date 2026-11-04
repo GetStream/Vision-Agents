@@ -4870,6 +4870,12 @@ namespace GetStream.VisionAgents.Models
         public string Text { get; set; } = default!;
 
         /// <summary>
+        /// What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_action")]
+        public System.Collections.Generic.Dictionary<string, object>? UiAction { get; set; } = default!;
+
+        /// <summary>
         /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("videos")]
@@ -6573,8 +6579,26 @@ namespace GetStream.VisionAgents.Models
     public partial class IndexedKnowledgeDocument
     {
 
+        /// <summary>
+        /// The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("bytes")]
+        public long Bytes { get; set; } = default!;
+
+        /// <summary>
+        /// The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("content_type")]
+        public string ContentType { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("created_at")]
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
@@ -6583,7 +6607,13 @@ namespace GetStream.VisionAgents.Models
         public string Namespace { get; set; } = default!;
 
         /// <summary>
-        /// How many passages it was last cut into.
+        /// How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("pages")]
+        public int Pages { get; set; } = default!;
+
+        /// <summary>
+        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("passages")]
         public int Passages { get; set; } = default!;
@@ -6594,8 +6624,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string Source { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string State { get; set; } = default!;
+
         /// <summary>
-        /// The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+        /// The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an &lt;!-- page N --&gt; comment. Only reading one document fills it in, and one written before its text was kept has none.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string? Text { get; set; } = default!;
@@ -8257,6 +8290,126 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("skipped")]
         public System.Collections.Generic.List<SkippedVendor> Skipped { get; set; } = new System.Collections.Generic.List<SkippedVendor>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Who reads the page, and what may happen to it afterwards.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrOptions
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("data_policy")]
+        public DataPolicy? DataPolicy { get; set; } = default!;
+
+        /// <summary>
+        /// Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("figures")]
+        public bool? Figures { get; set; } = default!;
+
+        /// <summary>
+        /// A priority list of where to try, in the order given, which wins over target when it holds anything.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("providers")]
+        public System.Collections.Generic.List<string>? Providers { get; set; } = default!;
+
+        /// <summary>
+        /// A provider/model or a shortcut. Defaults to ocr-default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrRequest
+    {
+
+        /// <summary>
+        /// The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public byte[] Image { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public OcrOptions? Options { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrResult
+    {
+
+        /// <summary>
+        /// Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// What went wrong, in words. Absent when the page was read.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// This response's own id, for logs. Nothing is stored under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markdown")]
+        public string Markdown { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// Who read it, or who failed to. Absent when nothing got as far as a provider.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 

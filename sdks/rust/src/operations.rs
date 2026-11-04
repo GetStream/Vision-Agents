@@ -1163,6 +1163,23 @@ impl Client {
         )
         .await
     }
+    /// Upload a file to a knowledge base, to be read in the background
+    ///
+    /// `POST /v1/agents/knowledge/files` (`uploadKnowledgeFile`).
+    pub async fn upload_knowledge_file(
+        &self,
+        query: &UploadKnowledgeFileQuery,
+        body: &serde_json::Value,
+    ) -> Result<types::IndexedKnowledgeDocument> {
+        self.send(
+            Method::POST,
+            "/v1/agents/knowledge/files",
+            Some(query),
+            Some(body),
+            "uploadKnowledgeFile",
+        )
+        .await
+    }
     /// The pages a knowledge base is kept filled from
     ///
     /// `GET /v1/agents/knowledge/urls` (`listKnowledgeUrls`).
@@ -2771,6 +2788,13 @@ impl Client {
         )
         .await
     }
+    /// Read the text of one page, and return it as Markdown
+    ///
+    /// `POST /v1/ocr` (`readPage`).
+    pub async fn read_page(&self, body: &types::OcrRequest) -> Result<types::OcrResult> {
+        self.send(Method::POST, "/v1/ocr", None::<&()>, Some(body), "readPage")
+            .await
+    }
     /// Make Stream's own app a customer's provider app
     ///
     /// `PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` (`setOperatorProviderApp`).
@@ -4238,6 +4262,16 @@ pub struct ListKnowledgeDocumentsQuery {
     /// One knowledge base. Omit to list every document the customer has.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub namespace: Option<String>,
+}
+/// The query string `uploadKnowledgeFile` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct UploadKnowledgeFileQuery {
+    /// The knowledge base to read the file into.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub namespace: Option<String>,
+    /// What the document is called and its passages keyed by. The file part's filename when left out.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source: Option<String>,
 }
 /// The query string `listKnowledgeUrls` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

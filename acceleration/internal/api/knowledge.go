@@ -271,11 +271,13 @@ func (s *Server) fillKnowledge(
 		cut := ingest.Split(source, document.Text, size, s.knowledgeLimits)
 		passages = append(passages, cut...)
 		written = append(written, store.KnowledgeDocument{
-			CustomerID: customerID,
-			Namespace:  namespace,
-			Source:     source,
-			Passages:   len(cut),
-			Text:       document.Text,
+			CustomerID:  customerID,
+			Namespace:   namespace,
+			Source:      source,
+			Passages:    len(cut),
+			Text:        document.Text,
+			ContentType: "text/markdown",
+			Bytes:       int64(len(document.Text)),
 		})
 	}
 
@@ -390,6 +392,11 @@ func (s *Server) removeKnowledgeDocument(ctx context.Context, document store.Kno
 	if err := s.store.DeleteKnowledgeDocument(ctx, document.CustomerID, document.ID); err != nil {
 		return err
 	}
+	if s.knowledgeFiles != nil {
+		if err := s.knowledgeFiles.Forget(ctx, document); err != nil {
+			s.logger.Warn("could not delete the file of a removed knowledge document", "id", document.ID, "error", err)
+		}
+	}
 	s.audit(ctx, auditRecord{
 		ResourceType: store.AuditKnowledge, ResourceID: document.ID, ResourceName: document.Source,
 		AgentID: s.agentOfKnowledge(ctx, document.CustomerID, document.Namespace),
@@ -408,13 +415,22 @@ func (s *Server) knowledgeFor(ctx context.Context, customerID, region string) me
 
 // indexedKnowledgeDocumentOf is the stored row as the API describes it.
 func indexedKnowledgeDocumentOf(document store.KnowledgeDocument) IndexedKnowledgeDocument {
+	state := KnowledgeDocumentState(document.State)
+	if state == "" {
+		state = KnowledgeDocumentStateIndexed
+	}
 	return IndexedKnowledgeDocument{
-		Id:        document.ID,
-		Namespace: document.Namespace,
-		Source:    document.Source,
-		Passages:  document.Passages,
-		CreatedAt: document.CreatedAt,
-		UpdatedAt: document.UpdatedAt,
+		Id:          document.ID,
+		Namespace:   document.Namespace,
+		Source:      document.Source,
+		Passages:    document.Passages,
+		State:       state,
+		Error:       optional(document.Error),
+		Pages:       document.Pages,
+		ContentType: document.ContentType,
+		Bytes:       document.Bytes,
+		CreatedAt:   document.CreatedAt,
+		UpdatedAt:   document.UpdatedAt,
 	}
 }
 
@@ -555,18 +571,48 @@ type listKnowledgeDocumentPassagesResponse struct {
 
 // IndexedKnowledgeDocument is the IndexedKnowledgeDocument schema.
 type IndexedKnowledgeDocument struct {
-	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
-	Namespace string    `json:"namespace"`
-	Passages  int       `json:"passages" doc:"How many passages it was last cut into."`
-	Source    string    `json:"source" doc:"What the document was posted as, and what its passages are keyed by." example:"pricing.md"`
-	Text      *string   `json:"text,omitempty" doc:"The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none."`
-	UpdatedAt time.Time `json:"updated_at" doc:"When it was last written."`
+	Bytes       int64                  `json:"bytes" doc:"The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept."`
+	ContentType string                 `json:"content_type" doc:"The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept." example:"application/pdf"`
+	CreatedAt   time.Time              `json:"created_at"`
+	Error       *string                `json:"error,omitempty" doc:"Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good."`
+	Id          string                 `json:"id"`
+	Namespace   string                 `json:"namespace"`
+	Pages       int                    `json:"pages" doc:"How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet."`
+	Passages    int                    `json:"passages" doc:"How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read."`
+	Source      string                 `json:"source" doc:"What the document was posted as, and what its passages are keyed by." example:"pricing.md"`
+	State       KnowledgeDocumentState `json:"state"`
+	Text        *string                `json:"text,omitempty" doc:"The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none."`
+	UpdatedAt   time.Time              `json:"updated_at" doc:"When it was last written."`
 }
 
 func (*IndexedKnowledgeDocument) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Properties["passages"].Format = ""
+	schema.Properties["pages"].Format = ""
 	return schema
+}
+
+// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+type KnowledgeDocumentState string
+
+// Defines values for KnowledgeDocumentState.
+const (
+	KnowledgeDocumentStateFailed  KnowledgeDocumentState = "failed"
+	KnowledgeDocumentStateIndexed KnowledgeDocumentState = "indexed"
+	KnowledgeDocumentStatePending KnowledgeDocumentState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the KnowledgeDocumentState enum.
+func (e KnowledgeDocumentState) Valid() bool {
+	switch e {
+	case KnowledgeDocumentStateFailed, KnowledgeDocumentStateIndexed, KnowledgeDocumentStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
+func (KnowledgeDocumentState) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "KnowledgeDocumentState", "Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.", "pending", "indexed", "failed")
 }
 
 // IngestKnowledgeRequest is the IngestKnowledgeRequest schema.

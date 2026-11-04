@@ -11,16 +11,25 @@ use GetStream\VisionAgents\Json;
 final readonly class IndexedKnowledgeDocument
 {
     public function __construct(
+        // The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+        public int $bytes,
+        // The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before ty...
+        public string $contentType,
         public \DateTimeImmutable $createdAt,
         public string $id,
         public string $namespace,
-        // How many passages it was last cut into.
+        // How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+        public int $pages,
+        // How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looke...
         public int $passages,
         // What the document was posted as, and what its passages are keyed by.
         public string $source,
+        public KnowledgeDocumentState|string $state,
         // When it was last written.
         public \DateTimeImmutable $updatedAt,
-        // The document as it was last posted. Only reading one document fills it in, and one written before its text...
+        // Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is t...
+        public ?string $error = null,
+        // The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an...
         public ?string $text = null,
     ) {
     }
@@ -31,12 +40,17 @@ final readonly class IndexedKnowledgeDocument
     public static function fromArray(array $data): self
     {
         return new self(
+            bytes: Json::int($data, 'bytes'),
+            contentType: Json::string($data, 'content_type'),
             createdAt: Json::date($data, 'created_at'),
             id: Json::string($data, 'id'),
             namespace: Json::string($data, 'namespace'),
+            pages: Json::int($data, 'pages'),
             passages: Json::int($data, 'passages'),
             source: Json::string($data, 'source'),
+            state: Json::enum($data, 'state', KnowledgeDocumentState::class),
             updatedAt: Json::date($data, 'updated_at'),
+            error: array_key_exists('error', $data) && $data['error'] !== null ? Json::string($data, 'error') : null,
             text: array_key_exists('text', $data) && $data['text'] !== null ? Json::string($data, 'text') : null,
         );
     }
@@ -49,12 +63,19 @@ final readonly class IndexedKnowledgeDocument
     public function toArray(): array
     {
         $out = [];
+        $out['bytes'] = $this->bytes;
+        $out['content_type'] = $this->contentType;
         $out['created_at'] = Json::dateValue($this->createdAt);
         $out['id'] = $this->id;
         $out['namespace'] = $this->namespace;
+        $out['pages'] = $this->pages;
         $out['passages'] = $this->passages;
         $out['source'] = $this->source;
+        $out['state'] = Json::enumValue($this->state);
         $out['updated_at'] = Json::dateValue($this->updatedAt);
+        if ($this->error !== null) {
+            $out['error'] = $this->error;
+        }
         if ($this->text !== null) {
             $out['text'] = $this->text;
         }
