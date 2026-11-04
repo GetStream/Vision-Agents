@@ -373,7 +373,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A number whose Stream SIP rule or trunk is gone lines again
 
-A number whose stored Stream SIP routing rule had been deleted at Stream failed every call it placed and every `POST /v1/phone/numbers/{e164}/attach` with "can't be found". The router now makes the rule again on the number's trunk and keeps its id. A number whose trunk is gone joins a shared trunk, and a shared trunk Stream lost is replaced for the next number that joins it, its other numbers following on their next call. When Stream still routes the number through a rule or trunk this router did not store, the router makes no second one and fails with an error that says so (AI-2699).
+A number whose stored Stream SIP routing rule had been deleted at Stream failed every call it placed and every `POST /v1/phone/numbers/{e164}/attach` with "can't be found". The router now makes the rule again on the number's trunk and keeps its id. A number whose trunk is gone joins a shared trunk, and a shared trunk Stream lost is replaced for the next number that joins it. Each of that trunk's other numbers moves to a working trunk on its next outbound call; calls to it reach an agent again only once it is detached and attached again. When Stream still routes the number through a rule or trunk this router did not store, the router makes no second one and fails with an error that says so (AI-2699).
 
 ### A new phone link starts the number clean
 
