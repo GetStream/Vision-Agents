@@ -131,6 +131,14 @@ func (s *StoreSuite) TestTheSameUserIdInAnotherAppIsAnotherPerson() {
 	later := streamUser("anya", "agent:omni-chat-two")
 	later.AgentConfigID, later.StreamAppPK = "agent-two", 7
 	s.Equal("agent:omni-chat-two", s.made(later).ConversationID, "a row made later in app 7")
+	// App 7 sorts before 4242, as the links' primary key does.
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "acme-app", StreamAppPK: 7, UserID: "anya", Phone: "+15550177"}))
+	smsThree := contact("+15550100", "agent:omni-sms-three")
+	smsThree.AgentConfigID = "agent-three"
+	s.made(smsThree)
+	chatThree := streamUser("anya", "agent:omni-chat-three")
+	chatThree.AgentConfigID = "agent-three"
+	s.Equal("agent:omni-sms-three", s.made(chatThree).ConversationID, "anya of app 4242 is found by app 4242's link")
 }
 
 // Catches a number linked to two users of one app, a second app refused the number, and a
@@ -150,7 +158,8 @@ func (s *StoreSuite) TestAnotherCustomersLinkJoinsNothingOfThisCustomer() {
 	sms := s.made(contact("+15550100", "agent:omni-sms"))
 	chat := s.made(streamUser("anya", "agent:omni-chat"))
 
-	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "globex-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550199"}))
+	// able-app sorts before acme-app, as the links' primary key does.
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "able-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550100"}))
 
 	s.Equal("agent:omni-sms", s.omniOf(sms))
 	s.Equal("agent:omni-chat", s.omniOf(chat))
@@ -160,7 +169,7 @@ func (s *StoreSuite) TestAnotherCustomersLinkJoinsNothingOfThisCustomer() {
 	s.made(smsTwo)
 	chatTwo := streamUser("anya", "agent:omni-chat-two")
 	chatTwo.AgentConfigID = "agent-two"
-	s.Equal("agent:omni-sms-two", s.made(chatTwo).ConversationID, "acme's own link, not globex's")
+	s.Equal("agent:omni-sms-two", s.made(chatTwo).ConversationID, "acme's own link, not able's")
 }
 
 // Catches an unlink that splits what was joined, or leaves the link to join the next row.

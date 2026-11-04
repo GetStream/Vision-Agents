@@ -98,6 +98,7 @@ func (s *UserPhonesSuite) TestAPutAnswersTheNumberInE164AndIsIdempotent() {
 	formatted := s.person[:2] + " (" + s.person[2:5] + ") " + s.person[5:8] + "-" + s.person[8:]
 
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+formatted+`"}`, &user))
+	s.Require().Equal([]string{s.person}, s.links(), "kept as an SMS from it names it")
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, &user))
 
 	s.Equal(AgentUser{UserID: s.user, Phone: &s.person}, user)
@@ -163,6 +164,24 @@ func (s *UserPhonesSuite) TestAnotherCustomerLinksItsOwnUser() {
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM user_phones WHERE customer_id = ?", first).Scan(&count))
 	s.Equal(1, count)
+}
+
+// Catches a link kept for the customer rather than for the Stream app the request acts in:
+// the same user id in a second app is another person, who may have a number of their own, and
+// a number the first app's user holds is free in the second.
+func (s *UserPhonesSuite) TestTheSameUserInASecondStreamAppIsAnotherPerson() {
+	second := s.utils.number()
+	s.giveApp(s.customerID(), 7101, "key-"+s.utils.uuid())
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.giveApp(s.customerID(), 7102, "key-"+s.utils.uuid())
+
+	s.Equal(http.StatusOK, s.put(s.user, `{"phone": "`+second+`"}`, nil))
+	s.Equal(http.StatusOK, s.put("other-"+s.utils.uuid(), `{"phone": "`+s.person+`"}`, nil))
+
+	var apps []int64
+	s.Require().NoError(s.store.DB().NewSelect().Table("user_phones").Column("stream_app_pk").
+		Where("customer_id = ? AND user_id = ?", s.customerID(), s.user).Order("stream_app_pk").Scan(context.Background(), &apps))
+	s.Equal([]int64{7101, 7102}, apps)
 }
 
 // Catches the operation reachable from an end user's device: a user could link their own id to

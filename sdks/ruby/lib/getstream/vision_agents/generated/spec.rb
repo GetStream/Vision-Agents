@@ -1640,6 +1640,12 @@ module GetStream
           body: "UseCaseRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "updateUser" => {
+          method: :put, path: "/v1/agents/users/{user_id}",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: "AgentUserRequest", body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "updateUserPolicy" => {
           method: :put, path: "/v1/policies/users/{user_id}",
           path_params: %w[user_id].freeze, query: [].freeze,
@@ -1760,6 +1766,14 @@ module GetStream
         "AgentTools" => {
           properties: %w[output_retention progressive].freeze,
           required: [].freeze, open: false
+        }.freeze,
+        "AgentUser" => {
+          properties: %w[phone user_id].freeze,
+          required: %w[user_id phone].freeze, open: false
+        }.freeze,
+        "AgentUserRequest" => {
+          properties: %w[phone].freeze,
+          required: %w[phone].freeze, open: false
         }.freeze,
         "AnalyzeReviewsRequest" => {
           properties: %w[from target to].freeze,

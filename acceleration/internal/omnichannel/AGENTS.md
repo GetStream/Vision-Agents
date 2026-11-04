@@ -18,11 +18,26 @@ channel bridge, a thread's message        session manager, a call's session join
                Cards.Open           Postgres only
                  store.MapContact   (customer, agent config, kind, address)
                                     -> omni-channel agent:omni-<uuid>
+                                    a new stream_user or phone row of a linked pair
+                                    takes its partner's omni-channel (joinPartner)
                  store.OpenEpisode  open episode of the thread or the call session
                Cards.Write          only an episode Open opened
                  omni-channel       agent user = channel id, agent_config_id
                  card message       id episode-<episode id>, source, status,
                                     started_at, thread_channel, call_id
+```
+
+Linking (AI-2701), the customer's backend:
+
+```
+PUT /v1/agents/users/{user_id} {"phone": "+15551234567" | null}    api.putUser, server-side only
+  app: the request's pin (streamapp.Clients.Pin), 0 for the deployment's own
+  phone: omnichannel.Phone, else 400; null unlinks
+  store.LinkUserPhone   user_phones (customer, app, user_id, phone), one pair per app;
+                        a number another user of the app holds: 409 phone_taken
+    joinLinked          each agent config of the customer: the stream_user row and the phone
+                        row of the pair, in that app, point at the older omni-channel
+                        (whose oldest row was made first) and take its pin; no card moves
 ```
 
 Reading (T56 and T42, AI-885), only for an agent config with `episode_cards` on:
@@ -37,7 +52,8 @@ session.Manager.Create, before the history is restored       callCards.read
                Cards.Context
                  store.EpisodeCards   same customer, same agent, same omni-channel;
                                       own thread and own call left out; newest 5
-                 for each card        summarized: the card's text (GetMessage)
+                 for each card        summarized: the card's text (GetMessage), when the
+                                      message is in an omni-channel, by its own agent
                                       otherwise: last 20 lines of thread_channel,
                                       before Until, and for a call not before it started;
                                       a call outside agent:<call id>, or whose window
@@ -88,6 +104,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 | contact map | How a person is known (an E.164 number, a Slack user, or a Stream user of the app chat) to their omni-channel | table `contact_map`, `store.MapContact` |
 | episode | One call, or one run of messages on one external thread or in one agent channel of the app chat | table `episodes`, `store.OpenEpisode` |
 | episode card | The episode's one message in the omni-channel | `Cards.Write` |
+| link | A customer's word that a Stream user of its app and a number are one person | table `user_phones`, `store.LinkUserPhone` |
 
 ## Rules
 
@@ -101,6 +118,8 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **App chat cards are opt-in.** Only a message answered under an agent config with `episode_cards` on opens an episode: the running session's spec, else the config `ownerOf` finds. Off, nothing is read or written beyond the config itself. A message with a source (the agent's own reply), a thread channel's (the bridge's), an incognito session's and a call session's open none: a chat episode in a call's channel would end the call card's lines at its start (`until`).
 - **One chat episode per run of messages.** Every message calls `Open`, which keeps the episode open; only the message that opened it writes a card. A delivery Stream makes again, or the queue tries again, finds the open episode (`episodes_open_thread`) and writes nothing. A card that fails costs the card, not the answer: logged at ERROR, and the message is answered. A hook's card is written off its request, as its answer is.
 - **An app chat's channel is the customer's by the config it names.** The customer's app makes it with `agent_config_id` and none of the router's stamps, so `linesOf` reads it for a chat card of that config (`theirs`); a stamped channel is read only for the customer it names.
+- **A link makes one omni-channel of two.** The customer's backend says a Stream user of its app and a number are one person (`PUT /v1/agents/users/{user_id}`); under each agent the user's `stream_user` row and the number's `phone` row then point at the older of their omni-channels, and a row made later takes its partner's (`store.MapContact`). One number per user and one user per number within a Stream app: the same user id in another app is another person, and a number another user holds is a 409. No message moves: the cards written before stay where they were, and are read by their message id from any omni-channel, as long as its own agent wrote them (`writtenAsCard`). A link and a first sighting at once each read after their own write, so one sees the other. Unlinking (`"phone": null`), or a new number, stops the joining; rows already joined stay so. Example: Anya's SMS made `omni-A` on Monday and her app chat `omni-B` on Tuesday; once linked, both rows point at `omni-A`, and her next SMS reads the chat's card from `omni-B`.
+- **The deployment's own app is one app, whatever its pin.** A chat row from it carries its id (the message hook), an SMS row none, and a request acting in it 0 (`store.linkApp`).
 - **Reading cards is opt-in too.** Off, `callCards.read` returns before any read, and the session is handed what it was before. Example: an SMS thread session under a config without `episode_cards` reads its thread as before and nothing else.
 - **A person's cards are their omni-channel's.** `store.EpisodeCards` takes the contact rows of the same customer and agent that point at the omni-channel, so a linked Slack row and a phone row are one person, and the same number under another agent or customer is another. Example: `+15550100199`'s cards are never read for `+15550100100`.
 - **A shared thread reads no cards.** A thread's cards are of the one who started it. Example: Bob writes in Alice's Slack thread; the session reads none of Alice's cards.
@@ -139,7 +158,9 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - A call whose `call.session_ended` arrives before its card's episode is opened (the card is written off the session's start) stays in progress: the sweeper closes thread episodes only.
 - The sweeper's gate is read once, at start: a config that turns `episode_cards` on later has its calls closed by the hook, and its expired summary leases taken from the next start.
 - A text session on a channel other than a thread channel reads no cards yet: the app chat writes its cards (`stream_user`), and reading them is the next change.
-- A Stream user is keyed by user id alone, under the customer and the agent config: a customer whose config answers in two Stream apps has one person for a user id in both.
+- A Stream user is keyed by user id alone, under the customer and the agent config: a customer whose config answers in two Stream apps has one person for a user id in both. A link is kept per app (`user_phones`) and joins only rows pinned to its app, so such a row is joined by the link of the app that made it.
+- A data move carries no link (`store.dataTables`): the contact rows it joins stay behind too, so the customer links again where it moved to.
+- A card written before a link and still in progress is closed as the omni-channel its row points at now (`Closer.mark` names that channel's agent as the author of the partial update); that a server-side partial update by another user is accepted is unverified against Stream.
 - A session a caller opens on a thread channel through the API and keeps open is checked for a shared thread once, when it opens; the Router's own sessions open for each turn (`api.answerThread`).
 
 ## Tests
@@ -147,7 +168,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 ```bash
 go test ./internal/omnichannel
 ROUTER_POSTGRES_DSN=... ROUTER_REDIS_ADDR=... \
-  go test -tags integration -run 'TestEpisodeCardsSuite|TestSlackChannelSuite|TestChatEpisodesSuite' ./internal/api
+  go test -tags integration -run 'TestEpisodeCardsSuite|TestSlackChannelSuite|TestChatEpisodesSuite|TestUserPhonesSuite' ./internal/api
 ROUTER_POSTGRES_DSN=... go test -tags integration -run TestEpisodeReadingSuite ./internal/session
 ROUTER_POSTGRES_DSN=... go test -tags integration -run TestCloserSuite ./internal/omnichannel
 ROUTER_POSTGRES_DSN=... go test -tags integration -run TestEpisodeSweeperSuite ./cmd/router
