@@ -1813,6 +1813,12 @@ components:
       type: object
     CampaignAnalytics:
       properties:
+        call_outcomes:
+          additionalProperties:
+            format: int64
+            type: integer
+          description: 'Calls placed that ended, by how the phone says they ended: completed, busy, no_answer, failed, canceled or unknown. A call an answering machine took is completed.'
+          type: object
         connected:
           description: Contacts who answered at least one call.
           format: int64
@@ -1846,6 +1852,7 @@ components:
         - converted
         - conversion_rate
         - outcomes
+        - call_outcomes
         - dials_per_day
       type: object
     CampaignAttempt:
@@ -1860,6 +1867,7 @@ components:
     CampaignDialDay:
       properties:
         answered:
+          description: Calls a person picked up and spoke on.
           format: int64
           type: integer
         date:
@@ -3546,6 +3554,9 @@ components:
           type: integer
         call_id:
           type: string
+        call_outcome:
+          $ref: '#/components/schemas/CallOutcome'
+          description: How the call the dial placed ended, as the phone says. Absent while it is happening and for a dial that placed none.
         dial:
           description: 1, or 2 for the second call of a double dial.
           type: integer
@@ -3553,10 +3564,10 @@ components:
           format: date-time
           type: string
         outcome:
-          description: The outcome an answered call was read as.
+          description: 'The outcome an answered call was read as: no_response when nobody but the agent spoke.'
           type: string
         result:
-          description: answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or abandoned; empty while the call is happening. Only answered, unanswered and voicemail placed a call that ended.
+          description: 'Why the dial placed no call: invalid_number, refused, deferred, paused or not_placed (the router stopped before the call went out). voicemail for a call an answering machine took. Empty for any other call, whose end call_outcome says.'
           type: string
         started_at:
           format: date-time

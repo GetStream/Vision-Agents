@@ -299,11 +299,11 @@ func (s *CampaignContactsSuite) TestAContactShowsItsAttempts() {
 	s.add(created.Id, map[string]any{"contacts": []map[string]any{{"to_number": "+14155550131"}}})
 	contact := s.list(created.Id, "").Items[0]
 	start := time.Now().UTC().Add(-time.Hour).Truncate(time.Second)
-	s.dial(created.Id, contact.Id, 1, 1, "unanswered", "", start)
-	s.dial(created.Id, contact.Id, 1, 2, "answered", "callback", start.Add(time.Minute))
-	s.dial(created.Id, contact.Id, 2, 1, "deferred", "", start.Add(2*time.Minute))
-	s.dial(created.Id, contact.Id, 3, 1, "refused", "", start.Add(3*time.Minute))
-	s.dial(created.Id, contact.Id, 4, 1, "", "", start.Add(4*time.Minute))
+	s.dial(created.Id, contact.Id, 1, 1, "", "no_answer", "", start)
+	s.dial(created.Id, contact.Id, 1, 2, "", "completed", "callback", start.Add(time.Minute))
+	s.dial(created.Id, contact.Id, 2, 1, "deferred", "", "", start.Add(2*time.Minute))
+	s.dial(created.Id, contact.Id, 3, 1, "refused", "", "", start.Add(3*time.Minute))
+	s.dial(created.Id, contact.Id, 4, 1, "", "", "", start.Add(4*time.Minute))
 
 	var shown Contact
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, s.contactPath(created.Id, contact.Id), nil, &shown))
@@ -314,13 +314,18 @@ func (s *CampaignContactsSuite) TestAContactShowsItsAttempts() {
 	first := shown.Attempts[0]
 	s.Equal(1, first.Attempt)
 	s.Equal(1, first.Dial)
-	s.Equal("unanswered", first.Result)
+	s.Empty(first.Result)
+	s.Equal(pointerTo(CallOutcomeNoAnswer), first.CallOutcome)
 	s.Nil(first.Outcome)
 	s.True(start.Equal(first.StartedAt))
 	s.Require().NotNil(first.EndedAt)
 	s.Equal(2, shown.Attempts[1].Dial)
 	s.Equal(pointerTo("callback"), shown.Attempts[1].Outcome)
+	s.Equal(pointerTo(CallOutcomeCompleted), shown.Attempts[1].CallOutcome)
+	s.Equal("deferred", shown.Attempts[2].Result)
+	s.Nil(shown.Attempts[2].CallOutcome, "a dial that placed no call has no call outcome")
 	s.Equal("", shown.Attempts[4].Result)
+	s.Nil(shown.Attempts[4].CallOutcome, "still ringing")
 	s.Nil(shown.Attempts[4].EndedAt, "still ringing")
 	s.Equal(2, s.list(created.Id, "").Items[0].AttemptsMade, "the list counts the same")
 	s.Nil(s.list(created.Id, "").Items[0].Attempts, "only one contact read alone lists its attempts")
@@ -468,18 +473,19 @@ func (s *CampaignContactsSuite) stop(campaignID, contactID string) Contact {
 	return stopped
 }
 
-// dial records one dial of a contact as the dialer would, ended unless result is empty.
-func (s *CampaignContactsSuite) dial(campaignID, contactID string, attempt, dial int, result, outcome string, at time.Time) {
+// dial records one dial of a contact as the dialer would, ended unless result and callOutcome
+// are both empty.
+func (s *CampaignContactsSuite) dial(campaignID, contactID string, attempt, dial int, result, callOutcome, outcome string, at time.Time) {
 	ctx := context.Background()
 	row := store.CampaignAttempt{
 		CampaignID: campaignID, ContactID: contactID, StepID: "step_1",
 		Attempt: attempt, Dial: dial, StartedAt: at,
 	}
 	s.Require().NoError(s.store.StartDial(ctx, &row))
-	if result == "" {
+	if result == "" && callOutcome == "" {
 		return
 	}
-	s.Require().NoError(s.store.EndDial(ctx, row.ID, result, s.utils.callID(), "", at.Add(30*time.Second), nil))
+	s.Require().NoError(s.store.EndDial(ctx, row.ID, result, callOutcome, s.utils.callID(), "", at.Add(30*time.Second), nil))
 	if outcome != "" {
 		_, err := s.store.DB().NewUpdate().Model((*store.CampaignAttempt)(nil)).
 			Set("outcome = ?", outcome).Where("id = ?", row.ID).Exec(ctx)

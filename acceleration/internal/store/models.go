@@ -1401,11 +1401,14 @@ type CampaignAttempt struct {
 	Dial         int    `bun:"dial,notnull"`
 	CallID       string `bun:"call_id,notnull"`
 	VendorCallID string `bun:"vendor_call_id,notnull"`
-	// Result is answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or
-	// abandoned, and empty while the call is happening.
-	Result    string `bun:"result,notnull"`
-	Outcome   string `bun:"outcome,notnull"`
-	Converted bool   `bun:"converted,notnull"`
+	// Result is why the dial placed no call: invalid_number, refused, deferred, paused or
+	// not_placed. It is voicemail for a call an answering machine took, and empty for any other.
+	Result string `bun:"result,notnull"`
+	// CallOutcome is how the placed call ended, a phone outcome. Empty while the call is
+	// happening, and for a dial that placed none.
+	CallOutcome string `bun:"call_outcome,nullzero"`
+	Outcome     string `bun:"outcome,notnull"`
+	Converted   bool   `bun:"converted,notnull"`
 	// ClassifyState is empty, pending, done or abandoned: whether an answered call's outcome
 	// is still to be read from its transcript. Abandoned is one whose contact settled before
 	// it was read.

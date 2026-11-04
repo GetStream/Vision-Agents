@@ -18,7 +18,9 @@ type CampaignAnalytics struct {
 	Converted int
 	// Outcomes counts the contacts that are done, by outcome.
 	Outcomes map[string]int
-	Days     []DialDay
+	// CallOutcomes counts the calls that ended, by how the phone says they ended.
+	CallOutcomes map[string]int
+	Days         []DialDay
 }
 
 // DialDay is the dials placed on one UTC day, and how many were answered.
@@ -35,8 +37,14 @@ type CampaignTotal struct {
 	Converted int
 }
 
-// A dial is an attempt that placed a call: answered, unanswered, voicemail, or still happening (empty
-// result). Deferred, paused, refused, invalid_number, canceled and abandoned attempts placed none.
+// A dial is an attempt that placed a call: one with no result, still happening or ended as its
+// call_outcome says, or one an answering machine took. Deferred, paused, refused, invalid_number
+// and not_placed attempts placed none. An answered dial is a person on a call: its phone joined,
+// no machine took it, and somebody spoke.
+const (
+	placedDial   = `result IN ('', 'voicemail')`
+	answeredDial = `result = '' AND call_outcome = 'completed' AND outcome <> 'no_response'`
+)
 
 // CampaignAnalytics counts a campaign's contacts and dials. Days run oldest first and hold
 // only the days with a dial.
@@ -46,15 +54,16 @@ func (s *Store) CampaignAnalytics(ctx context.Context, campaignID string) (Campa
 		return CampaignAnalytics{}, err
 	}
 	analytics := CampaignAnalytics{
-		Dialed:    totals[campaignID].Dialed,
-		Converted: totals[campaignID].Converted,
-		Outcomes:  map[string]int{},
-		Days:      []DialDay{},
+		Dialed:       totals[campaignID].Dialed,
+		Converted:    totals[campaignID].Converted,
+		Outcomes:     map[string]int{},
+		CallOutcomes: map[string]int{},
+		Days:         []DialDay{},
 	}
 
 	err = s.db.NewRaw(`SELECT count(*) FROM campaign_contacts cc
 WHERE cc.campaign_id = ? AND EXISTS (SELECT 1 FROM campaign_attempts ca
-	WHERE ca.contact_id = cc.id AND ca.result = 'answered')`, campaignID).Scan(ctx, &analytics.Connected)
+	WHERE ca.contact_id = cc.id AND `+answeredDial+`)`, campaignID).Scan(ctx, &analytics.Connected)
 	if err != nil {
 		return CampaignAnalytics{}, stack.Wrap(fmt.Errorf("store: count connected contacts: %w", err))
 	}
@@ -72,10 +81,23 @@ WHERE campaign_id = ? AND stage = ? GROUP BY outcome`, campaignID, ContactComple
 		analytics.Outcomes[row.Outcome] = row.Count
 	}
 
+	var calls []struct {
+		CallOutcome string
+		Count       int
+	}
+	err = s.db.NewRaw(`SELECT call_outcome, count(*) AS count FROM campaign_attempts
+WHERE campaign_id = ? AND call_outcome IS NOT NULL GROUP BY call_outcome`, campaignID).Scan(ctx, &calls)
+	if err != nil {
+		return CampaignAnalytics{}, stack.Wrap(fmt.Errorf("store: count call outcomes: %w", err))
+	}
+	for _, row := range calls {
+		analytics.CallOutcomes[row.CallOutcome] = row.Count
+	}
+
 	err = s.db.NewRaw(`SELECT date_trunc('day', started_at AT TIME ZONE 'UTC') AT TIME ZONE 'UTC' AS day,
-	count(*) AS dials, count(*) FILTER (WHERE result = 'answered') AS answered,
+	count(*) AS dials, count(*) FILTER (WHERE `+answeredDial+`) AS answered,
 	count(*) FILTER (WHERE result = 'voicemail') AS voicemail
-FROM campaign_attempts WHERE campaign_id = ? AND result IN ('answered', 'unanswered', 'voicemail', '') GROUP BY 1 ORDER BY 1`, campaignID).Scan(ctx, &analytics.Days)
+FROM campaign_attempts WHERE campaign_id = ? AND `+placedDial+` GROUP BY 1 ORDER BY 1`, campaignID).Scan(ctx, &analytics.Days)
 	if err != nil {
 		return CampaignAnalytics{}, stack.Wrap(fmt.Errorf("store: count dials per day: %w", err))
 	}
@@ -124,7 +146,7 @@ func (s *Store) CampaignTotals(ctx context.Context, campaignIDs []string) (map[s
 		Converted  int
 	}
 	err := s.db.NewRaw(`SELECT cc.campaign_id,
-	count(*) FILTER (WHERE EXISTS (SELECT 1 FROM campaign_attempts ca WHERE ca.contact_id = cc.id AND ca.result IN ('answered', 'unanswered', 'voicemail', ''))) AS dialed,
+	count(*) FILTER (WHERE EXISTS (SELECT 1 FROM campaign_attempts ca WHERE ca.contact_id = cc.id AND `+placedDial+`)) AS dialed,
 	count(*) FILTER (WHERE cc.converted) AS converted
 FROM campaign_contacts cc WHERE cc.campaign_id IN (?) GROUP BY cc.campaign_id`, bun.In(campaignIDs)).Scan(ctx, &rows)
 	if err != nil {
@@ -148,7 +170,7 @@ func (s *Store) AttemptsMade(ctx context.Context, contactIDs []string) (map[stri
 		Made      int
 	}
 	err := s.db.NewRaw(`SELECT contact_id, count(DISTINCT (step_id, attempt)) AS made
-FROM campaign_attempts WHERE contact_id IN (?) AND result IN ('answered', 'unanswered', 'voicemail', '')
+FROM campaign_attempts WHERE contact_id IN (?) AND `+placedDial+`
 GROUP BY contact_id`, bun.In(contactIDs)).Scan(ctx, &rows)
 	if err != nil {
 		return nil, stack.Wrap(fmt.Errorf("store: count attempts made: %w", err))

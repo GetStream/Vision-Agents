@@ -2427,9 +2427,10 @@ func (s *DataMoveSuite) midCall() string {
 		WHERE campaign_id = ?`, campaign)
 	s.Require().NoError(err)
 	_, err = s.source.DB().ExecContext(s.ctx, `INSERT INTO campaign_attempts
-		(id, campaign_id, contact_id, step_id, attempt, result, classify_state, classify_after)
+		(id, campaign_id, contact_id, step_id, attempt, call_outcome, ended_at, classify_state, classify_after)
 		SELECT 'att-' || to_number, campaign_id, id, 'step_1', 1,
-			CASE to_number WHEN '+15550000001' THEN '' ELSE 'answered' END,
+			CASE to_number WHEN '+15550000001' THEN NULL ELSE 'completed' END,
+			CASE to_number WHEN '+15550000001' THEN NULL ELSE now() END,
 			CASE to_number WHEN '+15550000002' THEN 'pending' ELSE '' END,
 			CASE to_number WHEN '+15550000002' THEN now() + interval '20 minutes' END
 		FROM campaign_contacts WHERE campaign_id = ?`, campaign)
@@ -2463,7 +2464,7 @@ func (s *DataMoveSuite) TestAContactMidCallIsSettledHereFromItsCallOnceTheMoveIs
 	s.Require().NoError(err)
 	s.Require().True(found)
 	s.Equal(1, dial.Attempt, "the dial the attempt used is there to settle from")
-	s.Equal("unanswered", dial.Result)
+	s.Equal("unknown", dial.CallOutcome, "the call it was in ended there, and how is not known here")
 	done, err := s.destination.QueryContacts(s.ctx, campaign, ContactFilter{Number: "+15550000003"})
 	s.Require().NoError(err)
 	s.Require().Len(done, 1)
@@ -2498,8 +2499,8 @@ func (s *DataMoveSuite) TestAttemptsMoveWithTheirContactsAndAPendingClassificati
 		s.Require().NoError(err)
 	}
 	_, err := s.source.DB().ExecContext(s.ctx, `INSERT INTO campaign_attempts
-		(id, campaign_id, contact_id, step_id, attempt, result, classify_state, classify_after)
-		SELECT 'att-' || campaign_id, campaign_id, id, 'step_1', 1, 'answered', 'pending', now() FROM campaign_contacts`)
+		(id, campaign_id, contact_id, step_id, attempt, call_outcome, ended_at, classify_state, classify_after)
+		SELECT 'att-' || campaign_id, campaign_id, id, 'step_1', 1, 'completed', now(), 'pending', now() FROM campaign_contacts`)
 	s.Require().NoError(err)
 	_, err = s.source.DB().ExecContext(s.ctx, `INSERT INTO campaign_attempts (id, campaign_id, contact_id, step_id, attempt, result)
 		SELECT 'live-' || campaign_id, campaign_id, id, 'step_1', 2, '' FROM campaign_contacts WHERE campaign_id = ?`, campaign)
@@ -2519,16 +2520,17 @@ func (s *DataMoveSuite) TestAttemptsMoveWithTheirContactsAndAPendingClassificati
 		"SELECT classify_state FROM campaign_attempts WHERE id = ?", "att-"+campaign).Scan(&source))
 	s.Equal("pending", source)
 
-	var result string
+	var called *string
 	var endedAt *time.Time
 	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
-		"SELECT result, ended_at FROM campaign_attempts WHERE id = ?", "live-"+campaign).Scan(&result, &endedAt))
-	s.Equal("unanswered", result, "the call that was happening there will not be ended here")
+		"SELECT call_outcome, ended_at FROM campaign_attempts WHERE id = ?", "live-"+campaign).Scan(&called, &endedAt))
+	s.Require().NotNil(called)
+	s.Equal("unknown", *called, "the call that was happening there will not be ended here")
 	s.Require().NotNil(endedAt)
 	s.WithinDuration(time.Now(), *endedAt, time.Minute)
 	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
-		"SELECT result FROM campaign_attempts WHERE id = ?", "live-"+campaign).Scan(&result))
-	s.Empty(result, "the source's own row is left alone")
+		"SELECT call_outcome FROM campaign_attempts WHERE id = ?", "live-"+campaign).Scan(&called))
+	s.Nil(called, "the source's own row is left alone")
 }
 
 func (s *DataMoveSuite) TestACampaignStartedHereIsNoLongerTheMovesToName() {

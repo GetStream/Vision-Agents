@@ -89,9 +89,12 @@ CREATE TABLE campaign_attempts (
     dial INTEGER NOT NULL DEFAULT 1,
     call_id TEXT NOT NULL DEFAULT '',
     vendor_call_id TEXT NOT NULL DEFAULT '',
-    -- result is answered, unanswered, invalid_number, refused, deferred, paused or
-    -- abandoned, and empty while the call is happening.
+    -- result is why the dial placed no call (invalid_number, refused, deferred, paused or
+    -- not_placed), or voicemail for a call an answering machine took; empty for any other.
     result TEXT NOT NULL DEFAULT '',
+    -- call_outcome is how the placed call ended, as phone_calls.outcome says. NULL while the
+    -- call is happening, and for a dial that placed none.
+    call_outcome TEXT,
     outcome TEXT NOT NULL DEFAULT '',
     converted BOOLEAN NOT NULL DEFAULT false,
     -- classify_state is empty, pending, done or abandoned: whether the outcome of an answered

@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -399,7 +400,7 @@ func (h heldDial) Dial(ctx context.Context, _ campaign.Dial) (campaign.Dialed, e
 	case <-h:
 	case <-ctx.Done():
 	}
-	return campaign.Dialed{Result: campaign.Unanswered}, nil
+	return campaign.Dialed{Outcome: outcome.NoAnswer}, nil
 }
 
 type unreadTranscripts struct{}

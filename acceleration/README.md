@@ -1750,6 +1750,11 @@ verdict at all, so does a call where nobody speaks for 40 seconds after answerin
 ends as `voicemail`: it uses the attempt like one nobody answered, gets no outcome, and is not
 dialed again at once.
 
+Each dial keeps the phone's own outcome of its call as `call_outcome`, and what follows is read
+from it. `completed` has its transcript read. `no_answer` and `unknown` ring again at once when
+the sequence double dials. `busy`, `failed` and `canceled` wait for the next attempt's delay. A
+dial that placed no call says why in `result` instead.
+
 Every router runs the dialer, and its state is all in Postgres. A router claims a contact
 that is due under a lease, and the claim counts the campaign's calls in progress in the same
 transaction, so several routers together never go past `concurrency` or ring one person

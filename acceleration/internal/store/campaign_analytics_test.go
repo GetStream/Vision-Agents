@@ -4,8 +4,9 @@ package store
 
 import "time"
 
-func (s *StoreSuite) dialed(contact Contact, at time.Time, result string) {
-	attempt := CampaignAttempt{CampaignID: contact.CampaignID, ContactID: contact.ID, StartedAt: at, Result: result}
+// dialed records an ended dial with result and the phone outcome of its call.
+func (s *StoreSuite) dialed(contact Contact, at time.Time, result, callOutcome string) {
+	attempt := CampaignAttempt{CampaignID: contact.CampaignID, ContactID: contact.ID, StartedAt: at, Result: result, CallOutcome: callOutcome}
 	s.Require().NoError(s.store.StartDial(s.ctx, &attempt))
 }
 
@@ -19,9 +20,9 @@ func (s *StoreSuite) settled(contact Contact, stage, outcome string, converted b
 func (s *StoreSuite) TestAnalyticsCountContactsNotDials() {
 	campaign := s.draftCampaign(newID(), "+15550001", "+15550002")
 	contact := s.contactByNumber(campaign, "+15550001")
-	s.dialed(contact, s.base, "unanswered")
-	s.dialed(contact, s.base.Add(time.Minute), "answered")
-	s.dialed(contact, s.base.Add(26*time.Hour), "unanswered")
+	s.dialed(contact, s.base, "", "no_answer")
+	s.dialed(contact, s.base.Add(time.Minute), "", "completed")
+	s.dialed(contact, s.base.Add(26*time.Hour), "", "busy")
 	s.settled(contact, ContactCompleted, "interested", true)
 
 	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
@@ -70,11 +71,11 @@ func (s *StoreSuite) TestStagesFoldAwaitingOutcomeIntoInProgress() {
 func (s *StoreSuite) TestOnlyAttemptsThatPlacedACallAreDials() {
 	campaign := s.draftCampaign(newID(), "+15550001", "+15550002", "+15550003")
 	mixed := s.contactByNumber(campaign, "+15550001")
-	for _, result := range []string{"deferred", "paused", "refused", "invalid_number", "abandoned"} {
-		s.dialed(mixed, s.base.Add(-48*time.Hour), result)
+	for _, result := range []string{"deferred", "paused", "refused", "invalid_number", "not_placed"} {
+		s.dialed(mixed, s.base.Add(-48*time.Hour), result, "")
 	}
-	s.dialed(mixed, s.base, "")
-	s.dialed(s.contactByNumber(campaign, "+15550002"), s.base, "refused")
+	s.dialed(mixed, s.base, "", "")
+	s.dialed(s.contactByNumber(campaign, "+15550002"), s.base, "refused", "")
 
 	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
 	s.Require().NoError(err)
@@ -90,15 +91,15 @@ func (s *StoreSuite) TestAnEmptyCampaignHasZeroAnalytics() {
 	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
 	s.Require().NoError(err)
 
-	s.Equal(CampaignAnalytics{Outcomes: map[string]int{}, Days: []DialDay{}}, got)
+	s.Equal(CampaignAnalytics{Outcomes: map[string]int{}, CallOutcomes: map[string]int{}, Days: []DialDay{}}, got)
 }
 
 func (s *StoreSuite) TestDialsFallOnUTCDaysAtMidnight() {
 	campaign := s.draftCampaign(newID(), "+15550001")
 	contact := s.contactByNumber(campaign, "+15550001")
 	day := s.base.Truncate(24 * time.Hour)
-	s.dialed(contact, day.Add(-time.Minute), "unanswered")
-	s.dialed(contact, day.Add(time.Minute), "answered")
+	s.dialed(contact, day.Add(-time.Minute), "", "no_answer")
+	s.dialed(contact, day.Add(time.Minute), "", "completed")
 
 	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
 	s.Require().NoError(err)
@@ -109,8 +110,8 @@ func (s *StoreSuite) TestDialsFallOnUTCDaysAtMidnight() {
 func (s *StoreSuite) TestVoicemailDialsAreDialsAndTheirOwnSeries() {
 	campaign := s.draftCampaign(newID(), "+15550001")
 	contact := s.contactByNumber(campaign, "+15550001")
-	s.dialed(contact, s.base, "voicemail")
-	s.dialed(contact, s.base.Add(time.Minute), "unanswered")
+	s.dialed(contact, s.base, "voicemail", "completed")
+	s.dialed(contact, s.base.Add(time.Minute), "", "no_answer")
 
 	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
 	s.Require().NoError(err)
@@ -121,4 +122,34 @@ func (s *StoreSuite) TestVoicemailDialsAreDialsAndTheirOwnSeries() {
 	made, err := s.store.AttemptsMade(s.ctx, []string{contact.ID})
 	s.Require().NoError(err)
 	s.Equal(1, made[contact.ID])
+}
+
+func (s *StoreSuite) TestACallNobodySpokeOnIsNotAnAnswer() {
+	campaign := s.draftCampaign(newID(), "+15550001")
+	contact := s.contactByNumber(campaign, "+15550001")
+	silent := CampaignAttempt{CampaignID: campaign.ID, ContactID: contact.ID, StartedAt: s.base, CallOutcome: "completed", Outcome: "no_response"}
+	s.Require().NoError(s.store.StartDial(s.ctx, &silent))
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal(1, got.Dialed)
+	s.Equal(0, got.Connected, "the phone joined, but no person spoke")
+	s.Equal([]DialDay{{Day: s.base.Truncate(24 * time.Hour), Dials: 1}}, got.Days)
+}
+
+func (s *StoreSuite) TestCallsAreCountedByHowThePhoneSaysTheyEnded() {
+	campaign := s.draftCampaign(newID(), "+15550001", "+15550002")
+	first, second := s.contactByNumber(campaign, "+15550001"), s.contactByNumber(campaign, "+15550002")
+	s.dialed(first, s.base, "", "busy")
+	s.dialed(first, s.base.Add(time.Minute), "", "busy")
+	s.dialed(second, s.base, "", "no_answer")
+	s.dialed(second, s.base.Add(time.Hour), "voicemail", "completed")
+	s.dialed(second, s.base.Add(2*time.Hour), "paused", "")
+	s.dialed(second, s.base.Add(3*time.Hour), "", "")
+
+	got, err := s.store.CampaignAnalytics(s.ctx, campaign.ID)
+	s.Require().NoError(err)
+
+	s.Equal(map[string]int{"busy": 2, "no_answer": 1, "completed": 1}, got.CallOutcomes, "a call still happening and a dial that placed none are left out")
 }

@@ -277,13 +277,12 @@ WHERE cp.id = cc.campaign_id AND cc.id = ? AND cc.leased_by = ? AND cc.stage IN 
 	return nil
 }
 
-// Classification is what reading an answered dial's transcript found: an outcome, or that
-// nobody but the agent spoke, which makes the dial unanswered.
+// Classification is what reading an answered dial's transcript found: an outcome id, or
+// no_response when nobody but the agent spoke.
 type Classification struct {
-	AttemptID  string
-	Outcome    string
-	Converted  bool
-	Unanswered bool
+	AttemptID string
+	Outcome   string
+	Converted bool
 }
 
 // ClassifyAndSettle records what an answered dial's transcript said and settles its contact, both
@@ -294,18 +293,15 @@ func (s *Store) ClassifyAndSettle(ctx context.Context, owner string, classificat
 		return stack.Wrap(errors.New("store: a dial id is required"))
 	}
 	return s.settleContact(ctx, owner, contactID, settle, func(ctx context.Context, tx bun.Tx) error {
-		query := tx.NewUpdate().Model((*CampaignAttempt)(nil)).
+		_, err := tx.NewUpdate().Model((*CampaignAttempt)(nil)).
 			Set("classify_after = NULL").
+			Set("classify_state = ?", classifyDone).
+			Set("outcome = ?", classification.Outcome).
+			Set("converted = ?", classification.Converted).
 			Where("id = ?", classification.AttemptID).
-			Where("classify_state = ?", classifyPending)
-		if classification.Unanswered {
-			query = query.Set("result = 'unanswered'").Set("classify_state = ''")
-		} else {
-			query = query.Set("classify_state = ?", classifyDone).
-				Set("outcome = ?", classification.Outcome).
-				Set("converted = ?", classification.Converted)
-		}
-		if _, err := query.Exec(ctx); err != nil {
+			Where("classify_state = ?", classifyPending).
+			Exec(ctx)
+		if err != nil {
 			return fmt.Errorf("store: classify a dial: %w", err)
 		}
 		return nil
@@ -330,16 +326,17 @@ func (s *Store) StartDial(ctx context.Context, attempt *CampaignAttempt) error {
 	return nil
 }
 
-// EndDial records how a dial ended. A classifyAfter marks an answered call whose outcome is to
-// be read from its transcript once it is written. A dial deleted with its campaign is nothing
-// to end.
-func (s *Store) EndDial(ctx context.Context, id string, result, callID, vendorCallID string, endedAt time.Time, classifyAfter *time.Time) error {
+// EndDial records how a dial ended: its result, and callOutcome, the phone outcome of the call
+// it placed, empty for none. A classifyAfter marks an answered call whose outcome is to be read
+// from its transcript once it is written. A dial deleted with its campaign is nothing to end.
+func (s *Store) EndDial(ctx context.Context, id string, result, callOutcome, callID, vendorCallID string, endedAt time.Time, classifyAfter *time.Time) error {
 	classify := ""
 	if classifyAfter != nil {
 		classify = classifyPending
 	}
 	_, err := s.db.NewUpdate().Model((*CampaignAttempt)(nil)).
 		Set("result = ?", result).
+		Set("call_outcome = NULLIF(?, '')", callOutcome).
 		Set("call_id = COALESCE(NULLIF(?, ''), call_id)", callID).
 		Set("vendor_call_id = COALESCE(NULLIF(?, ''), vendor_call_id)", vendorCallID).
 		Set("ended_at = ?", endedAt).

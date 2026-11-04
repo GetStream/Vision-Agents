@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -46,12 +47,12 @@ func (s *TransitionSuite) contact(attempt int) store.Contact {
 }
 
 func (s *TransitionSuite) TestNobodyAnsweringTheFirstDialDialsAgainAtOnce() {
-	_, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(0), 1, Dialed{Result: Unanswered}, s.at(2, 10, 0), s.at(2, 10, 1))
+	_, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(0), 1, Dialed{Outcome: outcome.NoAnswer}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.True(again)
 }
 
 func (s *TransitionSuite) TestAFirstDialWhoseSessionNeverOpenedUsesTheAttemptWithoutDialingAgain() {
-	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Unanswered, Reason: reasonNoSession, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.Unknown, Reason: reasonNoSession, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
 
 	s.False(again, "a second dial would ring the person into the same failure")
 	s.Equal(store.Enrolled, settle.Stage)
@@ -59,7 +60,7 @@ func (s *TransitionSuite) TestAFirstDialWhoseSessionNeverOpenedUsesTheAttemptWit
 }
 
 func (s *TransitionSuite) TestNobodyAnsweringTheDoubleDialSchedulesTheNextAttemptAfterItsDelay() {
-	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Result: Unanswered, CallID: "c2", VendorCallID: "v2"}, s.at(2, 10, 0), s.at(2, 10, 3))
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Outcome: outcome.NoAnswer, CallID: "c2", VendorCallID: "v2"}, s.at(2, 10, 0), s.at(2, 10, 3))
 	s.False(again)
 	s.Equal(store.Enrolled, settle.Stage)
 	s.Equal(2, settle.Attempt)
@@ -71,7 +72,7 @@ func (s *TransitionSuite) TestNobodyAnsweringTheDoubleDialSchedulesTheNextAttemp
 }
 
 func (s *TransitionSuite) TestWithoutDoubleDialTheFirstUnansweredDialSchedulesTheNextAttempt() {
-	settle, again := afterDial(s.sequence(false), s.hours, s.chicago, s.contact(0), 1, Dialed{Result: Unanswered}, s.at(2, 10, 0), s.at(2, 10, 1))
+	settle, again := afterDial(s.sequence(false), s.hours, s.chicago, s.contact(0), 1, Dialed{Outcome: outcome.NoAnswer}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.False(again)
 	s.Equal(store.Enrolled, settle.Stage)
 	s.Equal(2, settle.Attempt)
@@ -82,13 +83,13 @@ func (s *TransitionSuite) TestTheNextAttemptLandsInsideCallingHours() {
 	started := s.at(2, 17, 0)
 	seq := s.sequence(false)
 	seq.Steps[0].Attempts = []Attempt{{DelayMinutes: 0}, {DelayMinutes: 180}}
-	settle, _ := afterDial(seq, s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Unanswered}, started, started)
+	settle, _ := afterDial(seq, s.hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.NoAnswer}, started, started)
 	s.Require().NotNil(settle.NextAttemptAt)
 	s.True(s.at(3, 9, 0).Equal(*settle.NextAttemptAt), settle.NextAttemptAt.String())
 }
 
 func (s *TransitionSuite) TestTheLastUnansweredAttemptEndsWithNoResponse() {
-	settle, again := afterDial(s.sequence(false), s.hours, s.chicago, s.contact(4), 1, Dialed{Result: Unanswered}, s.at(2, 10, 0), s.at(2, 10, 1))
+	settle, again := afterDial(s.sequence(false), s.hours, s.chicago, s.contact(4), 1, Dialed{Outcome: outcome.NoAnswer}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.False(again)
 	s.Equal(store.ContactCompleted, settle.Stage)
 	s.Equal(OutcomeNoResponse, settle.Outcome)
@@ -98,7 +99,7 @@ func (s *TransitionSuite) TestTheLastUnansweredAttemptEndsWithNoResponse() {
 }
 
 func (s *TransitionSuite) TestAnAnsweredCallWaitsForItsOutcome() {
-	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(2), 2, Dialed{Result: Answered, CallID: "c"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(2), 2, Dialed{Outcome: outcome.Completed, CallID: "c"}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.False(again)
 	s.Equal(store.AwaitingOutcome, settle.Stage)
 	s.Equal(2, settle.Attempt)
@@ -225,10 +226,6 @@ func (s *TransitionSuite) TestAWrappedErrorIsRecognisedAsItsKind() {
 	s.Equal(InvalidNumber, resultOf(fmt.Errorf("x: %w", stack.Wrap(phone.Dialable("+19005550123")))).Result)
 }
 
-func (s *TransitionSuite) TestAnyOtherDialErrorIsUnanswered() {
-	s.Equal(Unanswered, resultOf(errors.New("vendor hung up")).Result)
-}
-
 func (s *TransitionSuite) TestAContactWithNoOpeningFailsInsteadOfGettingNoTime() {
 	hours := s.hours
 	hours.Windows = map[string][]Window{"monday": {{Start: "09:00", End: "18:00"}}}
@@ -236,7 +233,7 @@ func (s *TransitionSuite) TestAContactWithNoOpeningFailsInsteadOfGettingNoTime()
 	for d := 0; d < 420; d++ {
 		hours.ExcludedDates = append(hours.ExcludedDates, s.at(2, 0, 0).AddDate(0, 0, d).Format("2006-01-02"))
 	}
-	settle, _ := afterDial(s.sequence(false), hours, s.chicago, s.contact(1), 1, Dialed{Result: Unanswered}, s.at(2, 10, 0), s.at(2, 10, 0))
+	settle, _ := afterDial(s.sequence(false), hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.NoAnswer}, s.at(2, 10, 0), s.at(2, 10, 0))
 	s.Equal(store.Failed, settle.Stage)
 	s.Equal("no_calling_hours", settle.Reason)
 	s.Nil(settle.NextAttemptAt)
@@ -263,8 +260,8 @@ func (s *TransitionSuite) TestAnInvalidNumberOnTheSecondDialStillFails() {
 }
 
 func (s *TransitionSuite) TestAnUnknownResultFails() {
-	for _, r := range []Result{"", "mystery"} {
-		settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: r}, s.at(2, 10, 0), s.at(2, 10, 0))
+	for _, dialed := range []Dialed{{}, {Result: "mystery"}, {Outcome: "mystery"}} {
+		settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, dialed, s.at(2, 10, 0), s.at(2, 10, 0))
 		s.False(again)
 		s.Equal(store.Failed, settle.Stage)
 		s.Equal("unknown_result", settle.Reason)
@@ -273,7 +270,7 @@ func (s *TransitionSuite) TestAnUnknownResultFails() {
 
 func (s *TransitionSuite) TestADialCancelledBeforeItRangGoesBackUnused() {
 	now := s.at(2, 10, 1)
-	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Canceled}, s.at(2, 10, 0), now)
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: NotPlaced}, s.at(2, 10, 0), now)
 	s.False(again)
 	s.Equal(store.Enrolled, settle.Stage)
 	s.Equal(1, settle.Attempt)
@@ -282,33 +279,80 @@ func (s *TransitionSuite) TestADialCancelledBeforeItRangGoesBackUnused() {
 }
 
 func (s *TransitionSuite) TestASecondDialCancelledStillUsesTheAttempt() {
-	settle, _ := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Result: Canceled}, s.at(2, 10, 0), s.at(2, 10, 1))
+	settle, _ := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 2, Dialed{Result: NotPlaced}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.Equal(store.Enrolled, settle.Stage)
 	s.Equal(2, settle.Attempt)
 }
 
-func (s *TransitionSuite) TestACallCancelledBeforeItWasSentIsCanceled() {
+func (s *TransitionSuite) TestACallCancelledBeforeItWasSentIsNotPlaced() {
 	err := fmt.Errorf("%w: %w", phone.ErrNotPlaced, context.Canceled)
 
-	s.Equal(Canceled, resultOf(err).Result)
+	s.Equal(NotPlaced, resultOf(err).Result)
 }
 
-func (s *TransitionSuite) TestACallCancelledWhileTheVendorWasDialingIsUnanswered() {
+func (s *TransitionSuite) TestACallCancelledWhileTheVendorWasDialingEndsUnknown() {
 	// The vendor may have taken the call and be ringing the person: going back unused would
 	// ring them again.
-	s.Equal(Unanswered, resultOf(fmt.Errorf("phone: dial: %w", context.Canceled)).Result)
+	s.Equal(Dialed{Outcome: outcome.Unknown}, resultOf(fmt.Errorf("phone: dial: %w", context.Canceled)))
 }
 
 func (s *TransitionSuite) TestAVoicemailIsUnansweredWithoutADoubleDial() {
-	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Voicemail, CallID: "c"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Result: Voicemail, Outcome: outcome.Completed, CallID: "c"}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.False(again)
 	s.Equal(store.Enrolled, settle.Stage)
 	s.Equal(2, settle.Attempt)
 	s.True(s.at(5, 10, 0).Equal(*settle.NextAttemptAt))
 	s.Equal("c", settle.CallID)
 
-	last, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(4), 1, Dialed{Result: Voicemail}, s.at(2, 10, 0), s.at(2, 10, 1))
+	last, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(4), 1, Dialed{Result: Voicemail, Outcome: outcome.Completed}, s.at(2, 10, 0), s.at(2, 10, 1))
 	s.False(again)
 	s.Equal(store.ContactCompleted, last.Stage)
 	s.Equal(OutcomeNoResponse, last.Outcome)
+}
+
+func (s *TransitionSuite) TestAnUnknownEndingOnTheFirstDialDialsAgainAtOnce() {
+	_, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.Unknown, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.True(again)
+}
+
+func (s *TransitionSuite) TestABusyLineIsRetriedAfterTheDelayWithoutADoubleDial() {
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.Busy, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.False(again, "a person who just declined is not rung again at once")
+	s.Equal(store.Enrolled, settle.Stage)
+	s.Equal(2, settle.Attempt)
+	s.Require().NotNil(settle.NextAttemptAt)
+	s.True(s.at(5, 10, 0).Equal(*settle.NextAttemptAt), settle.NextAttemptAt.String())
+	s.Equal("c1", settle.CallID)
+}
+
+func (s *TransitionSuite) TestAFailedCallIsRetriedAfterTheDelayWithoutADoubleDial() {
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.Failed, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.False(again, "a carrier fault met at once would be met again")
+	s.Equal(store.Enrolled, settle.Stage)
+	s.Equal(2, settle.Attempt)
+	s.Require().NotNil(settle.NextAttemptAt)
+	s.True(s.at(5, 10, 0).Equal(*settle.NextAttemptAt), settle.NextAttemptAt.String())
+}
+
+func (s *TransitionSuite) TestACallTheVendorCanceledIsRetriedAfterTheDelayWithoutADoubleDial() {
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.Canceled, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.False(again)
+	s.Equal(store.Enrolled, settle.Stage)
+	s.Equal(2, settle.Attempt)
+	s.Require().NotNil(settle.NextAttemptAt)
+	s.True(s.at(5, 10, 0).Equal(*settle.NextAttemptAt), settle.NextAttemptAt.String())
+}
+
+func (s *TransitionSuite) TestACompletedCallWaitsForItsTranscriptToBeRead() {
+	settle, again := afterDial(s.sequence(true), s.hours, s.chicago, s.contact(1), 1, Dialed{Outcome: outcome.Completed, CallID: "c1"}, s.at(2, 10, 0), s.at(2, 10, 1))
+	s.False(again)
+	s.Equal(store.AwaitingOutcome, settle.Stage)
+	s.Equal(1, settle.Attempt)
+	s.Nil(settle.NextAttemptAt)
+}
+
+func (s *TransitionSuite) TestAnyOtherDialErrorEndsUnknown() {
+	dialed := resultOf(errors.New("vendor hung up"))
+	s.Empty(dialed.Result, "the vendor may have rung the person")
+	s.Equal(outcome.Unknown, dialed.Outcome)
 }

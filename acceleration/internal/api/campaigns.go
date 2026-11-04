@@ -652,7 +652,7 @@ func (s *Server) getCampaignAnalytics(ctx context.Context, request *campaignRequ
 	}
 	rendered := CampaignAnalytics{
 		Dialed: counted.Dialed, Connected: counted.Connected, Converted: counted.Converted,
-		Outcomes: counted.Outcomes, DialsPerDay: make([]CampaignDialDay, 0, len(counted.Days)),
+		Outcomes: counted.Outcomes, CallOutcomes: counted.CallOutcomes, DialsPerDay: make([]CampaignDialDay, 0, len(counted.Days)),
 	}
 	if counted.Dialed > 0 {
 		rendered.ConversionRate = float64(counted.Converted) / float64(counted.Dialed)
@@ -869,6 +869,7 @@ type CampaignAnalytics struct {
 	Converted      int               `json:"converted" doc:"Contacts that ended successfully."`
 	ConversionRate float64           `json:"conversion_rate" doc:"converted / dialed, 0 when nobody was dialed."`
 	Outcomes       map[string]int    `json:"outcomes" nullable:"false" doc:"Contacts that are done, by outcome id, no_response included."`
+	CallOutcomes   map[string]int    `json:"call_outcomes" nullable:"false" doc:"Calls placed that ended, by how the phone says they ended: completed, busy, no_answer, failed, canceled or unknown. A call an answering machine took is completed."`
 	DialsPerDay    []CampaignDialDay `json:"dials_per_day" nullable:"false" doc:"Oldest first, only the days with a dial."`
 }
 
@@ -876,7 +877,7 @@ type CampaignAnalytics struct {
 type CampaignDialDay struct {
 	Date      string `json:"date" format:"date" doc:"YYYY-MM-DD, in UTC."`
 	Dials     int    `json:"dials" doc:"Calls placed, answering machines included."`
-	Answered  int    `json:"answered"`
+	Answered  int    `json:"answered" doc:"Calls a person picked up and spoke on."`
 	Voicemail int    `json:"voicemail" doc:"Calls an answering machine took."`
 }
 

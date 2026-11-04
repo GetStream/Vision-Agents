@@ -949,7 +949,7 @@ func requeueImportedContact(row json.RawMessage, now time.Time) (json.RawMessage
 }
 
 // endImportedAttempt closes a call that was still happening there, which nobody here will end,
-// as unanswered, and makes an answered one whose outcome is still to be read due now rather than
+// as one whose ending is unknown, and makes an answered one whose outcome is still to be read due now rather than
 // when the source's lease on it would have run out.
 func endImportedAttempt(row json.RawMessage, now time.Time) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
@@ -963,8 +963,8 @@ func endImportedAttempt(row json.RawMessage, now time.Time) (json.RawMessage, er
 	if string(fields["classify_state"]) == `"`+classifyPending+`"` {
 		fields["classify_after"] = stamp
 	}
-	if string(fields["result"]) == `""` {
-		fields["result"] = json.RawMessage(`"unanswered"`)
+	if ended, ok := fields["ended_at"]; !ok || string(ended) == "null" {
+		fields["call_outcome"] = json.RawMessage(`"unknown"`)
 		fields["ended_at"] = stamp
 	}
 	return json.Marshal(fields)

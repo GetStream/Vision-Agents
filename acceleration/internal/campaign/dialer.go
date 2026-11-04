@@ -73,15 +73,16 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	placed, err := d.phone.Call(ctx, request)
 	if err != nil {
 		dialed := resultOf(err)
-		if dialed.Result == Unanswered {
+		if dialed.Result == "" {
 			return dialed, err
 		}
 		return dialed, nil
 	}
 
-	dialed := Dialed{Result: Unanswered, CallID: placed.SessionID, VendorCallID: placed.VendorCallID}
+	dialed := Dialed{CallID: placed.SessionID, VendorCallID: placed.VendorCallID}
 	created, err := d.sessions.Create(ctx, campaignSpec(config, dial.Campaign, dial.Step, dial.Contact, placed))
-	if _, nobody := errors.AsType[*session.CallUnansweredError](err); nobody {
+	if unanswered, nobody := errors.AsType[*session.CallUnansweredError](err); nobody {
+		dialed.Outcome = unanswered.Outcome
 		return dialed, nil
 	}
 	if err != nil {
@@ -93,23 +94,17 @@ func (d *phoneDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 		if ended := d.phone.EndCall(hangUp, dial.Campaign.CustomerID, placed.StreamApp, placed.CallType, placed.CallID); ended != nil {
 			d.logger.Error("could not end the Stream call of a campaign call with no session", "session", placed.SessionID, "error", ended)
 		}
-		dialed.Reason = reasonNoSession
+		// Hung up at once, before the phone could say how the call went.
+		dialed.Outcome, dialed.Reason = outcome.Unknown, reasonNoSession
 		return dialed, err
 	}
 
 	d.hold(ctx, created)
 	if created.EndReason() == session.EndVoicemail {
 		dialed.Result = Voicemail
-		return dialed, nil
 	}
-	answered, err := answeredCall(context.WithoutCancel(ctx), d.store, dial.Campaign.CustomerID, placed.SessionID)
-	if err != nil {
-		return dialed, err
-	}
-	if answered {
-		dialed.Result = Answered
-	}
-	return dialed, nil
+	dialed.Outcome, err = callOutcome(context.WithoutCancel(ctx), d.store, dial.Campaign.CustomerID, placed.SessionID)
+	return dialed, err
 }
 
 // hold waits for the conversation to end, and ends it if nothing else does.
@@ -149,22 +144,25 @@ func (d *phoneDialer) close(created *session.Session) {
 	}
 }
 
-// answeredCall reports whether the person picked up the call placed into callID. The phone
-// having joined is known while the call runs, and its outcome is decided a moment after it
-// ends, so either says so.
-func answeredCall(ctx context.Context, st *store.Store, customerID, callID string) (bool, error) {
+// callOutcome is how the call placed into callID ended, as the phone keeps it. A phone that
+// joined is completed, which the keeper decides only once its leg ends. One it has not decided
+// yet, from a vendor that never reports or one whose report is late, is unknown.
+func callOutcome(ctx context.Context, st *store.Store, customerID, callID string) (outcome.Outcome, error) {
 	ctx, cancel := context.WithTimeout(ctx, writeTimeout)
 	defer cancel()
 	calls, err := st.PhoneCalls(ctx, customerID, []string{callID})
 	if err != nil {
-		return false, err
+		return outcome.Unknown, err
 	}
 	for _, call := range calls {
-		if call.AnsweredAt != nil || call.Outcome == string(outcome.Completed) {
-			return true, nil
+		if call.AnsweredAt != nil {
+			return outcome.Completed, nil
+		}
+		if call.Outcome != "" {
+			return outcome.Outcome(call.Outcome), nil
 		}
 	}
-	return false, nil
+	return outcome.Unknown, nil
 }
 
 // campaignSpec is the session that has the conversation with contact: the agent config with

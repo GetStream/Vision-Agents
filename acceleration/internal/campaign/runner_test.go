@@ -17,6 +17,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -181,7 +182,7 @@ func (s *RunnerSuite) TestAnUnansweredContactIsDialedTwiceThenRetriedLater() {
 	s.Require().Len(attempts, 2)
 	// Both dials started at the test's one instant, so their order is not theirs to keep.
 	s.ElementsMatch([]int{1, 2}, []int{attempts[0].Dial, attempts[1].Dial})
-	s.Equal([]string{string(Unanswered), string(Unanswered)}, []string{attempts[0].Result, attempts[1].Result})
+	s.Equal([]string{"no_answer", "no_answer"}, []string{attempts[0].CallOutcome, attempts[1].CallOutcome})
 	s.Equal(store.Enrolled, contact.Stage)
 	s.Equal(2, contact.Attempt)
 	s.Require().NotNil(contact.NextAttemptAt)
@@ -287,13 +288,13 @@ func (s *RunnerSuite) TestARouterThatDiedMidCallIsTakenOver() {
 	answered, attempts := s.contact(campaign, "+15550000001")
 	s.Equal(store.ContactCompleted, answered.Stage)
 	s.Equal(OutcomeSuccess, answered.Outcome)
-	s.Equal(string(Answered), attempts[0].Result)
+	s.Equal("completed", attempts[0].CallOutcome, "read from the call the dead router placed")
 	unanswered, attempts := s.contact(campaign, "+15550000002")
 	s.Equal(store.Enrolled, unanswered.Stage)
 	s.Equal(2, unanswered.Attempt)
 	s.Require().NotNil(unanswered.NextAttemptAt)
 	s.Equal(died.Add(3*24*time.Hour), unanswered.NextAttemptAt.UTC())
-	s.Equal(string(Unanswered), attempts[0].Result)
+	s.Equal("no_answer", attempts[0].CallOutcome)
 }
 
 func (s *RunnerSuite) TestAContactClaimedBeforeItWasEverDialedGoesBackUnused() {
@@ -465,7 +466,8 @@ func (s *RunnerSuite) TestAnEmptyTranscriptIsReadAgainBeforeFallingBack() {
 	contact, attempts := s.contact(campaign, "+15550000001")
 	s.Equal(store.Enrolled, contact.Stage, "nobody ever spoke, which is an unanswered call")
 	s.Equal(2, contact.Attempt)
-	s.Equal(string(Unanswered), attempts[0].Result)
+	s.Equal("completed", attempts[0].CallOutcome, "the phone joined, whatever was said")
+	s.Equal(OutcomeNoResponse, attempts[0].Outcome)
 	s.Equal(maxClassifyTries, attempts[0].ClassifyTries)
 }
 
@@ -500,7 +502,7 @@ func (s *RunnerSuite) TestACallWhereOnlyTheAgentSpokeIsUnanswered() {
 	s.Equal(store.Enrolled, contact.Stage)
 	s.Equal(2, contact.Attempt)
 	s.Empty(contact.Outcome)
-	s.Equal(string(Unanswered), attempts[0].Result)
+	s.Equal(OutcomeNoResponse, attempts[0].Outcome, "nobody spoke on the call the phone says was answered")
 }
 
 // classifiedAs answers a call where somebody spoke, and has the classifier read it as outcome.
@@ -526,7 +528,7 @@ func (s *RunnerSuite) TestACallOnlyARecordingSpokeOnIsUnansweredAndCalledAgain()
 	s.Equal(store.Enrolled, contact.Stage)
 	s.Equal(2, contact.Attempt)
 	s.Empty(contact.Outcome)
-	s.Equal(string(Unanswered), attempts[0].Result)
+	s.Equal(OutcomeNoResponse, attempts[0].Outcome, "nobody spoke on the call the phone says was answered")
 }
 
 func (s *RunnerSuite) TestNoPersonIsUnansweredWhenACampaignHasAnOutcomeNamedRecording() {
@@ -545,7 +547,7 @@ func (s *RunnerSuite) TestNoPersonIsUnansweredWhenACampaignHasAnOutcomeNamedReco
 	contact, attempts := s.contact(campaign, "+15550000001")
 	s.Equal(store.Enrolled, contact.Stage)
 	s.Equal(2, contact.Attempt)
-	s.Equal(string(Unanswered), attempts[0].Result)
+	s.Equal(OutcomeNoResponse, attempts[0].Outcome, "nobody spoke on the call the phone says was answered")
 }
 
 func (s *RunnerSuite) TestACallWithNoOutcomeThatFitsIsOther() {
@@ -571,7 +573,7 @@ func (s *RunnerSuite) TestARefusalOfMoneyPausesTheCampaign() {
 }
 
 func (s *RunnerSuite) TestARefusalOfMoneyOnTheSecondDialStillPausesTheCampaign() {
-	s.dialer.results["+15550000001"] = []Dialed{{Result: Unanswered}, {Result: Paused, Reason: "insufficient_credits"}}
+	s.dialer.results["+15550000001"] = []Dialed{{Outcome: outcome.NoAnswer}, {Result: Paused, Reason: "insufficient_credits"}}
 	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
 
 	s.tick(s.runner)
@@ -856,11 +858,12 @@ func (s *RunnerSuite) TestADialRecordedAsTheRouterStopsIsNotPlaced() {
 	dialed, err := runner.ring(s.ctx, claimed[0].Campaign, claimed[0].Contact, s.single().First(), 1)
 	s.Require().NoError(err)
 
-	s.Equal(Canceled, dialed.Result)
+	s.Equal(NotPlaced, dialed.Result)
 	s.Empty(s.dialer.dialed(), "nobody is rung")
 	_, attempts := s.contact(campaign, "+15550000001")
 	s.Require().Len(attempts, 1)
-	s.Equal(string(Canceled), attempts[0].Result, "the dial row is ended, not left open")
+	s.Equal(string(NotPlaced), attempts[0].Result, "the dial row is ended, not left open")
+	s.Empty(attempts[0].CallOutcome, "no call was placed")
 }
 
 // clock is a time the test moves by hand.
@@ -887,7 +890,7 @@ func (c *clock) advance(by time.Duration) {
 	c.at = c.at.Add(by)
 }
 
-// stubDialer ends each dial as results says for its number, in order, and unanswered after
+// stubDialer ends each dial as results says for its number, in order, and as no_answer after
 // them. While hold is open, every dial waits for it to close.
 type stubDialer struct {
 	mu      sync.Mutex
@@ -901,7 +904,7 @@ type stubDialer struct {
 func (d *stubDialer) answer(number string) {
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	d.results[number] = []Dialed{{Result: Answered}}
+	d.results[number] = []Dialed{{Outcome: outcome.Completed}}
 }
 
 func (d *stubDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
@@ -909,7 +912,7 @@ func (d *stubDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	d.dials = append(d.dials, dial)
 	d.now++
 	d.highest = max(d.highest, d.now)
-	dialed := Dialed{Result: Unanswered}
+	dialed := Dialed{Outcome: outcome.NoAnswer}
 	if queued := d.results[dial.Contact.ToNumber]; len(queued) > 0 {
 		dialed, d.results[dial.Contact.ToNumber] = queued[0], queued[1:]
 	}
@@ -923,7 +926,7 @@ func (d *stubDialer) Dial(ctx context.Context, dial Dial) (Dialed, error) {
 	d.mu.Lock()
 	d.now--
 	d.mu.Unlock()
-	if dialed.Result == Answered || dialed.Result == Unanswered || dialed.Result == Voicemail {
+	if dialed.Result == "" || dialed.Result == Voicemail {
 		dialed.CallID = dial.SessionID
 		dialed.VendorCallID = "vendor-" + dial.SessionID
 	}
@@ -994,7 +997,7 @@ func (c *stubClassifier) Classify(ctx context.Context, _ store.Campaign, _ strin
 func (s *RunnerSuite) TestAVoicemailIsNotClassifiedNorDialedAgainAndTheNextAttemptIsOnSchedule() {
 	// Wednesday, so three days on is a Saturday, outside the default hours.
 	s.clock.set(time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC))
-	s.dialer.results["+15550000001"] = []Dialed{{Result: Voicemail}}
+	s.dialer.results["+15550000001"] = []Dialed{{Result: Voicemail, Outcome: outcome.Completed}}
 	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
 
 	s.tick(s.runner)
@@ -1013,7 +1016,7 @@ func (s *RunnerSuite) TestAVoicemailIsNotClassifiedNorDialedAgainAndTheNextAttem
 func (s *RunnerSuite) TestAVoicemailOnTheLastAttemptEndsAsNoResponse() {
 	sequence := s.single()
 	sequence.Steps[0].Attempts = []Attempt{{0}}
-	s.dialer.results["+15550000001"] = []Dialed{{Result: Voicemail}}
+	s.dialer.results["+15550000001"] = []Dialed{{Result: Voicemail, Outcome: outcome.Completed}}
 	campaign := s.launched(sequence, 1, "UTC", "+15550000001")
 
 	s.tick(s.runner)
@@ -1021,4 +1024,74 @@ func (s *RunnerSuite) TestAVoicemailOnTheLastAttemptEndsAsNoResponse() {
 	contact, _ := s.contact(campaign, "+15550000001")
 	s.Equal(store.ContactCompleted, contact.Stage)
 	s.Equal(OutcomeNoResponse, contact.Outcome)
+}
+
+func (s *RunnerSuite) TestADialKeepsHowThePhoneSaysItsCallEnded() {
+	// Wednesday, so three days on is a Saturday, outside the default hours.
+	s.clock.set(time.Date(2026, 3, 4, 10, 0, 0, 0, time.UTC))
+	s.dialer.results["+15550000001"] = []Dialed{{Outcome: outcome.Busy}}
+	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
+
+	s.tick(s.runner)
+
+	s.Len(s.dialer.dialed(), 1, "a busy line is not rung again at once")
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Require().Len(attempts, 1)
+	s.Equal("busy", attempts[0].CallOutcome)
+	s.Empty(attempts[0].Result)
+	s.Empty(attempts[0].ClassifyState, "nobody answered, so nothing is read")
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(2, contact.Attempt)
+	s.Require().NotNil(contact.NextAttemptAt)
+	s.Equal(time.Date(2026, 3, 9, 9, 0, 0, 0, time.UTC), contact.NextAttemptAt.UTC())
+}
+
+func (s *RunnerSuite) TestATakeOverKeepsHowThePhoneSaysTheCallEnded() {
+	campaign := s.launched(DefaultSequence("config-1"), 1, "UTC", "+15550000001")
+	died := s.clock.now()
+	claimed, err := s.store.ClaimDueContacts(s.ctx, "router-dead", died, lease, 10)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	callID := uuid.NewString()
+	s.Require().NoError(s.store.StartDial(s.ctx, &store.CampaignAttempt{CampaignID: campaign.ID, ContactID: claimed[0].Contact.ID,
+		StepID: "step_1", Attempt: 1, Dial: 1, CallID: callID, StartedAt: died}))
+	s.Require().NoError(s.store.InsertPhoneCall(s.ctx, &store.PhoneCall{Token: uuid.NewString(), CustomerID: s.customerID,
+		CallType: "default", CallID: callID, Vendor: "twilio", LocalNumber: campaign.FromNumber, RemoteNumber: "+15550000001",
+		PlacedAt: died, Outcome: "busy"}))
+	s.clock.advance(lease + time.Minute)
+
+	s.tick(s.runner)
+
+	s.Empty(s.dialer.dialed(), "a busy line is not rung again at once, and a call another router placed is never placed again")
+	contact, attempts := s.contact(campaign, "+15550000001")
+	s.Require().Len(attempts, 1)
+	s.Equal("busy", attempts[0].CallOutcome)
+	s.Require().NotNil(attempts[0].EndedAt)
+	s.Equal(store.Enrolled, contact.Stage)
+	s.Equal(2, contact.Attempt)
+}
+
+func (s *RunnerSuite) TestACallsOutcomeIsReadFromThePhone() {
+	answeredAt := s.clock.now()
+	calls := map[string]store.PhoneCall{
+		"joined":    {AnsweredAt: &answeredAt},
+		"busy":      {Outcome: "busy"},
+		"undecided": {},
+	}
+	ids := map[string]string{}
+	for name, call := range calls {
+		ids[name] = uuid.NewString()
+		call.Token, call.CustomerID, call.CallType, call.CallID = uuid.NewString(), s.customerID, "default", ids[name]
+		call.Vendor, call.LocalNumber, call.RemoteNumber, call.PlacedAt = "twilio", "+15550100000", "+15550000001", s.clock.now()
+		s.Require().NoError(s.store.InsertPhoneCall(s.ctx, &call))
+	}
+
+	for name, want := range map[string]outcome.Outcome{"joined": outcome.Completed, "busy": outcome.Busy, "undecided": outcome.Unknown} {
+		got, err := callOutcome(s.ctx, s.store, s.customerID, ids[name])
+		s.Require().NoError(err)
+		s.Equal(want, got, name)
+	}
+	never, err := callOutcome(s.ctx, s.store, s.customerID, uuid.NewString())
+	s.Require().NoError(err)
+	s.Equal(outcome.Unknown, never, "a call the phone kept no row for")
 }

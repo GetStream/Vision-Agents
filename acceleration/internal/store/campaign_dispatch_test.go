@@ -262,13 +262,14 @@ func (s *StoreSuite) TestAnAnsweredDialWaitsToBeClassifiedAndIsClaimedOnce() {
 	s.Require().NoError(s.store.StartDial(s.ctx, &attempt))
 	s.NotEmpty(attempt.ID)
 	classifyAfter := s.base.Add(2 * time.Minute)
-	s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "answered", "call-1", "vendor-1", s.base.Add(time.Minute), &classifyAfter))
+	s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "", "completed", "call-1", "vendor-1", s.base.Add(time.Minute), &classifyAfter))
 	s.Require().NoError(s.store.SettleContact(s.ctx, "a", claimed.Contact.ID, Settle{Stage: AwaitingOutcome, Attempt: 1, CallID: "call-1"}))
 
 	latest, found, err := s.store.LatestDial(s.ctx, claimed.Contact.ID)
 	s.Require().NoError(err)
 	s.Require().True(found)
-	s.Equal("answered", latest.Result)
+	s.Empty(latest.Result)
+	s.Equal("completed", latest.CallOutcome, "the phone's outcome is kept as is")
 	s.Equal("call-1", latest.CallID)
 	s.Equal("vendor-1", latest.VendorCallID)
 	s.Equal("pending", latest.ClassifyState)
@@ -330,7 +331,7 @@ func (s *StoreSuite) TestTheLatestDialIsTheSecondOfADoubleDial() {
 	for dial := 1; dial <= 2; dial++ {
 		attempt := CampaignAttempt{CampaignID: campaign.ID, ContactID: contact.ID, StepID: "step_1", Attempt: 1, Dial: dial, StartedAt: s.base}
 		s.Require().NoError(s.store.StartDial(s.ctx, &attempt))
-		s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "unanswered", fmt.Sprintf("call-%d", dial), "", s.base, nil))
+		s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "", "no_answer", fmt.Sprintf("call-%d", dial), "", s.base, nil))
 	}
 
 	latest, found, err := s.store.LatestDial(s.ctx, contact.ID)
@@ -342,7 +343,7 @@ func (s *StoreSuite) TestTheLatestDialIsTheSecondOfADoubleDial() {
 }
 
 func (s *StoreSuite) TestEndingADialOfADeletedCampaignIsNothing() {
-	s.NoError(s.store.EndDial(s.ctx, "deleted-attempt", "answered", "call-1", "", s.base, nil))
+	s.NoError(s.store.EndDial(s.ctx, "deleted-attempt", "", "completed", "call-1", "", s.base, nil))
 	s.NoError(s.store.Classified(s.ctx, "deleted-attempt", "success", true))
 }
 
@@ -415,7 +416,7 @@ func (s *StoreSuite) TestADialMustSayWhenItStarted() {
 func (s *StoreSuite) answered(owner string, campaign Campaign, contact Contact, startedAt, classifyAfter time.Time) CampaignAttempt {
 	attempt := CampaignAttempt{CampaignID: campaign.ID, ContactID: contact.ID, StepID: "step_1", Attempt: 1, Dial: 1, StartedAt: startedAt}
 	s.Require().NoError(s.store.StartDial(s.ctx, &attempt))
-	s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "answered", "call-"+attempt.ID, "", startedAt, &classifyAfter))
+	s.Require().NoError(s.store.EndDial(s.ctx, attempt.ID, "", "completed", "call-"+attempt.ID, "", startedAt, &classifyAfter))
 	return attempt
 }
 
@@ -611,13 +612,13 @@ func (s *StoreSuite) TestASilentCallThatCannotSettleStaysAnswered() {
 	s.Require().NoError(err)
 	next := s.base.Add(time.Hour)
 
-	err = s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Unanswered: true},
+	err = s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Outcome: "no_response"},
 		claimed.Contact.ID, Settle{Stage: Enrolled, Attempt: 2, NextAttemptAt: &next})
 
 	s.ErrorIs(err, ErrNotLeaseHolder)
 	latest, _, err := s.store.LatestDial(s.ctx, claimed.Contact.ID)
 	s.Require().NoError(err)
-	s.Equal("answered", latest.Result)
+	s.Empty(latest.Outcome)
 	s.Equal("pending", latest.ClassifyState)
 }
 
@@ -630,12 +631,13 @@ func (s *StoreSuite) TestASilentCallSettlesAsUnanswered() {
 	s.Require().NoError(err)
 	next := s.base.Add(time.Hour)
 
-	s.Require().NoError(s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Unanswered: true},
+	s.Require().NoError(s.store.ClassifyAndSettle(s.ctx, "a", Classification{AttemptID: attempt.ID, Outcome: "no_response"},
 		claimed.Contact.ID, Settle{Stage: Enrolled, Attempt: 2, NextAttemptAt: &next}))
 
 	latest, _, err := s.store.LatestDial(s.ctx, claimed.Contact.ID)
 	s.Require().NoError(err)
-	s.Equal("unanswered", latest.Result)
-	s.Empty(latest.ClassifyState)
+	s.Equal("completed", latest.CallOutcome, "the phone joined, whatever was said")
+	s.Equal("no_response", latest.Outcome)
+	s.Equal("done", latest.ClassifyState)
 	s.Equal(Enrolled, s.contactByNumber(campaign, "+15550001").Stage)
 }

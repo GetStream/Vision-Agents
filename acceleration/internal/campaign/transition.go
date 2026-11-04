@@ -6,23 +6,24 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
+// Result is why a dial placed no call, or Voicemail for a call a machine took. Any other call
+// has none: how it ended is its phone outcome.
 type Result string
 
 const (
-	Answered   Result = "answered"
-	Unanswered Result = "unanswered"
-	// Voicemail is a call an answering machine took. It uses the attempt like Unanswered, but
-	// ringing the same machine again at once would only leave a second message.
+	// Voicemail is a call an answering machine took. It uses the attempt like a call nobody
+	// answered, but ringing the same machine again at once would only leave a second message.
 	Voicemail     Result = "voicemail"
 	InvalidNumber Result = "invalid_number"
 	Refused       Result = "refused"
 	Deferred      Result = "deferred"
 	Paused        Result = "paused"
-	// Canceled is a dial cut off by a shutdown before the vendor took it: nobody was rung.
-	Canceled Result = "canceled"
+	// NotPlaced is a dial cut off by a shutdown before the vendor took it: nobody was rung.
+	NotPlaced Result = "not_placed"
 )
 
 const (
@@ -34,33 +35,34 @@ const (
 	concurrentRetry     = 5 * time.Minute
 )
 
-// Dialed is how one dial ended. Reason is the refusal or pause code.
+// Dialed is how one dial ended: a Result for one that placed no call or reached a machine,
+// and the phone Outcome of any call it placed. Reason is the refusal or pause code.
 type Dialed struct {
 	Result       Result
+	Outcome      outcome.Outcome
 	Reason       string
 	CallID       string
 	VendorCallID string
 }
 
-// afterDial says what follows a dial, which is 1 or 2. An unanswered first dial of a double
-// dial writes nothing: the caller dials again at once.
+// answered reports whether a person picked up a call the dial placed, so what they said is
+// to be read.
+func (d Dialed) answered() bool {
+	return d.Result == "" && d.Outcome == outcome.Completed
+}
+
+// afterDial says what follows a dial, which is 1 or 2. A first dial of a double dial that rang
+// out or ended unknown writes nothing: the caller dials again at once.
 func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, contact store.Contact, dial int, dialed Dialed, started, now time.Time) (settle store.Settle, dialAgain bool) {
 	step := sequence.First()
-	attempt := max(contact.Attempt, 1)
 	settle = store.Settle{StepID: step.ID, Attempt: contact.Attempt, CallID: dialed.CallID, VendorCallID: dialed.VendorCallID}
-	if dial == 2 && (dialed.Result == Deferred || dialed.Result == Paused || dialed.Result == Refused || dialed.Result == Canceled) {
+	if dial == 2 && (dialed.Result == Deferred || dialed.Result == Paused || dialed.Result == Refused || dialed.Result == NotPlaced) {
 		// Dial 1 already rang the person, so the attempt is used whatever stopped dial 2.
 		return unanswered(step, hours, zone, contact, started, settle), false
 	}
 	switch dialed.Result {
-	case Answered:
-		settle.Stage = store.AwaitingOutcome
-		settle.Attempt = attempt
-	case Unanswered:
-		if dial == 1 && sequence.DoubleDial && dialed.Reason != reasonNoSession {
-			return store.Settle{}, true
-		}
-		return unanswered(step, hours, zone, contact, started, settle), false
+	case "":
+		return afterCall(sequence, hours, zone, contact, dial, dialed, started, settle)
 	case Voicemail:
 		return unanswered(step, hours, zone, contact, started, settle), false
 	case Deferred:
@@ -70,7 +72,7 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 			at = time.Date(local.Year(), local.Month(), local.Day()+1, 0, 0, 0, 0, zone)
 		}
 		return enrolledAt(hours, zone, at, settle), false
-	case Paused, Canceled:
+	case Paused, NotPlaced:
 		settle.Stage = store.Enrolled
 		settle.NextAttemptAt = &now
 	case Refused:
@@ -83,6 +85,28 @@ func afterDial(sequence Sequence, hours CallingHours, zone *time.Location, conta
 		settle.Stage = store.Failed
 		settle.Reason = reasonUnknownResult
 	}
+	return settle, false
+}
+
+// afterCall is afterDial for a call that was placed, from how the phone says it ended.
+func afterCall(sequence Sequence, hours CallingHours, zone *time.Location, contact store.Contact, dial int, dialed Dialed, started time.Time, settle store.Settle) (store.Settle, bool) {
+	step := sequence.First()
+	switch {
+	case dialed.answered():
+		settle.Stage = store.AwaitingOutcome
+		settle.Attempt = max(contact.Attempt, 1)
+		return settle, false
+	case dialed.Outcome == outcome.NoAnswer || dialed.Outcome == outcome.Unknown:
+		if dial == 1 && sequence.DoubleDial && dialed.Reason != reasonNoSession {
+			return store.Settle{}, true
+		}
+		return unanswered(step, hours, zone, contact, started, settle), false
+	case dialed.Outcome.Unanswered():
+		// A busy line, a carrier fault or a hang-up is met again by a call placed at once.
+		return unanswered(step, hours, zone, contact, started, settle), false
+	}
+	settle.Stage = store.Failed
+	settle.Reason = reasonUnknownResult
 	return settle, false
 }
 
@@ -114,7 +138,7 @@ func afterOutcome(step Step, contact store.Contact, outcomeID string) store.Sett
 // resultOf maps the error of a dial. It looks through wrapping.
 func resultOf(err error) Dialed {
 	if errors.Is(err, phone.ErrNotPlaced) {
-		return Dialed{Result: Canceled}
+		return Dialed{Result: NotPlaced}
 	}
 	if code := pausing(err); code != "" {
 		return Dialed{Result: Paused, Reason: code}
@@ -132,7 +156,8 @@ func resultOf(err error) Dialed {
 	case errors.Is(err, phone.ErrNotDialable):
 		return Dialed{Result: InvalidNumber, Reason: reasonInvalidNumber}
 	}
-	return Dialed{Result: Unanswered}
+	// The vendor may have taken the call and rung the person.
+	return Dialed{Outcome: outcome.Unknown}
 }
 
 func unanswered(step Step, hours CallingHours, zone *time.Location, contact store.Contact, started time.Time, settle store.Settle) store.Settle {

@@ -26,6 +26,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -381,7 +382,7 @@ func (r *Runner) attempt(ctx context.Context, claimed store.Claimed) {
 				settle, again = afterDial(sequence, hours, zone, contact, 2, Dialed{Result: Paused}, started, r.now())
 			} else if r.stopping() {
 				// Dial 1 may have come back unanswered only because its session was ended.
-				settle, again = afterDial(sequence, hours, zone, contact, 2, Dialed{Result: Canceled}, started, r.now())
+				settle, again = afterDial(sequence, hours, zone, contact, 2, Dialed{Result: NotPlaced}, started, r.now())
 			}
 		}
 		if !again {
@@ -435,13 +436,13 @@ func (r *Runner) ring(ctx context.Context, campaign store.Campaign, contact stor
 	var dialed Dialed
 	var err error
 	if r.stopping() {
-		dialed.Result = Canceled
+		dialed.Result = NotPlaced
 	} else {
 		dialed, err = r.dialer.Dial(ctx, Dial{Campaign: campaign, Contact: contact, Step: step, Number: number, SessionID: sessionID})
 	}
 	if err != nil {
 		r.logger.Warn("a campaign dial failed", "campaign", campaign.ID, "contact", contact.ID, "error", err)
-		if dialed.Result == "" {
+		if dialed.Result == "" && dialed.Outcome == "" {
 			dialed = resultOf(err)
 		}
 	}
@@ -450,11 +451,11 @@ func (r *Runner) ring(ctx context.Context, campaign store.Campaign, contact stor
 	defer cancel()
 	ended := r.now()
 	var classifyAfter *time.Time
-	if dialed.Result == Answered {
+	if dialed.answered() {
 		at := ended.Add(classifyDelay)
 		classifyAfter = &at
 	}
-	if err := r.store.EndDial(written, attempt.ID, string(dialed.Result), dialed.CallID, dialed.VendorCallID, ended, classifyAfter); err != nil {
+	if err := r.store.EndDial(written, attempt.ID, string(dialed.Result), string(dialed.Outcome), dialed.CallID, dialed.VendorCallID, ended, classifyAfter); err != nil {
 		return Dialed{}, err
 	}
 	return dialed, nil
@@ -495,22 +496,20 @@ func (r *Runner) recover(ctx context.Context, claimed store.Claimed) error {
 		return nil
 	}
 
-	result := Result(latest.Result)
-	if result == "" {
-		answered, err := answeredCall(ctx, r.store, campaign.CustomerID, latest.CallID)
+	dialed := Dialed{Result: Result(latest.Result), Outcome: outcome.Outcome(latest.CallOutcome), CallID: latest.CallID, VendorCallID: latest.VendorCallID}
+	if latest.EndedAt == nil {
+		dialed.Outcome, err = callOutcome(ctx, r.store, campaign.CustomerID, latest.CallID)
 		if err != nil {
 			return err
 		}
-		result = Unanswered
 		var classifyAfter *time.Time
-		if answered {
-			result, classifyAfter = Answered, &now
+		if dialed.answered() {
+			classifyAfter = &now
 		}
-		if err := r.store.EndDial(ctx, latest.ID, string(result), "", "", now, classifyAfter); err != nil {
+		if err := r.store.EndDial(ctx, latest.ID, "", string(dialed.Outcome), "", "", now, classifyAfter); err != nil {
 			return err
 		}
 	}
-	dialed := Dialed{Result: result, CallID: latest.CallID, VendorCallID: latest.VendorCallID}
 	settle, again := afterDial(sequence, hours, zone, contact, latest.Dial, dialed, latest.StartedAt, now)
 	if again {
 		settle, _ = afterDial(sequence, hours, zone, contact, 2, dialed, latest.StartedAt, now)
@@ -623,7 +622,7 @@ func (r *Runner) classify(ctx context.Context, claimed store.Classifying) error 
 // unanswered settles an answered call nobody spoke on like a dial nobody picked up: the next
 // attempt goes on schedule.
 func (r *Runner) unanswered(ctx context.Context, sequence Sequence, hours CallingHours, zone *time.Location, contact store.Contact, attempt store.CampaignAttempt) error {
-	return r.store.ClassifyAndSettle(ctx, r.owner, store.Classification{AttemptID: attempt.ID, Unanswered: true},
+	return r.store.ClassifyAndSettle(ctx, r.owner, store.Classification{AttemptID: attempt.ID, Outcome: OutcomeNoResponse},
 		contact.ID, afterSilence(sequence, hours, zone, contact, attempt.StartedAt, r.now()))
 }
 
