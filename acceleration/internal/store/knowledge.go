@@ -210,11 +210,22 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 	now := time.Now().UTC()
 	document.CreatedAt = now
 	document.UpdatedAt = now
+	document.State = KnowledgeDocumentIndexed
+	document.Error = ""
+	document.ObjectKey = ""
 
+	// Text posted over a file still waiting to be read is the newer of the two, so the row
+	// lets go of the file and the read that finds it gone leaves the row alone.
 	_, err := s.db.NewInsert().Model(document).
 		On("CONFLICT (customer_id, namespace, source) DO UPDATE").
 		Set("passages = EXCLUDED.passages").
 		Set("text = EXCLUDED.text").
+		Set("state = EXCLUDED.state").
+		Set("error = EXCLUDED.error").
+		Set("pages = EXCLUDED.pages").
+		Set("content_type = EXCLUDED.content_type").
+		Set("bytes = EXCLUDED.bytes").
+		Set("object_key = EXCLUDED.object_key").
 		Set("updated_at = EXCLUDED.updated_at").
 		Returning("id, created_at").
 		Exec(ctx)
@@ -222,6 +233,89 @@ func (s *Store) SaveKnowledgeDocument(ctx context.Context, document *KnowledgeDo
 		return stack.Wrap(fmt.Errorf("store: save knowledge document: %w", err))
 	}
 	return nil
+}
+
+// PendKnowledgeFile records a file uploaded to a knowledge base, waiting in the bucket under
+// document.ObjectKey to be read. A source the base already has keeps its id and its passages,
+// which are still looked up until the file's replace them. The row comes back with the
+// passages and pages it still has.
+func (s *Store) PendKnowledgeFile(ctx context.Context, document *KnowledgeDocument) error {
+	if document.CustomerID == "" || document.Namespace == "" || document.Source == "" {
+		return stack.Wrap(errors.New("store: a customer, a namespace and a source are required"))
+	}
+	if document.ObjectKey == "" {
+		return stack.Wrap(errors.New("store: a file waiting to be read needs its object key"))
+	}
+
+	document.ID = newID()
+	now := time.Now().UTC()
+	document.CreatedAt = now
+	document.UpdatedAt = now
+	document.State = KnowledgeDocumentPending
+	document.Error = ""
+
+	_, err := s.db.NewInsert().Model(document).
+		On("CONFLICT (customer_id, namespace, source) DO UPDATE").
+		Set("state = EXCLUDED.state").
+		Set("error = EXCLUDED.error").
+		Set("content_type = EXCLUDED.content_type").
+		Set("bytes = EXCLUDED.bytes").
+		Set("object_key = EXCLUDED.object_key").
+		Set("updated_at = EXCLUDED.updated_at").
+		Returning("id, created_at, passages, pages").
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: pend knowledge file: %w", err))
+	}
+	return nil
+}
+
+// FinishKnowledgeFile records a file read into its passages, as long as the row still waits
+// for that file. It is false when the document was removed, or uploaded or posted again,
+// while the file was read: the row is no longer this read's to write.
+func (s *Store) FinishKnowledgeFile(ctx context.Context, document *KnowledgeDocument, objectKey string) (bool, error) {
+	document.UpdatedAt = time.Now().UTC()
+	document.State = KnowledgeDocumentIndexed
+	document.Error = ""
+	document.ObjectKey = ""
+	result, err := s.db.NewUpdate().Model(document).
+		Column("text", "passages", "pages", "state", "error", "object_key", "updated_at").
+		Where("id = ?", document.ID).
+		Where("customer_id = ?", document.CustomerID).
+		Where("object_key = ?", objectKey).
+		Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: finish knowledge file: %w", err))
+	}
+	return updatedOne(result, "finish knowledge file")
+}
+
+// FailKnowledgeFile records why a file could not be read, under the same condition as
+// FinishKnowledgeFile. A last failure marks the document failed and lets go of the file;
+// an earlier one leaves it pending, to be tried again.
+func (s *Store) FailKnowledgeFile(ctx context.Context, customerID, id, objectKey, reason string, last bool) (bool, error) {
+	query := s.db.NewUpdate().Model((*KnowledgeDocument)(nil)).
+		Set("error = ?", reason).
+		Set("updated_at = ?", time.Now().UTC()).
+		Where("id = ?", id).
+		Where("customer_id = ?", customerID).
+		Where("object_key = ?", objectKey)
+	if last {
+		query = query.Set("state = ?", KnowledgeDocumentFailed).Set("object_key = ''")
+	}
+	result, err := query.Exec(ctx)
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: fail knowledge file: %w", err))
+	}
+	return updatedOne(result, "fail knowledge file")
+}
+
+func updatedOne(result sql.Result, doing string) (bool, error) {
+	affected, err := result.RowsAffected()
+	if err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: %s: %w", doing, err))
+	}
+	return affected == 1, nil
 }
 
 // The accounts a knowledge base is kept in (KnowledgePlace.Account).
@@ -444,6 +538,10 @@ func (s *Store) DeleteKnowledgeBase(ctx context.Context, customerID, namespace s
 	return documents, pages, nil
 }
 
+// ErrNoKnowledgeDocument is what asking for a document that is not there returns, which is
+// what tells a document removed while its file was read from a database that did not answer.
+var ErrNoKnowledgeDocument = errors.New("store: no such knowledge document")
+
 func unknownKnowledgeDocument(id string) error {
-	return stack.Wrap(fmt.Errorf("store: there is no knowledge document %s", id))
+	return stack.Wrap(fmt.Errorf("%w: %s", ErrNoKnowledgeDocument, id))
 }

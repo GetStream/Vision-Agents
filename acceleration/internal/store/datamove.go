@@ -109,7 +109,9 @@ var dataTables = []dataTable{
 	{name: "sip_trunks", customer: "customer_id"},
 	{name: "phone_numbers", customer: "customer_id"},
 	{name: "knowledge_urls", customer: "customer_id"},
-	{name: "knowledge_documents", customer: "customer_id"},
+	// A file still waiting to be read is in this deployment's bucket, which a move does not
+	// carry, so an imported document is taken as read: its text is what it had.
+	{name: "knowledge_documents", customer: "customer_id", vouched: []string{"state", "error", "object_key"}},
 	{name: "campaigns", customer: "customer_id"},
 	{name: "campaign_contacts", parent: "campaigns", parentColumn: "campaign_id"},
 	{name: "simulations", customer: "customer_id"},
