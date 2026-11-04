@@ -125,7 +125,7 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 		err := stream.UpdateTrunk(ctx, trunk.ID, Trunk{Name: name, Numbers: trunk.Numbers, AllowedIPs: allowedIPs})
 		switch {
 		case notFound(err):
-			if err := s.forgetLostTrunk(ctx, stream, tx, held, trunk.ID); err != nil {
+			if err := s.forgetLostTrunk(ctx, stream, tx, held, trunk.ID, err); err != nil {
 				return TrunkLine{}, err
 			}
 			roomiest = -1
@@ -188,11 +188,15 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 
 // forgetLostTrunk drops the row of a shared trunk Stream no longer has, so the number
 // joining gets a new trunk and each number left on the row, no longer finding it, lines again
-// on its next call. The number must not be routed at Stream some other way.
-func (s *Service) forgetLostTrunk(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, trunkID string) error {
-	rules, trunks, err := stream.answering(ctx, held.E164)
+// on its next call. The number must not be routed at Stream some other way. A trunk Stream
+// still lists answered the update with lost, which is returned and drops nothing.
+func (s *Service) forgetLostTrunk(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, trunkID string, lost error) error {
+	rules, trunks, holds, err := stream.answering(ctx, held.E164, trunkID)
 	if err != nil {
 		return err
+	}
+	if holds {
+		return lost
 	}
 	if len(rules) > 0 || len(trunks) > 0 {
 		return s.routedElsewhere(held, rules, trunks)
@@ -296,7 +300,7 @@ func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGrou
 // routeAgain makes the rule of a number on a trunk of its own again, Stream having lost the
 // stored one, and records it in place of that one.
 func (s *Service) routeAgain(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, route Route, joined *joining) (string, error) {
-	rules, trunks, err := stream.answering(ctx, held.E164)
+	rules, trunks, _, err := stream.answering(ctx, held.E164, held.StreamTrunkID)
 	if err != nil {
 		return "", err
 	}

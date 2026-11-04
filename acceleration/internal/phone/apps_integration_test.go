@@ -1622,6 +1622,27 @@ func (s *AppsSuite) TestACallFromANumberAnotherRuleAnswersPlacesOnATrunkOfItsOwn
 	s.Equal(attached.TrunkID, s.number().StreamTrunkID, "the row is left as it was")
 }
 
+func (s *AppsSuite) TestANotFoundForASharedTrunkStreamStillHasDropsNoneOfItsNumbers() {
+	s.sealed()
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	s.deployment.FailWith(http.MethodPut, "/sip/inbound_trunks/"+first.TrunkID, http.StatusNotFound)
+
+	_, err = s.lineFor(s.customer, second)
+
+	s.Require().True(notFound(err), "the update's own error is answered: %v", err)
+	s.Equal([]string{first.TrunkID}, s.deployment.Trunks())
+	s.Equal([]string{first.RouteID}, s.deployment.Rules())
+
+	s.deployment.Heal(http.MethodPut, "/sip/inbound_trunks/"+first.TrunkID)
+	joined, err := s.lineFor(s.customer, second)
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, joined.TrunkID, "the trunk's row is kept")
+	s.Equal([]string{s.e164, second}, s.deployment.TrunkNumbers(first.TrunkID))
+}
+
 func (s *AppsSuite) TestTwoNumbersJoiningAtOnceMakeOneTrunk() {
 	s.sealed()
 	second := s.anotherNumber(s.customer, s.vendor.vendor)

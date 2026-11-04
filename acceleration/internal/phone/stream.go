@@ -293,11 +293,12 @@ func (s *Stream) DeleteRoute(ctx context.Context, id string) error {
 }
 
 // answering is what the app has at Stream for a number: the ids of the rules that answer
-// for it and of the trunks that list it. Stream lists both whole, with no page.
-func (s *Stream) answering(ctx context.Context, e164 string) (rules, trunks []string, err error) {
+// for it and of the trunks that list it, and whether it holds the trunk with the id trunkID.
+// Stream lists both whole, with no page.
+func (s *Stream) answering(ctx context.Context, e164, trunkID string) (rules, trunks []string, holds bool, err error) {
 	listedRules, err := s.client.Video().ListSIPInboundRoutingRule(ctx, &getstream.ListSIPInboundRoutingRuleRequest{})
 	if err != nil {
-		return nil, nil, stack.Wrap(fmt.Errorf("phone: list sip routing rules: %w", err))
+		return nil, nil, false, stack.Wrap(fmt.Errorf("phone: list sip routing rules: %w", err))
 	}
 	for _, rule := range listedRules.Data.SipInboundRoutingRules {
 		if slices.Contains(rule.CalledNumbers, e164) {
@@ -306,14 +307,15 @@ func (s *Stream) answering(ctx context.Context, e164 string) (rules, trunks []st
 	}
 	listedTrunks, err := s.client.Video().ListSIPTrunks(ctx, &getstream.ListSIPTrunksRequest{})
 	if err != nil {
-		return nil, nil, stack.Wrap(fmt.Errorf("phone: list sip trunks: %w", err))
+		return nil, nil, false, stack.Wrap(fmt.Errorf("phone: list sip trunks: %w", err))
 	}
 	for _, trunk := range listedTrunks.Data.SipTrunks {
 		if slices.Contains(trunk.Numbers, e164) {
 			trunks = append(trunks, trunk.ID)
 		}
+		holds = holds || trunk.ID == trunkID
 	}
-	return rules, trunks, nil
+	return rules, trunks, holds, nil
 }
 
 // notFound is Stream saying what was to be deleted or updated is not there: removed by hand

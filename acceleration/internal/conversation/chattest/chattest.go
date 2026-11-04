@@ -63,8 +63,9 @@ type store struct {
 	held   *held
 	// limited are the path suffixes RateLimit answers 429 to.
 	limited map[string]bool
-	// failing are the path suffixes Fail answers 500 to, by method.
-	failing map[string]map[string]bool
+	// failing are the path suffixes Fail and FailWith answer, by method, with the status each
+	// is answered with.
+	failing map[string]map[string]int
 	// uploads are the files stored on channels, in the order they came.
 	uploads []Upload
 	// events are the events sent to each channel, by channel id, in the order they came.
@@ -432,15 +433,20 @@ func (s *Server) LiftRateLimit(suffix string) {
 // Fail answers every request of method whose path ends in suffix with a 500
 // for a call it could not update. Other methods on that path are served.
 func (s *Server) Fail(method, suffix string) {
+	s.FailWith(method, suffix, http.StatusInternalServerError)
+}
+
+// FailWith is Fail answering with status, such as a 404 for something the app still holds.
+func (s *Server) FailWith(method, suffix string, status int) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	if s.db.failing == nil {
-		s.db.failing = map[string]map[string]bool{}
+		s.db.failing = map[string]map[string]int{}
 	}
 	if s.db.failing[method] == nil {
-		s.db.failing[method] = map[string]bool{}
+		s.db.failing[method] = map[string]int{}
 	}
-	s.db.failing[method][suffix] = true
+	s.db.failing[method][suffix] = status
 }
 
 // Heal serves requests of method ending in suffix again.
@@ -681,10 +687,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for suffix := range db.failing[r.Method] {
+	for suffix, status := range db.failing[r.Method] {
 		if strings.HasSuffix(r.URL.Path, suffix) {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": http.StatusInternalServerError})
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": status})
 			return
 		}
 	}
