@@ -12,6 +12,7 @@ package dispatch
 import (
 	"errors"
 	"fmt"
+	"slices"
 	"strconv"
 	"sync"
 	"time"
@@ -380,6 +381,14 @@ func (p *Pool) Workers(customerID string) []*Worker {
 	defer p.mu.Unlock()
 	// A copy, because the caller reading this must not see the slice change underneath it.
 	return append([]*Worker(nil), p.workers[customerID]...)
+}
+
+// Takes reports whether any of a customer's workers here accepts that kind of work, full or
+// not. A worker that only hosts tools is waiting here all the same, and takes none.
+func (p *Pool) Takes(customerID string, kind Kind) bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return slices.ContainsFunc(p.workers[customerID], func(worker *Worker) bool { return worker.takes(kind) })
 }
 
 // Assign gives a call to the worker best placed to answer it.
