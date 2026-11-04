@@ -43,7 +43,7 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 	_, err := s.db.NewInsert().Model(link).
 		On("CONFLICT (customer_id, stream_app_pk, user_id) DO UPDATE").
 		Set("phone = EXCLUDED.phone").
-		Set("updated_at = CASE WHEN up.phone = EXCLUDED.phone THEN up.updated_at ELSE EXCLUDED.updated_at END").
+		Set("updated_at = EXCLUDED.updated_at").
 		Returning("*").
 		Exec(ctx)
 	if isViolation(err, uniqueViolation) {
@@ -55,7 +55,7 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 	// After the link is committed, not in its transaction: a contact row MapContact makes at the
 	// same time either is committed before this reads it, or reads the link itself once it is
 	// made (MapContact), so no row is left out of the pair.
-	return s.joinLinked(ctx, *link, "")
+	return s.joinLinked(ctx, *link)
 }
 
 // UnlinkUserPhone removes the user's link to a number, if any. The contact rows already
@@ -105,19 +105,18 @@ func (s *Store) linkApp(pin int64) int64 {
 }
 
 // joinLinked points the Stream user's row and the number's row of the link at one omni-channel,
-// for each agent config of the customer, or for the one named: the older one, whose oldest row
+// for each agent config of the customer: the older one, whose oldest row
 // was made first, and its pin with it. No card moves: a card is read by its message id
 // (omnichannel.summaryOf), and the cards of a person are those of every row pointing at their
 // omni-channel (EpisodeCards). Two joins at once, a link's and MapContact's, pick the same
 // omni-channel, since what makes one older never changes.
-func (s *Store) joinLinked(ctx context.Context, link UserPhone, agentConfigID string) error {
+func (s *Store) joinLinked(ctx context.Context, link UserPhone) error {
 	deployment := s.streamPins().deployment()
 	_, err := s.db.NewRaw(`WITH pair AS (
 	SELECT cm.id, cm.agent_config_id, cm.conversation_id, cm.stream_app_pk FROM contact_map AS cm
 	WHERE cm.customer_id = ?0
 		AND ((cm.kind = ?1 AND cm.address = ?2) OR (cm.kind = ?3 AND cm.address = ?4))
 		AND COALESCE(NULLIF(cm.stream_app_pk, ?5), 0) = ?6
-		AND (?7 = '' OR cm.agent_config_id = ?7)
 ), born AS (
 	SELECT o.agent_config_id, o.conversation_id, min(o.created_at) AS at FROM contact_map AS o
 	WHERE o.customer_id = ?0 AND (o.agent_config_id, o.conversation_id) IN (SELECT agent_config_id, conversation_id FROM pair)
@@ -128,11 +127,11 @@ func (s *Store) joinLinked(ctx context.Context, link UserPhone, agentConfigID st
 	ORDER BY pair.agent_config_id, born.at, pair.conversation_id
 )
 UPDATE contact_map AS cm
-SET conversation_id = oldest.conversation_id, stream_app_pk = oldest.stream_app_pk, updated_at = ?8
+SET conversation_id = oldest.conversation_id, stream_app_pk = oldest.stream_app_pk, updated_at = ?7
 FROM pair JOIN oldest USING (agent_config_id)
 WHERE cm.id = pair.id AND cm.conversation_id <> oldest.conversation_id`,
 		link.CustomerID, ContactStreamUser, link.UserID, ContactPhone, link.Phone,
-		deployment, link.StreamAppPK, agentConfigID, time.Now().UTC()).
+		deployment, link.StreamAppPK, time.Now().UTC()).
 		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: join linked contacts: %w", err))

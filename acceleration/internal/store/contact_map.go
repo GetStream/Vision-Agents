@@ -82,13 +82,14 @@ func (s *Store) MapContact(ctx context.Context, entry *ContactMapEntry) (created
 // joinPartner points a row just made at its linked partner's omni-channel of the same agent,
 // when the customer linked its Stream user or its number (LinkUserPhone), and reads the row
 // back. Read after the row is committed, so a link made at the same time is either seen here
-// or sees the row.
+// or sees the row. Only a new row: a row that was there when the link was made was joined
+// then, so a message on a known row costs no extra query.
 func (s *Store) joinPartner(ctx context.Context, entry *ContactMapEntry) error {
 	link, linked, err := s.linkOf(ctx, entry)
 	if err != nil || !linked {
 		return err
 	}
-	if err := s.joinLinked(ctx, link, entry.AgentConfigID); err != nil {
+	if err := s.joinLinked(ctx, link); err != nil {
 		return err
 	}
 	if err := s.db.NewSelect().Model(entry).WherePK().Scan(ctx); err != nil {

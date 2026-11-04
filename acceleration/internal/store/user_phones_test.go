@@ -53,6 +53,12 @@ func (s *StoreSuite) TestALinkPointsTheUsersAndTheNumbersRowsAtTheOlderOmniChann
 	s.Equal("agent:omni-sms", s.omniOf(chat))
 	s.Equal("agent:omni-chat-two", s.omniOf(chatTwo))
 	s.Equal("agent:omni-chat-two", s.omniOf(smsTwo))
+	var latest string
+	s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT max(updated_at)::text FROM contact_map").Scan(&latest))
+	s.Require().NoError(s.link("anya", "+15550100"))
+	var again string
+	s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT max(updated_at)::text FROM contact_map").Scan(&again))
+	s.Equal(latest, again, "the same link again writes no row")
 }
 
 // Catches a row made after the link that keeps an omni-channel of its own, whichever half of
@@ -101,6 +107,12 @@ func (s *StoreSuite) TestTheDeploymentsOwnAppIsOneAppWhateverItsPin() {
 	s.Require().NoError(err)
 	s.Equal(int64(4242), found.StreamAppPK, "the pin of the omni-channel it points at")
 	s.Equal("agent:omni-chat", s.omniOf(chat))
+	smsTwo := contact("+15550100", "agent:omni-sms-two")
+	smsTwo.AgentConfigID, smsTwo.StreamAppPK = "agent-two", 0
+	s.made(smsTwo)
+	chatTwo := streamUser("anya", "agent:omni-chat-two")
+	chatTwo.AgentConfigID = "agent-two"
+	s.Equal("agent:omni-sms-two", s.made(chatTwo).ConversationID, "a row made later, pinned to the app's id")
 }
 
 // Catches a link keyed by user id alone: anya of app 7 is not anya of app 4242.
