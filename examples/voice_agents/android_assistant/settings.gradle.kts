@@ -9,11 +9,6 @@ pluginManagement {
 dependencyResolutionManagement {
     repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
     repositories {
-        // --- LOCAL ONLY: Stream Chat AI 7.17.0-GENUI-LOCAL from ~/.m2. Remove with streamChatAi's bump. ---
-        mavenLocal {
-            content { includeGroup("io.getstream") }
-        }
-        // --- end LOCAL ONLY ---
         google()
         mavenCentral()
         // Stream publishes its Android SDKs here; Maven Central stops at the older releases.

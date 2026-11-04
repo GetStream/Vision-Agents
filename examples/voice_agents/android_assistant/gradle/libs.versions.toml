@@ -6,8 +6,8 @@ material-icons = "1.7.8"
 activity = "1.11.0"
 lifecycle = "2.11.0"
 okhttp = "5.5.0"
-# One version for every Stream Chat AI artifact; 7.17.0-GENUI-LOCAL is a mavenLocal() build.
-streamChatAi = "7.17.0-GENUI-LOCAL"
+# One version for every Stream Chat AI artifact.
+streamChatAi = "7.18.0"
 browser = "1.10.0"
 
 [libraries]
