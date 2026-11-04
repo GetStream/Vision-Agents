@@ -5,8 +5,9 @@
 # the Verify Token (wave 3d Q1). The replies go from the business number with the customer's
 # system-user access token. STOP, START and HELP are kept from the agent by the bridge
 # (channelbridge.keywords): Meta answers none of them itself. Text messages, and a photo's
-# caption as its text (revision 2); replies past the 24-hour window (approved templates) and Meta's Tech Provider with Embedded Signup are
-# later tickets. internal/channels/whatsapp.go is where it started.
+# caption as its text (revision 2); replies past the 24-hour window (approved templates) and
+# Meta's Tech Provider with Embedded Signup are later tickets. internal/channels/whatsapp.go is
+# where it started.
 # Meta's pages, opened October 8, 2026:
 #   [hooks]    https://developers.facebook.com/docs/graph-api/webhooks/getting-started
 #   [payload]  https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples
