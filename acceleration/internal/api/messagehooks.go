@@ -401,7 +401,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return true
 	}
 
-	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID); elsewhere {
+	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID, dispatch.Messages); elsewhere {
 		return taken
 	}
 
@@ -433,9 +433,9 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return settled
 	}
 	return s.handOn(ctx, origin, recorded, func(ctx context.Context) bool {
-		// Only a worker connected here is handed it (forwardedToWorkers): with none, nothing
-		// would answer what the recording says, so it is not heard.
-		if recorded && len(s.dispatch.Workers(customerID)) > 0 {
+		// Only a worker connected here is handed it (forwardedToWorkers): with none taking
+		// messages, nothing would answer what the recording says, so it is not heard.
+		if recorded && s.dispatch.Takes(customerID, dispatch.Messages) {
 			message.Text = s.heardText(ctx, heardFor, origin, event)
 		}
 		// Said before the worker has the message, so the session it opens for it finds it said.
