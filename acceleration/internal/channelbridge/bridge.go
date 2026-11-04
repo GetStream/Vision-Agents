@@ -236,6 +236,9 @@ type Options struct {
 	// QueueTimeout bounds the transaction that claims and queues a message, which Deliver
 	// finishes off the request (detached). Zero is defaultQueueTimeout. Tests shorten it.
 	QueueTimeout time.Duration
+	// DownloadTimeout bounds downloading one message's photos (download). Zero is
+	// downloadTimeout. Tests shorten it.
+	DownloadTimeout time.Duration
 	// Unanswered queues a delivery for the customer's event destinations of unhandled events
 	// (eventforward.Forwarder.ForwardUnanswered), for a queued message the worker gave up. Nil
 	// forwards nothing.
@@ -274,6 +277,8 @@ type Bridge struct {
 	// queueTimeout bounds the claim and queue transaction Deliver finishes off the request
 	// (Options).
 	queueTimeout time.Duration
+	// downloadTimeout bounds downloading one message's photos (Options).
+	downloadTimeout time.Duration
 	// kick wakes the worker: a message was queued, or a slot freed.
 	kick chan struct{}
 	// slots holds one token for each queued message being written.
@@ -319,6 +324,10 @@ func New(options Options) (*Bridge, error) {
 	if queueTimeout <= 0 {
 		queueTimeout = defaultQueueTimeout
 	}
+	downloading := options.DownloadTimeout
+	if downloading <= 0 {
+		downloading = downloadTimeout
+	}
 	cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream})
 	if err != nil {
 		return nil, err
@@ -336,14 +345,15 @@ func New(options Options) (*Bridge, error) {
 		logger:     logger,
 		held:       map[string]chan conversation.FinishedReply{},
 
-		inboundRetries: inboundRetries,
-		inboundPoll:    inboundPoll,
-		unanswered:     options.Unanswered,
-		queueTimeout:   queueTimeout,
-		kick:           make(chan struct{}, 1),
-		slots:          make(chan struct{}, inboundInFlight),
-		ctx:            ctx,
-		cancel:         cancel,
+		inboundRetries:  inboundRetries,
+		inboundPoll:     inboundPoll,
+		unanswered:      options.Unanswered,
+		queueTimeout:    queueTimeout,
+		downloadTimeout: downloading,
+		kick:            make(chan struct{}, 1),
+		slots:           make(chan struct{}, inboundInFlight),
+		ctx:             ctx,
+		cancel:          cancel,
 	}, nil
 }
 
@@ -816,16 +826,20 @@ func (b *Bridge) read(connection store.ConnectorConnection, definition store.Con
 // errNotRead is a message the revision of its connection does not read as the event's did.
 var errNotRead = errors.New("not read by the connection's revision")
 
-// writeInto writes message into its thread channel as its author under the Stream message id
-// id, creating the channel the first time, with the agent config that answers it, and with
-// files, its photos download fetched, uploaded to the channel. When Stream Chat refuses the
-// write as already done (alreadyWritten), that refusal carries no message, so the message is
-// rebuilt as written and returned with the error: with this attempt's uploads, never a
-// provider's URL that needs the connection's credential.
-func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, id string, files []sandbox.File) (Written, error) {
+// streamThread is where writeInto writes a thread's message: the Stream client of the thread's
+// app and the message's author, a user of it.
+type streamThread struct {
+	client *getstream.Stream
+	author string
+}
+
+// openThread makes message's author and the agent users of the thread's Stream app and
+// creates the thread channel the first time, with the agent config that answers it, for
+// upload and writeInto.
+func (b *Bridge) openThread(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage) (streamThread, error) {
 	bound, err := b.stream.ForApp(ctx, thread.CustomerID, thread.StreamAppPK)
 	if err != nil {
-		return Written{}, err
+		return streamThread{}, err
 	}
 	author := AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID)
 	name, agentName := message.AuthorID, config.Name
@@ -836,7 +850,7 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		author:           {ID: author, Name: &name},
 		thread.ChannelID: {ID: thread.ChannelID, Name: &agentName},
 	}); err != nil {
-		return Written{}, stack.Wrap(err)
+		return streamThread{}, stack.Wrap(err)
 	}
 	// The data creates the channel on the thread's first message; the agent channel type
 	// refuses a server-side create without a creator. The stamps are the ones a persistent
@@ -853,26 +867,50 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		},
 	})
 	if err != nil {
-		return Written{}, stack.Wrap(err)
+		return streamThread{}, stack.Wrap(err)
 	}
-	attachments := photos(message.Media)
-	for _, file := range files {
+	return streamThread{client: bound.Client, author: author}, nil
+}
+
+// upload stores files, the photos download fetched, on the thread channel as the message's
+// author, as image attachments for writeInto. An upload Stream Chat fails fails the attempt,
+// as its other writes do, so the row is tried again. On the row's last attempt, or when Stream
+// Chat refuses the upload for good (refusedForGood), the photo is left out and logged with ids
+// only, as one that cannot be downloaded is, so the message's text is still written.
+func (b *Bridge) upload(ctx context.Context, target streamThread, thread store.ChannelThread, files []sandbox.File, last bool, log *slog.Logger) ([]getstream.Attachment, error) {
+	var attachments []getstream.Attachment
+	for i, file := range files {
 		// As the person, as a photo they send in an app chat is (conversation.PublishPhotos).
-		uploaded, err := conversation.Upload(ctx, bound.Client, thread.ChannelID, file, author)
+		uploaded, err := conversation.Upload(ctx, target.client, thread.ChannelID, file, target.author)
 		if err != nil {
-			return Written{}, stack.Wrap(err)
+			if !last && !refusedForGood(err) {
+				return nil, stack.Wrap(err)
+			}
+			log.Warn("a photo Stream Chat did not store is left out: the message goes on without it",
+				"connection", thread.ConnectionID, "photo", i+1, "error", err)
+			continue
 		}
 		attachments = append(attachments, getstream.Attachment{
 			Type: getstream.PtrTo("image"), ImageUrl: &uploaded.URL, Custom: map[string]any{"mime_type": file.MIME},
 		})
 	}
+	return attachments, nil
+}
+
+// writeInto writes message into its thread channel as its author under the Stream message id
+// id, with its photos at a URL and uploaded, the attachments upload stored. When Stream Chat
+// refuses the write as already done (alreadyWritten), that refusal carries no message, so the
+// message is rebuilt as written and returned with the error: with this attempt's uploads,
+// never a provider's URL that needs the connection's credential.
+func (b *Bridge) writeInto(ctx context.Context, target streamThread, thread store.ChannelThread, message core.InboundMessage, id string, uploaded []getstream.Attachment) (Written, error) {
+	attachments := append(photos(message.Media), uploaded...)
 	// No source: the conversation reads a message without one as the person's
 	// (conversation.messageFromThread). Bridged: the message hook leaves it to the worker.
-	request := getstream.MessageRequest{ID: &id, Text: &message.Text, UserID: &author, Attachments: attachments,
+	request := getstream.MessageRequest{ID: &id, Text: &message.Text, UserID: &target.author, Attachments: attachments,
 		Custom: map[string]any{BridgedField: true}}
-	sent, err := bound.Client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{Message: request})
+	sent, err := target.client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{Message: request})
 	if alreadyWritten(err) {
-		return Written{ID: id, Text: message.Text, Author: author, Attachments: attachments}, err
+		return Written{ID: id, Text: message.Text, Author: target.author, Attachments: attachments}, err
 	}
 	if err != nil {
 		return Written{}, stack.Wrap(err)

@@ -247,8 +247,21 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	if err != nil {
 		return err
 	}
-	if nothingToWrite(inbound, files, named) {
+	if nothingToWrite(inbound, len(files), named) {
 		log.Warn("an inbound message that is only files none of which could be downloaded is not written or answered")
+		return nil
+	}
+	target, err := b.openThread(ctx, thread, config, inbound)
+	if err != nil {
+		return err
+	}
+	// The row's last attempt writes the message without a photo Stream Chat keeps failing.
+	uploaded, err := b.upload(ctx, target, thread, files, message.Attempts+1 > len(b.inboundRetries), log)
+	if err != nil {
+		return err
+	}
+	if nothingToWrite(inbound, len(uploaded), named) {
+		log.Warn("an inbound message that is only files none of which could be stored is not written or answered")
 		return nil
 	}
 	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
@@ -267,7 +280,7 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	id := inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)
 	// Stream Chat refusing the write as already done answers no message, so writeInto
 	// rebuilds it.
-	written, err := b.writeInto(ctx, thread, config, inbound, id, files)
+	written, err := b.writeInto(ctx, target, thread, inbound, id, uploaded)
 	if err != nil && !alreadyWritten(err) {
 		return err
 	}

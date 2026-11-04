@@ -52,7 +52,7 @@ func (s *BridgeSuite) TestOnlyAMessageLeftWithNothingIsNotWritten() {
 		{"a video alone, named by no id", core.InboundMessage{Media: []core.Media{video}}, nil, 0, false},
 		{"nothing at all, named by no id", core.InboundMessage{}, nil, 0, false},
 	} {
-		s.Equal(tc.nothing, nothingToWrite(tc.message, tc.files, tc.named), tc.name)
+		s.Equal(tc.nothing, nothingToWrite(tc.message, len(tc.files), tc.named), tc.name)
 	}
 }
 

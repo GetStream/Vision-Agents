@@ -287,7 +287,7 @@ func (s *WhatsAppChannelSuite) TestAPhotoWithACaptionReachesTheModelWithItsCapti
 	s.writtenByTheInboundWorker(channel)
 	uploads := s.chat.Uploads()[uploaded:]
 	s.Require().Len(uploads, 1)
-	s.Equal(chattest.Upload{Endpoint: "image", Name: "photo-1.jpeg", User: `{"id":"` + channelbridge.AuthorUserID(s.customerID(), "whatsapp", s.unit, person) + `"}`,
+	s.Equal(chattest.Upload{Channel: channel, Endpoint: "image", Name: "photo-1.jpeg", User: `{"id":"` + channelbridge.AuthorUserID(s.customerID(), "whatsapp", s.unit, person) + `"}`,
 		Data: s.photoBytes(photo)}, uploads[0])
 	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored[0]))
 	sent := s.took(1)[0]
@@ -325,7 +325,9 @@ func (s *WhatsAppChannelSuite) TestAPhotoWithoutACaptionReachesTheModel() {
 // and lookaside.fbsbx.com alone: a file Graph names on any other host, or not over https, is
 // never requested. A lookup answer over 64 KiB, a file over 5 MB, the most the model takes,
 // or one that is no image, is not passed on, and a file the webhook says is no image is not
-// looked up at all.
+// looked up at all. Neither is a file whose GET answers anything but 200, or does not finish
+// within the download's bound. A 401 of either GET is the file's, not the token's: the
+// connection stays connected (core.Unjudged), so the caption is answered.
 func (s *WhatsAppChannelSuite) TestAPhotoThatCannotBeDownloadedIsAnsweredByItsCaptionAlone() {
 	s.answersWith("vision/vision-model")
 	elsewhere := func(file string) func(id string) metaMedia {
@@ -342,6 +344,10 @@ func (s *WhatsAppChannelSuite) TestAPhotoThatCannotBeDownloadedIsAnsweredByItsCa
 		"a file with userinfo":               elsewhere("https://files.example.com@lookaside.fbsbx.com/whatsapp_business/attachments/?mid={id}"),
 		"a file on another port":             elsewhere("https://lookaside.fbsbx.com:8443/whatsapp_business/attachments/?mid={id}"),
 		"a file lookaside answers 404":       func(string) metaMedia { return metaMedia{data: jpegOf(s.T()), status: http.StatusNotFound} },
+		"a file lookaside answers 206":       func(string) metaMedia { return metaMedia{data: jpegOf(s.T()), status: http.StatusPartialContent} },
+		"a file lookaside answers 401":       func(string) metaMedia { return metaMedia{data: jpegOf(s.T()), status: http.StatusUnauthorized} },
+		"a lookup Graph answers 401":         func(string) metaMedia { return metaMedia{data: jpegOf(s.T()), lookup: http.StatusUnauthorized} },
+		"a file lookaside never finishes":    func(string) metaMedia { return metaMedia{data: jpegOf(s.T()), stall: true} },
 		"a file over 5 MB":                   func(string) metaMedia { return metaMedia{data: append(jpegOf(s.T()), make([]byte, 5<<20)...)} },
 		"a file that is no image":            func(string) metaMedia { return metaMedia{data: []byte("<html><body>not a photo</body></html>")} },
 		"a lookup answer over 64 KiB":        func(string) metaMedia { return metaMedia{data: jpegOf(s.T()), pad: 64 << 10} },
@@ -367,6 +373,9 @@ func (s *WhatsAppChannelSuite) TestAPhotoThatCannotBeDownloadedIsAnsweredByItsCa
 			s.Equal("Is this tooth chipped?", said.Content)
 			s.Empty(imagesIn(said))
 			s.Empty(s.chat.Uploads()[uploaded:])
+			connection, err := s.store.ConnectorConnection(context.Background(), s.customerID(), s.connection.ID)
+			s.Require().NoError(err)
+			s.Equal(store.ConnectionConnected, string(connection.Status), "the connection is left as it was")
 			gets := s.meta.got()[got:]
 			for _, get := range gets {
 				s.Contains([]string{"graph.facebook.com", "lookaside.fbsbx.com"}, get.host, "the token went to %s", get.host)
@@ -415,6 +424,49 @@ func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadFailedIsWrittenWithItOnTheNe
 	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored))
 	s.Equal("Two roses.", s.took(1)[0].text)
 	s.Equal([]llm.ImagePart{{Data: s.photoBytes(photo), MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
+}
+
+// A photo Stream Chat keeps failing to store is left out on the row's last attempt (D1), and
+// one it refuses with a 4xx on the first: the caption is answered without it, as a photo that
+// cannot be downloaded is, rather than the row given up with its caption.
+func (s *WhatsAppChannelSuite) TestAPhotoStreamChatWillNotStoreIsAnsweredByItsCaptionAlone() {
+	s.answersWith("vision/vision-model")
+	for name, fail := range map[string]func(method, suffix string){"failing": s.chat.Fail, "refused": s.chat.Refuse} {
+		s.Run(name, func() {
+			person, asked, uploaded, sent := s.digits(), len(s.vision.replies()), len(s.chat.Uploads()), len(s.meta.sent())
+			fail(http.MethodPost, "/image")
+			defer s.chat.Heal(http.MethodPost, "/image")
+
+			s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"))))
+
+			stored := s.written(s.threadChannel(person), 1)[0]
+			s.Equal("Is this tooth chipped?", stored["text"])
+			s.Empty(stored["attachments"])
+			s.Equal("Two roses.", s.took(sent + 1)[sent].text)
+			said := s.lastTurn(s.vision.replies()[asked:])
+			s.Equal("Is this tooth chipped?", said.Content)
+			s.Empty(imagesIn(said))
+			s.Empty(s.chat.Uploads()[uploaded:])
+			s.Contains(s.logged.String(), `level=WARN msg="a photo Stream Chat did not store is left out: the message goes on without it" connector=whatsapp`)
+		})
+	}
+}
+
+// A photo alone that Stream Chat will not store has nothing left for the agent (D1, as D0): it
+// is not written, answered or carded, and the row is done.
+func (s *WhatsAppChannelSuite) TestAPhotoAloneStreamChatWillNotStoreIsNotWritten() {
+	person := s.digits()
+	s.chat.Refuse(http.MethodPost, "/image")
+	defer s.chat.Heal(http.MethodPost, "/image")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, ""))))
+
+	channel := s.threadChannel(person)
+	s.settled()
+	s.Equal(1, s.inboundRows(store.ChannelInboundDone))
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.meta.sent()) > 0 }, dropped, 20*time.Millisecond)
+	s.Zero(s.episodes())
+	s.Contains(s.logged.String(), `level=WARN msg="an inbound message that is only files none of which could be stored is not written or answered" connector=whatsapp`)
 }
 
 // An attempt whose write Stream Chat already holds (alreadyWritten) hands the model the photo
@@ -889,12 +941,14 @@ type fakeMeta struct {
 
 // metaMedia is one photo the fake's Graph serves (media): its lookup, GET /v25.0/{media id},
 // answers lookup, 200 when zero, with file as its url, lookaside's for the id when empty and
-// none when "-", and pad bytes more; the file's GET answers status, 200 when zero, with data.
-// mime is the MIME type the test's webhook says the file has, image/jpeg when empty.
+// none when "-", and pad bytes more; the file's GET answers status, 200 when zero, with data,
+// or with stall answers nothing until the bridge gives up on it. mime is the MIME type the
+// test's webhook says the file has, image/jpeg when empty.
 type metaMedia struct {
 	data                []byte
 	file, mime          string
 	lookup, status, pad int
+	stall               bool
 }
 
 // metaGet is one GET the fake was sent: the host it named, its path, and whether it carried
@@ -959,6 +1013,10 @@ func (f *fakeMeta) download(w http.ResponseWriter, r *http.Request) {
 	media, authorized := f.saw(r, r.URL.Query().Get("mid"))
 	if !authorized {
 		w.WriteHeader(http.StatusUnauthorized)
+		return
+	}
+	if media.stall {
+		<-r.Context().Done()
 		return
 	}
 	// A failed download answers the file all the same: only its status says it failed.

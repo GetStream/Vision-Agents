@@ -34,7 +34,7 @@ const downloadTimeout = 10 * time.Second
 
 // download fetches the photos of message that its provider names by id (core.Media.ID), as
 // the manifest of the connection's pinned revision finds them (MessageRule.MediaLookup), with
-// the connection's own client, which carries its credential, for writeInto to upload. named is
+// the connection's own client, which carries its credential, for upload to store. named is
 // how many files the message names by id, photos or not: another file is not downloaded, as
 // photos writes no other file. A photo that cannot be downloaded is left out and logged with
 // ids only, as is its reason: the message goes on with its text, and the provider's id is no
@@ -70,7 +70,9 @@ func (b *Bridge) download(ctx context.Context, thread store.ChannelThread, messa
 		return nil, named, stack.Wrap(err)
 	}
 	client := b.transports.Client(core.ConnectionRef{CustomerID: connection.CustomerID, ConnectionID: connection.ID}, scheme)
-	downloading, cancel := context.WithTimeout(ctx, downloadTimeout)
+	// A refusal of either GET is the file's, never the credential's: a link that has expired
+	// must not move the connection to needs_reauthorization (core.Unjudged).
+	downloading, cancel := context.WithTimeout(core.Unjudged(ctx), b.downloadTimeout)
 	defer cancel()
 	for i, file := range wanted {
 		data, err := fetchPhoto(downloading, client, resolved, file.ID)
@@ -85,11 +87,12 @@ func (b *Bridge) download(ctx context.Context, thread store.ChannelThread, messa
 	return files, named, nil
 }
 
-// nothingToWrite is whether a message has nothing for the agent once download is done: it names
-// files by id, none of which downloaded, and has no text and no photo at a URL. A message that
-// names no file by id, such as a Linq video alone, is written as before.
-func nothingToWrite(message core.InboundMessage, files []sandbox.File, named int) bool {
-	return named > 0 && len(files) == 0 && message.Text == "" && len(photos(message.Media)) == 0
+// nothingToWrite is whether a message has nothing for the agent once download, then upload,
+// is done: it names files by id, none of which it has as one of its kept photos, and has no
+// text and no photo at a URL. A message that names no file by id, such as a Linq video alone,
+// is written as before.
+func nothingToWrite(message core.InboundMessage, kept, named int) bool {
+	return named > 0 && kept == 0 && message.Text == "" && len(photos(message.Media)) == 0
 }
 
 // fetchPhoto looks the file id names up, and downloads it from where the answer says, when that

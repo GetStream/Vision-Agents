@@ -107,7 +107,7 @@ func (s *Server) answerThread(origin hookOrigin, thread store.ChannelThread, eve
 // which the hook leaves to the worker (bridged). It claims the message's turn on the worker's
 // attempt and returns the turn: answerThread past its claim. A message the hook would not
 // answer (addressed) returns no turn. The origin is the thread's own customer and app, which
-// the worker's write was just let into (channelbridge writeInto, streamapp.Clients.ForApp), so
+// the worker's write was just let into (channelbridge openThread, streamapp.Clients.ForApp), so
 // the turn asks mayWrite nothing it did not.
 func (s *Server) AnswerQueued(ctx context.Context, thread store.ChannelThread, written channelbridge.Written) (func(), error) {
 	// A router with no LLM router has no sessions (cmd/router buildSessions): its hook answers
@@ -156,7 +156,7 @@ func (s *Server) answerClaimed(ctx context.Context, origin hookOrigin, thread st
 		}
 	}()
 	// The author is told to the agent by their Stream user alone: the bridge names that user
-	// after the provider's id for them (channelbridge writeInto), a phone number on a texting
+	// after the provider's id for them (channelbridge openThread), a phone number on a texting
 	// line, which no model is told. So each person goes under "Speaker N".
 	turn, cancelTurn := context.WithTimeout(agent.WithAuthor(routing.WithAttribution(context.Background(), chatHookAttribution(thread.CustomerID, event)), event.Message.User.ID), askTimeout)
 	defer cancelTurn()

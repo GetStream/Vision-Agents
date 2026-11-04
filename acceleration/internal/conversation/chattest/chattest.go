@@ -63,19 +63,20 @@ type store struct {
 	held   *held
 	// limited are the path suffixes RateLimit answers 429 to.
 	limited map[string]bool
-	// failing are the path suffixes Fail answers 500 to, by method.
-	failing map[string]map[string]bool
+	// failing are the path suffixes Fail answers 500 to and Refuse 400 to, by method.
+	failing map[string]map[string]int
 	// uploads are the files stored on channels, in the order they came.
 	uploads []Upload
 	// events are the events sent to each channel, by channel id, in the order they came.
 	events map[string][]map[string]any
 }
 
-// Upload is one file stored on a channel: which endpoint took it ("image" or "file"), its
-// name, who it was uploaded as, as the JSON the client sent, and what was in it.
+// Upload is one file stored on a channel: the channel's id, which endpoint took it ("image"
+// or "file"), its name, who it was uploaded as, as the JSON the client sent, and what was in
+// it.
 type Upload struct {
-	Endpoint, Name, User string
-	Data                 []byte
+	Channel, Endpoint, Name, User string
+	Data                          []byte
 }
 
 // held is one request Hold keeps waiting: the path it ends in, a channel closed once it
@@ -432,15 +433,26 @@ func (s *Server) LiftRateLimit(suffix string) {
 // Fail answers every request of method whose path ends in suffix with a 500
 // for a call it could not update. Other methods on that path are served.
 func (s *Server) Fail(method, suffix string) {
+	s.failWith(method, suffix, http.StatusInternalServerError)
+}
+
+// Refuse answers every request of method whose path ends in suffix with a 400, as Chat
+// refuses a request it will never take, until Heal.
+func (s *Server) Refuse(method, suffix string) {
+	s.failWith(method, suffix, http.StatusBadRequest)
+}
+
+// failWith answers every request of method whose path ends in suffix with status.
+func (s *Server) failWith(method, suffix string, status int) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	if s.db.failing == nil {
-		s.db.failing = map[string]map[string]bool{}
+		s.db.failing = map[string]map[string]int{}
 	}
 	if s.db.failing[method] == nil {
-		s.db.failing[method] = map[string]bool{}
+		s.db.failing[method] = map[string]int{}
 	}
-	s.db.failing[method][suffix] = true
+	s.db.failing[method][suffix] = status
 }
 
 // Heal serves requests of method ending in suffix again.
@@ -643,7 +655,8 @@ func (db *store) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, _ := io.ReadAll(file)
-	stored := Upload{Endpoint: path.Base(r.URL.Path), Name: path.Base(header.Filename), User: r.FormValue("user"), Data: data}
+	stored := Upload{Channel: path.Base(path.Dir(r.URL.Path)), Endpoint: path.Base(r.URL.Path), Name: path.Base(header.Filename),
+		User: r.FormValue("user"), Data: data}
 	db.uploads = append(db.uploads, stored)
 	_ = json.NewEncoder(w).Encode(map[string]any{"file": "https://cdn.fake/" + stored.Endpoint + "/" + stored.Name})
 }
@@ -669,10 +682,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for suffix := range db.failing[r.Method] {
+	for suffix, status := range db.failing[r.Method] {
 		if strings.HasSuffix(r.URL.Path, suffix) {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": http.StatusInternalServerError})
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": status})
 			return
 		}
 	}

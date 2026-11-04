@@ -584,7 +584,7 @@ func (s *LinqChannelSuite) streamDelivers(channel string, index int) int {
 		message["attachments"] = attachments
 	}
 	// The hook carries the author as Chat keeps them, which the bridge named after their
-	// number (channelbridge writeInto), not after their id as the fake's messages do.
+	// number (channelbridge openThread), not after their id as the fake's messages do.
 	if author, ok := message["user"].(map[string]any); ok {
 		if user, found := s.chat.User(fmt.Sprint(author["id"])); found {
 			message["user"] = user
