@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 )
 
@@ -174,16 +175,17 @@ func (s *Server) forwardedMessage(ctx context.Context, origin hookOrigin, event 
 //
 // A worker waits on whichever node its socket landed on, and Stream's hook lands wherever
 // the load balancer sends it, so without this a call rings out on a node with nobody
-// connected while a worker sits idle on the next one. A worker connected here is always
-// asked first, which costs nothing and is most of the time.
+// connected while a worker sits idle on the next one. A worker connected here that takes the
+// hook's kind of work is always asked first, which costs nothing and is most of the time; one
+// that takes other work, such as a process only hosting tools, is passed over.
 //
 // Handed over with handOver, as forwardedMessage hands a message over; nil hands nothing over.
 // taken is false when that node could not be reached or would not take the hook.
-func (s *Server) forwardedToWorkers(ctx context.Context, handOver func(context.Context, string) (*node.ForwardResponse, error), customerID string) (elsewhere, taken bool) {
+func (s *Server) forwardedToWorkers(ctx context.Context, handOver func(context.Context, string) (*node.ForwardResponse, error), customerID string, kind dispatch.Kind) (elsewhere, taken bool) {
 	if s.directory == nil || s.forwarder == nil || handOver == nil {
 		return false, false
 	}
-	if len(s.dispatch.Workers(customerID)) > 0 {
+	if s.dispatch.Takes(customerID, kind) {
 		return false, false
 	}
 

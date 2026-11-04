@@ -364,6 +364,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A new phone link starts the number clean
 
 `PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716, #1728).
+### A message reaches the worker that takes messages on another router
+
+A router that held only a customer's worker hosting tools kept an arriving message and failed it, with "nobody could answer an arriving message", while the customer's worker taking messages waited on another router. The same held for a call on a router whose worker took only messages. Now a router keeps a message or a call only when a worker connected to it takes that kind of work. Otherwise it hands the work to a router where a worker waits, as it did when no worker was connected to it. A router with such a worker still answers first. With no worker anywhere that takes the work, the error is the same as before (#1725, AI-2719).
 
 ### Pausing a campaign stops its calls on every router
 
