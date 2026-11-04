@@ -440,15 +440,28 @@ button {
   background: var(--surface);
 }
 
+/* The buttons stay on the last line as the text grows over several. */
 .composer-row {
   display: flex;
-  align-items: center;
+  align-items: flex-end;
   gap: 6px;
 }
 
 .composer-row textarea,
 .composer-row input[type="text"] {
   flex: 1;
+}
+
+/* One line as tall as the talk button, so its text is centred with the buttons, and more lines
+   grow up from there. */
+.composer-row .str-chat__ai-message-composer__text-input {
+  padding-block: 8px;
+}
+
+/* The 32px buttons, centred on that last 40px line rather than resting on its bottom. */
+.composer-row > .str-chat__ai-message-composer__round-button,
+.composer-row > .str-chat__ai-chat-options {
+  margin-bottom: 4px;
 }
 
 .round-button {

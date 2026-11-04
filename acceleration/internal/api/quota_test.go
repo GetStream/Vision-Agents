@@ -373,6 +373,20 @@ func (s *QuotaSuite) TestABackendStillReadsASpentUsersSessionAndIsRefusedOnlyNew
 	s.Equal(http.StatusTooManyRequests, status, "and so is a turn")
 }
 
+// TestAUserWhoHasSpentTheirDayStillReadsTheirSession: in the T7 E check a user who had spent
+// their day was refused the listing of a session's responses, which starts no model work.
+func (s *QuotaSuite) TestAUserWhoHasSpentTheirDayStillReadsTheirSession() {
+	opened := s.spendTheDay()
+
+	listed := s.client.raw(http.MethodGet, "/v1/agents/sessions/"+opened+"/responses", nil)
+	s.Equal(http.StatusOK, listed.StatusCode, "a read starts no model work")
+	s.Equal("0", listed.Header.Get("X-Quota-Remaining"), "and still says what is left of the day")
+	s.Equal(http.StatusOK, s.client.do(http.MethodGet, "/v1/agents/sessions/"+opened, nil, nil))
+	status, _ := s.client.failure(http.MethodPost, "/v1/agents/sessions/"+opened+"/responses",
+		CreateResponseRequest{Text: "and a text"})
+	s.Equal(http.StatusTooManyRequests, status, "a turn is still refused")
+}
+
 // raw opens a session as client and answers the response, which must be a 201.
 func (s *QuotaSuite) raw(client *testClient) *http.Response {
 	response := client.raw(http.MethodPost, "/v1/agents/sessions", textSession(nil))

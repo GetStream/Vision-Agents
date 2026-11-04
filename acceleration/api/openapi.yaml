@@ -20,7 +20,7 @@ components:
           - "true"
         type: string
     X-Stream-Cost-Micros:
-      description: 'What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user''s device. An operation that answers before its work runs, such as createResponse, sends none.'
+      description: 'What the request cost, in millionths of a dollar: the sum of the usage it recorded. Sent on a success to a server-side caller when the request recorded any, and never to an end user''s device. An operation that answers before its work runs, such as createResponse or respondSession, sends none.'
       schema:
         format: int64
         type: integer
@@ -260,7 +260,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          description: Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+          description: Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
           type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
@@ -286,26 +286,10 @@ components:
           type: array
         llm:
           type: string
-        mcp_servers:
-          items:
-            $ref: '#/components/schemas/McpServer'
-          type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
         name:
           type: string
-        plugin_events:
-          deprecated: true
-          description: 'Deprecated: use the events of a fixed binding under connectors.'
-          items:
-            $ref: '#/components/schemas/PluginEvent'
-          type: array
-        plugins:
-          deprecated: true
-          description: 'Deprecated: use connectors, a binding to a connector.'
-          items:
-            $ref: '#/components/schemas/PluginEntry'
-          type: array
         region:
           description: 'Where the agent''s work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent''s agent.yaml or config names another.'
           example: us
@@ -404,9 +388,10 @@ components:
         llm:
           type: string
         mcp_servers:
+          deprecated: true
+          description: 'No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/McpServer'
-          maxItems: 16
           type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
@@ -416,14 +401,13 @@ components:
           type: string
         plugin_events:
           deprecated: true
-          description: 'Deprecated: use the events of a fixed binding under connectors.'
+          description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/PluginEvent'
-          maxItems: 32
           type: array
         plugins:
           deprecated: true
-          description: 'Deprecated: use connectors, a binding to a connector.'
+          description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
@@ -487,7 +471,7 @@ components:
           $ref: '#/components/schemas/AgentChannels'
           description: 'Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.'
         connectors:
-          description: The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+          description: The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
           items:
             $ref: '#/components/schemas/AgentConnectorBinding'
           maxItems: 64
@@ -495,7 +479,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          description: 'Whether each phone call under this agent writes an episode card into the caller''s omni-channel: an agent channel for each caller number and agent, keyed by the caller''s E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
+          description: 'Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person''s omni-channel: an agent channel for each person and agent, keyed by the caller''s E.164 number or by the app chat''s Stream user id. On, a session on a thread channel, on an app chat''s agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. An app chat''s agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
           type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
@@ -518,10 +502,10 @@ components:
           description: The model holding the conversation.
           type: string
         mcp_servers:
-          description: MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
+          deprecated: true
+          description: 'No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/McpServer'
-          maxItems: 16
           type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
@@ -530,14 +514,13 @@ components:
           type: string
         plugin_events:
           deprecated: true
-          description: 'Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever''s login it came through.'
+          description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/PluginEvent'
-          maxItems: 32
           type: array
         plugins:
           deprecated: true
-          description: 'Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear''s read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.'
+          description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
@@ -586,7 +569,7 @@ components:
           type: object
         tools:
           $ref: '#/components/schemas/AgentTools'
-          description: How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay.
+          description: How the agent is offered its connector tools. Left out on an update, the stored settings stay.
         tts:
           type: string
         video:
@@ -675,7 +658,7 @@ components:
         - type
       type: object
     AgentConnectorSelectionType:
-      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
       enum:
         - fixed
         - session
@@ -938,6 +921,31 @@ components:
           description: Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
           type: boolean
       type: object
+    AgentUser:
+      properties:
+        phone:
+          description: The number linked to the user, in E.164; null when none is.
+          example: "+15551234567"
+          nullable: true
+          type: string
+        user_id:
+          description: The Stream user id, as the app's own token signs it.
+          type: string
+      required:
+        - user_id
+        - phone
+      type: object
+    AgentUserRequest:
+      description: 'Who one of the app''s users is, as the app''s backend knows it. phone is required: a number, or null for none.'
+      properties:
+        phone:
+          description: 'The user''s phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent''s episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user''s cards. A new number takes the place of the old one, which reads none of the user''s cards from then on. A number linked to another user of the app is refused (409 phone_taken).'
+          example: "+15551234567"
+          nullable: true
+          type: string
+      required:
+        - phone
+      type: object
     AnalyzeReviewsRequest:
       properties:
         from:
@@ -1197,12 +1205,6 @@ components:
       properties:
         return_url:
           description: 'The app''s own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router''s. The launch page then takes the handoff only from a page of this URL''s origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser''s origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.'
-          type: string
-      type: object
-    AuthorizePluginRequest:
-      properties:
-        instance_url:
-          description: The shop hostname. Required for plugins that have no single global URL.
           type: string
       type: object
     AvailableNumber:
@@ -2671,7 +2673,7 @@ components:
         - created_at
       type: object
     ConnectorAuditAction:
-      description: 'grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app''s backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.'
+      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app''s backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.'
       enum:
         - grant_created
         - grant_refreshed
@@ -2737,7 +2739,7 @@ components:
         owner_type:
           $ref: '#/components/schemas/ConnectionOwnerType'
         reason:
-          description: 'Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.'
+          description: 'Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.'
           type: string
         request_id:
           description: The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -3263,7 +3265,7 @@ components:
       properties:
         audio:
           $ref: '#/components/schemas/AudioSource'
-          description: A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+          description: A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         images:
           items:
             $ref: '#/components/schemas/ImageSource'
@@ -3276,7 +3278,7 @@ components:
           description: How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
           type: string
         request_id:
-          description: 'Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation''s channel and shown on the person''s message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.'
+          description: 'Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation''s channel and shown on the person''s message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.'
           pattern: ^[A-Za-z0-9_-]{1,128}$
           type: string
         text:
@@ -4071,7 +4073,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer''s own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer''s own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -4207,6 +4209,9 @@ components:
           type: string
         name:
           type: string
+        refresh_secret:
+          description: 'What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest''s own token while they already hold one, which keeps working.'
+          type: string
         token:
           description: A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
           type: string
@@ -4220,10 +4225,13 @@ components:
           additionalProperties: {}
           type: object
         id:
-          description: A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+          description: 'A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app''s backend, the guest''s own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.'
           type: string
         name:
-          description: What to call them, for a transcript a person reads later.
+          description: What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
+          type: string
+        refresh_secret:
+          description: The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
           type: string
       type: object
     Harness:
@@ -4501,7 +4509,7 @@ components:
           format: int64
           type: integer
         instructions:
-          description: 'The system prompt: the agent''s instructions, skills and plugin guidance.'
+          description: 'The system prompt: the agent''s instructions, skills and connector guidance.'
           format: int64
           type: integer
         messages:
@@ -5900,6 +5908,9 @@ components:
             type: string
           description: 'Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router''s own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.'
           type: object
+        detect_voicemail:
+          description: Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+          type: boolean
         from:
           description: One of the customer's own numbers, which is what the person sees.
           type: string
@@ -5944,126 +5955,6 @@ components:
         - status
         - vendor_call_id
       type: object
-    Plugin:
-      description: One hosted MCP server from the built-in catalog.
-      properties:
-        category:
-          type: string
-        client_required:
-          description: True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
-          type: boolean
-        description:
-          type: string
-        id:
-          type: string
-        instance_hint:
-          type: string
-        instance_required:
-          type: boolean
-        logo_url:
-          description: Where this deployment serves the plugin's logo, as an SVG needing no credential.
-          readOnly: true
-          type: string
-        name:
-          type: string
-        readonly:
-          description: True when the plugin has a read-only endpoint an agent may pick on its entry.
-          type: boolean
-        redirect_uri:
-          description: The redirect URI that client has to list, which is this deployment's. Only with client_required.
-          readOnly: true
-          type: string
-        scopes_supported:
-          description: The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
-          items:
-            type: string
-          type: array
-        setup_steps:
-          description: What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
-          items:
-            $ref: '#/components/schemas/PluginSetupStep'
-          type: array
-        setup_url:
-          description: Where the app creates that client with the provider. Only with client_required.
-          format: uri
-          type: string
-        toolsets:
-          description: The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
-          items:
-            type: string
-          type: array
-      required:
-        - category
-        - description
-        - id
-        - logo_url
-        - name
-      type: object
-    PluginAuthorization:
-      properties:
-        authorize_url:
-          description: The URL the browser should open to finish the login.
-          type: string
-      required:
-        - authorize_url
-      type: object
-    PluginClient:
-      description: The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
-      properties:
-        client_id:
-          description: The client id the provider issued.
-          type: string
-        has_secret:
-          description: Whether a client secret is stored. It is never returned.
-          type: boolean
-      required:
-        - client_id
-        - has_secret
-      type: object
-    PluginConnection:
-      description: A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
-      properties:
-        category:
-          type: string
-        client:
-          $ref: '#/components/schemas/PluginClient'
-          description: The OAuth client the config set for the plugin. Absent when it set none.
-        client_required:
-          description: True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
-          type: boolean
-        description:
-          type: string
-        instance_hint:
-          type: string
-        instance_required:
-          type: boolean
-        instance_url:
-          type: string
-        logo_url:
-          description: Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
-          readOnly: true
-          type: string
-        name:
-          type: string
-        plugin_id:
-          type: string
-        status:
-          description: The app's login. Always not_connected for a plugin with user, which the app does not log into.
-          enum:
-            - pending
-            - connected
-            - failed
-            - not_connected
-          type: string
-        user:
-          description: 'True when the config names the plugin with user: each end user connects their own account in the conversation.'
-          type: boolean
-      required:
-        - logo_url
-        - name
-        - plugin_id
-        - status
-      type: object
     PluginEntry:
       description: 'One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.'
       oneOf:
@@ -6091,19 +5982,6 @@ components:
       required:
         - plugin
         - event
-      type: object
-    PluginSetupStep:
-      description: One thing to do with a plugin's provider before its OAuth client can be set.
-      properties:
-        description:
-          description: How to do it with the provider.
-          type: string
-        title:
-          description: What the step does, in a few words.
-          type: string
-      required:
-        - title
-        - description
       type: object
     PluginWithOptions:
       description: One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
@@ -6134,7 +6012,7 @@ components:
           maxItems: 32
           type: array
         user:
-          description: 'Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person''s own account, such as google_calendar, is connected by each end user, and one reaching the company''s, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.'
+          description: 'Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person''s own account, such as google_calendar, is connected by each end user, and one reaching the company''s, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.'
           type: boolean
       required:
         - name
@@ -7011,7 +6889,7 @@ components:
           type: number
       type: object
     Quota:
-      description: 'What one end user may spend in a UTC day. Each number is the first set of the user''s own (/v1/policies/users/{user_id}), the app''s, the organization''s and the router''s default. A quota set here counts everything recorded with the user: what their devices ask for and what the app''s backend asks for in their name. (An app''s quota counted devices only before; the router''s default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.'
+      description: 'What one end user may spend in a UTC day. Each number is the first set of the user''s own (/v1/policies/users/{user_id}), the app''s, the organization''s and the router''s default. A quota set here counts everything recorded with the user: what their devices ask for and what the app''s backend asks for in their name. (An app''s quota counted devices only before; the router''s default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router''s default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.'
       properties:
         messages_per_user_per_day:
           description: 'How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level''s applies: the app''s, then the organization''s, then the router''s default.'
@@ -7115,7 +6993,7 @@ components:
       properties:
         audio:
           $ref: '#/components/schemas/AudioSource'
-          description: A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+          description: A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         client_id:
           description: The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
           pattern: ^[A-Za-z0-9_.:-]{1,128}$
@@ -7964,13 +7842,14 @@ components:
         - connection_id
       type: object
     SessionEndReason:
-      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.'
+      description: 'Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.'
       enum:
         - agent_hangup
         - transferred
         - hangup
         - start
         - unanswered
+        - voicemail
       type: string
     SessionFilter:
       additionalProperties: false
@@ -8064,6 +7943,9 @@ components:
         vendor_call_id:
           description: The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
           type: string
+        voicemail:
+          $ref: '#/components/schemas/SessionVoicemail'
+          description: What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
       required:
         - number
       type: object
@@ -8249,6 +8131,18 @@ components:
           description: Track or processor source. Omitted requires one unambiguous available source.
           type: string
       type: object
+    SessionVoicemail:
+      description: What the agent does when an answering machine picks up.
+      properties:
+        action:
+          $ref: '#/components/schemas/VoicemailAction'
+        message:
+          description: Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+          maxLength: 1000
+          type: string
+      required:
+        - action
+      type: object
     SetNumberAgentRequest:
       properties:
         agent:
@@ -8257,25 +8151,6 @@ components:
         config_id:
           description: The id of the agent config that answers the number. Give this or agent.
           type: string
-      type: object
-    SetPluginClientRequest:
-      description: The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
-      properties:
-        client_id:
-          description: The client id the provider issued.
-          maxLength: 512
-          minLength: 1
-          type: string
-        client_secret:
-          description: The client secret the provider issued. Left out for a public client.
-          maxLength: 512
-          type: string
-          writeOnly: true
-        user:
-          description: 'Also name the plugin under the config''s plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app''s.'
-          type: boolean
-      required:
-        - client_id
       type: object
     SetSandboxRecipientsRequest:
       properties:
@@ -9279,10 +9154,10 @@ components:
         llm:
           type: string
         mcp_servers:
-          description: MCP servers outside the plugin catalog, opened by their URL with no login.
+          deprecated: true
+          description: 'No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/McpServer'
-          maxItems: 16
           type: array
         mode:
           $ref: '#/components/schemas/AgentMode'
@@ -9291,14 +9166,13 @@ components:
           type: string
         plugin_events:
           deprecated: true
-          description: 'Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.'
+          description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/PluginEvent'
-          maxItems: 32
           type: array
         plugins:
           deprecated: true
-          description: 'Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.'
+          description: 'No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.'
           items:
             $ref: '#/components/schemas/PluginEntry'
           type: array
@@ -9345,7 +9219,7 @@ components:
           type: object
         tools:
           $ref: '#/components/schemas/AgentTools'
-          description: How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
+          description: How connector tools are offered. A setting left out keeps what is stored.
         tts:
           type: string
         video:
@@ -10778,7 +10652,7 @@ components:
           minimum: 1
           type: integer
         url:
-          description: Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+          description: Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
           type: string
       required:
         - url
@@ -10951,6 +10825,14 @@ components:
       required:
         - audio
       type: object
+    VoicemailAction:
+      description: |-
+        hang_up: end the call at once, saying nothing.
+        leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+      enum:
+        - hang_up
+        - leave_message
+      type: string
     WhatsAppProfile:
       properties:
         business_account:
@@ -12813,266 +12695,6 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: What was changed about an agent since its directory was last synced
-  /v1/agents/configs/{id}/plugins:
-    get:
-      deprecated: true
-      description: 'Deprecated: use listConnections for the logins, and the config''s connectors for what it binds. The app''s own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user''s logins, made for a plugin or a server with user, are never listed.'
-      operationId: listConfigPlugins
-      parameters:
-        - description: The resource, as returned when it was created.
-          in: path
-          name: id
-          required: true
-          schema:
-            description: The resource, as returned when it was created.
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/PluginConnection'
-                type: array
-          description: The config's connections
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: The plugin logins this agent holds
-  /v1/agents/configs/{id}/plugins/{plugin_id}:
-    delete:
-      deprecated: true
-      description: |-
-        Deprecated: use deleteConnection.
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: disconnectPlugin
-      parameters:
-        - description: The resource, as returned when it was created.
-          in: path
-          name: id
-          required: true
-          schema:
-            description: The resource, as returned when it was created.
-            type: string
-        - description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
-          in: path
-          name: plugin_id
-          required: true
-          schema:
-            description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
-            type: string
-      responses:
-        "204":
-          description: The login is gone
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: Drop a plugin login
-  /v1/agents/configs/{id}/plugins/{plugin_id}/authorize:
-    post:
-      deprecated: true
-      description: |-
-        Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: authorizePlugin
-      parameters:
-        - description: The resource, as returned when it was created.
-          in: path
-          name: id
-          required: true
-          schema:
-            description: The resource, as returned when it was created.
-            type: string
-        - description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
-          in: path
-          name: plugin_id
-          required: true
-          schema:
-            description: A built-in catalog id such as slack or calendly, or the name of an MCP server the config names by URL that the app logs into.
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/AuthorizePluginRequest'
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PluginAuthorization'
-          description: The URL the browser should open
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: Start a plugin login
-  /v1/agents/configs/{id}/plugins/{plugin_id}/client:
-    delete:
-      deprecated: true
-      description: |-
-        Deprecated: use deleteConnectorOAuthClient.
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: deletePluginClient
-      parameters:
-        - description: The resource, as returned when it was created.
-          in: path
-          name: id
-          required: true
-          schema:
-            description: The resource, as returned when it was created.
-            type: string
-        - description: A built-in catalog id such as google_calendar.
-          in: path
-          name: plugin_id
-          required: true
-          schema:
-            description: A built-in catalog id such as google_calendar.
-            type: string
-      responses:
-        "204":
-          description: The client is gone
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: Drop the OAuth client an agent logs a plugin in with
-    put:
-      deprecated: true
-      description: |-
-        Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-      operationId: setPluginClient
-      parameters:
-        - description: The resource, as returned when it was created.
-          in: path
-          name: id
-          required: true
-          schema:
-            description: The resource, as returned when it was created.
-            type: string
-        - description: A built-in catalog id such as google_calendar.
-          in: path
-          name: plugin_id
-          required: true
-          schema:
-            description: A built-in catalog id such as google_calendar.
-            type: string
-      requestBody:
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/SetPluginClientRequest'
-        required: true
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/PluginClient'
-          description: The client as stored, without its secret
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: Set the OAuth client an agent logs a plugin in with
   /v1/agents/connections:
     get:
       description: |-
@@ -15021,7 +14643,7 @@ paths:
   /v1/agents/guests:
     post:
       description: |-
-        Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+        Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
         Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
       operationId: createGuestUser
       requestBody:
@@ -16098,126 +15720,6 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Replace a model
-  /v1/agents/plugins:
-    get:
-      deprecated: true
-      description: 'Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer''s own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.'
-      operationId: listPlugins
-      parameters:
-        - description: Filter by name, category or description.
-          explode: false
-          in: query
-          name: q
-          schema:
-            description: Filter by name, category or description.
-            type: string
-      responses:
-        "200":
-          content:
-            application/json:
-              schema:
-                items:
-                  $ref: '#/components/schemas/Plugin'
-                type: array
-          description: Matching plugins, in catalog order
-          headers:
-            X-Stream-Balance-Micros:
-              $ref: '#/components/headers/X-Stream-Balance-Micros'
-            X-Stream-Balance-Warning:
-              $ref: '#/components/headers/X-Stream-Balance-Warning'
-            X-Stream-Cost-Estimated:
-              $ref: '#/components/headers/X-Stream-Cost-Estimated'
-            X-Stream-Cost-Micros:
-              $ref: '#/components/headers/X-Stream-Cost-Micros'
-        "400":
-          $ref: '#/components/responses/BadRequest'
-        "401":
-          $ref: '#/components/responses/Unauthorized'
-        "402":
-          $ref: '#/components/responses/PaymentRequired'
-        "403":
-          $ref: '#/components/responses/Forbidden'
-        "500":
-          $ref: '#/components/responses/InternalError'
-        "503":
-          $ref: '#/components/responses/Unavailable'
-      summary: The hosted MCP servers an agent may attach
-  /v1/agents/plugins/{plugin_id}/logo:
-    get:
-      deprecated: true
-      description: Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
-      operationId: getPluginLogo
-      parameters:
-        - description: A built-in catalog id such as slack or linear.
-          in: path
-          name: plugin_id
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          content:
-            image/svg+xml:
-              schema:
-                type: string
-          description: The logo
-        "404":
-          $ref: '#/components/responses/NotFound'
-        "500":
-          $ref: '#/components/responses/InternalError'
-      security: []
-      summary: A plugin's logo
-  /v1/agents/plugins/callback:
-    get:
-      deprecated: true
-      description: 'Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.'
-      operationId: pluginOAuthCallback
-      parameters:
-        - in: query
-          name: code
-          schema:
-            type: string
-        - in: query
-          name: state
-          schema:
-            type: string
-        - in: query
-          name: error
-          schema:
-            type: string
-      responses:
-        "302":
-          description: The browser is sent back to the agent editor
-        "500":
-          $ref: '#/components/responses/InternalError'
-      security: []
-      summary: Finish a plugin login
-  /v1/agents/plugins/events/{token}:
-    post:
-      deprecated: true
-      description: 'Deprecated: a connector binding''s events are delivered to receiveConnectionEvent. Where a plugin''s MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.'
-      operationId: receivePluginEvent
-      parameters:
-        - in: path
-          name: token
-          required: true
-          schema:
-            type: string
-      responses:
-        "200":
-          description: A verification's challenge, echoed, or an event already taken
-        "202":
-          description: The event is taken, and a conversation is opening for it
-        "401":
-          description: The delivery is not signed with the subscription's secret
-        "410":
-          description: There is no such subscription any more; stop delivering to it
-        "413":
-          description: The delivery is over 256 KiB
-        "500":
-          $ref: '#/components/responses/InternalError'
-      security: []
-      summary: Receive a plugin's MCP event
   /v1/agents/provider-keys:
     get:
       description: |-
@@ -17211,7 +16713,7 @@ paths:
         message_start and message_end are offsets in Unicode code points into the text of the Chat message the reply is written into, the one whose turn_id names the turn, from message_start up to message_end. They are left out where the router does not know them.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
         `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is running again with authorization.status connected and no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at the provider, declines the login (declined); a consent that ended otherwise without connecting, such as with another account, is failed, and one not finished by expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is running again with authorization.status connected and no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at the provider, declines the login (declined); a consent that ended otherwise without connecting, such as with another account, is failed, and one not finished by expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
         A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text and images returns the existing IDs without invoking the model again; reuse with different content emits an error. Its images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, user_message_id is empty, and a reused id is answered as a duplicate even with other text or images. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -17860,7 +17362,7 @@ paths:
       x-client-accessible: true
   /v1/agents/sessions/{id}/tools:
     get:
-      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its plugins'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
+      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its connectors'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
       operationId: listSessionTools
       parameters:
         - description: The resource, as returned when it was created.
@@ -18741,6 +18243,63 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
+  /v1/agents/users/{user_id}:
+    put:
+      description: |-
+        Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: updateUser
+      parameters:
+        - description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
+          in: path
+          name: user_id
+          required: true
+          schema:
+            description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
+            minLength: 1
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentUserRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentUser'
+          description: The user as the router now holds it
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Link a user to a phone number
   /v1/agents/users/{user_id}/connections:
     delete:
       description: |-
@@ -20008,7 +19567,7 @@ paths:
       description: |-
         Writes a change, its entries and an audit row in one transaction. Each entry replaces its item's entry under its `when` whole: the vendor's cost in `rates` and `tiers`, for reference, and the price customers are charged in `prices` and `price_tiers`, both set outright: nothing is worked out from the cost, and no markup is added. Every router prices with it from `effective_at`: this one at once, the others within 30 seconds, or at `effective_at` when that is later. Nothing ever changes an entry once written: a correction is a newer change, and a scheduled one can be cancelled.
 
-        Every entry names its `region`, such as `us` or `eu`, else the change is a 400 `validation_failed`, and `byok: true` prices work done with the customer's own key, whose vendor bills the customer. Both are matched exactly: an entry prices work of its own region and `byok` only, and an item with no entry of its own is unpriced, never priced by another region's or the other `byok` state's.
+        Every entry names its `region`, such as `us` or `eu`, else the change is a 400 `validation_failed`, and `byok: true` prices work done with the customer's own key, whose vendor bills the customer. Both are matched exactly: an entry prices work of its own region and `byok` only, and an item with no entry of its own is unpriced, never priced by another region's or the other `byok` state's. A new `llm`, `knowledge` or `sandbox` item is written with its `byok` entry beside it, at a fifth of the vendor's rates, unless the change sets that entry itself or one is in force, and a withdrawn one has its `byok` entry withdrawn with it; a renamed item's `byok` entry keeps the old one's SKU.
 
         Every item has one SKU, kept across its price changes, which each row it prices records. An entry without `sku` keeps the item's, or gives a new item one made from its modality, provider, model, `when`, `region` and `byok` (`llm-openai-gpt-6-luna-service-tier-flex-us`, `llm-openai-gpt-6-luna-us-byok`), lowercased with every run of other characters a hyphen and numbered `-2`, `-3` past one another item has had. A new item may take another item's SKU, as a model its vendor renamed keeps the old name's, when that item is withdrawn by the same change or is no longer in force; else, or when a change scheduled later gives it to another item, the change is a 400 `sku_in_use`. An item in force given another SKU is a 400 `sku_changed`.
 
@@ -21520,6 +21079,29 @@ paths:
           $ref: '#/components/responses/InternalError'
       security: []
       summary: Receive a Telnyx call
+  /v1/phone/machine/{token}:
+    post:
+      description: 'Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.'
+      operationId: receiveCallMachine
+      parameters:
+        - in: path
+          name: token
+          required: true
+          schema:
+            type: string
+      responses:
+        "204":
+          description: The report is taken
+        "400":
+          description: The report could not be read
+        "404":
+          description: No placed call is waiting at this token
+        "413":
+          description: The report is over 64 KiB
+        "500":
+          $ref: '#/components/responses/InternalError'
+      security: []
+      summary: Receive who picked up a placed call
   /v1/phone/numbers:
     get:
       operationId: listPhoneNumbers
@@ -21602,6 +21184,7 @@ paths:
       summary: Buy a number, which starts its monthly charge
   /v1/phone/numbers/{e164}:
     delete:
+      description: 'A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.'
       operationId: releasePhoneNumber
       parameters:
         - description: The number in +15551234567 form.
@@ -21633,6 +21216,12 @@ paths:
           $ref: '#/components/responses/Forbidden'
         "404":
           $ref: '#/components/responses/NotFound'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
         "500":
           $ref: '#/components/responses/InternalError'
         "503":

@@ -207,6 +207,8 @@ var usageIndexes = []struct{ name, create string }{
 	// (20261206120000_agent_logs_source_id.sql).
 	{"agent_logs_source_idx", "CREATE UNIQUE INDEX CONCURRENTLY IF NOT EXISTS agent_logs_source_idx ON agent_logs (customer_id, source_id) " +
 		"WHERE source_id IS NOT NULL"},
+	// What a link's join finds one omni-channel's rows of an agent by (20261212100000_user_phones.sql).
+	{"contact_map_conversation", "CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_conversation ON contact_map (customer_id, agent_config_id, conversation_id)"},
 }
 
 // ensureUsageIndexes builds each usage index that is missing, dropping one a failed build left

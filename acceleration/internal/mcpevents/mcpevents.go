@@ -2,12 +2,10 @@
 // declare, on the binding's fixed connection, and opens a conversation for each event a
 // connection's server delivers (T60, AI-899).
 //
-// It is the plugin system's MCP Events client (internal/pluginevents) moved onto connections:
-// a subscription is keyed by the connection it was made with, asked for through the MCP
+// A subscription is keyed by the connection it was made with, asked for through the MCP
 // source (core.EventSource) on the connection's own client, and each delivery is checked with
 // the subscription's own Standard Webhooks secret. The draft it follows is
-// experimental-ext-triggers-events at 6682596d, «Webhook-Based Delivery». The plugin path,
-// POST /v1/agents/plugins/events/{token} and its tables, stays as it is until T23.
+// experimental-ext-triggers-events at 6682596d, «Webhook-Based Delivery».
 package mcpevents
 
 import (
@@ -39,19 +37,19 @@ import (
 // with the app's secret: each delivery here is signed with its subscription's own.
 const Path = "/v1/connectors/mcp-events/"
 
-// MaxEventBytes is the most one delivery may hold: webhook.MaxEventBytes, the plugin
-// system's cap and the one the router's other provider webhooks use (256 KiB). The draft names no size.
+// MaxEventBytes is the most one delivery may hold: webhook.MaxEventBytes, the removed plugin
+// system's cap and the one the router's other provider webhooks use (256 KiB). The draft names
+// no size.
 // Unverified against a real server's largest event.
 const MaxEventBytes = webhook.MaxEventBytes
 
-// refreshAhead is how long before refreshBefore a subscription is asked for again: the plugin
-// system's (internal/pluginevents), a choice. The draft: «the client MUST re-call
-// events/subscribe ... before refreshBefore».
+// refreshAhead is how long before refreshBefore a subscription is asked for again, a
+// choice. The draft: «the client MUST re-call events/subscribe ... before refreshBefore».
 const refreshAhead = 10 * time.Minute
 
 // retryAfter is how long a refused subscription waits before it is asked for again the first
 // time, and how long one whose connection waits on a renewal or a reconnect waits each time:
-// the plugin system's, a choice. Each further refusal doubles it, up to maxRetryAfter.
+// a choice. Each further refusal doubles it, up to maxRetryAfter.
 const retryAfter = 15 * time.Minute
 
 // maxRetryAfter is the longest a refused subscription waits: a day, the longest grant the
@@ -78,7 +76,7 @@ const minLook = time.Second
 // due row, one claim at a time.
 const claimBatch = 1
 
-// runTimeout bounds the conversation one event opens: the plugin system's choice.
+// runTimeout bounds the conversation one event opens: a choice.
 const runTimeout = 15 * time.Minute
 
 // Options configures a Service. Every field but Logger and Lease is required.
@@ -749,8 +747,7 @@ func bindsFixed(binding store.ConnectorBinding, connection store.ConnectorConnec
 }
 
 // Key is an event and its arguments as one value: canonical JSON, hashed. encoding/json writes
-// a map's keys in order, so the same filters in another order are one key. The plugin system's
-// pluginevents.Key.
+// a map's keys in order, so the same filters in another order are one key.
 func Key(event string, arguments map[string]any) string {
 	if arguments == nil {
 		arguments = map[string]any{}
@@ -760,7 +757,7 @@ func Key(event string, arguments map[string]any) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// newToken is a callback's path segment: 24 random bytes, in hex, as the plugin system's.
+// newToken is a callback's path segment: 24 random bytes, in hex.
 func newToken() (string, error) {
 	raw := make([]byte, 24)
 	if _, err := rand.Read(raw); err != nil {

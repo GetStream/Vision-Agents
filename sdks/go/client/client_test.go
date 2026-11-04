@@ -209,6 +209,23 @@ func newRouter(t *testing.T) *router {
 		w.WriteHeader(http.StatusNoContent)
 	})
 
+	mux.HandleFunc("PUT /v1/agents/users/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		backend.mu.Lock()
+		phone, _ := backend.bodies["PUT "+r.URL.Path]["phone"].(string)
+		backend.mu.Unlock()
+		switch {
+		case phone == "+15550100199":
+			answer(w, http.StatusConflict, acceleration.ErrorResponse{Error: acceleration.ErrorDetail{
+				Type: "conflict", Code: "phone_taken", Message: "the phone number is linked to another user of this app",
+			}})
+		case phone == "":
+			answer(w, http.StatusOK, acceleration.AgentUser{UserId: r.PathValue("user_id")})
+		default:
+			answer(w, http.StatusOK, acceleration.AgentUser{UserId: r.PathValue("user_id"), Phone: ptr("+15550100100")})
+		}
+	})
+
 	mux.HandleFunc("POST /v1/agents/guests", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusCreated, acceleration.GuestUser{
@@ -819,7 +836,21 @@ func TestImagesAndClipsGoOverWithTheQuestion(t *testing.T) {
 		t.Errorf("the videos went over as %s", videos)
 	}
 	if _, carried := body["request_id"]; carried {
-		t.Error("a request id carries text only")
+		t.Error("a question with photos goes without a request id, so a photo may be a link")
+	}
+}
+
+func TestAQuestionWithClipsAndNoPhotosGoesOverWithARequestID(t *testing.T) {
+	backend := newRouter(t)
+	session := open(t, backend)
+
+	if _, err := session.Responses.Create(t.Context(), "What happens here?", Clip{URL: "https://example.com/unboxing.mp4"}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := backend.body(t, "POST", "/v1/agents/sessions/session-1/responses")
+	if id, _ := body["request_id"].(string); len(id) != 32 {
+		t.Errorf("a question with clips went with request id %v, so a personal conversation refuses it", body["request_id"])
 	}
 }
 
@@ -1122,6 +1153,65 @@ func TestTruncatingNobodyIsRefusedBeforeTheRouter(t *testing.T) {
 
 	if err := backend.client(t).Memories().Truncate(t.Context(), ""); err == nil {
 		t.Fatal("an empty user id was truncated")
+	}
+	if len(backend.asked) != 0 {
+		t.Errorf("the router was asked %v", backend.asked)
+	}
+}
+
+// Catches a number sent under another name, and the router's answer dropped for what was sent.
+func TestLinkingAUserSendsTheNumberAndReturnsTheRoutersForm(t *testing.T) {
+	backend := newRouter(t)
+
+	kept, err := backend.client(t).Users().LinkPhone(t.Context(), "anya", "+1 555 010 0100")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if kept != "+15550100100" {
+		t.Errorf("the number came back as %q", kept)
+	}
+	if sent := backend.body(t, "PUT", "/v1/agents/users/anya"); sent["phone"] != "+1 555 010 0100" {
+		t.Errorf("the router was sent %v", sent)
+	}
+}
+
+// Catches an unlink sent as an empty body, which the router refuses, rather than a null.
+func TestUnlinkingAUserSendsANullNumber(t *testing.T) {
+	backend := newRouter(t)
+
+	if err := backend.client(t).Users().UnlinkPhone(t.Context(), "anya"); err != nil {
+		t.Fatal(err)
+	}
+	sent := backend.body(t, "PUT", "/v1/agents/users/anya")
+	if phone, ok := sent["phone"]; !ok || phone != nil {
+		t.Errorf("the router was sent %v", sent)
+	}
+}
+
+// Catches a number another user holds coming back as success, or without the router's code.
+func TestATakenNumberIsTheRoutersConflict(t *testing.T) {
+	backend := newRouter(t)
+
+	_, err := backend.client(t).Users().LinkPhone(t.Context(), "bob", "+15550100199")
+
+	var refused *stream.RouterError
+	if !errors.As(err, &refused) || refused.Status != http.StatusConflict || refused.Code != "phone_taken" {
+		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+// Catches an empty user id or number sent to the router, where an empty number would unlink.
+func TestLinkingNobodyOrNoNumberIsRefusedBeforeTheRouter(t *testing.T) {
+	backend := newRouter(t)
+
+	if _, err := backend.client(t).Users().LinkPhone(t.Context(), "", "+15550100100"); err == nil {
+		t.Error("an empty user id was linked")
+	}
+	if _, err := backend.client(t).Users().LinkPhone(t.Context(), "anya", ""); err == nil {
+		t.Error("an empty number was sent")
+	}
+	if err := backend.client(t).Users().UnlinkPhone(t.Context(), ""); err == nil {
+		t.Error("an empty user id was unlinked")
 	}
 	if len(backend.asked) != 0 {
 		t.Errorf("the router was asked %v", backend.asked)

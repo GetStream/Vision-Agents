@@ -325,7 +325,7 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+    ///Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -346,16 +346,8 @@ pub struct AgentConfig {
     pub left_out_connectors: ::std::option::Option<::std::vec::Vec<LeftOutConnector>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
     pub mode: AgentMode,
     pub name: ::std::string::String,
-    ///Deprecated: use the events of a fixed binding under connectors.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     ///Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
     pub region: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -434,6 +426,7 @@ pub struct AgentConfigPatch {
     pub knowledge_namespace: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
+    ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -441,10 +434,10 @@ pub struct AgentConfigPatch {
     ///What the config is called, which is unique among the customer's own.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
-    ///Deprecated: use the events of a fixed binding under connectors.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     ///Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
@@ -500,12 +493,12 @@ pub struct AgentConfigRequest {
     ///Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub channels: ::std::option::Option<AgentChannels>,
-    ///The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+    ///The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+    ///Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -526,17 +519,17 @@ pub struct AgentConfigRequest {
     ///The model holding the conversation.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
-    ///MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
+    ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is unique among the customer's own.
     pub name: ::std::string::String,
-    ///Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     ///Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
@@ -578,7 +571,7 @@ pub struct AgentConfigRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
-    ///How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay.
+    ///How the agent is offered its connector tools. Left out on an update, the stored settings stay.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -633,7 +626,7 @@ pub struct AgentConnectorSelection {
     #[serde(rename = "type")]
     pub type_: AgentConnectorSelectionType,
 }
-///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -1165,6 +1158,22 @@ pub struct AgentTools {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub progressive: ::std::option::Option<bool>,
 }
+///`AgentUser`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AgentUser {
+    ///The number linked to the user, in E.164; null when none is.
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub phone: ::std::option::Option<::std::string::String>,
+    ///The Stream user id, as the app's own token signs it.
+    pub user_id: ::std::string::String,
+}
+///Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AgentUserRequest {
+    ///The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+    #[serde(deserialize_with = "::std::option::Option::deserialize")]
+    pub phone: ::std::option::Option<::std::string::String>,
+}
 ///`AnalyzeReviewsRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AnalyzeReviewsRequest {
@@ -1581,13 +1590,6 @@ pub struct AuthorizationRequest {
     ///The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub return_url: ::std::option::Option<::std::string::String>,
-}
-///`AuthorizePluginRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
-pub struct AuthorizePluginRequest {
-    ///The shop hostname. Required for plugins that have no single global URL.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_url: ::std::option::Option<::std::string::String>,
 }
 ///`AvailableNumber`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -3278,7 +3280,7 @@ pub struct Connector {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub setup: ::std::option::Option<ConnectorSetup>,
 }
-///grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
+///grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -3388,7 +3390,7 @@ pub struct ConnectorAuditEvent {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub latency_ms: ::std::option::Option<i64>,
     pub owner_type: ConnectionOwnerType,
-    ///Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+    ///Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reason: ::std::option::Option<::std::string::String>,
     ///The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -4142,7 +4144,7 @@ impl ::std::convert::TryFrom<::std::string::String> for CreateOptOutRequestSourc
 ///`CreateResponseRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct CreateResponseRequest {
-    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    ///A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub audio: ::std::option::Option<AudioSource>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -4153,7 +4155,7 @@ pub struct CreateResponseRequest {
     ///How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub reasoning_effort: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
+    ///Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     ///What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
@@ -5121,7 +5123,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -5450,6 +5452,9 @@ pub struct GuestUser {
     pub id: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
     ///A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
     pub token: ::std::string::String,
 }
@@ -5458,12 +5463,15 @@ pub struct GuestUser {
 pub struct GuestUserRequest {
     #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    ///A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+    ///A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub id: ::std::option::Option<::std::string::String>,
-    ///What to call them, for a transcript a person reads later.
+    ///What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
+    ///The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub refresh_secret: ::std::option::Option<::std::string::String>,
 }
 ///Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 #[derive(
@@ -6031,7 +6039,7 @@ pub struct IngestedKnowledge {
 pub struct InputParts {
     ///Pictures, attached or returned by a tool.
     pub images: i64,
-    ///The system prompt: the agent's instructions, skills and plugin guidance.
+    ///The system prompt: the agent's instructions, skills and connector guidance.
     pub instructions: i64,
     ///The conversation's words, from either side.
     pub messages: i64,
@@ -7852,6 +7860,9 @@ pub struct PlaceCallRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub custom: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub detect_voicemail: ::std::option::Option<bool>,
     ///One of the customer's own numbers, which is what the person sees.
     pub from: ::std::string::String,
     ///Carried to the person's leg as custom SIP headers. Only some vendors can express these, and one that cannot refuses the call.
@@ -7889,143 +7900,6 @@ pub struct PlacedCall {
     pub vendor: ::std::option::Option<::std::string::String>,
     pub vendor_call_id: ::std::string::String,
 }
-///One hosted MCP server from the built-in catalog.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct Plugin {
-    pub category: ::std::string::String,
-    ///True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client_required: ::std::option::Option<bool>,
-    pub description: ::std::string::String,
-    pub id: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_hint: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_required: ::std::option::Option<bool>,
-    ///Where this deployment serves the plugin's logo, as an SVG needing no credential.
-    pub logo_url: ::std::string::String,
-    pub name: ::std::string::String,
-    ///True when the plugin has a read-only endpoint an agent may pick on its entry.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub readonly: ::std::option::Option<bool>,
-    ///The redirect URI that client has to list, which is this deployment's. Only with client_required.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub redirect_uri: ::std::option::Option<::std::string::String>,
-    ///The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub scopes_supported: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub setup_steps: ::std::option::Option<::std::vec::Vec<PluginSetupStep>>,
-    ///Where the app creates that client with the provider. Only with client_required.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub setup_url: ::std::option::Option<::std::string::String>,
-    ///The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub toolsets: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-}
-///`PluginAuthorization`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginAuthorization {
-    ///The URL the browser should open to finish the login.
-    pub authorize_url: ::std::string::String,
-}
-///The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginClient {
-    ///The client id the provider issued.
-    pub client_id: ::std::string::String,
-    ///Whether a client secret is stored. It is never returned.
-    pub has_secret: bool,
-}
-///A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-pub struct PluginConnection {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub category: ::std::option::Option<::std::string::String>,
-    ///The OAuth client the config set for the plugin. Absent when it set none.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client: ::std::option::Option<PluginClient>,
-    ///True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client_required: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub description: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_hint: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_required: ::std::option::Option<bool>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instance_url: ::std::option::Option<::std::string::String>,
-    ///Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
-    pub logo_url: ::std::string::String,
-    pub name: ::std::string::String,
-    pub plugin_id: ::std::string::String,
-    ///The app's login. Always not_connected for a plugin with user, which the app does not log into.
-    pub status: PluginConnectionStatus,
-    ///True when the config names the plugin with user: each end user connects their own account in the conversation.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
-}
-///The app's login. Always not_connected for a plugin with user, which the app does not log into.
-#[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
-)]
-pub enum PluginConnectionStatus {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "connected")]
-    Connected,
-    #[serde(rename = "failed")]
-    Failed,
-    #[serde(rename = "not_connected")]
-    NotConnected,
-}
-impl ::std::fmt::Display for PluginConnectionStatus {
-    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
-        match *self {
-            Self::Pending => f.write_str("pending"),
-            Self::Connected => f.write_str("connected"),
-            Self::Failed => f.write_str("failed"),
-            Self::NotConnected => f.write_str("not_connected"),
-        }
-    }
-}
-impl ::std::str::FromStr for PluginConnectionStatus {
-    type Err = self::error::ConversionError;
-    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        match value {
-            "pending" => Ok(Self::Pending),
-            "connected" => Ok(Self::Connected),
-            "failed" => Ok(Self::Failed),
-            "not_connected" => Ok(Self::NotConnected),
-            _ => Err("invalid value".into()),
-        }
-    }
-}
-impl ::std::convert::TryFrom<&str> for PluginConnectionStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
-impl ::std::convert::TryFrom<::std::string::String> for PluginConnectionStatus {
-    type Error = self::error::ConversionError;
-    fn try_from(
-        value: ::std::string::String,
-    ) -> ::std::result::Result<Self, self::error::ConversionError> {
-        value.parse()
-    }
-}
 ///One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(untagged)]
@@ -8052,14 +7926,6 @@ pub struct PluginEvent {
     ///A catalog plugin the config names under plugins.
     pub plugin: ::std::string::String,
 }
-///One thing to do with a plugin's provider before its OAuth client can be set.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginSetupStep {
-    ///How to do it with the provider.
-    pub description: ::std::string::String,
-    ///What the step does, in a few words.
-    pub title: ::std::string::String,
-}
 ///One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct PluginWithOptions {
@@ -8077,7 +7943,7 @@ pub struct PluginWithOptions {
     ///Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub toolsets: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+    ///Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub user: ::std::option::Option<bool>,
 }
@@ -8772,7 +8638,7 @@ pub struct ProviderPrice {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub per_million_output_tokens: ::std::option::Option<f64>,
 }
-///What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+///What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct Quota {
     ///How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default.
@@ -8960,7 +8826,7 @@ impl ::std::convert::TryFrom<::std::string::String> for RecordingStatus {
 ///`RespondRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct RespondRequest {
-    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+    ///A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub audio: ::std::option::Option<AudioSource>,
     ///The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
@@ -10029,7 +9895,7 @@ pub struct SessionConnectorBinding {
     ///The binding's alias in the agent config.
     pub name: ::std::string::String,
 }
-///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -10053,6 +9919,8 @@ pub enum SessionEndReason {
     Start,
     #[serde(rename = "unanswered")]
     Unanswered,
+    #[serde(rename = "voicemail")]
+    Voicemail,
 }
 impl ::std::fmt::Display for SessionEndReason {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10062,6 +9930,7 @@ impl ::std::fmt::Display for SessionEndReason {
             Self::Hangup => f.write_str("hangup"),
             Self::Start => f.write_str("start"),
             Self::Unanswered => f.write_str("unanswered"),
+            Self::Voicemail => f.write_str("voicemail"),
         }
     }
 }
@@ -10074,6 +9943,7 @@ impl ::std::str::FromStr for SessionEndReason {
             "hangup" => Ok(Self::Hangup),
             "start" => Ok(Self::Start),
             "unanswered" => Ok(Self::Unanswered),
+            "voicemail" => Ok(Self::Voicemail),
             _ => Err("invalid value".into()),
         }
     }
@@ -10275,6 +10145,9 @@ pub struct SessionPhone {
     ///The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub vendor_call_id: ::std::option::Option<::std::string::String>,
+    ///What the agent does when an answering machine picks up the call placed. A vendor's verdict needs detect_voicemail on the call placed, on a vendor that reports a machine. A verdict the vendor cannot make counts as a machine while nobody has spoken to the agent. Without any verdict, a call where nobody speaks to the agent for 40 seconds after answering counts as a machine. A fax is hung up on. Absent, the agent talks to a machine as to a person. A speech-to-speech session cannot say a fixed message, so leave_message is refused for one; a session switched to speech-to-speech later hangs up without leaving it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub voicemail: ::std::option::Option<SessionVoicemail>,
 }
 ///`SessionQuery`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -10742,6 +10615,14 @@ pub struct SessionVideo {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub source: ::std::option::Option<::std::string::String>,
 }
+///What the agent does when an answering machine picks up.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct SessionVoicemail {
+    pub action: VoicemailAction,
+    ///Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub message: ::std::option::Option<::std::string::String>,
+}
 ///`SetNumberAgentRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct SetNumberAgentRequest {
@@ -10751,18 +10632,6 @@ pub struct SetNumberAgentRequest {
     ///The id of the agent config that answers the number. Give this or agent.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub config_id: ::std::option::Option<::std::string::String>,
-}
-///The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct SetPluginClientRequest {
-    ///The client id the provider issued.
-    pub client_id: ::std::string::String,
-    ///The client secret the provider issued. Left out for a public client.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub client_secret: ::std::option::Option<::std::string::String>,
-    ///Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
 }
 ///`SetSandboxRecipientsRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -12106,17 +11975,17 @@ pub struct SyncAgentRequest {
     pub left_out_connectors: ::std::option::Option<::std::vec::Vec<LeftOutConnector>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub llm: ::std::option::Option<::std::string::String>,
-    ///MCP servers outside the plugin catalog, opened by their URL with no login.
+    ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is also the directory's name.
     pub name: ::std::string::String,
-    ///Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
-    ///Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+    ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
     ///agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
@@ -12154,7 +12023,7 @@ pub struct SyncAgentRequest {
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
-    ///How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
+    ///How connector tools are offered. A setting left out keeps what is stored.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub tools: ::std::option::Option<AgentTools>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -13616,7 +13485,7 @@ pub struct VideoSource {
     ///How many frames to sample, evenly spaced across the clip. Default 8.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_frames: ::std::option::Option<i64>,
-    ///Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+    ///Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
     pub url: ::std::string::String,
 }
 ///`Voice`
@@ -13790,6 +13659,58 @@ pub struct VoiceSampleRequest {
     ///What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub transcript: ::std::option::Option<::std::string::String>,
+}
+/**hang_up: end the call at once, saying nothing.
+leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum VoicemailAction {
+    #[serde(rename = "hang_up")]
+    HangUp,
+    #[serde(rename = "leave_message")]
+    LeaveMessage,
+}
+impl ::std::fmt::Display for VoicemailAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::HangUp => f.write_str("hang_up"),
+            Self::LeaveMessage => f.write_str("leave_message"),
+        }
+    }
+}
+impl ::std::str::FromStr for VoicemailAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "hang_up" => Ok(Self::HangUp),
+            "leave_message" => Ok(Self::LeaveMessage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for VoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`WhatsAppProfile`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]

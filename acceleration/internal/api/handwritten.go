@@ -13,7 +13,7 @@ import (
 
 // documentHandWritten declares the routes served by hand rather than by Huma: the four
 // sockets, which an operation cannot express past the upgrade, the logs, exports and imports,
-// which stream, and the plugin callback, which a browser arrives at from the provider. They
+// which stream, and the consent flow's browser routes, which a browser arrives at. They
 // are in the spec so a reader and a client generator know they exist, and so withServerSide
 // reads their marks the way it reads every other operation's: a route nothing declares is
 // the one place a default that refuses could fail open. Handler registers what serves them.
@@ -93,10 +93,7 @@ func documentHandWritten(api huma.API) {
 			"persistence_error, refused (true on a reply the prompt injection screen refused) and " +
 			"attachments. Each tool_calling attachment has tool_call_id, name, " +
 			"title, status, phase, summary, immutable started_at, execution_started_at, finished_at " +
-			"and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin " +
-			"the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: " +
-			"a client shows it as a button opening authorize_url. Once the user finishes that login " +
-			"the message is sent again with the attachment's status set to connected. " +
+			"and duration_ms. " +
 			"A connector_authorization attachment asks the end user to connect a connector binding " +
 			"the reply needed with their own account, with name (the binding's alias), connector_id, " +
 			"connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page " +
@@ -404,27 +401,8 @@ func documentHandWritten(api huma.API) {
 			"404": {Ref: "#/components/responses/NotFound"},
 		},
 	})
-	document.AddOperation(&huma.Operation{
-		OperationID: "pluginOAuthCallback",
-		Method:      http.MethodGet,
-		Path:        "/v1/agents/plugins/callback",
-		Summary:     "Finish a plugin login",
-		Deprecated:  true,
-		Description: "Deprecated: a connector login finishes at finishConnectorConsent. " +
-			"The provider redirects here with a code. The path is unauthenticated because the " +
-			"browser arrives from the identity provider, and the state is the secret.",
-		Security: []map[string][]string{},
-		Parameters: []*huma.Param{
-			{Name: "code", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "state", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-			{Name: "error", In: "query", Schema: &huma.Schema{Type: huma.TypeString}},
-		},
-		Responses: map[string]*huma.Response{
-			"302": {Description: "The browser is sent back to the agent editor"},
-		},
-	})
-	// The consent flow's browser routes (authorizations.go). Unauthenticated, as the plugin
-	// callback is: a browser carries no credential of this API's, and what each one checks
+	// The consent flow's browser routes (authorizations.go). Unauthenticated: a browser
+	// carries no credential of this API's, and what each one checks
 	// instead is in its description.
 	document.AddOperation(&huma.Operation{
 		OperationID: "getConnectorLaunchPage",
@@ -638,49 +616,6 @@ func documentHandWritten(api huma.API) {
 		},
 	})
 	document.AddOperation(&huma.Operation{
-		OperationID: "getPluginLogo",
-		Method:      http.MethodGet,
-		Path:        "/v1/agents/plugins/{plugin_id}/logo",
-		Summary:     "A plugin's logo",
-		Deprecated:  true,
-		Description: "Deprecated with the plugin catalog. Connectors have no logo route. " +
-			"The image a card uses to show which plugin it is asking about, as an SVG. The path " +
-			"is unauthenticated because what draws it is an `<img>` in a chat client or a browser, " +
-			"which has no credential of this API's to send, and because the catalog is the same " +
-			"built-in list for every customer, so there is nothing of anybody's here.",
-		Security: []map[string][]string{},
-		Parameters: []*huma.Param{
-			{Name: "plugin_id", In: "path", Description: "A built-in catalog id such as slack or linear.", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
-		},
-		Responses: map[string]*huma.Response{
-			"200": {Description: "The logo", Content: map[string]*huma.MediaType{"image/svg+xml": {Schema: &huma.Schema{Type: huma.TypeString}}}},
-			"404": {Ref: "#/components/responses/NotFound"},
-		},
-	})
-	document.AddOperation(&huma.Operation{
-		OperationID: "receivePluginEvent",
-		Method:      http.MethodPost,
-		Path:        "/v1/agents/plugins/events/{token}",
-		Summary:     "Receive a plugin's MCP event",
-		Deprecated:  true,
-		Description: "Deprecated: a connector binding's events are delivered to receiveConnectionEvent. " +
-			"Where a plugin's MCP server delivers the events an agent subscribed to, signed " +
-			"with Standard Webhooks. The path is unauthenticated because the server is not a " +
-			"customer: the token names the subscription and its secret signs each delivery. A " +
-			"verification is answered with its challenge, and an event opens a text conversation.",
-		Security: []map[string][]string{},
-		Parameters: []*huma.Param{
-			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
-		},
-		Responses: map[string]*huma.Response{
-			"200": {Description: "A verification's challenge, echoed, or an event already taken"},
-			"202": {Description: "The event is taken, and a conversation is opening for it"},
-			"401": {Description: "The delivery is not signed with the subscription's secret"},
-			"410": {Description: "There is no such subscription any more; stop delivering to it"},
-			"413": {Description: "The delivery is over 256 KiB"},
-		},
-	})
-	document.AddOperation(&huma.Operation{
 		OperationID: "receiveConnectionEvent",
 		Method:      http.MethodPost,
 		Path:        mcpevents.Path + "{token}",
@@ -824,6 +759,25 @@ func documentHandWritten(api huma.API) {
 			"400": {Description: "The status could not be read"},
 			"404": {Description: "No placed call is waiting for its status at this token"},
 			"413": {Description: "The status is over 64 KiB"},
+		},
+	})
+	document.AddOperation(&huma.Operation{
+		OperationID: "receiveCallMachine",
+		Method:      http.MethodPost,
+		Path:        "/v1/phone/machine/{token}",
+		Summary:     "Receive who picked up a placed call",
+		Description: "Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated " +
+			"because the vendor is not a customer: the token made when the call was placed is the " +
+			"only proof, and it names that one call.",
+		Security: []map[string][]string{},
+		Parameters: []*huma.Param{
+			{Name: "token", In: "path", Required: true, Schema: &huma.Schema{Type: huma.TypeString}},
+		},
+		Responses: map[string]*huma.Response{
+			"204": {Description: "The report is taken"},
+			"400": {Description: "The report could not be read"},
+			"404": {Description: "No placed call is waiting at this token"},
+			"413": {Description: "The report is over 64 KiB"},
 		},
 	})
 	document.AddOperation(&huma.Operation{

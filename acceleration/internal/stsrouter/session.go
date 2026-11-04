@@ -1,6 +1,7 @@
 package stsrouter
 
 import (
+	"math"
 	"strconv"
 	"sync"
 	"time"
@@ -54,8 +55,12 @@ type Session struct {
 	// running total takes in all the audio of the replies before it.
 	countedGeneration int
 	// reportedSeconds is the vendor's last running total of the seconds the session has been
-	// open, and billedSeconds what the session's rows have billed of them.
+	// open, and billedSeconds what the session's rows have billed of them. finalSeconds is
+	// whether the vendor sent the report it sends as the session closes, and openedAt is when
+	// the session was opened, which the seconds are counted from without one.
 	reportedSeconds, billedSeconds int64
+	finalSeconds                   bool
+	openedAt                       time.Time
 	// current is the generation of the reply in flight, and staleBelow the highest one
 	// whose audio is no longer wanted.
 	current    int
@@ -106,6 +111,7 @@ func newSession(
 		inFlight: map[string]*reply{},
 		settled:  map[string]struct{}{},
 		billed:   map[string]struct{}{},
+		openedAt: time.Now(),
 	}
 	session.lease = routing.StartLeaseEvery(recorder, config, owner, "sts", session.id, leaseMinute, leaseRenew, 3*leaseRenew)
 	go session.forward()
@@ -273,13 +279,15 @@ func (s *Session) forward() {
 // event reports: the caller's audio and the typed turns since. It is recorded only where the
 // price list bills it, the vendors priced on the caller's audio or on each message, and is
 // marked as the router's own count. A vendor that bills the session's seconds has none: the
-// seconds are the whole bill, the time after the last reply included.
+// seconds are the whole bill, the time after the last reply included, and billUnreported bills
+// those the vendor never got to report.
 func (s *Session) recordTrailing() {
 	s.mu.Lock()
 	heardMs, typed := s.heardMs, s.typed
 	s.heardMs, s.typed = 0, 0
 	s.mu.Unlock()
 	if s.provider.Capabilities().SessionBilled {
+		s.billUnreported()
 		return
 	}
 
@@ -402,7 +410,7 @@ func (s *Session) observe(event sts.Event) bool {
 		})
 
 	case sts.SessionUsage:
-		s.billSeconds(typed.Seconds)
+		s.billSeconds(typed.Seconds, typed.Final)
 		return false
 
 	case sts.BackendUsage:
@@ -421,13 +429,14 @@ func (s *Session) observe(event sts.Event) bool {
 // usage id is the session and the seconds billed by the end of it, so a report repeated bills
 // nothing more. A total lower than the last is a vendor session started over, counted from
 // zero.
-func (s *Session) billSeconds(reported int64) {
+func (s *Session) billSeconds(reported int64, final bool) {
 	s.mu.Lock()
 	grown := reported - s.reportedSeconds
 	if grown < 0 {
 		grown = reported
 	}
 	s.reportedSeconds = reported
+	s.finalSeconds = s.finalSeconds || final
 	s.billedSeconds += max(grown, 0)
 	billed := s.billedSeconds
 	s.mu.Unlock()
@@ -443,6 +452,36 @@ func (s *Session) billSeconds(reported int64) {
 		OperationID: s.id,
 		Unmeasured:  true,
 	}, pricing.Quantities{pricing.SessionSeconds: grown})
+}
+
+// billUnreported bills the seconds a session billed by its time was open beyond what its rows
+// billed, when it ended with no final report: a caller who hung up before the vendor answered
+// the close, or before its first report. The seconds are the router's clock from when the
+// session opened, marked estimated and interrupted, as a reply cut off before its count is.
+func (s *Session) billUnreported() {
+	s.mu.Lock()
+	open := int64(math.Round(time.Since(s.openedAt).Seconds()))
+	grown := open - s.billedSeconds
+	unreported := !s.finalSeconds && grown > 0
+	if unreported {
+		s.billedSeconds = open
+	}
+	s.mu.Unlock()
+	if !unreported {
+		return
+	}
+	stat := routing.Stat{
+		Owner:       s.owner,
+		StartedAt:   time.Now().UTC(),
+		UsageID:     routing.UsageID("sts_session_seconds", s.id, strconv.FormatInt(open, 10)),
+		OperationID: s.id,
+		Success:     true,
+		Interrupted: true,
+		Unmeasured:  true,
+	}
+	stat.Use(pricing.Quantities{pricing.SessionSeconds: grown})
+	stat.Estimated()
+	s.recorder.Record(s.config, stat)
 }
 
 // billBackend records a response of the text model the voice handed its reasoning to, as an

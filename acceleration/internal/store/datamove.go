@@ -85,8 +85,9 @@ func (t dataTable) rollup() bool {
 // under this deployment's key and their callbacks are this deployment's URL. And
 // channel_threads, contact_map, episodes and episode_activity: the thread channels,
 // omni-channels and cards they point at live in the Stream app, which a move does not carry
-// either; and channel_thread_waiting and channel_thread_inbound, messages in flight for
-// minutes. And connector_invocations and connector_audit, with connector_audit_credentials and
+// either; and user_phones, whose links join only those contact_map rows; and
+// channel_thread_waiting and channel_thread_inbound, messages in flight for minutes. And
+// connector_invocations and connector_audit, with connector_audit_credentials and
 // connector_invocation_arguments: this deployment's record of what it did with credentials
 // sealed under its own key. And connector_tool_pins: the deployment a connection moves to pins
 // its tools again on first use. And connector_connection_clients: the next consent of the
@@ -152,7 +153,9 @@ var dataTables = []dataTable{
 // their data would be a way to walk off with a customer's users' accounts. Both are left
 // out on the way out and left alone on the way in, so a connection arrives needing to be
 // authorized again rather than arriving broken.
-var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed"}
+// A guest's refresh secret hash is the same kind of thing: a moved guest is handed a new
+// one by its own token or by the app's backend, or comes back as a new guest.
+var secretColumns = []string{"secret_sealed", "access_token", "refresh_token", "oauth_state", "code_verifier", "credentials_sealed", "password_sealed", "bridge_password_sealed", "refresh_secret_hash"}
 
 // DataChange is one thing that happened to one row.
 type DataChange struct {
@@ -714,7 +717,8 @@ FROM %s`, sequence.name)
 //
 // A campaign running there does not ring anybody here either way: only starting it here
 // does (campaign.Runner.Start). It arrives paused so that it says so, and marked so that the
-// cut-over can name the campaigns to start.
+// cut-over can name the campaigns the source was still running. One the user paused there
+// before the last catch-up loses the mark: the copy holds every call it made there.
 func pauseImported(row json.RawMessage, active, paused string, claimed bool) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(row, &fields); err != nil {
@@ -839,10 +843,11 @@ func settleSkippedRuns(ctx context.Context, tx bun.Tx, customerID string, tasks 
 // cancelled or paused tasks here.
 //
 // It returns how many tasks it resumed, how many it left paused for want of a config, how many
-// for want of room, and the campaigns that were running there. Those it leaves paused and
-// marked: a campaign rings only from the router that starts it, so each is started here
-// (POST /v1/agents/campaigns/{id}/start), and any change of its state here clears the mark
-// (setCampaignState). Running it again resumes nothing twice.
+// for want of room, and the campaigns still running there at the last catch-up. Those it
+// leaves paused and marked: a contact the source rang after that is still pending here, and
+// starting the campaign here (POST /v1/agents/campaigns/{id}/start) rings it again, so that
+// is left to a person. Any change of its state here clears the mark (setCampaignState).
+// Running it again resumes nothing twice.
 func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped, overLimit int64, campaigns []string, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var marked []ScheduledTask
@@ -922,6 +927,35 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 		return 0, 0, 0, nil, stack.Wrap(err)
 	}
 	return resumed, skipped, overLimit, campaigns, nil
+}
+
+// CampaignCalls is a campaign and how many of its contacts are in a call.
+type CampaignCalls struct {
+	ID    string `bun:"id"`
+	Calls int    `bun:"calls"`
+}
+
+// PausedCampaignsCalling returns the customer's campaigns that are paused here, not by the move,
+// and still hold contacts in a call, with how many each. The source was calling them at the
+// last catch-up: a start here releases them to pending (ReleaseContacts) and rings them again.
+func (s *Store) PausedCampaignsCalling(ctx context.Context, customerID string) ([]CampaignCalls, error) {
+	var calling []CampaignCalls
+	err := s.db.NewSelect().
+		TableExpr("campaigns AS c").
+		ColumnExpr("c.id AS id").
+		ColumnExpr("count(*) AS calls").
+		Join("JOIN campaign_contacts AS cc ON cc.campaign_id = c.id").
+		Where("c.customer_id = ?", customerID).
+		Where("c.state = ?", Paused).
+		Where("NOT c.move_paused").
+		Where("cc.state = ?", Calling).
+		Group("c.id").
+		Order("c.id").
+		Scan(ctx, &calling)
+	if err != nil {
+		return nil, stack.Wrap(fmt.Errorf("store: paused campaigns calling: %w", err))
+	}
+	return calling, nil
 }
 
 // scheduledTaskHolder is a user on an agent config, who holds at most its limit of active tasks.

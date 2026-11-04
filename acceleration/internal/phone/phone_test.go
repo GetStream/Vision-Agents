@@ -1,6 +1,7 @@
 package phone
 
 import (
+	"cmp"
 	"context"
 	"errors"
 	"log/slog"
@@ -597,6 +598,8 @@ type stub struct {
 	// was told to take back.
 	ordered  int
 	released []string
+	// releaseErr is what a release answers, the vendor's other answers left to err.
+	releaseErr error
 	// stopped are the numbers this vendor was told to stop sending callers to the trunk.
 	stopped []string
 	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
@@ -628,7 +631,7 @@ func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
 
 func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
 	s.released = append(s.released, e164)
-	return s.err
+	return cmp.Or(s.releaseErr, s.err)
 }
 
 func (s *stub) ConfigureInbound(_ context.Context, inbound Inbound) error {
@@ -656,6 +659,18 @@ func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
 		return CallStatus{}, errors.New("stub: a status needs a word")
 	}
 	return CallStatus{Result: CallResult(form.Get("result")), Word: form.Get("word")}, nil
+}
+
+// ReadMachine reads a form's machine, as a vendor's machine post would carry it.
+func (s *stub) ReadMachine(_ string, body []byte) (MachineReport, error) {
+	form, err := url.ParseQuery(string(body))
+	if err != nil {
+		return MachineReport{}, err
+	}
+	if !form.Has("machine") {
+		return MachineReport{}, errors.New("stub: a machine report needs a machine")
+	}
+	return MachineReport{Machine: Machine(form.Get("machine")), Word: form.Get("machine")}, nil
 }
 
 // silent is a vendor that reports nothing on the calls it places.
@@ -736,4 +751,19 @@ func (s *PhoneSuite) config() Config {
 	config, err := DefaultConfig()
 	s.Require().NoError(err)
 	return config
+}
+
+func (s *PhoneSuite) TestANumberThatCannotBeDialedIsErrNotDialable() {
+	for _, to := range []string{"+19005550123", "+19765550123", "911", "5125550123", "not a number"} {
+		err := Dialable(to)
+		s.ErrorIs(err, ErrNotDialable, to)
+	}
+	s.NoError(Dialable("+15125550123"))
+}
+
+func (s *PhoneSuite) TestAPremiumNumberIsStillRefusedAsADestination() {
+	err := Dialable("+19005550123")
+	s.ErrorIs(err, ErrDestinationRefused)
+	s.Contains(err.Error(), "premium-rate")
+	s.NotContains(err.Error(), ErrNotDialable.Error())
 }

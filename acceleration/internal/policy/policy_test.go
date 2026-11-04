@@ -86,6 +86,9 @@ func (s *PolicySuite) SetupSuite() {
 // 200 ms, and whatever goes unacked dropped well inside a test. What goes unused is kept for a
 // minute: a test that waits without an admission, or on another router, keeps what it read
 // however long a loaded machine pauses it. A test of Idle sets its own (idle).
+// MaxStale is below the default FirstRead (250 ms): an admission of an unread account that
+// waits FirstRead finds it unread for longer than MaxStale and is refused as unreadable by a
+// closed tier. A test that admits one before its first read sets MaxStale past FirstRead.
 var quick = Settings{
 	Fresh: 50 * time.Millisecond, SpendEvery: 20 * time.Millisecond, SumEvery: 50 * time.Millisecond,
 	MaxStale: 200 * time.Millisecond, Idle: time.Minute, PendingTTL: 300 * time.Millisecond,

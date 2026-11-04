@@ -36,8 +36,9 @@ class CreateResponseRequest:
         request_id (str | Unset): Generated and sent by the SDKs, one per question, so a retry of the same question is
             answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream
             Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the
-            person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same
-            id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened
+            person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model
+            alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not
+            fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened
             for a message handed out from a channel, that message is already there: nothing is written or uploaded for it,
             and a reused id is answered as a duplicate even with other text or images.
         ui_action (CreateResponseRequestUiAction | Unset): What the person did in the generated UI of an earlier reply,

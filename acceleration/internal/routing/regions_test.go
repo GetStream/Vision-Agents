@@ -235,20 +235,20 @@ func (s *RoutingSuite) TestATargetIsInARegionWhenOneOfItsInstancesIs() {
 	router := s.startedRegional(Admission{}, &built{})
 
 	for _, target := range []string{"quick/en", "en", "steady"} {
-		in, err := router.InRegion(s.ctx, target, pricing.RegionEU)
+		in, err := router.InRegion(s.ctx, target, pricing.RegionEU, nil)
 		s.Require().NoError(err, target)
 		s.True(in, "%s has an instance in the eu", target)
 	}
-	in, err := router.InRegion(s.ctx, "lush/multi", pricing.RegionEU)
+	in, err := router.InRegion(s.ctx, "lush/multi", pricing.RegionEU, nil)
 	s.Require().NoError(err)
 	s.False(in, "lush/multi runs in the us alone")
-	in, err = router.InRegion(s.ctx, "lush/multi", "")
+	in, err = router.InRegion(s.ctx, "lush/multi", "", nil)
 	s.Require().NoError(err)
 	s.True(in, "no region named is the default one")
-	in, err = router.InRegion(s.ctx, "custom/prod", pricing.RegionEU)
+	in, err = router.InRegion(s.ctx, "custom/prod", pricing.RegionEU, nil)
 	s.Require().NoError(err)
 	s.False(in, "a customer's own model runs in the us alone")
-	_, err = router.InRegion(s.ctx, "nobody/nothing", pricing.RegionEU)
+	_, err = router.InRegion(s.ctx, "nobody/nothing", pricing.RegionEU, nil)
 	s.Error(err, "a target that names nothing is the resolution's error")
 }
 

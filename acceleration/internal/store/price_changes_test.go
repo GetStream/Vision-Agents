@@ -4,6 +4,7 @@ package store
 
 import (
 	"errors"
+	"slices"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -93,6 +94,33 @@ func (s *StoreSuite) TestAPriceChangeResubmittedUnderItsKeyIsWrittenOnce() {
 	s.Equal(first.Name, again.Name)
 	s.Len(rows, 1)
 	s.Len(s.auditOf(first.Name), 1)
+}
+
+// TestAnExpandedPriceChangeResubmittedIsWrittenOnce: the entries Expand writes beside those
+// asked for are worked out on the list the change lands on, and a resubmit, landing on a list
+// they are already in force on, is still the same change.
+func (s *StoreSuite) TestAnExpandedPriceChangeResubmittedIsWrittenOnce() {
+	s.seeded(priced("a", 1))
+	write := apiChange("expanded", "key-expanded", priced("a", 0.5))
+	write.Expand = func(before PriceListAt, writes []PriceEntryWrite) []PriceEntryWrite {
+		if slices.ContainsFunc(before.Entries, func(row PriceEntry) bool { return row.Model == "b" }) {
+			return writes
+		}
+		return append(writes, PriceEntryWrite{Entry: pricing.AtCost(priced("b", 1))})
+	}
+	first, rows, _, err := s.store.CreatePriceChange(s.ctx, write, accept)
+	s.Require().NoError(err)
+	s.Require().Len(rows, 2, "a and the entry written beside it")
+
+	again, rows, replayed, err := s.store.CreatePriceChange(s.ctx, write, accept)
+
+	s.Require().NoError(err)
+	s.True(replayed)
+	s.Equal(first.Name, again.Name)
+	s.Len(rows, 2)
+	write.Entries = apiChange("expanded", "key-expanded", priced("a", 0.4)).Entries
+	_, _, _, err = s.store.CreatePriceChange(s.ctx, write, accept)
+	s.ErrorIs(err, ErrPriceChangeKeyReused, "an entry asked for is still compared")
 }
 
 func (s *StoreSuite) TestAPriceChangeKeyHeldByAnotherBodyIsRefused() {

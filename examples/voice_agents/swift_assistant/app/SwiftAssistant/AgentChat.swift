@@ -7,41 +7,36 @@ import StreamChatAI
 import StreamChatOpenUI
 import VisionAgentsCore
 
-/// A written conversation as Stream's AI components want it: the channel it is kept in, the
-/// whole of each reply's thinking, and what the agent is doing before it writes.
+/// How Stream's `AIConversation` reaches Juno: the session that answers the conversation, and
+/// the channel the router keeps it in.
 ///
 /// The router writes everything here. Asking goes through the session, which records the
 /// question in the channel and answers it there: the reply's text, and its steps (each round
 /// of reasoning and each tool call) as attachments. The session's socket is what runs this
 /// phone's tools and carries the person's answers to the ones that ask first, on a call too.
+///
+/// A new conversation has no session until it is first written or talked to, which opens one.
+/// The router keeps a conversation in Chat and cannot rewind it, so a reply is not written
+/// again and a message is not edited: asking for either asks the question again.
 @MainActor
 @Observable
-final class AgentChat {
-    let session: AgentSession
+final class AgentChat: AIConversationTransport {
+    /// The session, once the conversation has one.
+    private(set) var session: AgentSession?
 
-    /// The session's conversation as it last was. The session is an `ObservableObject`, which
-    /// Observation does not see into, so views follow it through here.
-    private(set) var conversation: Conversation
+    /// The session once something was asked in it or said on its call. A new conversation
+    /// joins the list then.
+    private(set) var usedSessionID: String?
 
-    /// The session's tool calls waiting for the person, followed the same way.
+    /// The session's tool calls waiting for the person. The session is an `ObservableObject`,
+    /// which Observation does not see into, so views follow them through here.
     private(set) var approvals: [ToolApprovalRequest] = []
 
-    /// The channel's messages, oldest first.
-    private(set) var messages: [ChatMessage] = []
+    /// What the session last said went wrong, followed the same way.
+    private(set) var sessionFailure: String?
 
-    /// Each reply's thinking in full, from its live updates. A stored step only keeps its
-    /// opening.
-    private(set) var reasoning = LiveReasoning()
-
-    /// Why asking failed, or nil.
+    /// Why telling the agent what the person did in a reply's UI failed, or nil.
     private(set) var failure: String?
-
-    /// Whether the channel holds messages older than those loaded.
-    private(set) var hasOlderMessages = false
-
-    /// How the person rated replies on this phone, by message. Kept for the session only: the
-    /// router takes no ratings yet.
-    private(set) var ratings: [String: AIMessageRating] = [:]
 
     /// The UI the agent writes for some replies, in A2UI or OpenUI, whichever it was told.
     typealias UI = AIUIHost<AIUIRendererPair<A2UIRenderer, OpenUIRenderer>>
@@ -50,160 +45,196 @@ final class AgentChat {
     /// phone's own components, and sends what the person does in it back.
     @ObservationIgnored private(set) var ui: UI?
 
-    /// The newest message when something was last asked here, until it fails or is stopped:
-    /// what arrives after it is the question and then its reply.
-    private var askedAfter: String?
+    /// The composer option that asks with a higher reasoning effort.
+    static let thinkHarder = "think_harder"
 
-    @ObservationIgnored private let channel: ChatChannelController
-    @ObservationIgnored private let events: EventsController
+    /// The conversation to carry on, or nil for a new one.
+    @ObservationIgnored private let sessionID: String?
+    @ObservationIgnored private var feed: AIConversationFeed<AgentMessage>?
+    @ObservationIgnored private var channel: ChatChannelController?
+    @ObservationIgnored private var events: EventsController?
+    /// Each reply's thinking in full, from its live updates. A stored step only keeps its
+    /// opening.
+    @ObservationIgnored private var reasoning = LiveReasoning()
+    /// What the conversation was last told the agent is doing.
+    @ObservationIgnored private var activity: AIAgentActivity?
     @ObservationIgnored private var following: Set<AnyCancellable> = []
+    /// The session being opened, so asking while it opens waits for it rather than opening a
+    /// second one.
+    @ObservationIgnored private var opening: Task<AgentSession, any Error>?
 
-    /// Opens the session's channel and starts following the session.
-    static func open(_ session: AgentSession) async throws -> AgentChat {
+    init(sessionID: String?) {
+        self.sessionID = sessionID
+        ui = AIUIHost(components: TripComponents.all) {
+            A2UIRenderer()
+            OpenUIRenderer()
+        } send: { [weak self] action in
+            try await self?.answer(action)
+        }
+    }
+
+    /// Answers the questions of the tools that ask first, and the sign-ins the agent's
+    /// connectors wait for, as the person signed in here. A sign-in opens in a web
+    /// authentication sheet, which the router hands back to this app once the provider has
+    /// answered; "Not now" ends the call without it.
+    var approver: AIToolApprover {
+        AIToolApprover(
+            userID: Assistant.user.id, clientID: AIClientIdentity.installID,
+            authorizer: AIToolAuthorizer(callbackScheme: Assistant.callbackScheme) { [weak self] call in
+                try await self?.session?.declineLogin(call.id)
+            }
+        ) { [weak self] call, allowed in
+            try await self?.session?.decide(call.id, allowed: allowed)
+        }
+    }
+
+    func connect(_ feed: AIConversationFeed<AgentMessage>) {
+        self.feed = feed
+        publish()
+    }
+
+    /// Asks, with the photos the composer holds and, for Think harder, more time to reason.
+    func send(_ request: AIConversationRequest<AgentMessage>) async throws {
+        let session = try await use()
+        let images = await Photos.sources(for: request.attachments)
+        _ = try await session.responses.create(
+            request.text, images: images,
+            reasoningEffort: request.chatOption?.id == Self.thinkHarder ? "high" : nil)
+    }
+
+    /// Stops the reply in flight. What was written so far is kept.
+    func stop() async throws {
+        try await session?.interrupt()
+    }
+
+    /// Loads the messages before the oldest one loaded.
+    func loadOlderMessages() async throws {
+        guard let channel else { return }
+        try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
+            channel.loadPreviousMessages { error in
+                if let error { done.resume(throwing: error) } else { done.resume() }
+            }
+        }
+        publish()
+    }
+
+    /// The conversation's session, opened the first time it is asked for: the one it carries on,
+    /// or a new one for a new conversation.
+    @discardableResult
+    func open() async throws -> AgentSession {
+        if let session { return session }
+        if let opening { return try await opening.value }
+        let task = Task { try await start() }
+        opening = task
+        defer { opening = nil }
+        return try await task.value
+    }
+
+    /// The session, open and written or talked to.
+    @discardableResult
+    func use() async throws -> AgentSession {
+        let session = try await open()
+        usedSessionID = session.id
+        return session
+    }
+
+    /// Closes the session. A new conversation's that was opened while its first message was
+    /// written, and never used, is deleted, so it is not left in the list.
+    func close() async {
+        if let opening {
+            _ = try? await opening.value
+        }
+        guard let session else { return }
+        await session.close()
+        if sessionID == nil, usedSessionID == nil {
+            try? await Assistant.sessions.delete(session.id)
+        }
+    }
+
+    /// Carries on the conversation's session, or starts one for a new conversation, and opens
+    /// its channel.
+    private func start() async throws -> AgentSession {
+        let session: AgentSession
+        if let sessionID {
+            session = try await Assistant.agents.attach(sessionID: sessionID, tools: Assistant.tools)
+        } else {
+            var options = SessionOptions(agent: Assistant.agentName)
+            options.llm = Assistant.chatModel
+            options.tools = Assistant.tools
+            options.returnURL = Assistant.returnURL
+            session = try await Assistant.agents.chat(options)
+        }
         let channel = try await session.chat()
-        let chat = AgentChat(session: session, channel: channel)
         try await withCheckedThrowingContinuation { (done: CheckedContinuation<Void, any Error>) in
             channel.synchronize { error in
                 if let error { done.resume(throwing: error) } else { done.resume() }
             }
         }
+        follow(session, channel: channel)
         await session.start()
-        chat.hasOlderMessages = !channel.hasLoadedAllPreviousMessages
-        return chat
+        self.session = session
+        publish()
+        return session
     }
 
-    private init(session: AgentSession, channel: ChatChannelController) {
-        self.session = session
+    private func follow(_ session: AgentSession, channel: ChatChannelController) {
         self.channel = channel
-        conversation = session.conversation
-        approvals = session.approvals
         // The client's events rather than the channel's list: the list can fold several live
         // updates into one, and each update carries its own window of the reply's thinking.
-        events = channel.client.eventsController()
-        messages = channel.messages.reversed()
+        let events = channel.client.eventsController()
+        self.events = events
         channel.delegate = self
         events.delegate = self
         // Published from the main actor, which is where the session changes.
         session.$conversation
-            .sink { [weak self] conversation in MainActor.assumeIsolated { self?.conversation = conversation } }
+            .sink { [weak self] conversation in MainActor.assumeIsolated { self?.sessionChanged(conversation) } }
             .store(in: &following)
         session.$approvals
             .sink { [weak self] approvals in MainActor.assumeIsolated { self?.approvals = approvals } }
             .store(in: &following)
-        ui = AIUIHost(components: TripComponents.all) {
-            A2UIRenderer()
-            OpenUIRenderer()
-        } send: { [weak self] action in
-            self?.answer(action)
-        }
     }
 
-    /// What the agent is doing while its reply shows nothing yet.
-    enum Activity: Equatable {
-        /// Thinking about the question.
-        case thinking
-        /// Running skills, such as "Working on trip planning".
-        case working(String)
+    /// Tells the conversation what the channel holds: its messages, each reply with the whole
+    /// of its thinking, and whether there are older ones.
+    private func publish() {
+        guard let channel else { return }
+        feed?.update(messages: channel.messages.reversed().map { AgentMessage($0, reasoning: reasoning) })
+        feed?.update(hasOlderMessages: channel.state == .remoteDataFetched && !channel.hasLoadedAllPreviousMessages)
     }
 
-    /// What the agent is doing while its reply has nothing to show, or nil.
-    var activity: Activity? {
-        switch conversation.state {
+    /// Tells the conversation what the agent is doing, which keeps it waiting for a reply that
+    /// takes long, such as one that runs a skill.
+    private func sessionChanged(_ conversation: Conversation) {
+        sessionFailure = conversation.failure
+        let activity: AIAgentActivity? = switch conversation.state {
+        case .responding:
+            AIAgentActivity(state: .thinking)
         case .working(let skills):
-            return .working(
-                "Working on " + skills.map { $0.replacingOccurrences(of: "_", with: " ") }
+            AIAgentActivity(
+                state: .checkingExternalSources,
+                text: "Working on " + skills.map { $0.replacingOccurrences(of: "_", with: " ") }
                     .joined(separator: " and "))
-        case .responding where !replyHasBegun:
-            return .thinking
         default:
-            // The session can pass through idle between the question and the first of its
-            // reply, which would hide the activity for a moment.
-            return isAwaitingReply ? .thinking : nil
+            nil
         }
-    }
-
-    /// The messages as Stream's AI components show them, each reply with the whole of its
-    /// thinking.
-    var listMessages: [AgentMessage] {
-        messages.map { AgentMessage($0, reasoning: reasoning) }
-    }
-
-    /// Loads the messages before the oldest one loaded.
-    func loadOlderMessages() async {
-        await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
-            channel.loadPreviousMessages { _ in done.resume() }
-        }
-        hasOlderMessages = !channel.hasLoadedAllPreviousMessages
-    }
-
-    /// Rates a reply, or takes the rating back with nil.
-    func rate(_ reply: ChatMessage, _ rating: AIMessageRating?) {
-        ratings[reply.id] = rating
-    }
-
-    /// Whether a reply is on its way, from the first thought to the last word.
-    var isAnswering: Bool {
-        switch conversation.state {
-        case .responding, .working:
-            return true
-        default:
-            return messages.last(where: \.isAgentReply)?.isGenerating == true
-        }
-    }
-
-    /// Whether the reply to the latest question shows anything yet: a step or some text.
-    private var replyHasBegun: Bool {
-        guard let reply = messages.last, reply.isAgentReply else { return false }
-        return !reply.isEmptyReply
-    }
-
-    /// Whether the question asked here is in the channel and its reply shows nothing yet.
-    private var isAwaitingReply: Bool {
-        guard let askedAfter, let last = messages.last, last.id != askedAfter else { return false }
-        return !last.isAgentReply || (last.isGenerating && !replyHasBegun)
-    }
-
-    /// Asks, with the photos the composer holds and, when `thinkHarder`, more time to reason.
-    func ask(_ text: String, photos: [URL] = [], thinkHarder: Bool = false) {
-        failure = nil
-        askedAfter = messages.last?.id ?? ""
-        Task {
-            do {
-                let images = await Photos.sources(for: photos)
-                _ = try await session.responses.create(
-                    text, images: images, reasoningEffort: thinkHarder ? "high" : nil)
-            } catch is CancellationError {
-            } catch {
-                failure = error.localizedDescription
-                askedAfter = nil
-            }
-        }
+        guard activity != self.activity else { return }
+        self.activity = activity
+        feed?.update(activity: activity)
     }
 
     /// Tells the agent what the person did in the UI of a reply, such as tapping a place on its
-    /// map: their message says it in words, and carries the action for the agent.
-    func answer(_ action: AIUIAction) {
+    /// map: their message says it in words, and carries the action for the agent. A request of
+    /// the conversation carries no action, so this asks the session itself, and the conversation
+    /// follows the question and its reply in the channel.
+    private func answer(_ action: AIUIAction) async throws {
         failure = nil
-        askedAfter = messages.last?.id ?? ""
-        Task {
-            do {
-                _ = try await session.responses.create(action.label, uiAction: action.json)
-            } catch is CancellationError {
-            } catch {
-                failure = error.localizedDescription
-                askedAfter = nil
-            }
+        do {
+            _ = try await use().responses.create(action.label, uiAction: action.json)
+        } catch is CancellationError {
+        } catch {
+            failure = error.localizedDescription
+            throw error
         }
-    }
-
-    /// Stops the reply in flight. What was written so far is kept.
-    func stop() {
-        askedAfter = nil
-        Task { try? await session.interrupt() }
-    }
-
-    func close() async {
-        await session.close()
     }
 }
 
@@ -212,14 +243,18 @@ extension AgentChat: ChatChannelControllerDelegate {
         _ channelController: ChatChannelController,
         didUpdateMessages changes: [ListChange<ChatMessage>]
     ) {
-        messages = channelController.messages.reversed()
+        publish()
     }
 }
 
 extension AgentChat: EventsControllerDelegate {
     func eventsController(_ controller: EventsController, didReceiveEvent event: Event) {
-        guard let event = event as? MessageUpdatedEvent, event.cid == channel.cid else { return }
+        guard let event = event as? MessageUpdatedEvent, event.cid == channel?.cid else { return }
+        let before = reasoning
         reasoning.read(event.message)
+        if reasoning != before {
+            publish()
+        }
     }
 }
 
@@ -227,11 +262,6 @@ extension ChatMessage {
     /// A reply the agent wrote, which Stream's AI components render.
     var isAgentReply: Bool {
         extraData["ai_generated"]?.boolValue == true
-    }
-
-    /// Whether it is a reply with nothing to show yet: no text, no steps and no UI.
-    var isEmptyReply: Bool {
-        isAgentReply && text.isEmpty && parts.isEmpty && extraData[AIUIDocument.customDataKey] == nil
     }
 
     /// Whether the agent is still writing it.

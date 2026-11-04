@@ -80,17 +80,16 @@ class SyncAgentRequest:
                 sync that sends connectors replaces the stored ones with these, or with none when this is left out, and a sync
                 that sends neither leaves them alone. At most 64, as connectors.
             llm (str | Unset):
-            mcp_servers (list[McpServer] | Unset): MCP servers outside the plugin catalog, opened by their URL with no
-                login.
+            mcp_servers (list[McpServer] | Unset): No longer read: a server named by URL is now a custom connector, so
+                create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names
+                nothing.
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
-            plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors. MCP
-                events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
-            plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector. Plugins
-                the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once,
-                unless its entry sets user: then each end user connects it with their own account, from the conversation, the
-                first time the agent needs it.
+            plugin_events (list[PluginEvent] | Unset): No longer read: plugins were replaced by connectors, so name the
+                provider under connectors. A non-empty list is refused (400); an empty one names nothing.
+            plugins (list[PluginWithOptions | str] | Unset): No longer read: plugins were replaced by connectors, so name
+                the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
             region (str | Unset): agent.yaml's region: where the agent's work is done, us or eu for now. Every model its
                 sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there.
                 A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming

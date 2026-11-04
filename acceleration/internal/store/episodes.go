@@ -19,6 +19,9 @@ const (
 	EpisodeIMessage = "imessage"
 	EpisodeSMS      = "sms"
 	EpisodeWhatsApp = "whatsapp"
+	// EpisodeChat is a run of messages in one agent channel of the app chat
+	// (20261212090000_chat_episodes.sql).
+	EpisodeChat = "chat"
 )
 
 // episodeInProgress is an episode not closed yet, the status its card is written with.
@@ -341,6 +344,9 @@ type EpisodeCard struct {
 	// map row: for a call, the caller's number, which is whose lines the card's are.
 	ContactKind    string `bun:"contact_kind,scanonly"`
 	ContactAddress string `bun:"contact_address,scanonly"`
+	// AgentConfigID is the agent config of the episode's contact map row, which an app chat's
+	// channel names.
+	AgentConfigID string `bun:"agent_config_id,scanonly"`
 }
 
 // CardsQuery is whose episode cards a session reads, and which of them it leaves out
@@ -368,7 +374,7 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 	var cards []EpisodeCard
 	err := s.db.NewSelect().Model(&cards).
 		ColumnExpr("ep.*").
-		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address").
+		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address, cm.agent_config_id").
 		// LEAST ignores NULLs, so Until is nil only when both are.
 		ColumnExpr(`LEAST(ep.ended_at, (SELECT min(nx.started_at) FROM episodes AS nx
 			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel

@@ -132,7 +132,7 @@ func (s *AttachConnectorsSuite) TestARequiredSessionBindingWithNoSelectionFailsT
 
 // TestASessionBindingWithNoSelectionUsesTheCallersOnlyConnectedConnection is AI-994 (F41 of
 // the plugin migration run): a session created without connector_bindings, as an app created
-// one for user_plugins, opens on the caller's one connected connection to the connector. Her
+// one before connectors, opens on the caller's one connected connection to the connector. Her
 // newer connections that are pending, need reauthorization or were disconnected are not
 // counted. It is not kept as the session's selection, and the log says which it used.
 func (s *AttachConnectorsSuite) TestASessionBindingWithNoSelectionUsesTheCallersOnlyConnectedConnection() {

@@ -1,4 +1,5 @@
-# A shop's storefront MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# A shop's storefront MCP server, moved from the plugin catalog (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
 # entry shopify, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
 # connectors/planning). The core's fixture testdata/manifests/shopify.yaml is the Admin API's
 # authorization code grant; this is the plugin's MCP endpoint on the shop.

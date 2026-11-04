@@ -39,6 +39,8 @@ from .agent_role import AgentRole
 from .agent_scheduling import AgentScheduling
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
+from .agent_user import AgentUser
+from .agent_user_request import AgentUserRequest
 from .analyze_reviews_request import AnalyzeReviewsRequest
 from .app_settings import AppSettings
 from .approved_connection_tool import ApprovedConnectionTool
@@ -57,7 +59,6 @@ from .audit_source import AuditSource
 from .authorization import Authorization
 from .authorization_kind import AuthorizationKind
 from .authorization_request import AuthorizationRequest
-from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
 from .business_profile import BusinessProfile
 from .business_profile_legal_entity_type import BusinessProfileLegalEntityType
@@ -324,14 +325,8 @@ from .place_call_request_custom import PlaceCallRequestCustom
 from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
-from .plugin import Plugin
-from .plugin_authorization import PluginAuthorization
-from .plugin_client import PluginClient
-from .plugin_connection import PluginConnection
-from .plugin_connection_status import PluginConnectionStatus
 from .plugin_event import PluginEvent
 from .plugin_event_arguments import PluginEventArguments
-from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
@@ -457,8 +452,8 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .session_voicemail import SessionVoicemail
 from .set_number_agent_request import SetNumberAgentRequest
-from .set_plugin_client_request import SetPluginClientRequest
 from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
 from .simulation import Simulation
 from .simulation_case import SimulationCase
@@ -578,6 +573,7 @@ from .voice_providers import VoiceProviders
 from .voice_request import VoiceRequest
 from .voice_sample import VoiceSample
 from .voice_sample_request import VoiceSampleRequest
+from .voicemail_action import VoicemailAction
 from .whats_app_profile import WhatsAppProfile
 from .window_spend import WindowSpend
 
@@ -621,6 +617,8 @@ __all__ = (
     "AgentScheduling",
     "AgentStats",
     "AgentTools",
+    "AgentUser",
+    "AgentUserRequest",
     "AnalyzeReviewsRequest",
     "AppSettings",
     "ApprovedConnectionTool",
@@ -639,7 +637,6 @@ __all__ = (
     "Authorization",
     "AuthorizationKind",
     "AuthorizationRequest",
-    "AuthorizePluginRequest",
     "AvailableNumber",
     "BusinessProfile",
     "BusinessProfileLegalEntityType",
@@ -900,14 +897,8 @@ __all__ = (
     "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
-    "Plugin",
-    "PluginAuthorization",
-    "PluginClient",
-    "PluginConnection",
-    "PluginConnectionStatus",
     "PluginEvent",
     "PluginEventArguments",
-    "PluginSetupStep",
     "PluginWithOptions",
     "Policy",
     "PolicyBudget",
@@ -1033,8 +1024,8 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SessionVoicemail",
     "SetNumberAgentRequest",
-    "SetPluginClientRequest",
     "SetSandboxRecipientsRequest",
     "Simulation",
     "SimulationCase",
@@ -1154,6 +1145,7 @@ __all__ = (
     "VoiceRequest",
     "VoiceSample",
     "VoiceSampleRequest",
+    "VoicemailAction",
     "WhatsAppProfile",
     "WindowSpend",
 )

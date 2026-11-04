@@ -4,8 +4,12 @@ package api
 
 import (
 	"context"
+	"log/slog"
 	"net/http"
 	"testing"
+	"time"
+
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
@@ -85,6 +89,7 @@ func (s *CampaignsSuite) TestContactsAreRungInTheOrderTheyWereAdded() {
 	s.add(created.Id, map[string]any{"to_number": first, "instructions": "ask about the trial"},
 		map[string]any{"to_number": second})
 
+	s.running(created.Id)
 	ctx := context.Background()
 	claimed, found, err := s.store.ClaimContact(ctx, created.Id)
 	s.Require().NoError(err)
@@ -110,6 +115,7 @@ func (s *CampaignsSuite) TestACallThatNeverFinishedIsRungAgainRatherThanLost() {
 	created := s.campaign(1)
 	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
 
+	s.running(created.Id)
 	ctx := context.Background()
 	_, found, err := s.store.ClaimContact(ctx, created.Id)
 	s.Require().NoError(err)
@@ -128,6 +134,7 @@ func (s *CampaignsSuite) TestWhatBecameOfAContactIsShownAgainstIt() {
 	s.add(created.Id, map[string]any{"to_number": s.utils.number()},
 		map[string]any{"to_number": s.utils.number()})
 
+	s.running(created.Id)
 	ctx := context.Background()
 	rung, _, err := s.store.ClaimContact(ctx, created.Id)
 	s.Require().NoError(err)
@@ -152,6 +159,7 @@ func (s *CampaignsSuite) TestWhatBecameOfAContactIsShownAgainstIt() {
 func (s *CampaignsSuite) TestAContactShowsHowItsCallEnded() {
 	created := s.campaign(1)
 	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	s.running(created.Id)
 	ctx := context.Background()
 	rung, _, err := s.store.ClaimContact(ctx, created.Id)
 	s.Require().NoError(err)
@@ -206,6 +214,204 @@ func (s *CampaignsSuite) TestOnlyTheAppsOwnBackendMayCreateACampaign() {
 			"from_number": s.utils.number(),
 		}, nil)
 	})
+}
+
+func (s *CampaignsSuite) TestAPauseOnAnotherRouterStopsTheCallsOfTheOneRunningIt() {
+	// A campaign is also left not running by a loop elsewhere that found nobody to ring.
+	for _, left := range []string{store.Paused, store.Finished} {
+		s.Run(left, func() {
+			created := s.campaign(1)
+			s.add(created.Id, map[string]any{"to_number": s.utils.number()}, map[string]any{"to_number": s.utils.number()})
+			// The suite's router runs the campaign; the pause lands on a second router over the
+			// same database, as it does behind a load balancer.
+			other := s.campaigns(s.router.sessions, slog.New(slog.DiscardHandler))
+			locked := s.holdContacts(created.Id)
+			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+
+			if left == store.Paused {
+				s.Require().NoError(other.Pause(context.Background(), s.customerID(), created.Id))
+			} else {
+				s.Require().NoError(s.store.SetCampaignState(context.Background(), s.customerID(), created.Id, store.Finished))
+			}
+			s.Require().NoError(locked.Rollback())
+
+			s.Never(func() bool {
+				return s.state(created.Id) != CampaignState(left) || s.rung(created.Id) > 0
+			}, time.Second, 20*time.Millisecond, "the router running it rang nobody after the pause, and left it as it was")
+			// A call that never finished, which only a start that finds no loop running gives back.
+			_, err := s.store.DB().NewUpdate().Table("campaign_contacts").Set("state = ?", store.Calling).
+				Where("id = ?", s.contacts(created.Id)[0].Id).Exec(context.Background())
+			s.Require().NoError(err)
+			s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+			s.Require().Eventually(func() bool { return s.state(created.Id) == CampaignStateFinished && s.rung(created.Id) == 2 },
+				10*time.Second, 20*time.Millisecond, "started again where its loop ended at the pause, it rings again")
+			for _, contact := range s.contacts(created.Id) {
+				s.Equal(ContactStateFailed, contact.State, "everybody it held back is rung")
+				s.Equal(1, contact.Attempts)
+			}
+		})
+	}
+}
+
+func (s *CampaignsSuite) TestACampaignNobodyPausesRingsEverybodyAndFinishes() {
+	created := s.campaign(2)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()}, map[string]any{"to_number": s.utils.number()},
+		map[string]any{"to_number": s.utils.number()})
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+
+	s.Require().Eventually(func() bool { return s.state(created.Id) == CampaignStateFinished },
+		10*time.Second, 20*time.Millisecond)
+	contacts := s.contacts(created.Id)
+	s.Require().Len(contacts, 3)
+	for _, contact := range contacts {
+		// The suite's phone service has no credentials, so every call it places fails.
+		s.Equal(ContactStateFailed, contact.State)
+		s.Equal(1, contact.Attempts)
+	}
+}
+
+func (s *CampaignsSuite) TestNobodyIsClaimedFromACampaignThatIsNotRunning() {
+	for _, state := range []string{store.Draft, store.Paused, store.Finished} {
+		s.Run(state, func() {
+			created := s.campaign(1)
+			s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+			s.running(created.Id)
+			s.Require().NoError(s.store.SetCampaignState(context.Background(), s.customerID(), created.Id, store.Paused))
+			if state != store.Paused {
+				_, err := s.store.DB().NewUpdate().Table("campaigns").Set("state = ?", state).
+					Where("id = ?", created.Id).Exec(context.Background())
+				s.Require().NoError(err)
+			}
+
+			_, found, err := s.store.ClaimContact(context.Background(), created.Id)
+
+			s.Require().NoError(err)
+			s.False(found, "a router that had not heard of the pause would ring them")
+			contacts := s.contacts(created.Id)
+			s.Equal(ContactStatePending, contacts[0].State)
+			s.Zero(contacts[0].Attempts)
+		})
+	}
+}
+
+func (s *CampaignsSuite) TestACampaignThatRanOutWhilePausedStaysPaused() {
+	created := s.campaign(1)
+	s.running(created.Id)
+	ctx := context.Background()
+	s.Require().NoError(s.store.SetCampaignState(ctx, s.customerID(), created.Id, store.Paused))
+
+	// What a loop on another router writes when its last claim found nobody.
+	s.Require().NoError(s.store.SetCampaignState(ctx, s.customerID(), created.Id, store.Finished))
+
+	stored, err := s.store.Campaign(ctx, s.customerID(), created.Id)
+	s.Require().NoError(err)
+	s.Equal(store.Paused, stored.State)
+	s.Nil(stored.FinishedAt)
+}
+
+func (s *CampaignsSuite) TestAStartOnTheRouterWhoseLoopOutlivedAPauseRunsTheCampaign() {
+	created := s.campaign(1)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	ctx := context.Background()
+	locked := s.holdContacts(created.Id)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+	// Another router's pause, held open: the loop here waits on it at its next claim.
+	pausing, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = pausing.Rollback() })
+	_, err = pausing.NewUpdate().Table("campaigns").Set("state = ?", store.Paused).Where("id = ?", created.Id).Exec(ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(locked.Rollback())
+
+	started := make(chan int, 1)
+	go func() {
+		started <- s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil)
+	}()
+	// The loop's claim and the start both wait on the pause, so neither has read it yet.
+	s.Require().Eventually(func() bool { return s.waitingOn(created.Id) == 2 },
+		10*time.Second, 20*time.Millisecond, "the start writes the campaign running, behind the pause")
+	s.Require().NoError(pausing.Commit())
+
+	s.Equal(http.StatusAccepted, <-started)
+	s.Require().Eventually(func() bool { return s.state(created.Id) == CampaignStateFinished },
+		10*time.Second, 20*time.Millisecond, "the start that came after the pause is the last word, and rings")
+	s.Equal(1, s.rung(created.Id))
+}
+
+func (s *CampaignsSuite) TestAStartWaitingOnItsCampaignsRowLeavesTheCampaignsOfOthersAlone() {
+	created := s.campaign(1)
+	s.add(created.Id, map[string]any{"to_number": s.utils.number()})
+	unrelated := s.campaign(1)
+	ctx := context.Background()
+	locked := s.holdContacts(created.Id)
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil))
+	// Another router's write on the campaign's row, held open.
+	writing, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = writing.Rollback() })
+	_, err = writing.NewUpdate().Table("campaigns").Set("state = ?", store.Running).Where("id = ?", created.Id).Exec(ctx)
+	s.Require().NoError(err)
+	s.Require().NoError(locked.Rollback())
+
+	// The start finds its loop listed and writes the row, behind that write, holding the list.
+	go s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+created.Id+"/start", nil, nil)
+	s.Require().Eventually(func() bool { return s.waitingOn(created.Id) >= 2 },
+		10*time.Second, 20*time.Millisecond, "the start waits on the row")
+
+	paused := make(chan int, 1)
+	go func() {
+		paused <- s.serverClient.do(http.MethodPost, "/v1/agents/campaigns/"+unrelated.Id+"/pause", nil, nil)
+	}()
+	select {
+	case status := <-paused:
+		s.Equal(http.StatusOK, status)
+	case <-time.After(15 * time.Second):
+		s.Fail("a start that waits on one campaign's row holds every campaign's pause past the 10 s a write may take")
+	}
+}
+
+// running marks a campaign running without starting a loop, for a test that claims its
+// contacts itself.
+func (s *CampaignsSuite) running(campaignID string) {
+	s.Require().NoError(s.store.SetCampaignState(context.Background(), s.customerID(), campaignID, store.Running))
+}
+
+// waitingOn counts the statements naming a campaign that wait on a lock.
+func (s *CampaignsSuite) waitingOn(campaignID string) int {
+	var waiting int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM pg_stat_activity WHERE wait_event_type = 'Lock' AND query LIKE ?",
+		"%"+campaignID+"%").Scan(&waiting))
+	return waiting
+}
+
+// holdContacts locks a campaign's contacts until the returned transaction ends, which holds
+// a runner off them, as its claim skips locked rows.
+func (s *CampaignsSuite) holdContacts(campaignID string) bun.Tx {
+	ctx := context.Background()
+	locked, err := s.store.DB().BeginTx(ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = locked.Rollback() })
+	_, err = locked.ExecContext(ctx, "SELECT id FROM campaign_contacts WHERE campaign_id = ? FOR UPDATE", campaignID)
+	s.Require().NoError(err)
+	return locked
+}
+
+// state is what the campaign's row says it is doing.
+func (s *CampaignsSuite) state(campaignID string) CampaignState {
+	var campaign Campaign
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/campaigns/"+campaignID, nil, &campaign))
+	return campaign.State
+}
+
+// rung counts the times anybody on the campaign was claimed to be rung.
+func (s *CampaignsSuite) rung(campaignID string) int {
+	rung := 0
+	for _, contact := range s.contacts(campaignID) {
+		rung += contact.Attempts
+	}
+	return rung
 }
 
 // campaign creates a campaign over a stored config and returns it.
