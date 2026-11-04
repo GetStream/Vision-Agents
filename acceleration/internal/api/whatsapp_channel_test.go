@@ -370,6 +370,57 @@ func (s *WhatsAppChannelSuite) TestAPhotoWithoutACaptionAndOtherKindsAreNotWritt
 // revision 1, until its next credential save, answers text alone: a photo with a caption in a
 // delivery is left out, and the text beside it is answered as on revision 1.
 func (s *WhatsAppChannelSuite) TestAConnectionStillOnRevision1AnswersTextAlone() {
+	s.pinToRevision1()
+	person := "16505551234"
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"), s.captioned(person, "video", "And this one?"),
+		s.captioned(person, "document", "My x-ray"), s.text(person, "Hi"))))
+
+	channel := s.threadChannel(person)
+	s.Equal("Hi", s.written(channel, 1)[0]["text"])
+	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Noted."}, s.took(1)[0].withoutAuthorization())
+	s.settled()
+	s.Never(func() bool {
+		return len(s.meta.sent()) > 1 || slices.ContainsFunc(s.chat.Stored(channel), func(stored map[string]any) bool {
+			return stored["text"] == "Is this tooth chipped?"
+		})
+	}, dropped, 20*time.Millisecond)
+}
+
+// A connection pinned to a revision with no channel block cannot read any message: the
+// delivery answers 500, so Meta retries it, and nothing is linked or written. Only a message
+// its revision does not read (errNotRead) is dropped with 200. The stored revision 1 loses its
+// channel block for the test and gets it back after, because the other revision 1 test seeds it.
+func (s *WhatsAppChannelSuite) TestAConnectionPinnedToARevisionWithNoChannelBlockAnswers500AndLinksNothing() {
+	ctx := context.Background()
+	s.pinToRevision1()
+	stored, err := s.store.ConnectorDefinition(ctx, s.customerID(), "whatsapp", 1)
+	s.Require().NoError(err)
+	s.Require().NotNil(stored.Manifest.Channel)
+	restored := stored
+	stored.Manifest.Channel = nil
+	_, err = s.store.DB().NewUpdate().Model(&stored).Column("manifest").WherePK().Exec(ctx)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_, err := s.store.DB().NewUpdate().Model(&restored).Column("manifest").WherePK().Exec(context.Background())
+		s.NoError(err)
+	})
+	person := "16505551234"
+
+	s.Equal(http.StatusInternalServerError, s.deliver(s.received(s.unit, person, "Hi")))
+
+	s.settled()
+	var threads int
+	s.Require().NoError(s.store.DB().QueryRowContext(ctx,
+		"SELECT count(*) FROM channel_threads WHERE customer_id = ? AND connector_id = 'whatsapp' AND thread_key = ?",
+		s.customerID(), person).Scan(&threads))
+	s.Zero(threads)
+	s.Empty(s.meta.sent())
+}
+
+// pinToRevision1 stores the manifest as revision 1 was, without its caption entries, and pins
+// the test's connection to it.
+func (s *WhatsAppChannelSuite) pinToRevision1() {
 	ctx := context.Background()
 	raw, err := fs.ReadFile(providers.FS, "whatsapp.yaml")
 	s.Require().NoError(err)
@@ -388,20 +439,6 @@ func (s *WhatsAppChannelSuite) TestAConnectionStillOnRevision1AnswersTextAlone()
 			connection.DefinitionRevision = 1
 			return true, nil
 		}))
-	person := "16505551234"
-
-	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"), s.captioned(person, "video", "And this one?"),
-		s.captioned(person, "document", "My x-ray"), s.text(person, "Hi"))))
-
-	channel := s.threadChannel(person)
-	s.Equal("Hi", s.written(channel, 1)[0]["text"])
-	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Noted."}, s.took(1)[0].withoutAuthorization())
-	s.settled()
-	s.Never(func() bool {
-		return len(s.meta.sent()) > 1 || slices.ContainsFunc(s.chat.Stored(channel), func(stored map[string]any) bool {
-			return stored["text"] == "Is this tooth chipped?"
-		})
-	}, dropped, 20*time.Millisecond)
 }
 
 // received is a text message shaped as the example in payload: to the business number, from
@@ -459,7 +496,8 @@ func (s *WhatsAppChannelSuite) photo(person, caption string) map[string]any {
 // examples in image, video and document.
 func (s *WhatsAppChannelSuite) captioned(person, kind, caption string) map[string]any {
 	message := s.message(person, kind)
-	message[kind] = map[string]any{"caption": caption, "mime_type": "video/mp4", "sha256": "c3ludGhldGlj", "id": s.digits()}
+	mime := map[string]string{"image": "image/jpeg", "video": "video/mp4", "document": "application/pdf"}[kind]
+	message[kind] = map[string]any{"caption": caption, "mime_type": mime, "sha256": "c3ludGhldGlj", "id": s.digits()}
 	return message
 }
 

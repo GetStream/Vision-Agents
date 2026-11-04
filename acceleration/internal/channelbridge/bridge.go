@@ -673,8 +673,9 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		// The events route reads with the latest revision, so a message only a newer revision
 		// reads, such as WhatsApp's photo by its caption (revision 2, AI-2133) on a connection
 		// still on revision 1, is one this connection does not take. Delivering it again finds
-		// the same revision, so it is dropped, not answered 500.
-		b.logger.Info("dropped an inbound message the revision of its connection does not read",
+		// the same revision, so it is dropped, not answered 500. It is a warn, not an info: the
+		// same drop is a pinned revision reading the message with another thread key or id.
+		b.logger.Warn("dropped an inbound message the revision of its connection does not read",
 			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID,
 			"revision", connection.DefinitionRevision)
 		return store.ChannelThread{}, store.AgentConfig{}, nil, nil

@@ -32,11 +32,11 @@ func (s *WhatsAppSuite) SetupSuite() {
 	s.Require().NotNil(s.manifest.Channel)
 }
 
-// Text messages are read: the image in the batch has no caption, so it is not, and the
-// statuses add nothing.
+// Text messages are read as on revision 1: the image in the batch has no caption, so it is
+// not, and the statuses add nothing.
 // Each message is routed by the business number that received it, and its thread is the
 // person's number as Meta writes it.
-func (s *WhatsAppSuite) TestOnlyTextMessagesAreRead() {
+func (s *WhatsAppSuite) TestTextMessagesAreReadAndAnImageWithoutACaptionIsNot() {
 	raw, err := os.ReadFile(filepath.Join("..", "core", "testdata", "recorded", "whatsapp.batch.json"))
 	s.Require().NoError(err)
 
