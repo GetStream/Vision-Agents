@@ -33,12 +33,34 @@ const (
 	MaxSide = 10000
 )
 
+// Mode is what a reading gives back of a page.
+type Mode string
+
+const (
+	// Text is the page's text, its pictures left out. It is what an OCR model reads.
+	Text Mode = ""
+	// TextAndFigures is the page's text and, under each chart, diagram, photo or table
+	// drawn as a picture, the words in it and a summary of what it shows. It is how a
+	// scanned page is read, since nothing else on it can be.
+	TextAndFigures Mode = "text_and_figures"
+	// Figures is only what the pictures hold, the words in them and a summary of each,
+	// for a page whose own text was read from it already or a picture taken out of a
+	// document.
+	Figures Mode = "figures"
+)
+
+// Describes says the mode asks for pictures to be summarised, which a vision language
+// model does and an OCR model, which only transcribes, does not.
+func (m Mode) Describes() bool { return m == TextAndFigures || m == Figures }
+
 // Request is one page to read.
 type Request struct {
 	// Image is a JPEG or PNG of the page.
 	Image []byte
 	// MediaType is image/jpeg or image/png, read off the image by Validate.
 	MediaType string
+	// Mode is what to give back. Empty is Text.
+	Mode Mode
 }
 
 // Validate reports whether the page is a picture that can be read, and says what kind.

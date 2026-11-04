@@ -3608,6 +3608,20 @@ ocr:
         trains_on_data: "no"
         retention: unspecified
 
+    # Claude Haiku 5.5 at Luna's rates, a fallback that sees for the pages and pictures read
+    # with their figures summarised. It thinks before it answers, so a page takes more
+    # output tokens than on Luna. The data terms are its llm entry's.
+    - provider: anthropic
+      model: claude-haiku-5-5
+      description: "Claude Haiku 5.5 asked to transcribe the page, or summarise its figures."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
     - provider: gemini
       model: gemini-3.8-flash
       description: "Gemini 3.8 Flash asked to transcribe the page. Strong on small print, dearer than Luna."
@@ -3632,6 +3646,17 @@ ocr:
       title: OCR by a vision model
       description: "A vision language model transcribes the page, cheapest first."
       require_input_modalities: [image]
+      prefer: openai/gpt-6-luna
+
+    # What knowledge reads a scanned page, a page with charts or diagrams, or a picture in an
+    # office file with: a model that can say what a chart or a diagram shows, the strongest
+    # for the money first, which is the order the providers are listed in above. Mistral OCR
+    # is last, for a scan's text when no vision model answers; a reading of figures alone
+    # never goes to it.
+    ocr-figures:
+      title: OCR with figures summarised
+      description: "GPT-6 Luna reads the page and summarises its charts, diagrams and pictures, with Claude Haiku 5.5, Gemini 3.8 Flash and then Mistral OCR as fallbacks."
+      only: [openai/gpt-6-luna, anthropic/claude-haiku-5-5, gemini/gemini-3.8-flash, mistral/mistral-ocr-4-1]
       prefer: openai/gpt-6-luna
 
     # The four shortcuts every modality answers to.

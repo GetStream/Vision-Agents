@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ocr"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -144,6 +145,7 @@ func (r *Router) Read(ctx context.Context, request Request) (Reading, error) {
 	if err != nil {
 		return Reading{}, err
 	}
+	candidates = describing(candidates, request.Page.Mode)
 
 	var failures []error
 	for _, candidate := range candidates {
@@ -202,6 +204,30 @@ func (r *Router) read(
 	reading.Markdown = result.Markdown
 	reading.CostMicros = r.Quote(config, result.Used()).CostMicros
 	return reading, nil
+}
+
+// describing puts the candidates that can summarise a picture ahead of those that only
+// transcribe, when the mode asks for summaries, keeping each group's order. A vision
+// language model is the one that can: in the ocr config, an image among a model's
+// input_modalities is what marks one, as ocr-vision requires. A scan is still better
+// transcribed than not read, so an OCR model stays last for it; a reading of figures alone
+// would get the page's text back from one, so it is left out.
+func describing(candidates []routing.Candidate, mode ocr.Mode) []routing.Candidate {
+	if !mode.Describes() {
+		return candidates
+	}
+	var seeing, transcribing []routing.Candidate
+	for _, candidate := range candidates {
+		if candidate.Config.Sees([]string{llm.ModalityImage}) {
+			seeing = append(seeing, candidate)
+		} else {
+			transcribing = append(transcribing, candidate)
+		}
+	}
+	if mode == ocr.Figures {
+		return seeing
+	}
+	return append(seeing, transcribing...)
 }
 
 // where names what a request asked for, for an error about it.

@@ -124,6 +124,12 @@ type response struct {
 
 // Read implements ocr.Provider.
 func (p *Provider) Read(ctx context.Context, page ocr.Request) (ocr.Result, error) {
+	// Mistral OCR transcribes and does not describe, so a page whose text was read already
+	// would come back as that text again. A scan asked for with its figures is read for its
+	// text, which is more than nothing.
+	if page.Mode == ocr.Figures {
+		return ocr.Result{}, ocr.Fail(ocr.ProviderFailed, stack.Wrap(errors.New("mistral: OCR transcribes text and cannot summarise pictures")))
+	}
 	body, err := json.Marshal(request{
 		Model: p.model,
 		Document: document{

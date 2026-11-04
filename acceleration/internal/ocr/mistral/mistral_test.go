@@ -82,6 +82,16 @@ func (s *MistralSuite) TestThePageGoesAsADataURLWithItsHeaderAndFooterAskedForAp
 	s.Equal(false, s.asked[0]["include_image_base64"], "pictures on the page are not asked for")
 }
 
+func (s *MistralSuite) TestFiguresAloneAreRefusedWithoutAskingOrPayingMistral() {
+	page := s.page()
+	page.Mode = ocr.Figures
+
+	_, err := s.provider().Read(context.Background(), page)
+
+	s.Equal(ocr.ProviderFailed, ocr.CodeOf(err))
+	s.Empty(s.asked)
+}
+
 func (s *MistralSuite) TestThePageIsItsMarkdownWithoutThePicturesMistralFound() {
 	read, err := s.provider().Read(context.Background(), s.page())
 

@@ -109,3 +109,33 @@ func (s *VisionSuite) TestATranscriptionCutShortIsAFailureNotHalfAPage() {
 	s.Equal(ocr.ProviderFailed, ocr.CodeOf(err))
 	s.ErrorContains(err, "token limit")
 }
+
+func (s *VisionSuite) TestAScanIsAskedForItsTextAndASummaryOfEachFigure() {
+	seeing := s.seeing("# Wiring\n\n> **Figure:** The fryer's control board.")
+	provider, err := newVision(seeing)
+	s.Require().NoError(err)
+	s.page.Mode = ocr.TextAndFigures
+
+	_, err = provider.Read(context.Background(), s.page)
+
+	s.Require().NoError(err)
+	asked := seeing.asked[0]
+	s.Contains(asked.Instructions, "Write out every word printed on the page")
+	s.Contains(asked.Instructions, "> **Figure:**")
+	s.NotContains(asked.Instructions, "Do not describe pictures")
+}
+
+func (s *VisionSuite) TestAPageWhoseTextIsReadIsAskedForItsFiguresAlone() {
+	seeing := s.seeing("> **Figure:** Oil temperature over a shift.")
+	provider, err := newVision(seeing)
+	s.Require().NoError(err)
+	s.page.Mode = ocr.Figures
+
+	_, err = provider.Read(context.Background(), s.page)
+
+	s.Require().NoError(err)
+	asked := seeing.asked[0]
+	s.Contains(asked.Instructions, "do not write out the text of the page")
+	s.Contains(asked.Instructions, "> **Figure:**")
+	s.Contains(asked.Instructions, "Leave out logos")
+}

@@ -54,6 +54,9 @@ func (s *Server) readPage(ctx context.Context, request *readPageRequest) (*readP
 	}
 
 	sent := value(body.Options)
+	if value(sent.Figures) {
+		page.Mode = ocr.TextAndFigures
+	}
 	ctx, cancel := context.WithTimeout(ctx, ocrDeadline)
 	defer cancel()
 	reading, err := s.streams.OCR.Read(ctx, ocrrouter.Request{
@@ -105,8 +108,9 @@ func (s *Server) registerOCR(api huma.API) {
 		Description: "Routed like detection: a target or a priority list picks the model, failover and billing " +
 			"work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and " +
 			"fails over to vision language models that transcribe the page, and to nothing that cannot read " +
-			"one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the " +
-			"tokens it took.\n" +
+			"one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised " +
+			"too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is " +
+			"billed per page and a vision model by the tokens it took.\n" +
 			"A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A " +
 			"reading that got as far as a provider answers 200 whether it read anything or not: a failed one " +
 			"carries status failed, an error_code and the error, and costs nothing. A page with no text on " +
@@ -140,6 +144,7 @@ type OcrRequest struct {
 // OcrOptions is the OcrOptions schema.
 type OcrOptions struct {
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+	Figures    *bool       `json:"figures,omitempty" doc:"Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best."`
 	Providers  *[]string   `json:"providers,omitempty" doc:"A priority list of where to try, in the order given, which wins over target when it holds anything."`
 	Target     *string     `json:"target,omitempty" doc:"A provider/model or a shortcut. Defaults to ocr-default." example:"ocr-vision"`
 }

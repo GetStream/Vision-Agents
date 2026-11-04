@@ -159,3 +159,75 @@ func (s *OCRRouterSuite) TestAPageIsPricedByThePageOrByTheTokensItsModelBills() 
 	s.Equal(int64(4000), byPage.CostMicros, "$4 per 1,000 pages")
 	s.Equal(int64(400), byToken.CostMicros, "1,500 input tokens at $0.10 and 500 output at $0.50 a million")
 }
+
+func (s *OCRRouterSuite) TestAScanReadWithItsFiguresGoesToAModelThatSeesFirst() {
+	reading, err := s.router().Read(s.ctx, Request{CustomerID: "c1", Page: ocr.Request{Mode: ocr.TextAndFigures}})
+
+	s.Require().NoError(err)
+	s.Equal(s.vision.name, reading.Provider, "the shortcut prefers the OCR model, which cannot summarise a chart")
+	s.Zero(s.pages.times())
+}
+
+func (s *OCRRouterSuite) TestAScanReadWithItsFiguresIsTranscribedWhenNoModelThatSeesCan() {
+	s.vision.err = ocr.Fail(ocr.ProviderFailed, errors.New("down"))
+
+	reading, err := s.router().Read(s.ctx, Request{CustomerID: "c1", Page: ocr.Request{Mode: ocr.TextAndFigures}})
+
+	s.Require().NoError(err)
+	s.Equal(s.pages.name, reading.Provider, "its text is more than nothing")
+}
+
+func (s *OCRRouterSuite) TestFiguresAloneAreNeverAskedOfAModelThatOnlyTranscribes() {
+	s.vision.err = ocr.Fail(ocr.ProviderFailed, errors.New("down"))
+
+	_, err := s.router().Read(s.ctx, Request{CustomerID: "c1", Page: ocr.Request{Mode: ocr.Figures}})
+
+	s.Equal(ocr.ProviderFailed, ocr.CodeOf(err))
+	s.Zero(s.pages.times(), "it would answer with the page's text, which the passages hold already")
+}
+
+// failing stands in for every model in the built-in config, writing down who was asked and
+// failing, so each is asked in turn.
+type failing struct {
+	provider string
+	model    string
+	asked    *[]string
+}
+
+func (f *failing) Read(context.Context, ocr.Request) (ocr.Result, error) {
+	*f.asked = append(*f.asked, f.provider+"/"+f.model)
+	return ocr.Result{}, ocr.Fail(ocr.ProviderFailed, errors.New("down"))
+}
+
+func (f *failing) Start(context.Context) error { return nil }
+func (f *failing) Close() error                { return nil }
+func (f *failing) Provider() string            { return f.provider }
+func (f *failing) Model() string               { return f.model }
+
+// askedThroughFigures is the order ocr-figures, in the built-in config, asks its models to
+// read a page in mode.
+func (s *OCRRouterSuite) askedThroughFigures(mode ocr.Mode) []string {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	var asked []string
+	registry := NewRegistry()
+	for _, provider := range config[routing.OCR].Providers {
+		registry.Register(provider.Provider, func(spec routing.Spec) (ocr.Provider, error) {
+			return &failing{provider: provider.Provider, model: spec.Model, asked: &asked}, nil
+		})
+	}
+	router, err := New(Options{Config: config[routing.OCR], Registry: registry, Logger: slog.New(slog.DiscardHandler)})
+	s.Require().NoError(err)
+
+	_, err = router.Read(s.ctx, Request{CustomerID: "c1", Target: "ocr-figures", Page: ocr.Request{Mode: mode}})
+
+	s.Require().Error(err)
+	return asked
+}
+
+func (s *OCRRouterSuite) TestFiguresAreSummarisedByTheStrongestModelForTheMoneyFirst() {
+	s.Equal([]string{"openai/gpt-6-luna", "anthropic/claude-haiku-5-5", "gemini/gemini-3.8-flash", "mistral/mistral-ocr-4-1"},
+		s.askedThroughFigures(ocr.TextAndFigures))
+	s.Equal([]string{"openai/gpt-6-luna", "anthropic/claude-haiku-5-5", "gemini/gemini-3.8-flash"},
+		s.askedThroughFigures(ocr.Figures))
+}

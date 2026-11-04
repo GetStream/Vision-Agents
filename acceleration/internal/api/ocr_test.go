@@ -56,6 +56,13 @@ func (s *OCRSuite) TestEveryPageIsAUsageRowWithItsModelAndCost() {
 	s.EqualValues(400, rows[1].CostMicros, "a vision model is priced by the tokens it took")
 }
 
+func (s *OCRSuite) TestAPageReadWithItsFiguresGoesToAModelThatSeesBeforeTheShortcutsFirst() {
+	read := s.read(OcrRequest{Image: drawn.Images[0].Data, Options: &OcrOptions{Figures: pointerTo(true)}})
+
+	s.Equal(OcrStatusCompleted, read.Status)
+	s.Equal("vision", *read.Provider, "ocr-default prefers the OCR model, which cannot summarise a chart")
+}
+
 func (s *OCRSuite) TestAReadingEveryModelFailedIsAnAnswerSayingWhy() {
 	read := s.read(OcrRequest{Image: drawn.Images[0].Data, Options: &OcrOptions{Target: pointerTo("broken/stub")}})
 

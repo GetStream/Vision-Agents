@@ -26,6 +26,48 @@ Write out every word printed on the page, exactly as printed, in reading order: 
 
 Leave out the running header and footer and the page number. Do not describe pictures, summarise, translate, correct or comment. Do not wrap the answer in a code block. If there is no text on the page, answer with nothing at all.`
 
+// figureInstructions say what a figure's reading is: the words in it, for search to find,
+// and a summary of what it shows, for a question about it to be answered from. Logos and
+// ornaments say nothing a customer would ask about, so they are left out.
+const figureInstructions = `For each chart, diagram, photo, screenshot or table drawn as a picture, write the words printed in it, then a summary as a quote that opens with "> **Figure:**". Say what it shows so that somebody who cannot see it could answer a question about it:
+- a chart: what is measured against what, the trend, and the values that stand out, as printed;
+- a diagram: its parts by their labels, and how they connect or follow on;
+- a photo or screenshot: what it shows and where things are in it, by their labels;
+- a table drawn as a picture: the table itself as a Markdown table, then a sentence on what it is for.
+
+Leave out logos, icons, borders and ornaments. Never guess at a value or a label that cannot be read.`
+
+// textAndFiguresInstructions read a scanned page: its text as a transcription is, and its
+// figures as figureInstructions say, each where it is on the page.
+const textAndFiguresInstructions = `You transcribe one page of a document from a picture of it, and summarise its figures.
+
+Write out every word printed on the page, exactly as printed, in reading order: a page in columns is read one column after another. Write it as Markdown: headings as #, ## and ###, lists as - or 1., and tables as Markdown tables with a header row. Put each figure's words and summary where the figure is in that order.
+
+` + figureInstructions + `
+
+Leave out the running header and footer and the page number. Do not translate, correct or comment. Do not wrap the answer in a code block. If there is nothing on the page, answer with nothing at all.`
+
+// figuresInstructions read only the figures, of a page whose own text was read from its
+// text layer, or of a picture taken out of a document. The page's text is left out, since
+// it is in the passages already and twice would only crowd them.
+const figuresInstructions = `You are shown a page of a document, or a picture taken out of one. Its text has been read already, so do not write out the text of the page around its figures.
+
+` + figureInstructions + `
+
+Do not wrap the answer in a code block. If there is no such figure, answer with nothing at all.`
+
+// instructions are what a vision model is told for each mode, and what it is asked.
+func instructions(mode ocr.Mode) (string, string) {
+	switch mode {
+	case ocr.TextAndFigures:
+		return textAndFiguresInstructions, "Transcribe this page and summarise its figures."
+	case ocr.Figures:
+		return figuresInstructions, "Read and summarise the figures in this picture."
+	default:
+		return visionInstructions, "Transcribe this page."
+	}
+}
+
 // visionOutputTokens caps one page. A dense page of small print is about 1,500 words, which
 // is around 2,500 tokens, and a reasoning model spends some before it writes.
 const visionOutputTokens = 8192
@@ -58,14 +100,15 @@ func (p *vision) Close() error { return p.model.Close() }
 
 // Read implements ocr.Provider.
 func (p *vision) Read(ctx context.Context, page ocr.Request) (ocr.Result, error) {
+	told, asked := instructions(page.Mode)
 	stream, err := p.model.Create(ctx, llm.ResponseParams{
 		Purpose:      "ocr",
-		Instructions: visionInstructions,
+		Instructions: told,
 		Input: []llm.Message{{
 			Role: llm.User,
 			Parts: []llm.ContentPart{
 				{Image: &llm.ImagePart{MIME: page.MediaType, Data: page.Image}},
-				{Text: "Transcribe this page."},
+				{Text: asked},
 			},
 		}},
 		MaxOutputTokens: visionOutputTokens,
