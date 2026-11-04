@@ -196,6 +196,16 @@ func (s *LimitsSuite) TestAUsageReadRefusalNamesTheKeyFieldOfTheQuery() {
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure.Message, "names api_key")
 	s.NotContains(failure.Message, "api_key_id", "a write names the body field")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/grants", map[string]any{"subject": "api_key", "app_id": s.customerID(), "amount_micros": 1, "reason": "x"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a grant names the body field")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/usage/reset", map[string]any{"subject": "api_key", "app_id": s.customerID(), "reason": "x"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a reset names the body field")
 }
 
 // The usage read names a key subject by api_key_id, so the caller's key the proxy forwards as
