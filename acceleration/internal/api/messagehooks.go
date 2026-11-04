@@ -271,6 +271,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			return false
 		}
 		if running {
+			s.chatEpisode(ctx, origin, event, found.Spec())
 			// The session a worker opened to answer this channel answers in it, as a thread's
 			// does: the message is already there, so only the reply is written.
 			if found.Spec().Dispatched {
@@ -375,6 +376,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			return false
 		}
 	}
+	s.chatEpisodeUnopened(ctx, origin, event, customerID, configID, heardFor, recorded)
 
 	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 		return settled

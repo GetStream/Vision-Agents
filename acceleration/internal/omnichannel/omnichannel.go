@@ -97,7 +97,7 @@ func New(options Options) (*Cards, error) {
 
 // Person is who an episode is with, as the contact map keys them.
 type Person struct {
-	// Kind is store.ContactPhone or store.ContactSlack.
+	// Kind is store.ContactPhone, store.ContactSlack or store.ContactStreamUser.
 	Kind    string
 	Address string
 }
@@ -146,6 +146,17 @@ func SlackUser(teamID, userID string) (Person, error) {
 	return Person{Kind: store.ContactSlack, Address: teamID + ":" + userID}, nil
 }
 
+// StreamUser is the person a Stream user of the app chat is: the message's user id, which
+// Stream signed through the customer's own token. Never a custom field of the user, which a
+// user may set on themselves. Until a customer links the user to a number, their chat
+// episodes go to an omni-channel of their own.
+func StreamUser(userID string) (Person, error) {
+	if userID == "" {
+		return Person{}, stack.Wrap(errors.New("omnichannel: a Stream user is required"))
+	}
+	return Person{Kind: store.ContactStreamUser, Address: userID}, nil
+}
+
 // Episode is the start of an episode, as the channel bridge or the call path sees it.
 type Episode struct {
 	CustomerID    string
@@ -153,7 +164,8 @@ type Episode struct {
 	// AgentName is the name the omni-channel's agent user is shown by, for a new omni-channel.
 	AgentName string
 	Person    Person
-	// Source is the card's source: store.EpisodeCall or store.EpisodeSlack.
+	// Source is the card's source: store.EpisodeCall, store.EpisodeSlack, store.EpisodeChat, or
+	// the channel bridge's.
 	Source string
 	// ThreadChannel is the cid of the channel with the raw text.
 	ThreadChannel string

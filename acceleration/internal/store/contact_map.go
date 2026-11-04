@@ -18,6 +18,9 @@ const (
 	ContactPhone = "phone"
 	// ContactSlack is a Slack user in one workspace, «<team id>:<user id>».
 	ContactSlack = "slack"
+	// ContactStreamUser is a Stream user of the app chat, by the user id Stream signed
+	// (20261212090000_chat_episodes.sql).
+	ContactStreamUser = "stream_user"
 )
 
 // ContactMapEntry is one address a person is reached at, for one agent of a customer, and the
@@ -28,7 +31,8 @@ type ContactMapEntry struct {
 	ID            string `bun:"id,pk"`
 	CustomerID    string `bun:"customer_id,notnull"`
 	AgentConfigID string `bun:"agent_config_id,notnull"`
-	// Kind is ContactPhone or ContactSlack, and Address the number or the Slack user.
+	// Kind is ContactPhone, ContactSlack or ContactStreamUser, and Address the number, the Slack
+	// user or the Stream user id.
 	Kind    string `bun:"kind,notnull"`
 	Address string `bun:"address,notnull"`
 	// ConversationID is the omni-channel's cid, agent:omni-<uuid>.

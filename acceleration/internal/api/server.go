@@ -391,6 +391,9 @@ type Server struct {
 	mcpEvents       *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
+	// chatCards opens the episodes of the app chat and writes their cards (chatEpisode); nil
+	// without a store or Stream clients.
+	chatCards *omnichannel.Cards
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
 	// Stream, and how long to wait before each read. Tests replace both.
 	readCallStats  readCallStats
@@ -597,6 +600,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
+	}
+	if cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream}); err == nil {
+		server.chatCards = cards
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
