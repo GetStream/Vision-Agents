@@ -10,8 +10,8 @@
 # acceleration/docs/connectors/architecture.md on connectors/planning.
 id: linear
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.registration.
-revision: 2
+# client.policy to client.registration. 3 lists the tools that only read.
+revision: 3
 # [proto]:68-70
 name: Linear
 category: Project management
@@ -60,3 +60,58 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read. Linear's page ([mcp], opened 2026-11-04) names no tools, so
+    # each name and what it does is from the tool's own description in the tools/list of
+    # https://mcp.linear.app/mcp, read on 2026-11-04 through Anthropic's claude.ai Linear
+    # connector: each one gets, lists or searches («Retrieve ...», «List ...», «Search ...»)
+    # and none says it changes anything. get_attachment takes an attachment id and returns
+    # the file or its download URL, signed for five minutes; that brings data in, as
+    # google_drive.yaml's download_file_content does, and only a tool that writes could send
+    # the URL on. Left out: every save_, create_, delete_, retire_, restore_, share_, unshare_,
+    # mark_, merge_, submit_, update_, resolve_ and prepare_ tool, which change the workspace,
+    # and extract_images, which fetches the image URLs found in markdown the model passes,
+    # so a URL to any host could carry data out. A tool added later is left out too.
+    read_only_tools:
+      - get_attachment
+      - list_agent_skills
+      - get_agent_skill
+      - list_comments
+      - list_cycles
+      - list_custom_views
+      - get_document
+      - list_documents
+      - get_issue
+      - list_issues
+      - list_issue_statuses
+      - get_issue_status
+      - list_issue_labels
+      - list_projects
+      - get_project
+      - list_project_labels
+      - list_release_pipelines
+      - list_releases
+      - get_release
+      - list_release_notes
+      - get_release_note
+      - list_milestones
+      - get_milestone
+      - get_notifications
+      - list_teams
+      - get_team
+      - get_triage_responsibility
+      - list_templates
+      - get_template
+      - list_users
+      - get_user
+      - get_workspace
+      - search_documentation
+      - get_diff
+      - list_diffs
+      - get_diff_threads
+      - whoami
+      - list_customers
+      - list_customer_needs
+      - list_initiatives
+      - get_initiative
+      - list_initiative_labels
+      - get_status_updates
