@@ -16,10 +16,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/migrations"
 )
 
-// Around 20261210120000_campaign_dialer.sql, which follows the newest migration.
+// Around 20261214100000_campaign_dialer.sql, which follows the newest migration.
 const (
-	beforeCampaignDialer int64 = 20261206140000
-	campaignDialer       int64 = 20261210120000
+	beforeCampaignDialer int64 = 20261212100000
+	campaignDialer       int64 = 20261214100000
 )
 
 // CampaignDialerMigrationSuite stops a database of its own just before the dialer schema,
