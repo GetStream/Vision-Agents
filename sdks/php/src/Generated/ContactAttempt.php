@@ -15,12 +15,14 @@ final readonly class ContactAttempt
         public int $attempt,
         // 1, or 2 for the second call of a double dial.
         public int $dial,
-        // answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or abandoned; empty wh...
+        // Why the dial placed no call: invalid_number, refused, deferred, paused or not_placed (the router stopped be...
         public string $result,
         public \DateTimeImmutable $startedAt,
         public ?string $callId = null,
+        // How the call the dial placed ended, as the phone says. Absent while it is happening and for a dial that pla...
+        public CallOutcome|string|null $callOutcome = null,
         public ?\DateTimeImmutable $endedAt = null,
-        // The outcome an answered call was read as.
+        // The outcome an answered call was read as: no_response when nobody but the agent spoke.
         public ?string $outcome = null,
     ) {
     }
@@ -36,6 +38,7 @@ final readonly class ContactAttempt
             result: Json::string($data, 'result'),
             startedAt: Json::date($data, 'started_at'),
             callId: array_key_exists('call_id', $data) && $data['call_id'] !== null ? Json::string($data, 'call_id') : null,
+            callOutcome: array_key_exists('call_outcome', $data) && $data['call_outcome'] !== null ? Json::enum($data, 'call_outcome', CallOutcome::class) : null,
             endedAt: array_key_exists('ended_at', $data) && $data['ended_at'] !== null ? Json::date($data, 'ended_at') : null,
             outcome: array_key_exists('outcome', $data) && $data['outcome'] !== null ? Json::string($data, 'outcome') : null,
         );
@@ -55,6 +58,9 @@ final readonly class ContactAttempt
         $out['started_at'] = Json::dateValue($this->startedAt);
         if ($this->callId !== null) {
             $out['call_id'] = $this->callId;
+        }
+        if ($this->callOutcome !== null) {
+            $out['call_outcome'] = Json::enumValue($this->callOutcome);
         }
         if ($this->endedAt !== null) {
             $out['ended_at'] = Json::dateValue($this->endedAt);

@@ -94,6 +94,7 @@ from .calling_hours_windows import CallingHoursWindows
 from .calling_window import CallingWindow
 from .campaign import Campaign
 from .campaign_analytics import CampaignAnalytics
+from .campaign_analytics_call_outcomes import CampaignAnalyticsCallOutcomes
 from .campaign_analytics_outcomes import CampaignAnalyticsOutcomes
 from .campaign_attempt import CampaignAttempt
 from .campaign_dial_day import CampaignDialDay
@@ -711,6 +712,7 @@ __all__ = (
     "CallingWindow",
     "Campaign",
     "CampaignAnalytics",
+    "CampaignAnalyticsCallOutcomes",
     "CampaignAnalyticsOutcomes",
     "CampaignAttempt",
     "CampaignDialDay",

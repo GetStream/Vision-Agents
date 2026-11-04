@@ -63,13 +63,13 @@ class ErrorDetail:
             launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a
             400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for
             agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url,
-            limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and
-            voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a
-            date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-
-            shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the
-            user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now
-            and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More
-            may be added, so a client should expect one it does not know.
+            limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A
+            scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time
+            or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an
+            in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the
+            config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier
+            than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added,
+            so a client should expect one it does not know.
         doc_url (str): Where the code is explained.
         message (str): What went wrong, for a person to read. Its wording may change; branch on code.
         type_ (ErrorType): The kind of failure, which decides the status it is answered with: invalid_request 400,

@@ -288,7 +288,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          description: Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+          description: Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
           type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
@@ -507,7 +507,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          description: 'Whether each phone call under this agent writes an episode card into the caller''s omni-channel: an agent channel for each caller number and agent, keyed by the caller''s E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
+          description: 'Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person''s omni-channel: an agent channel for each person and agent, keyed by the caller''s E.164 number or by the app chat''s Stream user id. On, a session on a thread channel, on an app chat''s agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. An app chat''s agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
           type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
@@ -686,7 +686,7 @@ components:
         - type
       type: object
     AgentConnectorSelectionType:
-      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+      description: fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
       enum:
         - fixed
         - session
@@ -948,6 +948,31 @@ components:
         progressive:
           description: Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
           type: boolean
+      type: object
+    AgentUser:
+      properties:
+        phone:
+          description: The number linked to the user, in E.164; null when none is.
+          example: "+15551234567"
+          nullable: true
+          type: string
+        user_id:
+          description: The Stream user id, as the app's own token signs it.
+          type: string
+      required:
+        - user_id
+        - phone
+      type: object
+    AgentUserRequest:
+      description: 'Who one of the app''s users is, as the app''s backend knows it. phone is required: a number, or null for none.'
+      properties:
+        phone:
+          description: 'The user''s phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent''s episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user''s cards. A new number takes the place of the old one, which reads none of the user''s cards from then on. A number linked to another user of the app is refused (409 phone_taken).'
+          example: "+15551234567"
+          nullable: true
+          type: string
+      required:
+        - phone
       type: object
     AnalyzeReviewsRequest:
       properties:
@@ -2985,7 +3010,7 @@ components:
         - created_at
       type: object
     ConnectorAuditAction:
-      description: 'grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app''s backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.'
+      description: 'grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app''s backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app''s backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.'
       enum:
         - grant_created
         - grant_refreshed
@@ -3051,7 +3076,7 @@ components:
         owner_type:
           $ref: '#/components/schemas/ConnectionOwnerType'
         reason:
-          description: 'Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.'
+          description: 'Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.'
           type: string
         request_id:
           description: The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -4526,7 +4551,7 @@ components:
     ErrorDetail:
       properties:
         code:
-          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer''s own key here, and the message names the ones that are), campaign_locked (a 409: the campaign''s state does not allow the change, such as a launched campaign''s sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
+          description: 'What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody''s edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection''s messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization''s credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization''s spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization''s own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent''s limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant''s expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token''s usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller''s app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer''s own key here, and the message names the ones that are), campaign_locked (a 409: the campaign''s state does not allow the change, such as a launched campaign''s sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.'
           type: string
         doc_url:
           description: Where the code is explained.
@@ -4982,7 +5007,7 @@ components:
           format: int64
           type: integer
         instructions:
-          description: 'The system prompt: the agent''s instructions, skills and plugin guidance.'
+          description: 'The system prompt: the agent''s instructions, skills and connector guidance.'
           format: int64
           type: integer
         messages:
@@ -6584,7 +6609,7 @@ components:
           maxItems: 32
           type: array
         user:
-          description: 'Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person''s own account, such as google_calendar, is connected by each end user, and one reaching the company''s, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.'
+          description: 'Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person''s own account, such as google_calendar, is connected by each end user, and one reaching the company''s, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.'
           type: boolean
       required:
         - name
@@ -17929,7 +17954,7 @@ paths:
         message_start and message_end are offsets in Unicode code points into the text of the Chat message the reply is written into, the one whose turn_id names the turn, from message_start up to message_end. They are left out where the router does not know them.
         `connector_unavailable` names an optional connector binding the session opened without: name (its alias), connector_id and reason, one of no_selection, shared_session, caller_unverified, connection_unavailable, provider_mismatch, needs_reauthorization, credential_rejected (the provider rejected the token or key a bearer or api_key connection holds, or the connection reads a connector revision marked broken; only saving its credentials again fixes it, so no login is offered), not_connected, open_failed, tool_unavailable and selection_dropped (a fork's or a reopened chat's selection for an alias its config no longer declares). Every watcher is sent each one when it attaches.
         `connector_scope_required` says a connector tool call was refused because the caller's own connection lacks access the provider asked for (insufficient_scope or a claims challenge), and a step-up consent was begun for it: name (the binding's alias), connector_id, connection_id, scopes (what the provider asked for, empty for a claims challenge), authorization_id, launch_url, handoff_token and expires_at. A page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url: the launch page takes the handoff from that origin only, and the consent goes back to the session's return_url, or else to the dashboard. The old grant keeps working until the step-up succeeds, and the same call works afterwards in the same session. While that step-up is open, calls refused for the same access send no second event.
-        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A plugin_authorization attachment asks the end user to connect a plugin the reply needed, with plugin_id, title, authorize_url, text, thumb_url and title_link: a client shows it as a button opening authorize_url. Once the user finishes that login the message is sent again with the attachment's status set to connected. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is running again with authorization.status connected and no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at the provider, declines the login (declined); a consent that ended otherwise without connecting, such as with another account, is failed, and one not finished by expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
+        Persistent text sessions also emit `conversation_updated` with conversation_id and a complete message snapshot: id, request_id, question_id, role, text, state, response_started_at, state_started_at, finished_at, duration_ms, saved, persistence_error, refused (true on a reply the prompt injection screen refused) and attachments. Each tool_calling attachment has tool_call_id, name, title, status, phase, summary, immutable started_at, execution_started_at, finished_at and duration_ms. A connector_authorization attachment asks the end user to connect a connector binding the reply needed with their own account, with name (the binding's alias), connector_id, connection_id, authorization_id, title, launch_url, handoff_token and expires_at: a page of the session's return_url's origin, or the dashboard for a session created without one, opens launch_url in a popup and posts it handoff_token, as for a createAuthorization with that return_url, and the consent goes back to the session's return_url, or else to the dashboard. Once the user finishes that login the message is sent again with status connected and no handoff_token, and the agent carries on by itself. The call that needed the login waits for it on its own ai_tool_call step, in parts: status awaiting_authorization, target_user_id the caller, and an authorization of type oauth with provider (the connector id), provider_name, title, message, url (the launch page), handoff_token and expires_at. A page of the return_url's origin opens url and posts it handoff_token; a native app opens url#handoff_token=<handoff_token> in its web authentication sheet. Connected, the step is running again with authorization.status connected and no handoff_token, and the call runs in the same reply. A tool_approval naming its tool_call_id with allowed false, or the person refusing at the provider, declines the login (declined); a consent that ended otherwise without connecting, such as with another account, is failed, and one not finished by expires_at is expired. Each way the step is cancelled, authorization.status says how, and the call runs nothing. Activity states are thinking, queued, tools, writing, completed, failed and cancelled. tool_started includes tool_call_id, tool, turn_id and started_at, and pre_speech when the tool's connector binding sets one in its policy; tool_ran also includes tool_call_id, and files when the tool was run_code, as on task_settled.
         A respond command carrying request_id emits command_accepted with a nested command receipt (request_id, user_message_id, assistant_message_id, state, duplicate). Personal persistent text sessions require this ID. A retry with the same text and images returns the existing IDs without invoking the model again; reuse with different content emits an error. Its images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, user_message_id is empty, and a reused id is answered as a duplicate even with other text or images. After restart an interrupted command is reported, not rerun.
         An `interrupt` command carrying `request_id` stops that command and emits `command_stopped` with its terminal receipt. A stop arriving after its command finished replays that command's receipt and leaves the command running now alone; an unknown command is reported as an error. Without `request_id` the frame stops whichever reply is current, which is what a caller with no command to name means by it.
         A `decision` frame is one judgement the conversation made, carrying the same fields as a CallEvent. Together they are why the call went the way it did, and they are also written down, so a finished call replays them from `/v1/agents/calls/{id}/events`.
@@ -18578,7 +18603,7 @@ paths:
       x-client-accessible: true
   /v1/agents/sessions/{id}/tools:
     get:
-      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its plugins'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
+      description: 'The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent''s own, its connectors'' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.'
       operationId: listSessionTools
       parameters:
         - description: The resource, as returned when it was created.
@@ -19459,6 +19484,63 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
+  /v1/agents/users/{user_id}:
+    put:
+      description: |-
+        Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: updateUser
+      parameters:
+        - description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
+          in: path
+          name: user_id
+          required: true
+          schema:
+            description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
+            minLength: 1
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentUserRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentUser'
+          description: The user as the router now holds it
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Link a user to a phone number
   /v1/agents/users/{user_id}/connections:
     delete:
       description: |-

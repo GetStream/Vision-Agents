@@ -11,6 +11,9 @@ use GetStream\VisionAgents\Json;
 final readonly class CampaignAnalytics
 {
     public function __construct(
+        // Calls placed that ended, by how the phone says they ended: completed, busy, no_answer, failed, canceled or...
+        /** @var array<string, mixed> */
+        public array $callOutcomes,
         // Contacts who answered at least one call.
         public int $connected,
         // converted / dialed, 0 when nobody was dialed.
@@ -34,6 +37,7 @@ final readonly class CampaignAnalytics
     public static function fromArray(array $data): self
     {
         return new self(
+            callOutcomes: Json::object($data, 'call_outcomes'),
             connected: Json::int($data, 'connected'),
             conversionRate: Json::float($data, 'conversion_rate'),
             converted: Json::int($data, 'converted'),
@@ -51,6 +55,7 @@ final readonly class CampaignAnalytics
     public function toArray(): array
     {
         $out = [];
+        $out['call_outcomes'] = Json::objectValue($this->callOutcomes);
         $out['connected'] = $this->connected;
         $out['conversion_rate'] = $this->conversionRate;
         $out['converted'] = $this->converted;

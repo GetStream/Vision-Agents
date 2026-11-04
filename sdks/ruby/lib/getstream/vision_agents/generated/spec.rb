@@ -1964,8 +1964,8 @@ module GetStream
           required: %w[id name type state config_id from_number default_country concurrency sequence calling_hours tags created_at contacts].freeze, open: false
         }.freeze,
         "CampaignAnalytics" => {
-          properties: %w[connected conversion_rate converted dialed dials_per_day outcomes].freeze,
-          required: %w[dialed connected converted conversion_rate outcomes dials_per_day].freeze, open: false
+          properties: %w[call_outcomes connected conversion_rate converted dialed dials_per_day outcomes].freeze,
+          required: %w[dialed connected converted conversion_rate outcomes call_outcomes dials_per_day].freeze, open: false
         }.freeze,
         "CampaignAttempt" => {
           properties: %w[delay_minutes].freeze,
@@ -2236,7 +2236,7 @@ module GetStream
           required: %w[id to_number variables zone stage attempts_made attempts_total converted created_at].freeze, open: false
         }.freeze,
         "ContactAttempt" => {
-          properties: %w[attempt call_id dial ended_at outcome result started_at].freeze,
+          properties: %w[attempt call_id call_outcome dial ended_at outcome result started_at].freeze,
           required: %w[attempt dial result started_at].freeze, open: false
         }.freeze,
         "ContactCounts" => {

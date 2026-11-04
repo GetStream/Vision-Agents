@@ -8,6 +8,7 @@ from attrs import field as _attrs_field
 from typing_extensions import Self
 
 if TYPE_CHECKING:
+    from ..models.campaign_analytics_call_outcomes import CampaignAnalyticsCallOutcomes
     from ..models.campaign_analytics_outcomes import CampaignAnalyticsOutcomes
     from ..models.campaign_dial_day import CampaignDialDay
 
@@ -19,6 +20,8 @@ T = TypeVar("T", bound="CampaignAnalytics")
 class CampaignAnalytics:
     """
     Attributes:
+        call_outcomes (CampaignAnalyticsCallOutcomes): Calls placed that ended, by how the phone says they ended:
+            completed, busy, no_answer, failed, canceled or unknown. A call an answering machine took is completed.
         connected (int): Contacts who answered at least one call.
         conversion_rate (float): converted / dialed, 0 when nobody was dialed.
         converted (int): Contacts that ended successfully.
@@ -27,6 +30,7 @@ class CampaignAnalytics:
         outcomes (CampaignAnalyticsOutcomes): Contacts that are done, by outcome id, no_response included.
     """
 
+    call_outcomes: CampaignAnalyticsCallOutcomes
     connected: int
     conversion_rate: float
     converted: int
@@ -36,6 +40,8 @@ class CampaignAnalytics:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
+        call_outcomes = self.call_outcomes.to_dict()
+
         connected = self.connected
 
         conversion_rate = self.conversion_rate
@@ -55,6 +61,7 @@ class CampaignAnalytics:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
+                "call_outcomes": call_outcomes,
                 "connected": connected,
                 "conversion_rate": conversion_rate,
                 "converted": converted,
@@ -68,10 +75,15 @@ class CampaignAnalytics:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.campaign_analytics_call_outcomes import (
+            CampaignAnalyticsCallOutcomes,
+        )
         from ..models.campaign_analytics_outcomes import CampaignAnalyticsOutcomes
         from ..models.campaign_dial_day import CampaignDialDay
 
         d = dict(src_dict)
+        call_outcomes = CampaignAnalyticsCallOutcomes.from_dict(d.pop("call_outcomes"))
+
         connected = d.pop("connected")
 
         conversion_rate = d.pop("conversion_rate")
@@ -90,6 +102,7 @@ class CampaignAnalytics:
         outcomes = CampaignAnalyticsOutcomes.from_dict(d.pop("outcomes"))
 
         campaign_analytics = cls(
+            call_outcomes=call_outcomes,
             connected=connected,
             conversion_rate=conversion_rate,
             converted=converted,

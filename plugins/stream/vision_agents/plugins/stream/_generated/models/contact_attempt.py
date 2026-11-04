@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.call_outcome import CallOutcome
 from ..types import UNSET, Unset
 
 T = TypeVar("T", bound="ContactAttempt")
@@ -19,12 +20,20 @@ class ContactAttempt:
     Attributes:
         attempt (int): Which attempt of the sequence, from 1.
         dial (int): 1, or 2 for the second call of a double dial.
-        result (str): answered, unanswered, voicemail, invalid_number, refused, deferred, paused, canceled or abandoned;
-            empty while the call is happening. Only answered, unanswered and voicemail placed a call that ended.
+        result (str): Why the dial placed no call: invalid_number, refused, deferred, paused or not_placed (the router
+            stopped before the call went out). voicemail for a call an answering machine took. Empty for any other call,
+            whose end call_outcome says.
         started_at (datetime.datetime):
         call_id (str | Unset):
+        call_outcome (CallOutcome | Unset): How a placed call ended.
+            completed: the person answered and the call ended.
+            busy: the line was busy or the person declined.
+            no_answer: it rang and nobody answered.
+            failed: the vendor could not place it, for a bad number or a carrier fault.
+            canceled: the vendor says the call was hung up before an answer.
+            unknown: the vendor reports nothing about how it ended, and the phone never joined.
         ended_at (datetime.datetime | Unset):
-        outcome (str | Unset): The outcome an answered call was read as.
+        outcome (str | Unset): The outcome an answered call was read as: no_response when nobody but the agent spoke.
     """
 
     attempt: int
@@ -32,6 +41,7 @@ class ContactAttempt:
     result: str
     started_at: datetime.datetime
     call_id: str | Unset = UNSET
+    call_outcome: CallOutcome | Unset = UNSET
     ended_at: datetime.datetime | Unset = UNSET
     outcome: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -46,6 +56,10 @@ class ContactAttempt:
         started_at = self.started_at.isoformat()
 
         call_id = self.call_id
+
+        call_outcome: str | Unset = UNSET
+        if not isinstance(self.call_outcome, Unset):
+            call_outcome = self.call_outcome.value
 
         ended_at: str | Unset = UNSET
         if not isinstance(self.ended_at, Unset):
@@ -65,6 +79,8 @@ class ContactAttempt:
         )
         if call_id is not UNSET:
             field_dict["call_id"] = call_id
+        if call_outcome is not UNSET:
+            field_dict["call_outcome"] = call_outcome
         if ended_at is not UNSET:
             field_dict["ended_at"] = ended_at
         if outcome is not UNSET:
@@ -85,6 +101,13 @@ class ContactAttempt:
 
         call_id = d.pop("call_id", UNSET)
 
+        _call_outcome = d.pop("call_outcome", UNSET)
+        call_outcome: CallOutcome | Unset
+        if isinstance(_call_outcome, Unset):
+            call_outcome = UNSET
+        else:
+            call_outcome = CallOutcome(_call_outcome)
+
         _ended_at = d.pop("ended_at", UNSET)
         ended_at: datetime.datetime | Unset
         if isinstance(_ended_at, Unset):
@@ -100,6 +123,7 @@ class ContactAttempt:
             result=result,
             started_at=started_at,
             call_id=call_id,
+            call_outcome=call_outcome,
             ended_at=ended_at,
             outcome=outcome,
         )

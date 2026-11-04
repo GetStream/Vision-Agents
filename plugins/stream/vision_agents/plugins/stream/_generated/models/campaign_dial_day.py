@@ -15,7 +15,7 @@ T = TypeVar("T", bound="CampaignDialDay")
 class CampaignDialDay:
     """
     Attributes:
-        answered (int):
+        answered (int): Calls a person picked up and spoke on.
         date (datetime.date): YYYY-MM-DD, in UTC.
         dials (int): Calls placed, answering machines included.
         voicemail (int): Calls an answering machine took.

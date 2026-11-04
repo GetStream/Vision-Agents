@@ -11,6 +11,7 @@ use GetStream\VisionAgents\Json;
 final readonly class CampaignDialDay
 {
     public function __construct(
+        // Calls a person picked up and spoke on.
         public int $answered,
         // YYYY-MM-DD, in UTC.
         public string $date,
