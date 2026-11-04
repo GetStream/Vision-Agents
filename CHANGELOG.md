@@ -25,7 +25,7 @@ Under an agent config with `episode_cards` on, a person's message in a plain `ag
 
 ### The person's own device reads their app chat's cards
 
-Under an agent config with `episode_cards` on, a session the person's own app opens with their user token now starts with their episode cards, as the app chat's session does: the cards of that Stream user, in the session's Stream app, under that agent config. Text and voice sessions both read them; a call with a phone number on it still reads the number's. A guest, an anonymous caller, a backend naming a user, and a scheduled task's session read none. Neither this session nor the app chat's reads any card in a Stream app whose auth checks are off, or one Stream cannot be asked about. A config with `episode_cards` off reads nothing new (AI-2709, #1727).
+Under an agent config with `episode_cards` on, a session the person's own app opens with their user token now starts with their episode cards, as the app chat's session does: the cards of that Stream user, in the session's Stream app, under that agent config. Text and voice sessions both read them, unless somebody else reads the answers: a conversation shared with its members or with any other member, or a call anybody else is on, reads none. A call with a phone number on it still reads the number's. A guest, an anonymous caller, a backend naming a user, and a scheduled task's session read none. Neither this session nor the app chat's reads any card in a Stream app whose auth checks are off, or one Stream cannot be asked about. A config with `episode_cards` off reads nothing new (AI-2709, #1727).
 
 ### A personal conversation takes a video with a question
 
