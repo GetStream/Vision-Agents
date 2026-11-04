@@ -778,14 +778,15 @@ func (s *Server) assignMessage(ctx context.Context, customerID string, message d
 
 // followUpMessage answers a message in the channel a running session answers for its worker
 // (session.Spec.Dispatched), once the reply it may still be writing is done, as a thread's
-// session answers one (answerClaimed).
+// session answers one (answerClaimed): with what its voice recording says and its photos, read
+// once for every try.
 func (s *Server) followUpMessage(origin hookOrigin, found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 	followUpID := "message_" + store.NewID()
-	text := s.heardText(ctx, found.Spec(), origin, event)
+	text, images := s.messagePhotos(ctx, found.SeesImages(), s.heardText(ctx, found.Spec(), origin, event), event)
 	for {
-		err := found.FollowUp(ctx, followUpID, text, nil)
+		err := found.FollowUp(ctx, followUpID, text, images)
 		if errors.Is(err, conversation.ErrResponseRunning) && ctx.Err() == nil {
 			time.Sleep(threadTurnPoll)
 			continue

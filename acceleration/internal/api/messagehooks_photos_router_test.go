@@ -142,22 +142,12 @@ func (s *MessageHooksSuite) TestAnOldWorkersEmptySocketRespondWithNoRequestIDToA
 	s.Equal([]string{""}, s.inTheChannel(), "the person's photo is left without a reply")
 }
 
-// Control, as on base (4f52691c5): a second photo sent alone to a session a worker opened for
-// the channel is followed up by the router itself, which asks the model with the text the
-// message holds, empty, and writes the reply. Only a worker's own empty respond is refused.
-func (s *MessageHooksSuite) TestASecondPhotoSentAloneToAWorkersRunningSessionIsAskedAndAnswered() {
-	worker := s.workerOf(s.customerID())
-	person, first := "sam", "is this fan broken?"
-	_, err := s.chat.Client.Chat().GetOrCreateChannel(context.Background(), chatlog.ChannelType, s.channelID,
-		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{CreatedByID: &person}})
-	s.Require().NoError(err)
-	_, err = s.chat.Client.Chat().SendMessage(context.Background(), chatlog.ChannelType, s.channelID,
-		&getstream.SendMessageRequest{Message: getstream.MessageRequest{UserID: &person, Text: &first}})
-	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), first))
-	handed := s.handed(worker)
-	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: pointerTo("vision/vision-model")})
-	s.Require().NotEmpty(opened.Id)
+// TestASecondPhotoSentAloneToAWorkersRunningSessionShowsTheModelThePhoto fails on base, where the
+// router followed it up with the message's empty text and no photo: a turn with nothing in it,
+// which Gemini refuses ("Requests ending with a model turn are not supported"). The model is
+// asked once, with the photo, and the reply is written (AI-2679).
+func (s *MessageHooksSuite) TestASecondPhotoSentAloneToAWorkersRunningSessionShowsTheModelThePhoto() {
+	first := s.workerAnswering("vision/vision-model")
 	seen := len(s.vision.requests())
 
 	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/photo.png")))
@@ -165,7 +155,98 @@ func (s *MessageHooksSuite) TestASecondPhotoSentAloneToAWorkersRunningSessionIsA
 	s.answered(first, finishedReply)
 	asked := s.vision.requests()[seen:]
 	s.Require().Len(asked, 1, "the model was asked once")
-	s.Equal("", s.lastTurn(asked).Content)
+	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(s.lastTurn(asked)))
+}
+
+// TestAPhotoSentWithTextToAWorkersRunningSessionShowsTheModelBoth fails on base, where only the
+// text reached the model.
+func (s *MessageHooksSuite) TestAPhotoSentWithTextToAWorkersRunningSessionShowsTheModelBoth() {
+	s.workerAnswering("vision/vision-model")
+	seen := len(s.vision.requests())
+	question := "and this one? " + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), question, s.photoAt("/photo.png"), s.photoAt("/other.png")))
+
+	turn := s.askedOf(s.vision, seen)
+	s.Equal(question, turn.Content+llm.TextOf(turn.Parts))
+	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}, {Data: pngStart, MIME: "image/png"}}, imagesIn(turn))
+}
+
+// TestAWorkersRunningSessionThatCannotSeeSaysSo fails on base, where a photo sent alone was a
+// turn with nothing in it: a session whose model cannot see is told of the photo, as a running
+// session answering in writing is, and so is one sent with text.
+func (s *MessageHooksSuite) TestAWorkersRunningSessionThatCannotSeeSaysSo() {
+	s.workerAnswering("holding/holding-model")
+	seen := len(s.holding.requests())
+	question := "and this one? " + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/photo.png")))
+	alone := s.askedOf(s.holding, seen)
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), question, s.photoAt("/photo.png")))
+	withText := s.askedOf(s.holding, seen+1)
+
+	s.Equal(unseenPhoto, alone.Content+llm.TextOf(alone.Parts))
+	s.Empty(imagesIn(alone))
+	s.Equal(question+"\n\n"+unseenPhotoWithText, withText.Content+llm.TextOf(withText.Parts))
+	s.Empty(imagesIn(withText))
+}
+
+// TestAPhotoAWorkersRunningSessionCannotFetchIsDroppedAndSaidSo fails on base, where the photo
+// was dropped unsaid: the model is told it could not be opened.
+func (s *MessageHooksSuite) TestAPhotoAWorkersRunningSessionCannotFetchIsDroppedAndSaidSo() {
+	s.workerAnswering("vision/vision-model")
+	seen := len(s.vision.requests())
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/gone.png")))
+
+	turn := s.askedOf(s.vision, seen)
+	s.Equal(unfetchedPhoto, turn.Content+llm.TextOf(turn.Parts))
+	s.Empty(imagesIn(turn))
+}
+
+// TestAVoiceRecordingSentWithAPhotoToAWorkersRunningSessionReachesItsModelWithBoth fails on base,
+// where what the recording says reached the model without the photo.
+func (s *MessageHooksSuite) TestAVoiceRecordingSentWithAPhotoToAWorkersRunningSessionReachesItsModelWithBoth() {
+	s.workerAnswering("vision/vision-model")
+	seen := len(s.vision.requests())
+	said := "and what about this one " + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream",
+		s.recordedMessage(s.namesConfig(), "", s.recordingAt(said), s.photoAt("/photo.png"))))
+
+	turn := s.askedOf(s.vision, seen)
+	s.Equal(said, turn.Content+llm.TextOf(turn.Parts))
+	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(turn))
+}
+
+// A message of blanks alone to a worker's running session has nothing to answer: the model is
+// not asked and nothing is written.
+func (s *MessageHooksSuite) TestABlankMessageToAWorkersRunningSessionIsNotAnswered() {
+	first := s.workerAnswering("vision/vision-model")
+	seen := len(s.vision.requests())
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "  \n "))
+
+	s.Never(func() bool { return len(s.vision.requests()) > seen || len(s.inTheChannel()) > 1 }, dropped, 10*time.Millisecond,
+		"a blank message was asked or answered")
+	s.Equal([]string{first}, s.inTheChannel())
+}
+
+// Control, as on base: text alone sent to a worker's running session reaches its model as the
+// text, with nothing attached, and the reply is written.
+func (s *MessageHooksSuite) TestTextSentToAWorkersRunningSessionReachesItsModelAsBefore() {
+	first := s.workerAnswering("vision/vision-model")
+	seen := len(s.vision.requests())
+	question := "and the other one? " + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), question))
+
+	s.answered(first, finishedReply)
+	asked := s.vision.requests()[seen:]
+	s.Require().Len(asked, 1, "the model was asked once")
+	turn := s.lastTurn(asked)
+	s.Equal(question, turn.Content)
+	s.Empty(turn.Parts)
 }
 
 // Control, as on base: a worker answering over the socket with text, as on a photo sent with
@@ -416,6 +497,20 @@ func (s *MessageHooksSuite) sentWithPhotos(custom, text string, attachments ...m
 	})
 	s.Require().NoError(err)
 	return s.signedly("/v1/chat/hooks/stream", string(payload))
+}
+
+// workerAnswering writes a first message in the suite's channel, as a person in the customer's
+// app does, and opens the session its worker opens for it with model, which answers whatever
+// is written there next. It returns that first message.
+func (s *MessageHooksSuite) workerAnswering(model string) string {
+	worker := s.workerOf(s.customerID())
+	first := "is this fan broken?"
+	s.writesIn(s.channelID, first)
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), first))
+	handed := s.handed(worker)
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID, Llm: &model})
+	s.Require().NotEmpty(opened.Id)
+	return first
 }
 
 // photoAloneHandedOut writes a photo without text in the suite's channel, as a person in the
