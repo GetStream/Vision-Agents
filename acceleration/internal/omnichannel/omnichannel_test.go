@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -126,6 +127,24 @@ func (s *PersonSuite) TestAStreamUserIsKeyedByTheirUserID() {
 func (s *PersonSuite) TestAStreamUserNeedsAnID() {
 	_, err := StreamUser("")
 	s.ErrorContains(err, "a Stream user is required")
+}
+
+// An app chat's channel carries none of the router's stamps and names the agent config that
+// answers in it; only a chat card of that config may read it. A stamp, where there is one,
+// decides, and a card of any other source reads only a stamped channel.
+func (s *PersonSuite) TestOnlyAChatCardOfTheConfigAChannelNamesReadsAnUnstampedChannel() {
+	chat := store.EpisodeCard{Episode: store.Episode{CustomerID: "acme", Source: store.EpisodeChat}, AgentConfigID: "config-1"}
+	sms := chat
+	sms.Source = store.EpisodeSMS
+
+	s.True(theirs(map[string]any{configField: "config-1"}, chat))
+	s.False(theirs(map[string]any{configField: "config-2"}, chat), "another config's channel")
+	s.False(theirs(map[string]any{}, chat), "a channel naming no config")
+	s.False(theirs(map[string]any{configField: "config-1"}, sms), "an SMS card's channel is the bridge's, which stamps it")
+	s.False(theirs(map[string]any{configField: "config-1", conversation.CustomerField: "globex"}, chat), "another customer's stamp")
+	s.True(theirs(map[string]any{conversation.CustomerField: "acme"}, sms), "the customer's stamp")
+	s.False(theirs(map[string]any{configField: ""}, store.EpisodeCard{Episode: store.Episode{CustomerID: "acme", Source: store.EpisodeChat}}),
+		"a card with no config")
 }
 
 func (s *PersonSuite) TestCardsNeedAStoreAndStreamClients() {

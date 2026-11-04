@@ -6,8 +6,10 @@
 // run of messages on one external thread, gets one card there: a message with a source, the
 // episode's status, when it started and the channel that holds its raw text. The raw text
 // stays in the thread channel or the call channel. The channel bridge writes a card on a
-// thread's first message, the session manager when a call's session starts. A session under
-// an agent config that turned the cards on starts with the person's other cards (Context).
+// thread's first message, the session manager when a call's session starts, and the message
+// path (api.chatEpisode) on the first message of a run in an app chat's agent channel. A
+// session under an agent config that turned the cards on starts with the person's other cards
+// (Context).
 package omnichannel
 
 import (

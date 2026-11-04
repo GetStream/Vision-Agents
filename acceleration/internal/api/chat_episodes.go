@@ -30,8 +30,8 @@ const chatCardTimeout = 30 * time.Second
 // writes no second card. An episode or a card that fails costs the card, not the answer: it
 // is logged and the message is answered all the same.
 func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messageEvent, answering session.Spec) {
-	if s.chatCards == nil || !answering.EpisodeCards || answering.Incognito || answering.ConfigID == "" ||
-		answering.CallID != "" || strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) {
+	if s.chatCards == nil || !answering.EpisodeCards || answering.Incognito || answering.CallID != "" ||
+		strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) {
 		return
 	}
 	person, err := omnichannel.StreamUser(event.Message.User.ID)
@@ -71,9 +71,6 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 // the card, not the answer.
 func (s *Server) chatEpisodeUnopened(ctx context.Context, origin hookOrigin, event messageEvent, customerID, configID string,
 	heardFor session.Spec, recorded bool) {
-	if s.chatCards == nil || configID == "" {
-		return
-	}
 	answering := heardFor
 	if !recorded {
 		var err error

@@ -9,6 +9,12 @@ channel bridge, a thread's message        session manager, a call's session join
   Person: SlackUser(team, user)             Person: Phone(SIP caller | PhoneSpec.To)
   source slack, thread agent:thread-<id>    source call, thread agent:<agent id>
               \                               /
+              |   api.chatEpisode, an app chat's message
+              |     api.routeArrivingMessage: /v1/chat/internal/messages or the message hook
+              |     config: the running session's spec, else ownerOf's; episode_cards on
+              |     not a thread channel, an incognito or a call's session
+              |     Person: StreamUser(message.user.id); source chat, thread agent:<channel id>
+              |  /
                Cards.Open           Postgres only
                  store.MapContact   (customer, agent config, kind, address)
                                     -> omni-channel agent:omni-<uuid>
@@ -49,7 +55,7 @@ idle sweeper, every minute                     call.session_ended hook (api.endC
   with episode_cards on (startEpisodeSweeper)    matches no row and reaches no Stream
               |                                           |
   store.CloseIdleEpisodes                        store.EndCallEpisodes
-    thread episodes, last message                  call episodes of the call in the
+    thread and chat episodes, last message         call episodes of the call in the
     older than episodes.idle_after                 event's app, still in progress
               \                                          /
                status ended, ended_at, summary lease (5 min): one router wins each row
@@ -79,8 +85,8 @@ A card closed after the idle period is updated in the app its episode is pinned 
 | Term | What it is | In code |
 | --- | --- | --- |
 | omni-channel | One agent channel for each person and agent of a customer, holding one card for each episode | `store.ContactMapEntry.ConversationID` |
-| contact map | How a person is known (an E.164 number, or a Slack user) to their omni-channel | table `contact_map`, `store.MapContact` |
-| episode | One call, or one run of messages on one external thread | table `episodes`, `store.OpenEpisode` |
+| contact map | How a person is known (an E.164 number, a Slack user, or a Stream user of the app chat) to their omni-channel | table `contact_map`, `store.MapContact` |
+| episode | One call, or one run of messages on one external thread or in one agent channel of the app chat | table `episodes`, `store.OpenEpisode` |
 | episode card | The episode's one message in the omni-channel | `Cards.Write` |
 
 ## Rules
@@ -91,6 +97,10 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **Call cards are opt-in.** Only a session under an agent config with `episode_cards` on writes one, so a call under any other config reads nothing of its call and writes nothing, as before the cards existed. Slack cards come from the channel bridge, which is new.
 - **The raw text stays where it is.** A call keeps its transcript in its call channel; a thread in its thread channel. The card names that channel.
 - **A Slack user is a person of their own** until account linking: keyed by workspace and user, so one person's Slack threads share an omni-channel.
+- **The app chat's person is the Stream user who wrote**: `message.user.id`, which Stream signed through the customer's own token, never a custom field of the user (a user may update their own user). Example: Anya (`anya_123`) writes in `agent:chat-1`; her card goes to the omni-channel of `stream_user:anya_123`.
+- **App chat cards are opt-in.** Only a message answered under an agent config with `episode_cards` on opens an episode: the running session's spec, else the config `ownerOf` finds. Off, nothing is read or written beyond the config itself. A message with a source (the agent's own reply), a thread channel's (the bridge's), an incognito session's and a call session's open none: a chat episode in a call's channel would end the call card's lines at its start (`until`).
+- **One chat episode per run of messages.** Every message calls `Open`, which keeps the episode open; only the message that opened it writes a card. A delivery Stream makes again, or the queue tries again, finds the open episode (`episodes_open_thread`) and writes nothing. A card that fails costs the card, not the answer: logged at ERROR, and the message is answered. A hook's card is written off its request, as its answer is.
+- **An app chat's channel is the customer's by the config it names.** The customer's app makes it with `agent_config_id` and none of the router's stamps, so `linesOf` reads it for a chat card of that config (`theirs`); a stamped channel is read only for the customer it names.
 - **Reading cards is opt-in too.** Off, `callCards.read` returns before any read, and the session is handed what it was before. Example: an SMS thread session under a config without `episode_cards` reads its thread as before and nothing else.
 - **A person's cards are their omni-channel's.** `store.EpisodeCards` takes the contact rows of the same customer and agent that point at the omni-channel, so a linked Slack row and a phone row are one person, and the same number under another agent or customer is another. Example: `+15550100199`'s cards are never read for `+15550100100`.
 - **A shared thread reads no cards.** A thread's cards are of the one who started it. Example: Bob writes in Alice's Slack thread; the session reads none of Alice's cards.
@@ -103,7 +113,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **A card with nothing to say is skipped, not a stop.** `render` passes over a card with neither a summary nor a line, so the older cards are still read. Example: a call in a named channel at -60 s does not hide an SMS at -120 s.
 - **An episode closes once, whatever the number of routers.** Each close is one transaction whose row lock one router wins (`FOR UPDATE SKIP LOCKED`, then the status and the last message checked again), and the winner holds the summary for `summaryLease`. Example: two routers sweep at the same second; each idle thread gets one summary.
 - **A message keeps its thread open.** `store.OpenEpisode` sets `episode_activity.last_message_at` with each message, in the statement that finds the episode open and holds it against a close; a message that arrives after the close opens the next episode and card.
-- **A call ends with its call, never as idle.** The sweeper closes thread episodes only (`session_id IS NULL`).
+- **A call ends with its call, never as idle.** The sweeper closes thread and chat episodes only (`session_id IS NULL`): a chat episode has no session, so it closes after `episodes.idle_after` as a thread's does.
 - **A failed summary keeps the raw text.** `summary_failed` changes the card's status only; the thread channel is never written. A call in a channel its session named gives no lines (`linesOf`), so its summary fails rather than mix in another caller's words.
 - **The summary is the config's own LLM**, the agent config's `llm`, or `llm-fast` (a session's default) when it names none. It is not written to memory (follow-up: memory's `Scope.UserID` is «the customer», not the person from the contact map).
 - **Card text is data.** The cards come as one user message, behind `cardsAttribution`, as restored shared history comes behind conversation's note.
@@ -128,7 +138,8 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - The summary is not written to memory: it would change what `memory.Scope.UserID` means (`internal/memory/memory.go:31-32`).
 - A call whose `call.session_ended` arrives before its card's episode is opened (the card is written off the session's start) stays in progress: the sweeper closes thread episodes only.
 - The sweeper's gate is read once, at start: a config that turns `episode_cards` on later has its calls closed by the hook, and its expired summary leases taken from the next start.
-- A text session on a channel other than a thread channel reads no cards: the contact map keys no in-app user yet (`contact_map.user_id`, T62).
+- A text session on a channel other than a thread channel reads no cards yet: the app chat writes its cards (`stream_user`), and reading them is the next change.
+- A Stream user is keyed by user id alone, under the customer and the agent config: a customer whose config answers in two Stream apps has one person for a user id in both.
 - A session a caller opens on a thread channel through the API and keeps open is checked for a shared thread once, when it opens; the Router's own sessions open for each turn (`api.answerThread`).
 
 ## Tests
@@ -136,7 +147,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 ```bash
 go test ./internal/omnichannel
 ROUTER_POSTGRES_DSN=... ROUTER_REDIS_ADDR=... \
-  go test -tags integration -run 'TestEpisodeCardsSuite|TestSlackChannelSuite' ./internal/api
+  go test -tags integration -run 'TestEpisodeCardsSuite|TestSlackChannelSuite|TestChatEpisodesSuite' ./internal/api
 ROUTER_POSTGRES_DSN=... go test -tags integration -run TestEpisodeReadingSuite ./internal/session
 ROUTER_POSTGRES_DSN=... go test -tags integration -run TestCloserSuite ./internal/omnichannel
 ROUTER_POSTGRES_DSN=... go test -tags integration -run TestEpisodeSweeperSuite ./cmd/router

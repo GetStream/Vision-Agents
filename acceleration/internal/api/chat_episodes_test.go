@@ -77,6 +77,19 @@ func (s *ChatEpisodesSuite) TestAChatMessageWritesOneCardAndTheNextOneKeepsItsEp
 	s.Equal(1, s.contacts())
 }
 
+// Catches the message webhook's path left out: Stream waits on the hook, so the card is
+// written off its request, and is written all the same.
+func (s *ChatEpisodesSuite) TestAChatMessageTheWebhookBringsWritesACard() {
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", s.written(config.ID, "where is my order?"), suiteStreamSecret))
+
+	s.True(s.reachesWorker(worker), "the message is answered")
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+}
+
 // Catches a redelivery that opens a second episode or writes a second card: the queue's worker
 // tries a row again when its lease runs out, after a try that opened the episode.
 func (s *ChatEpisodesSuite) TestAQueuedMessageTriedAgainOpensNoSecondEpisode() {
@@ -97,6 +110,7 @@ func (s *ChatEpisodesSuite) TestAQueuedMessageTriedAgainOpensNoSecondEpisode() {
 	s.False(s.reachesWorker(worker), "one delivery is one answer")
 	s.Never(func() bool { return len(s.chat.Stored(omni)) > 1 }, dropped, 20*time.Millisecond, "a second card")
 	s.Equal(1, s.episodeCount())
+	s.Equal(1, s.cardWrites(omni), "the card is written once, not again under its own id")
 }
 
 // The control: a config without episode_cards answers as at base c9a61fc90, where the probe
@@ -236,7 +250,13 @@ func (s *ChatEpisodesSuite) TestStreamRefusingTheCardStillAnswersTheMessage() {
 // writes delivers, as Stream Chat does, a message the test's user wrote in the test's channel,
 // which names the config given, and answers the status.
 func (s *ChatEpisodesSuite) writes(configID, text string) int {
-	body := fmt.Sprintf(`{
+	return s.delivers(&s.RouterSuite, s.written(configID, text), s.current)
+}
+
+// written is a message.new the test's user wrote in the test's channel, which names the
+// config given.
+func (s *ChatEpisodesSuite) written(configID, text string) string {
+	return fmt.Sprintf(`{
   "type": "message.new",
   "app_id": %d,
   "channel_id": %q,
@@ -246,7 +266,6 @@ func (s *ChatEpisodesSuite) writes(configID, text string) int {
   "message": {"id": %q, "text": %q, "user": {"id": %q, "name": "Anya"}}
 }`, suiteStreamApp, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), ConfigField, configID,
 		"message-"+s.utils.uuid(), text, s.user)
-	return s.delivers(&s.RouterSuite, body, s.current)
 }
 
 // config is a text agent of the test's app on the LLM named, with episode cards on or off.
@@ -291,6 +310,17 @@ func (s *ChatEpisodesSuite) cards(omni string, count int) []map[string]any {
 	s.Require().Eventually(func() bool { return len(s.chat.Stored(omni)) >= count }, settleFor, 10*time.Millisecond,
 		"%s holds %d cards, not %d", omni, len(s.chat.Stored(omni)), count)
 	return s.chat.Stored(omni)
+}
+
+// cardWrites is how many times Stream was asked to send a message into an omni-channel.
+func (s *ChatEpisodesSuite) cardWrites(omni string) int {
+	sent := 0
+	for _, request := range s.chat.Requests(suiteStreamKey) {
+		if request.Method == http.MethodPost && strings.HasSuffix(request.Path, "/agent/"+omni+"/message") {
+			sent++
+		}
+	}
+	return sent
 }
 
 // lastMessage is when the test customer's one episode last had a message, its start while
