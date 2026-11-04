@@ -115,18 +115,33 @@ func (s *PersonSuite) TestASlackUserNeedsAWorkspace() {
 	s.ErrorContains(err, "a Slack team and a Slack user are required")
 }
 
-// The app chat's person is the Stream user who wrote, by the id Stream signed, kept as it is.
-func (s *PersonSuite) TestAStreamUserIsKeyedByTheirUserID() {
-	person, err := StreamUser("anya_123")
-
+// The app chat's person is the Stream user who wrote, by the id Stream signed, in the app the
+// message came from. Catches a key of the user id alone: the same id in another Stream app of
+// the customer is another person.
+func (s *PersonSuite) TestAStreamUserIsKeyedByTheirAppAndUserID() {
+	person, err := StreamUser(111, "anya_123")
 	s.Require().NoError(err)
-	s.Equal(Person{Kind: store.ContactStreamUser, Address: "anya_123"}, person)
+	other, err := StreamUser(222, "anya_123")
+	s.Require().NoError(err)
+
+	s.Equal(Person{Kind: store.ContactStreamUser, Address: "111:anya_123"}, person)
+	s.NotEqual(person, other, "one user id in two apps is two people")
 }
 
-// A message with no user names nobody, so it keys no contact map row.
-func (s *PersonSuite) TestAStreamUserNeedsAnID() {
-	_, err := StreamUser("")
-	s.ErrorContains(err, "a Stream user is required")
+// A message with no user, or from an app not known, names nobody, so it keys no contact map
+// row.
+func (s *PersonSuite) TestAStreamUserNeedsAnAppAndAnID() {
+	_, err := StreamUser(111, "")
+	s.ErrorContains(err, "a Stream app and a Stream user are required")
+	_, err = StreamUser(0, "anya_123")
+	s.ErrorContains(err, "a Stream app and a Stream user are required")
+}
+
+// Catches an omni-channel taken for a channel a person writes in: its id starts omni-.
+func (s *PersonSuite) TestAnOmniChannelIsKnownByItsID() {
+	s.True(IsOmniChannel("omni-01a1a46a-7c54-7651-ae2c-5c382228af38"))
+	s.False(IsOmniChannel("chat-01a1a46a"))
+	s.False(IsOmniChannel("support-omni-1"))
 }
 
 // An app chat's channel carries none of the router's stamps and names the agent config that
