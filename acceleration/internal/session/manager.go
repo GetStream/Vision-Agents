@@ -225,6 +225,8 @@ type Manager struct {
 	// the recorders open for them (ended).
 	closing int
 	ended   sync.WaitGroup
+	// retiring holds the sessions retired (Retire) until a look at them finds them ended.
+	retiring map[*Session]struct{}
 }
 
 // SetSchedulerKick hands the manager the scheduled-task worker's wake-up, so
@@ -1083,15 +1085,36 @@ const RetireWithin = 2 * time.Minute
 // conversation has ended. A choice: short against a reply of seconds.
 const retirePoll = 50 * time.Millisecond
 
+// Retire marks a session as closing once it has written the replies it owes, which its
+// caller closes it after (api.retire), and reports whether it was not retiring already. A
+// session opened on its conversation meanwhile waits for it to end (awaitRetiring), its close
+// included: Close takes it off the map before its conversation is let go.
+func (m *Manager) Retire(found *Session) bool {
+	if !found.retiring.CompareAndSwap(false, true) {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.retiring == nil {
+		m.retiring = map[*Session]struct{}{}
+	}
+	m.retiring[found] = struct{}{}
+	return true
+}
+
 // awaitRetiring waits for each retiring session holding the persistent conversation cid to
 // end, so the session being opened on it neither takes it over, cutting the replies it owes
 // short (takeOver), nor is refused it as open already. Bounded by RetireWithin, and the
-// finishWithin its close may take, and by ctx; after that it is taken over as before.
+// finishWithin its close may take, and by ctx; after that it is taken over as before. A
+// retired session found ended is forgotten.
 func (m *Manager) awaitRetiring(ctx context.Context, customer, cid string) {
 	m.mu.Lock()
 	var retiring []*Session
-	for _, found := range m.sessions {
-		if found.spec.CustomerID == customer && found.Retiring() && found.holds(cid) {
+	for found := range m.retiring {
+		switch {
+		case found.State() == Ended:
+			delete(m.retiring, found)
+		case found.spec.CustomerID == customer && found.holds(cid):
 			retiring = append(retiring, found)
 		}
 	}

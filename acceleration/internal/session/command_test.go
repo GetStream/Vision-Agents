@@ -714,6 +714,44 @@ func (s *SessionSuite) TestReopeningAConversationNobodyWatchesDoesNotWaitForItsG
 	s.Equal(running.Spec().ConversationID, reopened.Spec().ConversationID)
 }
 
+// Defect (AI-2632 R2.1): a session opened on the conversation of one retiring, closing once
+// it has written the replies it owes (Retire), is refused the conversation as open, or takes
+// it over, while that one's close still lets its reply finish. It waits for it to end
+// instead, its close included: Close takes it off the map at once.
+func (s *SessionSuite) TestASessionOpenedOnARetiringOnesConversationWaitsForItToEnd() {
+	s.persists()
+	running := s.commands()
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.Equal("First question", s.asked())
+	s.Require().True(s.manager.Retire(running))
+	s.False(s.manager.Retire(running), "a session retiring already is retired again")
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_, _ = s.manager.Close(running.ID(), OwnerOf(running.Spec()))
+	}()
+	s.eventually(func() bool {
+		_, held := s.manager.Get(running.ID(), OwnerOf(running.Spec()))
+		return !held
+	}, "the retiring session was never closed")
+	s.Require().NotEqual(Ended, running.State(), "its close no longer waits for the reply it is writing")
+
+	reopened, err := s.manager.Create(s.ctx, Spec{
+		CustomerID:          "acme",
+		Text:                true,
+		PersistConversation: true,
+		ConversationID:      running.Spec().ConversationID,
+		LLMTarget:           "en-low-latency",
+		Caller:              routing.Caller{UserID: "employee-1"},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = reopened.Close() })
+	s.Equal(Ended, running.State(), "the session was opened before the retiring one ended")
+	<-closed
+}
+
 func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestion() {
 	s.persists()
 	running := s.commands()

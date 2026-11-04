@@ -102,7 +102,7 @@ func (s *Server) ChatCardsRunning() int {
 // session.RetireWithin; a session closed meanwhile, as a draining router closes them, ends it
 // early. A session retiring already is left to the wait it is in.
 func (s *Server) retire(found *session.Session) {
-	if !found.Retire() {
+	if !s.sessions.Retire(found) {
 		return
 	}
 	go func() {
