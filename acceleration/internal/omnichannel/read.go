@@ -228,9 +228,6 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 // between reports whether a channel's members are person alone, or person and agent, and
 // nobody else: with agent equal to person, any other member is one.
 func between(members []getstream.ChannelMemberResponse, person, agent string) bool {
-	if len(members) == 0 || len(members) > 2 {
-		return false
-	}
 	is := func(id string) func(getstream.ChannelMemberResponse) bool {
 		return func(member getstream.ChannelMemberResponse) bool { return member.UserID != nil && *member.UserID == id }
 	}
