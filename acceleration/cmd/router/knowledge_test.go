@@ -51,7 +51,7 @@ func (s *KnowledgeLimitsSuite) TestARegionKeptWhereTheDefaultRegionIsIsRefused()
 }
 
 func (s *KnowledgeLimitsSuite) TestLimitsThatGrowADocumentFourTimesOrLessAreNotWarnedOf() {
-	s.settings.Knowledge.MinChunk, s.settings.Knowledge.MaxHeading = 500, 235
+	s.settings.Knowledge.MinChunk, s.settings.Knowledge.MaxHeading = 500, 232
 
 	warnKnowledgeLimits(s.settings, slog.New(slog.NewTextHandler(&s.logs, nil)))
 
@@ -64,7 +64,7 @@ func (s *KnowledgeLimitsSuite) TestLimitsThatGrowADocumentMoreThanFourTimesAreWa
 	warnKnowledgeLimits(s.settings, slog.New(slog.NewTextHandler(&s.logs, nil)))
 
 	s.Contains(s.logs.String(), "level=WARN")
-	s.Contains(s.logs.String(), "5.6")
+	s.Contains(s.logs.String(), "5.7")
 	s.Contains(s.logs.String(), "ROUTER_KNOWLEDGE_MAX_HEADING")
 	s.Contains(s.logs.String(), "ROUTER_KNOWLEDGE_MIN_CHUNK")
 }
