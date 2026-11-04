@@ -53,10 +53,8 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 			"customer", answering.CustomerID, "config", answering.ConfigID, "error", err)
 		return
 	}
-	if !opened.New {
-		return
-	}
-	// Off a hook's request, which Stream waits on, as its answer is (hookOrigin.answer).
+	// Only an episode this message opened gets its card (Cards.Write). Off a hook's request,
+	// which Stream waits on, as its answer is (hookOrigin.answer).
 	origin.answer(func() {
 		ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), chatCardTimeout)
 		defer cancel()

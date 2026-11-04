@@ -114,6 +114,20 @@ func (s *PersonSuite) TestASlackUserNeedsAWorkspace() {
 	s.ErrorContains(err, "a Slack team and a Slack user are required")
 }
 
+// The app chat's person is the Stream user who wrote, by the id Stream signed, kept as it is.
+func (s *PersonSuite) TestAStreamUserIsKeyedByTheirUserID() {
+	person, err := StreamUser("anya_123")
+
+	s.Require().NoError(err)
+	s.Equal(Person{Kind: store.ContactStreamUser, Address: "anya_123"}, person)
+}
+
+// A message with no user names nobody, so it keys no contact map row.
+func (s *PersonSuite) TestAStreamUserNeedsAnID() {
+	_, err := StreamUser("")
+	s.ErrorContains(err, "a Stream user is required")
+}
+
 func (s *PersonSuite) TestCardsNeedAStoreAndStreamClients() {
 	_, err := New(Options{})
 	s.ErrorContains(err, "a store and Stream clients are required")
