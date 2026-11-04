@@ -20,7 +20,7 @@
     "react": "19.2.0",
     "react-dom": "19.2.0",
     "stream-chat": "^9.54.0",
-    "stream-chat-react": "file:vendor/stream-chat-react.tgz",
+    "stream-chat-react": "^14.16.0",
     "zod": "^4.1.0",
     "zustand": "^4.5.7"
   },

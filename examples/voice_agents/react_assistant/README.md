@@ -48,13 +48,8 @@ connector's sign-in comes back only to the origin a conversation named, and the 
 
 The AI components it uses (`AIConversation`, the reply's steps, the approval and sign-in cards,
 suggestions, reply actions and the composer's chat options) come from
-`stream-chat-react/ai-components`, released in 14.15.0. The generated UI it shows, from
-`stream-chat-react/a2ui` and `stream-chat-react/openui`, is not released yet. Until it is,
-build the package from its `feat/ai-components-generative-ui` branch, which is `release-v14`
-with generated UI on top (`yarn install && yarn build && npm pack`), and put the tarball here as
-`vendor/stream-chat-react.tgz`, which git ignores, then run
-`npm install ./vendor/stream-chat-react.tgz`: a plain `npm install` keeps the copy it cached for
-the old tarball. The page moves to the release that has it.
+`stream-chat-react/ai-components`, and the generated UI it shows from `stream-chat-react/a2ui`
+and `stream-chat-react/openui`, released in 14.16.0.
 
 The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
 `XAI_API_KEY`, and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY` and `INWORLD_API_KEY` for a call. Web
