@@ -152,6 +152,84 @@ func (s *LimitsSuite) TestLimitUsageForManyUsers() {
 	s.NotEmpty(failure.Message)
 }
 
+// limitIDs are the ids of the limits the query lists, as the app's backend.
+func (s *LimitsSuite) limitIDs(query string) []int64 {
+	var page LimitPage
+	status, payload := s.serverClient.call(http.MethodGet, "/v1/spend/limits?"+query, nil)
+	s.Require().Equal(http.StatusOK, status, string(payload))
+	s.Require().NoError(json.Unmarshal(payload, &page))
+	ids := make([]int64, 0, len(page.Items))
+	for _, limit := range page.Items {
+		ids = append(ids, limit.Id)
+	}
+	return ids
+}
+
+// Stream's proxy forwards the app's key as api_key in every call's query, so the limits list
+// takes a key as api_key_id and lists every limit beside the caller's key (AI-2684).
+func (s *LimitsSuite) TestLimitsListWithTheCallersKeyInTheQuery() {
+	organization := s.create(map[string]any{"subject": "organization", "interval": "daily", "limit_micros": 10_000_000})
+	key := s.create(map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "key_a", "interval": "daily", "limit_micros": 1_000_000})
+	proxied := "api_key=" + url.QueryEscape(s.app.key)
+
+	s.ElementsMatch([]int64{organization.Id, key.Id}, s.limitIDs(proxied))
+	s.Equal([]int64{key.Id}, s.limitIDs(proxied+"&api_key_id=key_a"))
+	s.Equal([]int64{key.Id}, s.limitIDs("api_key_id=key_a"), "the same with no credential in the query")
+}
+
+// A usage read's refusal names the query field it was sent, api_key_id; a write's names the
+// body field, api_key (AI-2684).
+func (s *LimitsSuite) TestAUsageReadRefusalNamesTheKeyFieldOfTheQuery() {
+	status, failure := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key_id")
+
+	status, failure = s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=user&app_id=a&user_id=u1&api_key_id=k1", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names no api_key_id")
+
+	status, failure = s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a&api_key_id=hook:chat", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "api_key_id is 1 to 128 characters")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits", map[string]any{"subject": "api_key", "level": "api_key", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a write names the body field")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/grants", map[string]any{"subject": "api_key", "app_id": s.customerID(), "amount_micros": 1, "reason": "x"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a grant names the body field")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits/usage/reset", map[string]any{"subject": "api_key", "app_id": s.customerID(), "reason": "x"})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a reset names the body field")
+}
+
+// The usage read names a key subject by api_key_id, so the caller's key the proxy forwards as
+// api_key is no subject id: a user's usage is read beside it (AI-2684).
+func (s *LimitsSuite) TestLimitUsageWithTheCallersKeyInTheQuery() {
+	s.create(map[string]any{"subject": "api_key", "app_id": s.customerID(), "api_key": "key_a", "interval": "daily", "limit_micros": 1_000_000})
+	s.spend(300_000, func(event *usage.Event) { event.APIKey = "key_a" })
+	s.spend(200_000, func(event *usage.Event) { event.UserID = "u1" })
+	proxied := "api_key=" + url.QueryEscape(s.app.key) + "&app_id=" + url.QueryEscape(s.customerID())
+
+	user := s.usageOf(proxied + "&subject=user&user_id=u1")
+	s.Equal("u1", user.UserId)
+	s.Empty(user.ApiKey)
+	s.Equal(int64(200_000), user.Windows[0].SpentMicros)
+
+	key := s.usageOf(proxied + "&subject=api_key&api_key_id=key_a")
+	s.Equal("key_a", key.ApiKey)
+	s.Equal(int64(300_000), key.Windows[0].SpentMicros)
+
+	status, failure := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a&app_id=b&app_id=c&api_key_id=k1&api_key_id=k2", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "api_key_id names 2 subjects", "the refusal names the parameter sent")
+}
+
 func (s *LimitsSuite) TestLimitUsagePairsTheAppsWithTheirSubjects() {
 	sibling := store.App{OrganizationID: s.organization(), Name: "app-" + s.utils.uuid()}
 	s.Require().NoError(s.store.CreateApp(context.Background(), &sibling))

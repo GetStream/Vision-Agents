@@ -11,13 +11,17 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"io"
+	"io/fs"
+	"maps"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
@@ -38,7 +42,9 @@ import (
 // October 8, 2026: https://developers.facebook.com/docs/graph-api/webhooks/getting-started
 // (hooks), https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples
 // (payload) and https://developers.facebook.com/docs/whatsapp/cloud-api/guides/send-messages
-// (send).
+// (send); opened November 4, 2026:
+// https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/image
+// (image).
 type WhatsAppChannelSuite struct {
 	RouterSuite
 
@@ -258,24 +264,192 @@ func (s *WhatsAppChannelSuite) TestAnEventSignedWithAnotherAppsSecretIsRefusedBe
 	s.nothingLinked()
 }
 
-// Only text is read (payload): an image reaches no agent, and a delivery report of the
-// agent's own reply, in value.statuses, is no message.
-func (s *WhatsAppChannelSuite) TestAnImageAndADeliveryReportAreNotWritten() {
-	image := bytes.Replace(s.received(s.unit, "16505551234", "x"), []byte(`"type":"text"`), []byte(`"type":"image"`), 1)
-	s.Require().Contains(string(image), `"type":"image"`)
+// A photo with a caption (image, revision 2, AI-2133) is answered as its caption: the
+// thread channel holds the caption with no file, the agent is asked the caption, and the
+// reply goes from the business number as a text message.
+func (s *WhatsAppChannelSuite) TestAPhotoWithACaptionIsAnsweredAsItsCaption() {
+	s.config.LLM = "vision/vision-model"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	person, asked := "16505551234", len(s.vision.replies())
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"))))
+
+	channel := s.threadChannel(person)
+	stored := s.written(channel, 1)
+	s.Equal("Is this tooth chipped?", stored[0]["text"])
+	s.Empty(stored[0]["attachments"], "the photo file is a later ticket (AI-2740)")
+	s.writtenByTheInboundWorker(channel)
+	sent := s.took(1)[0]
+	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Two roses."}, sent.withoutAuthorization())
+	said := s.lastTurn(s.vision.replies()[asked:])
+	s.Equal("Is this tooth chipped?", said.Content)
+	s.Empty(imagesIn(said))
+}
+
+// A video or a document with a caption (revision 2, AI-2133) is answered as its caption, as a
+// photo is: the thread channel holds the caption with no file, and the reply is a text message.
+func (s *WhatsAppChannelSuite) TestAVideoOrADocumentWithACaptionIsAnsweredAsItsCaption() {
+	for kind, caption := range map[string]string{"video": "And this one?", "document": "My x-ray"} {
+		s.Run(kind, func() {
+			person := s.digits()
+			asked := len(s.meta.sent())
+
+			s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.captioned(person, kind, caption))))
+
+			stored := s.written(s.threadChannel(person), 1)
+			s.Equal(caption, stored[0]["text"])
+			s.Empty(stored[0]["attachments"], "the file is a later ticket (AI-2740)")
+			sent := s.took(asked + 1)[asked]
+			s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Noted."}, sent.withoutAuthorization())
+		})
+	}
+}
+
+// A caption is the person's text, so STOP under a photo is the keyword it is as text: the one
+// confirmation, the number's opt-out, and no agent.
+func (s *WhatsAppChannelSuite) TestAPhotoCaptionedStopIsTheKeyword() {
+	person := "16505551234"
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "STOP"))))
+
+	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: telnyxStopped}, s.took(1)[0].withoutAuthorization())
+	s.Equal(1, s.liveOptOuts("+"+person))
+	channel := s.threadChannel(person)
+	s.settled()
+	s.Never(func() bool { return len(s.chat.Stored(channel)) > 0 || len(s.meta.sent()) > 1 }, dropped, 20*time.Millisecond)
+	s.Zero(s.episodes(), "a keyword opens no card")
+}
+
+// Nothing else is read (payload, the webhook reference pages beside image): a photo without
+// a caption or with an empty one, a reaction, a sticker, a voice note, a location, a button or
+// interactive reply, a video or a document with no caption, an unsupported message, and a
+// delivery report of the agent's own reply, in value.statuses, reach no agent and write
+// nothing to Stream Chat.
+func (s *WhatsAppChannelSuite) TestAPhotoWithoutACaptionAndOtherKindsAreNotWritten() {
+	person := "16505551234"
+	kind := func(kind string, body map[string]any) map[string]any {
+		message := s.message(person, kind)
+		maps.Copy(message, body)
+		return message
+	}
+	media := func(mime string, more map[string]any) map[string]any {
+		file := map[string]any{"mime_type": mime, "sha256": "c3ludGhldGlj", "id": s.digits()}
+		maps.Copy(file, more)
+		return file
+	}
+	others := s.delivery(s.unit,
+		kind("image", map[string]any{"image": media("image/jpeg", nil)}),
+		kind("image", map[string]any{"image": media("image/jpeg", map[string]any{"caption": ""})}),
+		// The fixture this suite started with: an image whose text.body is no caption.
+		kind("image", map[string]any{"text": map[string]any{"body": "x"}}),
+		kind("reaction", map[string]any{"reaction": map[string]any{"message_id": "wamid.out", "emoji": "\U0001F44D"}}),
+		kind("sticker", map[string]any{"sticker": media("image/webp", map[string]any{"animated": false})}),
+		kind("audio", map[string]any{"audio": media("audio/ogg; codecs=opus", map[string]any{"voice": true})}),
+		kind("location", map[string]any{"location": map[string]any{"latitude": 37.48, "longitude": -122.15, "name": "Dental Co"}}),
+		kind("button", map[string]any{"button": map[string]any{"payload": "yes", "text": "Yes"}}),
+		kind("interactive", map[string]any{"interactive": map[string]any{"type": "button_reply", "button_reply": map[string]any{"id": "yes", "title": "Yes"}}}),
+		kind("video", map[string]any{"video": media("video/mp4", nil)}),
+		kind("video", map[string]any{"video": media("video/mp4", map[string]any{"caption": ""})}),
+		kind("document", map[string]any{"document": media("application/pdf", map[string]any{"filename": "xray.pdf"})}),
+		kind("document", map[string]any{"document": media("application/pdf", map[string]any{"caption": "", "filename": "xray.pdf"})}),
+		kind("unsupported", map[string]any{"errors": []map[string]any{{"code": 131051, "title": "Message type unknown"}}}),
+	)
 	statuses := []byte(`{"object":"whatsapp_business_account","entry":[{"id":"1","changes":[{"field":"messages","value":{` +
 		`"messaging_product":"whatsapp","metadata":{"display_phone_number":"15550783881","phone_number_id":"` + s.unit + `"},` +
 		`"statuses":[{"id":"wamid.out","status":"delivered","timestamp":"1749416383","recipient_id":"16505551234"}]}}]}]}`)
 
-	s.Equal(http.StatusOK, s.deliver(image))
+	s.Equal(http.StatusOK, s.deliver(others))
 	s.Equal(http.StatusOK, s.deliver(statuses))
 
 	s.nothingLinked()
+	s.Empty(s.meta.sent())
+	s.Zero(s.episodes())
+}
+
+// A connection reads a message with its own revision (channelbridge take), so one still on
+// revision 1, until its next credential save, answers text alone: a photo with a caption in a
+// delivery is left out, and the text beside it is answered as on revision 1.
+func (s *WhatsAppChannelSuite) TestAConnectionStillOnRevision1AnswersTextAlone() {
+	s.pinToRevision1()
+	person := "16505551234"
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"), s.captioned(person, "video", "And this one?"),
+		s.captioned(person, "document", "My x-ray"), s.text(person, "Hi"))))
+
+	channel := s.threadChannel(person)
+	s.Equal("Hi", s.written(channel, 1)[0]["text"])
+	s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Noted."}, s.took(1)[0].withoutAuthorization())
+	s.settled()
+	s.Never(func() bool {
+		return len(s.meta.sent()) > 1 || slices.ContainsFunc(s.chat.Stored(channel), func(stored map[string]any) bool {
+			return stored["text"] == "Is this tooth chipped?"
+		})
+	}, dropped, 20*time.Millisecond)
+}
+
+// A connection pinned to a revision with no channel block cannot read any message: the
+// delivery answers 500, so Meta retries it, and nothing is linked or written. Only a message
+// its revision does not read (errNotRead) is dropped with 200. The stored revision 1 loses its
+// channel block for the test and gets it back after, because the other revision 1 test seeds it.
+func (s *WhatsAppChannelSuite) TestAConnectionPinnedToARevisionWithNoChannelBlockAnswers500AndLinksNothing() {
+	ctx := context.Background()
+	s.pinToRevision1()
+	stored, err := s.store.ConnectorDefinition(ctx, s.customerID(), "whatsapp", 1)
+	s.Require().NoError(err)
+	s.Require().NotNil(stored.Manifest.Channel)
+	restored := stored
+	stored.Manifest.Channel = nil
+	_, err = s.store.DB().NewUpdate().Model(&stored).Column("manifest").WherePK().Exec(ctx)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() {
+		_, err := s.store.DB().NewUpdate().Model(&restored).Column("manifest").WherePK().Exec(context.Background())
+		s.NoError(err)
+	})
+	person := "16505551234"
+
+	s.Equal(http.StatusInternalServerError, s.deliver(s.received(s.unit, person, "Hi")))
+
+	s.settled()
+	var threads int
+	s.Require().NoError(s.store.DB().QueryRowContext(ctx,
+		"SELECT count(*) FROM channel_threads WHERE customer_id = ? AND connector_id = 'whatsapp' AND thread_key = ?",
+		s.customerID(), person).Scan(&threads))
+	s.Zero(threads)
+	s.Empty(s.meta.sent())
+}
+
+// pinToRevision1 stores the manifest as revision 1 was, without its caption entries, and pins
+// the test's connection to it.
+func (s *WhatsAppChannelSuite) pinToRevision1() {
+	ctx := context.Background()
+	raw, err := fs.ReadFile(providers.FS, "whatsapp.yaml")
+	s.Require().NoError(err)
+	also := ""
+	for _, kind := range []string{"image", "video", "document"} {
+		also += "      - match:\n          $.entry[*].changes[*].value.messages[*].type: " + kind + "\n" +
+			"        text: $.entry[*].changes[*].value.messages[*]." + kind + ".caption\n"
+	}
+	also = "    also:\n" + also
+	s.Require().Contains(string(raw), also)
+	revision1 := strings.NewReplacer("\nrevision: 2\n", "\nrevision: 1\n", also, "").Replace(string(raw))
+	s.Require().NotContains(revision1, "also:")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(ctx, fstest.MapFS{"whatsapp.yaml": {Data: []byte(revision1)}}))
+	s.Require().NoError(s.store.WithLockedConnectorConnection(ctx, s.customerID(), s.connection.ID,
+		func(connection *store.ConnectorConnection, _ func() error) (bool, error) {
+			connection.DefinitionRevision = 1
+			return true, nil
+		}))
 }
 
 // received is a text message shaped as the example in payload: to the business number, from
 // the person, with text.body.
 func (s *WhatsAppChannelSuite) received(unit, person, text string) []byte {
+	return s.delivery(unit, s.text(person, text))
+}
+
+// delivery is one delivery of messages to the business number unit, shaped as the example
+// in payload.
+func (s *WhatsAppChannelSuite) delivery(unit string, messages ...map[string]any) []byte {
 	raw, err := json.Marshal(map[string]any{
 		"object": "whatsapp_business_account",
 		"entry": []map[string]any{{
@@ -285,17 +459,46 @@ func (s *WhatsAppChannelSuite) received(unit, person, text string) []byte {
 				"value": map[string]any{
 					"messaging_product": "whatsapp",
 					"metadata":          map[string]any{"display_phone_number": "15550783881", "phone_number_id": unit},
-					"contacts":          []map[string]any{{"profile": map[string]any{"name": "Sheena Nelson"}, "wa_id": person}},
-					"messages": []map[string]any{{
-						"from": person, "id": "wamid." + s.utils.uuid(), "timestamp": "1749416383",
-						"type": "text", "text": map[string]any{"body": text},
-					}},
+					"contacts":          []map[string]any{{"profile": map[string]any{"name": "Sheena Nelson"}, "wa_id": messages[0]["from"]}},
+					"messages":          messages,
 				},
 			}},
 		}},
 	})
 	s.Require().NoError(err)
 	return raw
+}
+
+// message is a message of kind from the person, with no body of its kind yet.
+func (s *WhatsAppChannelSuite) message(person, kind string) map[string]any {
+	return map[string]any{"from": person, "id": "wamid." + s.utils.uuid(), "timestamp": "1749416383", "type": kind}
+}
+
+// text is a text message, with text.body (payload).
+func (s *WhatsAppChannelSuite) text(person, text string) map[string]any {
+	message := s.message(person, "text")
+	message["text"] = map[string]any{"body": text}
+	return message
+}
+
+// photo is an image message with its caption, shaped as the example in image: caption,
+// mime_type, sha256, id and url.
+func (s *WhatsAppChannelSuite) photo(person, caption string) map[string]any {
+	message := s.message(person, "image")
+	message["image"] = map[string]any{
+		"caption": caption, "mime_type": "image/jpeg", "sha256": "c3ludGhldGlj", "id": s.digits(),
+		"url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=" + s.digits(),
+	}
+	return message
+}
+
+// captioned is a message of kind (image, video or document) with its caption, shaped as the
+// examples in image, video and document.
+func (s *WhatsAppChannelSuite) captioned(person, kind, caption string) map[string]any {
+	message := s.message(person, kind)
+	mime := map[string]string{"image": "image/jpeg", "video": "video/mp4", "document": "application/pdf"}[kind]
+	message[kind] = map[string]any{"caption": caption, "mime_type": mime, "sha256": "c3ludGhldGlj", "id": s.digits()}
+	return message
 }
 
 func (s *WhatsAppChannelSuite) deliver(body []byte) int {

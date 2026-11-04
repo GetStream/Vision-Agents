@@ -16,7 +16,7 @@ def _get_kwargs(
     *,
     subject: LimitSubject | Unset = UNSET,
     app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -35,7 +35,7 @@ def _get_kwargs(
 
     params["app_id"] = app_id
 
-    params["api_key"] = api_key
+    params["api_key_id"] = api_key_id
 
     params["user_id"] = user_id
 
@@ -129,7 +129,7 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     subject: LimitSubject | Unset = UNSET,
     app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -150,7 +150,8 @@ def sync_detailed(
             a team across the organization or within one app. A team is the user's team, as its token
             names it.
         app_id (str | Unset):
-        api_key (str | Unset):
+        api_key_id (str | Unset): Only grants for this key. Named api_key_id because api_key in
+            the query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset):
         team (str | Unset):
         category (str | Unset):
@@ -171,7 +172,7 @@ def sync_detailed(
     kwargs = _get_kwargs(
         subject=subject,
         app_id=app_id,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -192,7 +193,7 @@ def sync(
     client: AuthenticatedClient | Client,
     subject: LimitSubject | Unset = UNSET,
     app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -213,7 +214,8 @@ def sync(
             a team across the organization or within one app. A team is the user's team, as its token
             names it.
         app_id (str | Unset):
-        api_key (str | Unset):
+        api_key_id (str | Unset): Only grants for this key. Named api_key_id because api_key in
+            the query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset):
         team (str | Unset):
         category (str | Unset):
@@ -235,7 +237,7 @@ def sync(
         client=client,
         subject=subject,
         app_id=app_id,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -250,7 +252,7 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     subject: LimitSubject | Unset = UNSET,
     app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -271,7 +273,8 @@ async def asyncio_detailed(
             a team across the organization or within one app. A team is the user's team, as its token
             names it.
         app_id (str | Unset):
-        api_key (str | Unset):
+        api_key_id (str | Unset): Only grants for this key. Named api_key_id because api_key in
+            the query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset):
         team (str | Unset):
         category (str | Unset):
@@ -292,7 +295,7 @@ async def asyncio_detailed(
     kwargs = _get_kwargs(
         subject=subject,
         app_id=app_id,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -311,7 +314,7 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     subject: LimitSubject | Unset = UNSET,
     app_id: str | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -332,7 +335,8 @@ async def asyncio(
             a team across the organization or within one app. A team is the user's team, as its token
             names it.
         app_id (str | Unset):
-        api_key (str | Unset):
+        api_key_id (str | Unset): Only grants for this key. Named api_key_id because api_key in
+            the query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset):
         team (str | Unset):
         category (str | Unset):
@@ -355,7 +359,7 @@ async def asyncio(
             client=client,
             subject=subject,
             app_id=app_id,
-            api_key=api_key,
+            api_key_id=api_key_id,
             user_id=user_id,
             team=team,
             category=category,
