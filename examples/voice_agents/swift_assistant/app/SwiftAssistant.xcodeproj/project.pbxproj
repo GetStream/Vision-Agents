@@ -20,11 +20,16 @@
 		B200010C /* Conversations.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000C /* Conversations.swift */; };
 		B200010D /* Photos.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000D /* Photos.swift */; };
 		B200010F /* Gmail.swift in Sources */ = {isa = PBXBuildFile; fileRef = B200000F /* Gmail.swift */; };
+		B2000111 /* TripComponents.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000011 /* TripComponents.swift */; };
+		B2000113 /* Settings.swift in Sources */ = {isa = PBXBuildFile; fileRef = B2000013 /* Settings.swift */; };
+		B2000112 /* UIComponents.json in Resources */ = {isa = PBXBuildFile; fileRef = B2000012 /* UIComponents.json */; };
 		B2000201 /* VisionAgentsCore in Frameworks */ = {isa = PBXBuildFile; productRef = B2000301 /* VisionAgentsCore */; };
 		B2000202 /* StreamChat in Frameworks */ = {isa = PBXBuildFile; productRef = B2000302 /* StreamChat */; };
 		B2000203 /* StreamChatAI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000303 /* StreamChatAI */; };
 		B2000204 /* StreamVideo in Frameworks */ = {isa = PBXBuildFile; productRef = B2000304 /* StreamVideo */; };
 		B2000205 /* StreamVideoSwiftUI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000305 /* StreamVideoSwiftUI */; };
+		B2000206 /* StreamChatOpenUI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000306 /* StreamChatOpenUI */; };
+		B2000207 /* StreamChatA2UI in Frameworks */ = {isa = PBXBuildFile; productRef = B2000307 /* StreamChatA2UI */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +47,9 @@
 		B200000D /* Photos.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photos.swift; sourceTree = "<group>"; };
 		B200000F /* Gmail.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Gmail.swift; sourceTree = "<group>"; };
 		B200000E /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		B2000011 /* TripComponents.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TripComponents.swift; sourceTree = "<group>"; };
+		B2000013 /* Settings.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Settings.swift; sourceTree = "<group>"; };
+		B2000012 /* UIComponents.json */ = {isa = PBXFileReference; lastKnownFileType = text.json; path = UIComponents.json; sourceTree = "<group>"; };
 		B2000010 /* SwiftAssistant.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = SwiftAssistant.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -55,6 +63,8 @@
 				B2000203 /* StreamChatAI in Frameworks */,
 				B2000204 /* StreamVideo in Frameworks */,
 				B2000205 /* StreamVideoSwiftUI in Frameworks */,
+				B2000206 /* StreamChatOpenUI in Frameworks */,
+				B2000207 /* StreamChatA2UI in Frameworks */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -85,6 +95,9 @@
 				B200000A /* Assistant.swift */,
 				B200000B /* DeviceTools.swift */,
 				B200000F /* Gmail.swift */,
+				B2000011 /* TripComponents.swift */,
+				B2000013 /* Settings.swift */,
+				B2000012 /* UIComponents.json */,
 				B200000E /* Info.plist */,
 			);
 			path = SwiftAssistant;
@@ -120,6 +133,8 @@
 				B2000303 /* StreamChatAI */,
 				B2000304 /* StreamVideo */,
 				B2000305 /* StreamVideoSwiftUI */,
+				B2000306 /* StreamChatOpenUI */,
+				B2000307 /* StreamChatA2UI */,
 			);
 			productName = SwiftAssistant;
 			productReference = B2000010 /* SwiftAssistant.app */;
@@ -168,6 +183,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				B2000112 /* UIComponents.json in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -191,6 +207,8 @@
 				B200010C /* Conversations.swift in Sources */,
 				B200010D /* Photos.swift in Sources */,
 				B200010F /* Gmail.swift in Sources */,
+				B2000111 /* TripComponents.swift in Sources */,
+				B2000113 /* Settings.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -356,6 +374,16 @@
 			isa = XCSwiftPackageProductDependency;
 			package = B2000B03 /* XCRemoteSwiftPackageReference "stream-video-swift" */;
 			productName = StreamVideo;
+		};
+		B2000306 /* StreamChatOpenUI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */;
+			productName = StreamChatOpenUI;
+		};
+		B2000307 /* StreamChatA2UI */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = B2000B02 /* XCRemoteSwiftPackageReference "stream-chat-swift" */;
+			productName = StreamChatA2UI;
 		};
 		B2000305 /* StreamVideoSwiftUI */ = {
 			isa = XCSwiftPackageProductDependency;

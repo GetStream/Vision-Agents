@@ -1,4 +1,3 @@
-import StreamChat
 import StreamChatAI
 import SwiftUI
 import VisionAgentsCore
@@ -14,50 +13,47 @@ struct ChatScreen: View {
     /// Says which session a new conversation became, once it is first written or talked to.
     let onStarted: (String) -> Void
 
-    @State private var chat: AgentChat?
+    /// The conversation's session and channel, opened when the conversation first needs them.
+    @State private var chat: AgentChat
+    /// What the conversation shows and what the person does in it. Replies are rated on this
+    /// phone only, since the router takes no ratings yet, and are not written again or edited:
+    /// the router keeps the conversation in Chat and cannot rewind it.
+    @StateObject private var conversation: AIConversation<AgentMessage>
+    /// Why the conversation could not be opened, or nil.
     @State private var failure: String?
-    /// What the person just asked, shown at once with its photos until Stream's copy of their
-    /// message arrives and takes its place: opening a conversation, uploading its photos and
-    /// writing the message take seconds together.
-    @State private var asking: Asked?
     @State private var isVoiceShown = false
-    /// The session being opened, so asking while it opens waits for it rather than opening a
-    /// second one.
-    @State private var opening: Task<AgentChat?, Never>?
-    /// Whether the list has been told about this new conversation.
-    @State private var isAnnounced = false
-    /// A new conversation's session, opened while the person wrote their first message and not
-    /// used yet. Leaving without using it deletes it, so it is not left in the list.
-    @State private var unused: String?
-    @StateObject private var composer = AIComposerViewModel()
 
     private static let starters = [
         "What's on my calendar today?",
         "Remind me to call mum at 6pm",
-        "Plan a weekend in Lisbon",
+        "Plan a weekend in Ohrid",
         "What should I cook tonight?",
     ]
 
-    private static let thinkHarder = "think_harder"
+    init(sessionID: String?, onStarted: @escaping (String) -> Void) {
+        self.sessionID = sessionID
+        self.onStarted = onStarted
+        // SwiftUI keeps the first of each for as long as the screen shows, so the conversation
+        // kept goes through the chat kept.
+        let chat = AgentChat(sessionID: sessionID)
+        _chat = State(initialValue: chat)
+        _conversation = StateObject(
+            wrappedValue: AIConversation(
+                transport: chat, composerViewModel: Self.composer(), approver: chat.approver,
+                actions: [.rate]))
+    }
 
     var body: some View {
-        // The person's messages in bubbles, the agent's as their steps and then their answer.
-        // What the person asks shows at once, and Stream's copy takes its place, photos and
-        // all, which keeps them from loading again. Each question goes to the top as it is
-        // asked, and its reply writes itself out below it without moving what is on screen.
-        // While the agent thinks, the list shows its thinking, which the reply's first step
-        // takes over once it arrives.
+        // The person's messages in bubbles, the agent's as their steps and then their answer,
+        // or the UI it wrote. What the person asks shows at once, with its photos, and Stream's
+        // copy takes its place. Each question goes to the top as it is asked, and its reply
+        // writes itself out below it without moving what is on screen. While the agent thinks,
+        // the list shows its thinking, which the reply's first step takes over once it arrives.
         AIConversationView(
-            messages: chat?.listMessages ?? [],
-            pendingMessage: asking.map { asked in
-                AIPendingMessage(id: asked.id, text: asked.text, attachments: asked.photos.map { .image($0) })
-            },
-            isThinking: activity == .thinking,
-            approver: chat.map { approver(for: $0.session) },
-            loadOlderMessages: chat?.hasOlderMessages == true ? { await chat?.loadOlderMessages() } : nil,
-            viewFactory: MessageViews(chat: chat),
+            conversation: conversation,
+            ui: chat.ui,
             footer: {
-                if case .working(let text) = activity {
+                if conversation.status.isAnswering, let text = conversation.activity?.text {
                     AITypingIndicatorView(text: text)
                 }
             },
@@ -67,58 +63,27 @@ struct ChatScreen: View {
         .scrollDismissesKeyboard(.interactively)
         .modifier(ComposerBar(bar: composerBar))
         .fullScreenCover(isPresented: $isVoiceShown) {
-            if let chat {
-                VoiceMode(chat: chat)
+            if let session = chat.session {
+                VoiceMode(chat: chat, session: session)
             }
-        }
-        .onChange(of: chat?.messages.count ?? 0) {
-            if let asked = asking, copy(of: asked) != nil {
-                asking = nil
-            }
-        }
-        .onChange(of: chat?.isAnswering ?? false, initial: true) { _, answering in
-            composer.isGenerating = answering
-        }
-        .onAppear {
-            // An option's own action is what selects it: the list only runs it.
-            let model = composer
-            model.chatOptions = [
-                ChatOption(
-                    id: Self.thinkHarder, title: "Think harder",
-                    description: "More time to reason before answering", icon: "brain",
-                    shortTitle: "Think"
-                ) { [weak model] in
-                    model?.selectedChatOption = model?.chatOptions.first {
-                        $0.id == Self.thinkHarder
-                    }
-                    model?.sheetShown = false
-                }
-            ]
         }
         .task {
             guard sessionID != nil else { return }
             await open()
         }
-        .onChange(of: composer.text) { _, text in
+        .onReceive(conversation.composerViewModel.$text) { text in
             // Opening a session takes seconds, so a new conversation's opens as its first
             // message is written rather than once it is sent.
-            guard sessionID == nil, chat == nil, opening == nil, !text.isEmpty else { return }
-            Task {
-                if let chat = await open(), !isAnnounced {
-                    unused = chat.session.id
-                }
-            }
+            guard sessionID == nil, chat.session == nil, !text.isEmpty else { return }
+            Task { await open() }
+        }
+        .onChange(of: chat.usedSessionID) { _, used in
+            // A new conversation joins the list once it is written or talked to.
+            guard sessionID == nil, let used else { return }
+            onStarted(used)
         }
         .onDisappear {
-            let closing = chat
-            let abandoned = unused
-            chat = nil
-            Task {
-                await closing?.close()
-                if let abandoned {
-                    try? await Assistant.sessions.delete(abandoned)
-                }
-            }
+            Task { await chat.close() }
         }
     }
 
@@ -126,174 +91,72 @@ struct ChatScreen: View {
     private var composerBar: some View {
         VStack(spacing: 0) {
             if isWelcoming {
-                SuggestionsView(suggestions: Self.starters) { send($0) }
+                SuggestionsView(suggestions: Self.starters) { conversation.send($0) }
             }
-            if let failure = failure ?? chat?.failure ?? chat?.conversation.failure {
-                Text(failure)
-                    .font(.caption)
-                    .foregroundStyle(.red)
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .modifier(Floating(shape: .capsule))
-                    .padding(.horizontal)
+            if let failure = failure ?? chat.failure ?? conversation.error?.localizedDescription
+                ?? chat.sessionFailure
+            {
+                HStack(spacing: 8) {
+                    Text(failure)
+                        .foregroundStyle(.red)
+                    if conversation.error != nil {
+                        Button("Try again") { conversation.retry() }
+                            .fontWeight(.semibold)
+                    }
+                }
+                .font(.caption)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 6)
+                .modifier(Floating(shape: .capsule))
+                .padding(.horizontal)
             }
-            AIComposerView(
-                viewFactory: Composer(onTalk: talk),
-                viewModel: composer,
-                onMessageSend: { send($0) },
-                onStopGenerating: { chat?.stop() })
+            AIComposerView(conversation: conversation, viewFactory: Composer(onTalk: talk))
         }
-    }
-
-    /// Stream's copy of a question on its way, once it has arrived: the person's first message
-    /// after the ones there were when they asked.
-    private func copy(of asked: Asked) -> ChatMessage? {
-        chat?.messages.filter { !$0.isAgentReply }.dropFirst(asked.after).first
-    }
-
-    private var isEmpty: Bool {
-        chat?.messages.isEmpty ?? true
     }
 
     private var isWelcoming: Bool {
-        isEmpty && asking == nil
+        conversation.messages.isEmpty && conversation.pendingMessage == nil
     }
 
-    /// What the agent is doing, shown under the last message. A question on its way is
-    /// thought about before the session says anything.
-    private var activity: AgentChat.Activity? {
-        chat?.activity ?? (asking != nil ? .thinking : nil)
-    }
-
-    private func send(_ message: MessageData) {
-        let asked = Asked(
-            text: message.text, photos: Photos.thumbnails(for: message.attachments),
-            after: chat?.messages.count(where: { !$0.isAgentReply }) ?? 0)
-        asking = asked
-        Task {
-            guard let chat = await open() else {
-                asking = nil
-                return
+    /// The composer, whose options sheet has Think harder, which asks with a higher
+    /// `reasoning_effort`. An option's own action is what selects it: the list only runs it.
+    private static func composer() -> AIComposerViewModel {
+        let model = AIComposerViewModel()
+        model.chatOptions = [
+            ChatOption(
+                id: AgentChat.thinkHarder, title: "Think harder",
+                description: "More time to reason before answering", icon: "brain",
+                shortTitle: "Think"
+            ) { [weak model] in
+                model?.selectedChatOption = model?.chatOptions.first { $0.id == AgentChat.thinkHarder }
+                model?.sheetShown = false
             }
-            markUsed(chat)
-            chat.ask(
-                message.text, photos: message.attachments,
-                thinkHarder: message.chatOption?.id == Self.thinkHarder)
-        }
+        ]
+        return model
     }
 
     /// Switches to voice mode on this conversation, starting a session for a new one.
     private func talk() {
         Task {
-            guard let chat = await open() else { return }
-            markUsed(chat)
-            isVoiceShown = true
+            if await open(use: true) != nil {
+                isVoiceShown = true
+            }
         }
     }
 
-    /// Tells the list about a new conversation once it is used, written or talked to.
-    private func markUsed(_ chat: AgentChat) {
-        unused = nil
-        guard sessionID == nil, !isAnnounced else { return }
-        isAnnounced = true
-        onStarted(chat.session.id)
-    }
-
-    /// The conversation's chat, starting a session for a new one.
+    /// The conversation's session, opened if it is not yet, and marked used when `use`. Says
+    /// why when it cannot be opened.
     @discardableResult
-    private func open() async -> AgentChat? {
-        if let chat { return chat }
-        if let opening { return await opening.value }
-        let task = Task { await start() }
-        opening = task
-        let opened = await task.value
-        opening = nil
-        return opened
-    }
-
-    /// Carries on the conversation's session, or starts one for a new conversation, and opens
-    /// its channel.
-    private func start() async -> AgentChat? {
+    private func open(use: Bool = false) async -> AgentSession? {
         failure = nil
         do {
-            let session: AgentSession
-            if let sessionID {
-                session = try await Assistant.agents.attach(sessionID: sessionID, tools: Assistant.tools)
-            } else {
-                var options = SessionOptions(agent: Assistant.agentName)
-                options.llm = Assistant.chatModel
-                options.tools = Assistant.tools
-                options.returnURL = Assistant.returnURL
-                session = try await Assistant.agents.chat(options)
-            }
-            let opened = try await AgentChat.open(session)
-            chat = opened
-            return opened
+            return use ? try await chat.use() : try await chat.open()
         } catch is CancellationError {
             return nil
         } catch {
             failure = error.localizedDescription
             return nil
         }
-    }
-
-    /// Answers the questions of the tools that ask first, and the sign-ins the agent's
-    /// connectors wait for, as the person signed in here. A sign-in opens in a web
-    /// authentication sheet, which the router hands back to this app once the provider has
-    /// answered; "Not now" ends the call without it.
-    private func approver(for session: AgentSession) -> AIToolApprover {
-        AIToolApprover(
-            userID: Assistant.user.id, clientID: AIClientIdentity.installID,
-            authorizer: AIToolAuthorizer(callbackScheme: Assistant.callbackScheme) { call in
-                try await session.declineLogin(call.id)
-            }
-        ) { call, allowed in
-            try await session.decide(call.id, allowed: allowed)
-        }
-    }
-}
-
-/// A question on its way, as the person sees it before Stream's copy of it arrives.
-private struct Asked {
-    let text: String
-    let photos: [UIImage]
-    /// How many of the person's messages the conversation held when it was asked: the next
-    /// one is this question.
-    let after: Int
-    /// Its row in the list, which Stream's copy of it takes over.
-    let id = UUID().uuidString
-}
-
-/// Stream's message views, with what the person can do under each finished reply: copy it,
-/// share it, and rate it. Asking for a reply again needs the router to replace one, which it
-/// does not yet.
-private final class MessageViews: AIConversationViewFactory {
-    let chat: AgentChat?
-
-    init(chat: AgentChat?) {
-        self.chat = chat
-    }
-
-    @ViewBuilder
-    func makeReplyActionsView(options: AIReplyActionsViewOptions) -> some View {
-        if let chat, let reply = options.message as? AgentMessage {
-            ReplyActions(chat: chat, reply: reply)
-        }
-    }
-}
-
-/// The buttons under a reply. The rating is read here, from the chat, so the thumbs change as
-/// soon as it does: the list keeps a reply's row while the reply stays the same.
-private struct ReplyActions: View {
-    let chat: AgentChat
-    let reply: AgentMessage
-
-    var body: some View {
-        AIReplyActionsView(
-            text: reply.text,
-            actions: AIReplyActions(
-                rating: chat.ratings[reply.id],
-                onRate: { rating in chat.rate(reply.message, rating) }))
     }
 }
 

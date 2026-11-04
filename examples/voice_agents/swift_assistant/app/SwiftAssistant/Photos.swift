@@ -10,17 +10,9 @@ enum Photos {
     /// The longest side a photo is sent at, in pixels.
     private static let longestSide: CGFloat = 1280
 
-    /// The longest side a photo is shown at in the chat before Stream has it, in pixels.
-    private static let shownSide: CGFloat = 540
-
     /// Each file that reads as an image, ready to ask with. One that does not is left out.
     static func sources(for files: [URL]) async -> [ImageSource] {
         files.compactMap(source(for:))
-    }
-
-    /// Each file that reads as an image, small enough to show in the chat at once.
-    static func thumbnails(for files: [URL]) -> [UIImage] {
-        files.compactMap { UIImage(contentsOfFile: $0.path).map { resized($0, longestSide: shownSide) } }
     }
 
     private static func source(for file: URL) -> ImageSource? {
