@@ -24,7 +24,7 @@ final readonly class AgentConfig
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
-        // Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each se...
+        // Whether each phone call and each app chat conversation under this agent writes an episode card into the per...
         public ?bool $episodeCards = null,
         public ?Greeting $greeting = null,
         public ?string $guardrail = null,

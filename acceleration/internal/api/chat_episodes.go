@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
@@ -90,4 +91,59 @@ func (s *Server) chatEpisodeUnopened(ctx context.Context, origin hookOrigin, eve
 // draining router to wait for, as channelbridge.Bridge.Running.
 func (s *Server) ChatCardsRunning() int {
 	return int(s.chatCardsWriting.Load())
+}
+
+// retire closes a session holding a person's episode cards once another person wrote in its
+// channel, after it has answered what it was handed: the reply it is writing and every
+// follow-up handed to it before (owedReplies). Their message is handed out meanwhile; the
+// session the worker opens for it on the channel waits for this one to end
+// (session.Manager.Create), rather than cutting its replies short. The wait is bounded by
+// session.RetireWithin; a session closed meanwhile, as a draining router closes them, ends it
+// early. A session retiring already is left to the wait it is in.
+func (s *Server) retire(found *session.Session) {
+	if !s.sessions.Retire(found) {
+		return
+	}
+	go func() {
+		deadline := time.Now().Add(session.RetireWithin)
+		for (s.owing.owes(found.ID()) || found.Busy()) && found.State() != session.Ended && time.Now().Before(deadline) {
+			time.Sleep(threadTurnPoll)
+		}
+		if _, err := s.sessions.CloseRetired(found); err != nil {
+			s.logger.Error("could not close the session holding another person's episode cards",
+				"session", found.ID(), "error", err)
+		}
+	}()
+}
+
+// owedReplies is, by session id, how many follow-ups were handed to a running session and
+// have not begun yet (followUpMessage). The zero value is empty; an id is kept only while it
+// owes one.
+type owedReplies struct {
+	mu   sync.Mutex
+	owed map[string]int
+}
+
+// owe counts one follow-up handed to a session until the func it returns is called.
+func (o *owedReplies) owe(id string) (begun func()) {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	if o.owed == nil {
+		o.owed = map[string]int{}
+	}
+	o.owed[id]++
+	return func() {
+		o.mu.Lock()
+		defer o.mu.Unlock()
+		if o.owed[id]--; o.owed[id] <= 0 {
+			delete(o.owed, id)
+		}
+	}
+}
+
+// owes reports whether a follow-up handed to a session has not begun yet.
+func (o *owedReplies) owes(id string) bool {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.owed[id] > 0
 }
