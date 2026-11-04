@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -44,12 +45,19 @@ func readODT(data []byte) (Document, error) {
 		}
 	}
 
-	reader := &odtReader{bullets: bullets}
+	reader := &odtReader{bullets: bullets, media: func(href string) []byte {
+		// A picture linked from outside the file is not in it.
+		if strings.Contains(href, ":") {
+			return nil
+		}
+		data, _ := zipFile(archive, path.Clean(strings.TrimPrefix(href, "./")))
+		return data
+	}}
 	reader.numbered = bytes.Contains(content, []byte("soft-page-break"))
 	if err := reader.read(content); err != nil {
 		return Document{}, fail(Corrupt, ODT, err)
 	}
-	return Document{Pages: reader.pages()}, nil
+	return Document{Pages: reader.pages(), Pictures: reader.pictures.kept}, nil
 }
 
 // odtListStyles records, for each list style and level, whether its items are bulleted.
@@ -86,6 +94,10 @@ func odtListStyles(data []byte, bullets map[string]map[int]bool) error {
 type odtReader struct {
 	writer
 	bullets map[string]map[int]bool
+	// media is the picture kept in the archive at a path, or nil when there is none.
+	media func(href string) []byte
+	// placed are the markers of the pictures in the paragraph being read, written after it.
+	placed []string
 
 	text strings.Builder
 	// lists are the list styles of the lists being read, outermost first. A list inside
@@ -142,6 +154,10 @@ func (o *odtReader) read(content []byte) error {
 				o.text.WriteString(strings.Repeat(" ", min(max(count, 1), 64)))
 			case "tab", "line-break":
 				o.text.WriteByte(' ')
+			case "image":
+				// A chart or a formula is kept as an object, with a picture of it in a
+				// format of LibreOffice's own, which keep passes over.
+				o.placed = append(o.placed, o.pictures.keep(o.media(attr(element, "href"))))
 			case "soft-page-break":
 				o.flush()
 				o.pageBreak()
@@ -199,6 +215,12 @@ func (o *odtReader) flush() {
 	o.text.Reset()
 	heading := o.heading
 	o.heading = 0
+	defer func() {
+		for _, marker := range o.placed {
+			o.picture(marker)
+		}
+		o.placed = nil
+	}()
 	switch {
 	case heading > 0:
 		o.writer.heading(heading, text)

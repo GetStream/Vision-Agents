@@ -129,6 +129,8 @@ type pdfPage struct {
 	chars      int
 	width      float64
 	height     float64
+	// drawn is where the page's pictures and the shapes of its charts and diagrams are.
+	drawn []box
 }
 
 // run is text on one line in one font, where the page puts it. PDF coordinates grow
@@ -189,24 +191,164 @@ func (s *pdfSession) read(index int) (pdfPage, error) {
 		return page, err
 	}
 	defer func() { _, _ = s.instance.FPDF_ClosePage(&requests.FPDF_ClosePage{Page: loaded.Page}) }()
-	objects, err := s.instance.FPDFPage_CountObjects(&requests.FPDFPage_CountObjects{Page: requests.Page{ByReference: &loaded.Page}})
+	onPage := requests.Page{ByReference: &loaded.Page}
+	walked := 0
+	err = s.walk(&page, objects{
+		count: func() (int, error) {
+			counted, err := s.instance.FPDFPage_CountObjects(&requests.FPDFPage_CountObjects{Page: onPage})
+			return counted.Count, err
+		},
+		at: func(i int) (references.FPDF_PAGEOBJECT, error) {
+			object, err := s.instance.FPDFPage_GetObject(&requests.FPDFPage_GetObject{Page: onPage, Index: i})
+			return object.PageObject, err
+		},
+	}, identity, 0, &walked)
+	return page, err
+}
+
+// objects are the objects a page or a form holds.
+type objects struct {
+	count func() (int, error)
+	at    func(int) (references.FPDF_PAGEOBJECT, error)
+}
+
+// walk counts the pictures among a page's objects, and keeps where on the page those that
+// are part of a figure are: a picture, a shape with a curve or a slant in it, as a pie, a
+// plotted line or an arrow has, and a filled box with no text in it, as a bar is. Boxes and
+// lines with text in them are a table's, which reads as text already. A form's objects
+// are where its matrix puts them.
+func (s *pdfSession) walk(page *pdfPage, holder objects, onPage matrix, depth int, walked *int) error {
+	count, err := holder.count()
 	if err != nil {
-		return page, err
+		return err
 	}
-	for i := range objects.Count {
-		object, err := s.instance.FPDFPage_GetObject(&requests.FPDFPage_GetObject{Page: requests.Page{ByReference: &loaded.Page}, Index: i})
-		if err != nil {
-			return page, err
+	for i := range count {
+		if *walked >= maxPageObjects {
+			return nil
 		}
-		kind, err := s.instance.FPDFPageObj_GetType(&requests.FPDFPageObj_GetType{PageObject: object.PageObject})
+		*walked++
+		object, err := holder.at(i)
 		if err != nil {
-			return page, err
+			return err
 		}
-		if kind.Type == enums.FPDF_PAGEOBJ_IMAGE {
+		kind, err := s.instance.FPDFPageObj_GetType(&requests.FPDFPageObj_GetType{PageObject: object})
+		if err != nil {
+			return err
+		}
+		switch kind.Type {
+		case enums.FPDF_PAGEOBJ_IMAGE:
 			page.images++
+			bounds, err := s.bounds(object, onPage)
+			if err != nil {
+				return err
+			}
+			if page.sized(bounds) {
+				page.drawn = append(page.drawn, bounds)
+			}
+		case enums.FPDF_PAGEOBJ_PATH, enums.FPDF_PAGEOBJ_SHADING:
+			bounds, err := s.bounds(object, onPage)
+			if err != nil {
+				return err
+			}
+			if !page.sized(bounds) {
+				continue
+			}
+			drawing, err := s.drawing(object, kind.Type, func() bool { return page.written(bounds) })
+			if err != nil {
+				return err
+			}
+			if drawing {
+				page.drawn = append(page.drawn, bounds)
+			}
+		case enums.FPDF_PAGEOBJ_FORM:
+			if depth >= maxFormDepth {
+				continue
+			}
+			placed, err := s.instance.FPDFPageObj_GetMatrix(&requests.FPDFPageObj_GetMatrix{PageObject: object})
+			if err != nil {
+				return err
+			}
+			form := object
+			err = s.walk(page, objects{
+				count: func() (int, error) {
+					counted, err := s.instance.FPDFFormObj_CountObjects(&requests.FPDFFormObj_CountObjects{PageObject: form})
+					return counted.Count, err
+				},
+				at: func(i int) (references.FPDF_PAGEOBJECT, error) {
+					child, err := s.instance.FPDFFormObj_GetObject(&requests.FPDFFormObj_GetObject{PageObject: form, Index: uint64(i)})
+					return child.PageObject, err
+				},
+			}, matrixOf(placed.Matrix).then(onPage), depth+1, walked)
+			if err != nil {
+				return err
+			}
 		}
 	}
-	return page, nil
+	return nil
+}
+
+// bounds is where an object is on the page.
+func (s *pdfSession) bounds(object references.FPDF_PAGEOBJECT, onPage matrix) (box, error) {
+	bounds, err := s.instance.FPDFPageObj_GetBounds(&requests.FPDFPageObj_GetBounds{PageObject: object})
+	if err != nil {
+		return box{}, err
+	}
+	return onPage.box(box{
+		left: float64(bounds.Left), bottom: float64(bounds.Bottom),
+		right: float64(bounds.Right), top: float64(bounds.Top),
+	}), nil
+}
+
+// drawing says a shape is part of a figure rather than a table's or a page's furniture:
+// it has a curve or a slanted line in it, or it is filled and has no text in it. A shading
+// is a fill.
+func (s *pdfSession) drawing(object references.FPDF_PAGEOBJECT, kind enums.FPDF_PAGEOBJ, written func() bool) (bool, error) {
+	if kind == enums.FPDF_PAGEOBJ_SHADING {
+		return !written(), nil
+	}
+	curved, err := s.curved(object)
+	if err != nil || curved {
+		return curved, err
+	}
+	mode, err := s.instance.FPDFPath_GetDrawMode(&requests.FPDFPath_GetDrawMode{PageObject: object})
+	if err != nil {
+		return false, err
+	}
+	return mode.FillMode != enums.FPDF_FILLMODE_NONE && !written(), nil
+}
+
+// curved says a shape has a curve in it, or a line that is neither level nor upright,
+// among its first maxPathPoints points. A table is drawn from level and upright lines. The
+// points are in the shape's own coordinates, which a table is never turned in.
+func (s *pdfSession) curved(object references.FPDF_PAGEOBJECT) (bool, error) {
+	points, err := s.instance.FPDFPath_CountSegments(&requests.FPDFPath_CountSegments{PageObject: object})
+	if err != nil {
+		return false, err
+	}
+	var lastX, lastY float64
+	for i := range min(points.Count, maxPathPoints) {
+		segment, err := s.instance.FPDFPath_GetPathSegment(&requests.FPDFPath_GetPathSegment{PageObject: object, Index: i})
+		if err != nil {
+			return false, err
+		}
+		kind, err := s.instance.FPDFPathSegment_GetType(&requests.FPDFPathSegment_GetType{PathSegment: segment.PathSegment})
+		if err != nil {
+			return false, err
+		}
+		if kind.Type == enums.FPDF_SEGMENT_BEZIERTO {
+			return true, nil
+		}
+		at, err := s.instance.FPDFPathSegment_GetPoint(&requests.FPDFPathSegment_GetPoint{PathSegment: segment.PathSegment})
+		if err != nil {
+			return false, err
+		}
+		x, y := float64(at.X), float64(at.Y)
+		if kind.Type == enums.FPDF_SEGMENT_LINETO && slanted(x-lastX, y-lastY) {
+			return true, nil
+		}
+		lastX, lastY = x, y
+	}
+	return false, nil
 }
 
 // readPDF reads every page's text. A page with a picture and next to no text on it is

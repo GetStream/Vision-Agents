@@ -17,6 +17,8 @@ type writer struct {
 	// tables are the tables being read, innermost last: a table inside a cell is written
 	// into that cell as text.
 	tables [][][]string
+	// pictures are the pictures placed so far, each written as its marker.
+	pictures pictures
 }
 
 // paragraph writes a paragraph, or adds it to the cell being read.
@@ -77,6 +79,19 @@ func (w *writer) item(depth int, bulleted bool, text string) {
 	}
 	w.blocks = append(w.blocks, item)
 	w.listing = true
+}
+
+// picture writes a picture's marker in the cell being read, or as a block of its own.
+func (w *writer) picture(marker string) {
+	if marker == "" {
+		return
+	}
+	if len(w.tables) > 0 {
+		w.appendCell(marker)
+		return
+	}
+	w.listing = false
+	w.blocks = append(w.blocks, marker)
 }
 
 func (w *writer) startTable() { w.tables = append(w.tables, nil) }

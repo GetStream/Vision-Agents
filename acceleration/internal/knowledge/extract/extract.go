@@ -46,6 +46,12 @@ type Page struct {
 	// Scanned says the page is a picture with no text on it, so only reading the picture can
 	// say what it holds.
 	Scanned bool
+	// Figured says a tenth of the page or more is charts, diagrams or pictures, which its
+	// text does not say the content of, so the page is read from its picture for them too.
+	// A scanned page is never also figured: reading it reads its figures.
+	Figured bool
+	// Figures is what reading the page's figures said, written after its text.
+	Figures string
 }
 
 // Image is a page drawn as a picture.
@@ -58,7 +64,10 @@ type Image struct {
 type Document struct {
 	Format Format
 	Pages  []Page
-	render func(ctx context.Context, number int) (Image, error)
+	// Pictures are the pictures of a Word, OpenDocument or Excel file, each standing in
+	// its page's text as its PictureMarker. A PDF's are read with the page they are on.
+	Pictures []Picture
+	render   func(ctx context.Context, number int) (Image, error)
 }
 
 // Scanned are the numbers of the pages that are only a picture.
@@ -66,6 +75,17 @@ func (d Document) Scanned() []int {
 	var numbers []int
 	for _, page := range d.Pages {
 		if page.Scanned {
+			numbers = append(numbers, page.Number)
+		}
+	}
+	return numbers
+}
+
+// Figured are the numbers of the pages with charts, diagrams or pictures on them.
+func (d Document) Figured() []int {
+	var numbers []int
+	for _, page := range d.Pages {
+		if page.Figured {
 			numbers = append(numbers, page.Number)
 		}
 	}
@@ -82,11 +102,15 @@ func (d Document) Render(ctx context.Context, number int) (Image, error) {
 }
 
 // Markdown is the document as one text. Each numbered page opens with PageMarker, so the
-// page a passage came from survives the text being stored, edited and posted again.
+// page a passage came from survives the text being stored, edited and posted again. Each
+// picture is written as what reading it said, and left out when it was not read.
 func (d Document) Markdown() string {
 	var b strings.Builder
 	for _, page := range d.Pages {
-		text := strings.TrimSpace(page.Text)
+		text := strings.TrimSpace(placePictures(page.Text, d.Pictures))
+		if figures := strings.TrimSpace(page.Figures); figures != "" {
+			text = strings.TrimSpace(text + "\n\n" + figures)
+		}
 		if page.Number > 0 {
 			if b.Len() > 0 {
 				b.WriteString("\n\n")

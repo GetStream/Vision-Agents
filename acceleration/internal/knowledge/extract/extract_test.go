@@ -5,7 +5,9 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"image"
 	"image/jpeg"
+	"image/png"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -140,6 +142,33 @@ func (s *ExtractSuite) TestAScannedPageIsMarkedAndCanBeDrawn() {
 	picture, err := jpeg.Decode(bytes.NewReader(drawn.Data))
 	s.Require().NoError(err)
 	s.Greater(picture.Bounds().Dy(), 1500, "an A4 page drawn finely enough to read")
+}
+
+func (s *ExtractSuite) TestAPageWithAChartOrAPictureOnItIsMarkedForItsFigures() {
+	document := s.extract("figures.pdf")
+
+	s.Equal([]int{1, 3, 5, 7}, document.Figured(),
+		"a bar chart, a pie chart, a photo and a chart drawn as a form are figures; "+
+			"a ruled and shaded table, a logo and a tinted page are not")
+	s.Empty(document.Scanned())
+	s.Contains(s.page(document, 1), "Week 1", "a figured page's own text is read as ever")
+	s.Empty(s.extract("manual.pdf").Figured(), "a manual of text, lists and tables has nothing to summarise")
+}
+
+func (s *ExtractSuite) TestAScannedPageIsNotAlsoMarkedForItsFigures() {
+	document := s.extract("scanned.pdf")
+
+	s.Empty(document.Figured(), "reading a scan reads its figures")
+}
+
+func (s *ExtractSuite) TestAPageReadsWithWhatItsFiguresSaidAfterItsText() {
+	document := Document{Pages: []Page{
+		{Number: 1, Text: "Oil is changed every 48 hours.", Figures: "> **Figure:** Oil changes by week."},
+		{Number: 2, Figures: "> **Figure:** A fryer's parts."},
+	}}
+
+	s.Equal("<!-- page 1 -->\n\nOil is changed every 48 hours.\n\n> **Figure:** Oil changes by week.\n\n"+
+		"<!-- page 2 -->\n\n> **Figure:** A fryer's parts.", document.Markdown())
 }
 
 func (s *ExtractSuite) TestAPDFWithAPasswordIsRefusedAsEncrypted() {
@@ -352,4 +381,46 @@ func (s *ExtractSuite) TestTextCutPartWayThroughACharacterPassesASniff() {
 	text := bytes.Repeat([]byte("é"), SniffBytes)
 
 	s.NoError(Sniff(text[:SniffBytes-1]))
+}
+
+func (s *ExtractSuite) TestAWordOrOpenDocumentPictureStandsWhereItIsUntilItIsRead() {
+	for _, name := range []string{"figures.docx", "figures.odt"} {
+		document := s.extract(name)
+
+		s.Require().Len(document.Pictures, 2, "%s: the chart once, though it is placed twice, and the picture in the table; not the icon", name)
+		s.Equal("image/png", document.Pictures[0].MIME, name)
+		s.Equal("image/png", document.Pictures[1].MIME, "%s: a GIF is shown to a model as a PNG", name)
+		s.Contains(document.Pages[0].Text, "The fryer is cleaned every night.\n\n"+PictureMarker(1), name)
+		s.Contains(document.Pages[0].Text, "| 1 | "+PictureMarker(2)+" |", name)
+		s.NotContains(document.Markdown(), "<!-- picture", "%s: a picture not read is left out", name)
+	}
+}
+
+func (s *ExtractSuite) TestAPictureReadIsWrittenWhereItIs() {
+	document := s.extract("figures.docx")
+	document.Pictures[0].Text = "Fryer oil changes\n\n> **Figure:** Changes rise from week 1 to week 4."
+	document.Pictures[1].Text = "> **Figure:** A map\nof the kitchen."
+
+	text := document.Markdown()
+
+	s.Contains(text, "every night.\n\nFryer oil changes\n\n> **Figure:** Changes rise from week 1 to week 4.\n\nAn icon")
+	s.Contains(text, "| 1 | > **Figure:** A map of the kitchen. |", "a table's cell is one line")
+}
+
+func (s *ExtractSuite) TestAnExcelPictureFollowsItsSheetsTable() {
+	document := s.extract("figures.xlsx")
+
+	s.Require().Len(document.Pictures, 1)
+	s.Equal("## Oil\n\n| Week | Changes |\n| --- | --- |\n| 1 | 4 |\n\n"+PictureMarker(1), document.Pages[0].Text)
+}
+
+func (s *ExtractSuite) TestAPictureTooSmallToBeAFigureOrInNoFormatAModelReadsIsNotKept() {
+	var kept pictures
+	icon := image.NewRGBA(image.Rect(0, 0, 40, 40))
+	var small bytes.Buffer
+	s.Require().NoError(png.Encode(&small, icon))
+
+	s.Empty(kept.keep(small.Bytes()))
+	s.Empty(kept.keep([]byte("\x01\x00\x00\x00 an EMF drawing")))
+	s.Empty(kept.kept)
 }

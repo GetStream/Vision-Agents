@@ -13,6 +13,7 @@ import subprocess
 from pathlib import Path
 
 import openpyxl
+import openpyxl.drawing.image
 from msoffcrypto.format.ooxml import OOXMLFile
 from PIL import Image, ImageDraw, ImageFont
 from pypdf import PdfReader, PdfWriter
@@ -133,6 +134,90 @@ def scanned_pdf() -> None:
     (HERE / "scanned.pdf").write_bytes(text.getvalue())
 
 
+def chart_image(width: int, height: int) -> Image.Image:
+    """A bar chart as a picture, the way one pasted into a document is."""
+    image = Image.new("RGB", (width, height), "white")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=max(12, height // 16))
+    draw.text((width // 20, height // 30), "Fryer oil changes", fill="black", font=font)
+    for index, value in enumerate([0.4, 0.7, 0.55, 0.9]):
+        left = width // 8 + index * width // 5
+        top = int(height * (0.9 - 0.7 * value))
+        draw.rectangle(
+            [left, top, left + width // 8, int(height * 0.9)], fill="steelblue"
+        )
+    return image
+
+
+def figures_pdf() -> None:
+    """A page each of what does and does not make a page figured."""
+    pdf = canvas.Canvas(str(HERE / "figures.pdf"), pagesize=A4)
+
+    def heading(text: str) -> None:
+        pdf.setFont("Helvetica-Bold", 16)
+        pdf.drawString(20 * mm, HEIGHT - 30 * mm, text)
+        pdf.setFont("Helvetica", 10)
+        pdf.drawString(
+            20 * mm,
+            HEIGHT - 40 * mm,
+            "Every station is cleaned at the end of each shift.",
+        )
+
+    heading("A bar chart")
+    for index, value in enumerate([60, 110, 85, 140]):
+        pdf.setFillColorRGB(0.2, 0.4, 0.7)
+        pdf.rect((30 + index * 35) * mm, 60 * mm, 20 * mm, value * mm, stroke=0, fill=1)
+        pdf.setFillColorRGB(0, 0, 0)
+        pdf.drawString((32 + index * 35) * mm, 54 * mm, f"Week {index + 1}")
+    pdf.showPage()
+
+    heading("A table")
+    pdf.setFillColorRGB(0.85, 0.85, 0.85)
+    pdf.rect(20 * mm, 200 * mm, 150 * mm, 10 * mm, stroke=0, fill=1)
+    pdf.setFillColorRGB(0, 0, 0)
+    for row in range(8):
+        y = 200 * mm - row * 10 * mm
+        for column, text in enumerate(["Fryer", "Daily", "Shift lead"]):
+            pdf.drawString((22 + column * 50) * mm, y + 3 * mm, text)
+    for row in range(9):
+        pdf.line(20 * mm, (210 - row * 10) * mm, 170 * mm, (210 - row * 10) * mm)
+    for column in range(4):
+        x = (20 + column * 50) * mm
+        pdf.line(x, 130 * mm, x, 210 * mm)
+    pdf.showPage()
+
+    heading("A pie chart")
+    pdf.setFillColorRGB(0.8, 0.3, 0.2)
+    pdf.wedge(40 * mm, 60 * mm, 160 * mm, 180 * mm, 0, 120, stroke=0, fill=1)
+    pdf.setFillColorRGB(0.2, 0.6, 0.3)
+    pdf.wedge(40 * mm, 60 * mm, 160 * mm, 180 * mm, 120, 240, stroke=0, fill=1)
+    pdf.showPage()
+
+    heading("A logo")
+    pdf.drawInlineImage(chart_image(200, 200), 170 * mm, 270 * mm, 20 * mm, 20 * mm)
+    pdf.showPage()
+
+    heading("A photo")
+    pdf.drawInlineImage(chart_image(800, 600), 20 * mm, 60 * mm, 160 * mm, 120 * mm)
+    pdf.showPage()
+
+    pdf.setFillColorRGB(0.95, 0.93, 0.85)
+    pdf.rect(0, 0, WIDTH, HEIGHT, stroke=0, fill=1)
+    pdf.setFillColorRGB(0, 0, 0)
+    heading("A tinted page")
+    pdf.showPage()
+
+    pdf.beginForm("chart")
+    for index, value in enumerate([60, 110, 85, 140]):
+        pdf.setFillColorRGB(0.2, 0.4, 0.7)
+        pdf.rect((30 + index * 35) * mm, 60 * mm, 20 * mm, value * mm, stroke=0, fill=1)
+    pdf.endForm()
+    heading("A chart drawn as a form")
+    pdf.doForm("chart")
+    pdf.showPage()
+    pdf.save()
+
+
 def encrypted_pdf() -> None:
     writer = PdfWriter(clone_from=PdfReader(HERE / "columns.pdf"))
     writer.encrypt(user_password="secret", algorithm="AES-128")
@@ -211,6 +296,46 @@ def office_files() -> None:
         office.encrypt("secret", out)
 
 
+FIGURES = """# Fryer guide
+
+The fryer is cleaned every night.
+
+![](chart.png)
+
+An icon marks every safety step: ![](icon.png)
+
+| Week | Changes |
+|------|---------|
+| 1 | ![](map.gif) |
+
+The same chart again, for the night shift:
+
+![](chart.png)
+"""
+
+
+def office_figures() -> None:
+    """Word and OpenDocument files with a chart, an icon, a picture in a table and a
+    chart placed twice, and a workbook with a chart pasted as a picture."""
+    chart_image(800, 600).save(HERE / "chart.png")
+    Image.new("RGB", (40, 40), "red").save(HERE / "icon.png")
+    chart_image(300, 200).convert("P").save(HERE / "map.gif")
+    (HERE / "figures.md").write_text(FIGURES)
+    for out in ["figures.docx", "figures.odt"]:
+        subprocess.run(["pandoc", "figures.md", "-o", out], cwd=HERE, check=True)
+
+    book = openpyxl.Workbook()
+    sheet = book.active
+    sheet.title = "Oil"
+    sheet.append(["Week", "Changes"])
+    sheet.append([1, 4])
+    sheet.add_image(openpyxl.drawing.image.Image(str(HERE / "chart.png")), "D2")
+    book.save(HERE / "figures.xlsx")
+
+    for name in ["chart.png", "icon.png", "map.gif", "figures.md"]:
+        (HERE / name).unlink()
+
+
 def menu_xlsx() -> None:
     book = openpyxl.Workbook()
     menu = book.active
@@ -236,8 +361,10 @@ if __name__ == "__main__":
     manual_pdf()
     columns_pdf()
     scanned_pdf()
+    figures_pdf()
     encrypted_pdf()
     office_files()
+    office_figures()
     menu_xlsx()
     (HERE / "corrupt.pdf").write_bytes(
         b"%PDF-1.7\n1 0 obj << /Type /Catalog >>\ntrailer\n%%EOF\n"

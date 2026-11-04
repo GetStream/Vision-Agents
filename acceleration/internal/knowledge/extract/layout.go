@@ -84,11 +84,13 @@ func layoutPages(pages []pdfPage) []Page {
 				kept = append(kept, l.runs...)
 			}
 		}
+		scanned := (page.images > 0 && page.chars < scannedChars) ||
+			(page.unreadable > 0 && page.unreadable >= page.chars)
 		out = append(out, Page{
-			Number: i + 1,
-			Text:   style.render(style.cut(kept)),
-			Scanned: (page.images > 0 && page.chars < scannedChars) ||
-				(page.unreadable > 0 && page.unreadable >= page.chars),
+			Number:  i + 1,
+			Text:    style.render(style.cut(kept)),
+			Scanned: scanned,
+			Figured: !scanned && page.figured(),
 		})
 	}
 	return out

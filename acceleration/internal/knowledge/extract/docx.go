@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path"
 	"strconv"
 	"strings"
 )
@@ -52,12 +53,54 @@ func readDOCX(data []byte) (Document, error) {
 	if err != nil {
 		return Document{}, err
 	}
-	reader := &wordReader{styles: styles, bullets: bullets}
+	relsXML, err := zipFile(archive, "word/_rels/document.xml.rels")
+	if err != nil {
+		return Document{}, err
+	}
+	images, err := wordImages(relsXML)
+	if err != nil {
+		return Document{}, err
+	}
+	reader := &wordReader{styles: styles, bullets: bullets, media: func(id string) []byte {
+		data, _ := zipFile(archive, images[id])
+		return data
+	}}
 	reader.numbered = bytes.Contains(body, []byte("lastRenderedPageBreak"))
 	if err := reader.read(body); err != nil {
 		return Document{}, fail(Corrupt, DOCX, err)
 	}
-	return Document{Pages: reader.pages()}, nil
+	return Document{Pages: reader.pages(), Pictures: reader.pictures.kept}, nil
+}
+
+// wordImages is where in the archive each picture the document names is kept, by the id it
+// names it by. A picture linked from outside the file is not in it.
+func wordImages(data []byte) (map[string]string, error) {
+	images := map[string]string{}
+	if data == nil {
+		return images, nil
+	}
+	decoder := xml.NewDecoder(bytes.NewReader(data))
+	for {
+		token, err := decoder.Token()
+		if errors.Is(err, io.EOF) {
+			return images, nil
+		}
+		if err != nil {
+			return nil, fail(Corrupt, DOCX, fmt.Errorf("document.xml.rels: %w", err))
+		}
+		element, ok := token.(xml.StartElement)
+		if !ok || element.Name.Local != "Relationship" || attr(element, "TargetMode") == "External" ||
+			!strings.HasSuffix(attr(element, "Type"), "/image") {
+			continue
+		}
+		target := attr(element, "Target")
+		if strings.HasPrefix(target, "/") {
+			target = path.Clean(strings.TrimPrefix(target, "/"))
+		} else {
+			target = path.Join("word", target)
+		}
+		images[attr(element, "Id")] = target
+	}
 }
 
 func wordStyles(data []byte) (map[string]wordStyle, error) {
@@ -165,8 +208,12 @@ type wordReader struct {
 	writer
 	styles  map[string]wordStyle
 	bullets map[string]map[int]bool
+	// media is the picture the document names by an id, or nil when it holds none by it.
+	media func(id string) []byte
 
-	text    strings.Builder
+	text strings.Builder
+	// placed are the markers of the pictures in the paragraph being read, written after it.
+	placed  []string
 	style   string
 	numID   string
 	ilvl    int
@@ -224,6 +271,12 @@ func (w *wordReader) read(body []byte) error {
 				w.pageBreak()
 			case "noBreakHyphen":
 				w.text.WriteByte('-')
+			case "blip":
+				// A picture and the copy of it kept for programs that cannot draw the
+				// first are the same file, which keep writes once.
+				w.placed = append(w.placed, w.pictures.keep(w.media(attr(element, "embed"))))
+			case "imagedata":
+				w.placed = append(w.placed, w.pictures.keep(w.media(attr(element, "id"))))
 			case "tbl":
 				w.flushParagraph()
 				w.startTable()
@@ -270,6 +323,7 @@ func (w *wordReader) read(body []byte) error {
 func (w *wordReader) flushParagraph() {
 	text := w.text.String()
 	w.text.Reset()
+	defer w.flushPictures()
 	if level := w.headingLevel(); level > 0 {
 		w.heading(level, text)
 		return
@@ -279,6 +333,13 @@ func (w *wordReader) flushParagraph() {
 		return
 	}
 	w.paragraph(text)
+}
+
+func (w *wordReader) flushPictures() {
+	for _, marker := range w.placed {
+		w.picture(marker)
+	}
+	w.placed = nil
 }
 
 func (w *wordReader) headingLevel() int {
