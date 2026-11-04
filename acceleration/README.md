@@ -699,6 +699,16 @@ tells one from another, and it names both Deepgram Flux models, Grok and Muse ou
 `only`. Gemini, the two Parakeets, Ink 2, Inworld and Scribe stay reachable by
 `provider/model` and through the other shortcuts.
 
+A shortcut's candidates are ranked by their live health, which each router reads from a snapshot
+in memory, never from Redis while a request waits. The snapshot reads every model the router can
+build in one pipelined round trip a second. A model missing from it is read along with the rest
+of the walk's missing models in one round trip, and is kept from then on. What a router records
+itself counts in its own snapshot at once, so it stops routing to a model that just failed fatally
+there before the next refresh, and other routers learn of it within a second. A failed refresh
+keeps the last snapshot, and a model no read has reached within the health window is unmeasured,
+as with no Redis at all. The metrics are `router_health_reads_total` (by `kind`: `refresh` or
+`miss`), `router_health_refresh_errors_total` and `router_health_snapshot_age_seconds`.
+
 ### The default groups
 
 These are the shortcuts offered as a choice, for the caller who wants the models we would
