@@ -67,7 +67,38 @@ func (s *KnowledgeFilesSuite) TestAScannedPageIsReadFromItsPictureAndBilledAsOCR
 	s.Contains(*read.Text, "This first page has a text layer.")
 	s.Contains(*read.Text, "<!-- page 2 -->\n\n# Fryer cleaning\n\nDrain the oil.", "the scan is read by the OCR router")
 	rows := s.meteredRows(routing.OCR, since, 1)
-	s.Equal("pages", rows[0].Provider)
+	s.Equal("vision", rows[0].Provider, "a model that can summarise its figures reads a scan first")
+}
+
+func (s *KnowledgeFilesSuite) TestAChartOnAPageIsSummarisedAfterThePagesText() {
+	since := time.Now().UTC()
+	_, sent, _ := s.upload("figures.pdf", extractFixture(s.T(), "figures.pdf"), "")
+
+	read := s.settled(sent.Id)
+
+	s.Equal(KnowledgeDocumentStateIndexed, read.State)
+	s.Contains(*read.Text, "Week 4\n\n> **Figure:** Oil changes rise each week.\n\n<!-- page 2 -->")
+	s.NotContains(*read.Text, "A table\n\nEvery station is cleaned at the end of each shift.\n\n> **Figure:**",
+		"a table that is text is not summarised")
+	rows := s.meteredRows(routing.OCR, since, 4)
+	for _, row := range rows {
+		s.Equal("vision", row.Provider)
+	}
+	s.True(strings.Contains(s.passageContaining("Oil changes rise each week"), "figures.pdf > p. "),
+		"what a figure shows is found under its page")
+}
+
+func (s *KnowledgeFilesSuite) TestAPictureInAWordFileIsSummarisedWhereItIs() {
+	since := time.Now().UTC()
+	_, sent, _ := s.upload("figures.docx", extractFixture(s.T(), "figures.docx"), "")
+
+	read := s.settled(sent.Id)
+
+	s.Equal(KnowledgeDocumentStateIndexed, read.State)
+	s.Contains(*read.Text, "The fryer is cleaned every night.\n\n> **Figure:** Oil changes rise each week.\n\nAn icon")
+	s.Contains(*read.Text, "| 1 | > **Figure:** Oil changes rise each week. |")
+	s.NotContains(*read.Text, "<!-- picture")
+	s.meteredRows(routing.OCR, since, 2)
 }
 
 func (s *KnowledgeFilesSuite) TestAFileWithAPasswordFailsSayingSo() {

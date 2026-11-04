@@ -110,22 +110,30 @@ func (s *OCRSuite) read(request OcrRequest) OcrResult {
 	return read
 }
 
-// reader stands in for an OCR provider: it reads the same text every time, or fails.
+// reader stands in for an OCR provider: it reads the same text every time, or fails. One
+// that sees says the same of every figure it is asked for alone.
 type reader struct {
-	name string
-	read ocr.Result
-	err  error
+	name    string
+	read    ocr.Result
+	figures ocr.Result
+	err     error
 }
 
-func (r *reader) Read(context.Context, ocr.Request) (ocr.Result, error) { return r.read, r.err }
-func (r *reader) Start(context.Context) error                           { return nil }
-func (r *reader) Close() error                                          { return nil }
-func (r *reader) Provider() string                                      { return r.name }
-func (r *reader) Model() string                                         { return "stub" }
+func (r *reader) Read(_ context.Context, page ocr.Request) (ocr.Result, error) {
+	if page.Mode == ocr.Figures {
+		return r.figures, r.err
+	}
+	return r.read, r.err
+}
+func (r *reader) Start(context.Context) error { return nil }
+func (r *reader) Close() error                { return nil }
+func (r *reader) Provider() string            { return r.name }
+func (r *reader) Model() string               { return "stub" }
 
 var readers = []*reader{
 	{name: "pages", read: ocr.Result{Markdown: "# Fryer cleaning\n\nDrain the oil.", Pages: 1}},
-	{name: "vision", read: ocr.Result{Markdown: "# Fryer cleaning\n\nDrain the oil.", InputTokens: 1500, OutputTokens: 500}},
+	{name: "vision", read: ocr.Result{Markdown: "# Fryer cleaning\n\nDrain the oil.", InputTokens: 1500, OutputTokens: 500},
+		figures: ocr.Result{Markdown: "> **Figure:** Oil changes rise each week.", InputTokens: 1200, OutputTokens: 80}},
 	{name: "broken", err: ocr.Fail(ocr.ProviderFailed, errors.New("vendor down"))},
 }
 
@@ -141,6 +149,7 @@ func ocrConfig() routing.ModalityConfig {
 		},
 		Aliases: map[string]routing.Alias{
 			ocrrouter.DefaultTarget: {Title: "OCR", Only: []string{"pages/stub", "vision/stub"}, Prefer: "pages/stub"},
+			"ocr-figures":           {Title: "OCR with figures", Only: []string{"vision/stub", "pages/stub"}, Prefer: "vision/stub"},
 		},
 	}
 }
