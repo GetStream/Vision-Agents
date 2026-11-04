@@ -4,10 +4,10 @@
 # app's WhatsApp webhook at POST /v1/connectors/events/whatsapp/{app id}, with the app id as
 # the Verify Token (wave 3d Q1). The replies go from the business number with the customer's
 # system-user access token. STOP, START and HELP are kept from the agent by the bridge
-# (channelbridge.keywords): Meta answers none of them itself. Text messages, and a photo's
-# caption as its text (revision 2); replies past the 24-hour window (approved templates) and
-# Meta's Tech Provider with Embedded Signup are later tickets. internal/channels/whatsapp.go is
-# where it started.
+# (channelbridge.keywords): Meta answers none of them itself. Text messages, and the caption of
+# a photo, a video or a document as its text (revision 2); replies past the 24-hour window
+# (approved templates) and Meta's Tech Provider with Embedded Signup are later tickets.
+# internal/channels/whatsapp.go is where it started.
 # Meta's pages, opened October 8, 2026:
 #   [hooks]    https://developers.facebook.com/docs/graph-api/webhooks/getting-started
 #   [payload]  https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/payload-examples
@@ -15,9 +15,12 @@
 #   [versions] https://developers.facebook.com/docs/graph-api/changelog
 # Opened November 4, 2026:
 #   [image]    https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/image
+#   [video]    https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/video
+#   [document] https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/document
 id: whatsapp
 # A new revision for any change to what this file says; see AGENTS.md.
-# Revision 2 (AI-2133): a photo with a caption is read, with the caption as its text (also).
+# Revision 2 (AI-2133): a photo, a video and a document with a caption are read, with the
+# caption as their text (also).
 revision: 2
 name: WhatsApp
 category: Communication
@@ -64,16 +67,25 @@ channel:
     match:
       $.entry[*].changes[*].value.messages[*].type: text
     # [image]: a photo is «"type": "image"» with «"image": {"caption": "Taj Mahal", "mime_type",
-    # "sha256", "id", "url"}», caption being «Media asset caption text». Its caption is its
-    # text, so the person's question about it is answered, keywords included, as the same
-    # words sent as text would be. A photo without a caption is not read, as on revision 1. The
-    # photo itself is not passed on: its id and url are downloaded with the access token
-    # ([image]), a later ticket (AI-2740). A build before also (a rollback) ignores it and reads
-    # text messages only, as revision 1 does.
+    # "sha256", "id", "url"}», caption being «Media asset caption text». [video] and [document]
+    # give «"type": "video"» with «"video": {"caption": ...}» and «"type": "document"» with
+    # «"document": {"caption": ..., "filename": ...}», the same «Media asset caption text».
+    # The caption is the message's text, so the person's question about the file is answered,
+    # keywords included, as the same words sent as text would be (as on Linq, where the text
+    # sent with a video is answered and the video is not passed on). A file without a caption
+    # is not read, as on revision 1. The file itself is not passed on: its id and url are
+    # downloaded with the access token ([image]), a later ticket (AI-2740). A build before also
+    # (a rollback) ignores it and reads text messages only, as revision 1 does.
     also:
       - match:
           $.entry[*].changes[*].value.messages[*].type: image
         text: $.entry[*].changes[*].value.messages[*].image.caption
+      - match:
+          $.entry[*].changes[*].value.messages[*].type: video
+        text: $.entry[*].changes[*].value.messages[*].video.caption
+      - match:
+          $.entry[*].changes[*].value.messages[*].type: document
+        text: $.entry[*].changes[*].value.messages[*].document.caption
     # [payload]: value.metadata.phone_number_id, the business number that received it.
     provider_unit_id: $.entry[*].changes[*].value.metadata.phone_number_id
     thread_key:

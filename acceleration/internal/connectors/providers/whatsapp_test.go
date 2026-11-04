@@ -53,12 +53,12 @@ func (s *WhatsAppSuite) TestOnlyTextMessagesAreRead() {
 	}, got)
 }
 
-// Revision 2 (AI-2133) reads a photo with a caption, by its caption, and nothing else new, in
-// a batch of every kind Meta's webhook reference shows (core/testdata/recorded/whatsapp.kinds.json).
+// Revision 2 (AI-2133) reads a photo, a video and a document with a caption, by their caption,
+// and nothing else new, in a batch of every kind Meta's webhook reference shows (core/testdata/recorded/whatsapp.kinds.json).
 // The two text messages read as base 43159ccd0 read them, by a probe of this batch on it
 // (TestProbeKinds, ledger base-probe-kinds.txt): «First» and «Last». A photo with no caption
-// or an empty one, a reaction, sticker, audio, location, button, interactive reply, a video
-// and a document with their captions, an unsupported message and the statuses are not read.
+// or an empty one, a video and a document with no caption, a reaction, sticker, audio,
+// location, button, interactive reply, an unsupported message and the statuses are not read.
 func (s *WhatsAppSuite) TestAPhotoIsReadByItsCaptionAndNothingElseNew() {
 	raw, err := os.ReadFile(filepath.Join("..", "core", "testdata", "recorded", "whatsapp.kinds.json"))
 	s.Require().NoError(err)
@@ -74,6 +74,8 @@ func (s *WhatsAppSuite) TestAPhotoIsReadByItsCaptionAndNothingElseNew() {
 	s.Equal([][]string{
 		{"200000000000001", "15550001111", "15550001111", "wamid.synthetic-kind-1", "First"},
 		{"200000000000001", "15550001111", "15550001111", "wamid.synthetic-kind-2", "Is this tooth chipped?"},
+		{"200000000000001", "15550001111", "15550001111", "wamid.synthetic-kind-11", "And this one?"},
+		{"200000000000001", "15550001111", "15550001111", "wamid.synthetic-kind-12", "My x-ray"},
 		{"200000000000001", "15550001111", "15550001111", "wamid.synthetic-kind-14", "Last"},
 	}, got)
 	s.Len(read.Skipped, 11)

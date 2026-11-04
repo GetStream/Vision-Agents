@@ -361,9 +361,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
-### A WhatsApp photo's caption is answered
+### A WhatsApp photo's, video's and document's caption is answered
 
-A WhatsApp photo sent with a caption reaches the agent as its caption, and the agent answers it; before, the whole message was dropped. A caption that is STOP, START or HELP is the keyword, as the same text is. A photo without a caption, and a video, document, voice note, sticker, reaction or location, still get no reply, and the photo file itself does not reach the agent yet. A connection takes `whatsapp` revision 2 at its next credential save; until then its captioned photos are dropped, as before. A channel manifest reads another kind of message by its own text with `messages.also` (AI-2133).
+A WhatsApp photo, video or document sent with a caption reaches the agent as its caption, and the agent answers it; before, the whole message was dropped. A caption that is STOP, START or HELP is the keyword, as the same text is. A photo, video or document without a caption, and a voice note, sticker, reaction or location, still get no reply, and the file itself does not reach the agent yet. A connection takes `whatsapp` revision 2 at its next credential save; until then its captioned files are dropped, as before. A channel manifest reads another kind of message by its own text with `messages.also` (AI-2133).
 
 ### Pausing a campaign stops its calls on every router
 

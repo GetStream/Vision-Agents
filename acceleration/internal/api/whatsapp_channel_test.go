@@ -286,6 +286,25 @@ func (s *WhatsAppChannelSuite) TestAPhotoWithACaptionIsAnsweredAsItsCaption() {
 	s.Empty(imagesIn(said))
 }
 
+// A video or a document with a caption (revision 2, AI-2133) is answered as its caption, as a
+// photo is: the thread channel holds the caption with no file, and the reply is a text message.
+func (s *WhatsAppChannelSuite) TestAVideoOrADocumentWithACaptionIsAnsweredAsItsCaption() {
+	for kind, caption := range map[string]string{"video": "And this one?", "document": "My x-ray"} {
+		s.Run(kind, func() {
+			person := s.digits()
+			asked := len(s.meta.sent())
+
+			s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.captioned(person, kind, caption))))
+
+			stored := s.written(s.threadChannel(person), 1)
+			s.Equal(caption, stored[0]["text"])
+			s.Empty(stored[0]["attachments"], "the file is a later ticket (AI-2740)")
+			sent := s.took(asked + 1)[asked]
+			s.Equal(metaMessage{unit: s.unit, to: "+" + person, kind: "text", text: "Noted."}, sent.withoutAuthorization())
+		})
+	}
+}
+
 // A caption is the person's text, so STOP under a photo is the keyword it is as text: the one
 // confirmation, the number's opt-out, and no agent.
 func (s *WhatsAppChannelSuite) TestAPhotoCaptionedStopIsTheKeyword() {
@@ -303,7 +322,7 @@ func (s *WhatsAppChannelSuite) TestAPhotoCaptionedStopIsTheKeyword() {
 
 // Nothing else is read (payload, the webhook reference pages beside image): a photo without
 // a caption or with an empty one, a reaction, a sticker, a voice note, a location, a button or
-// interactive reply, a video or a document with its caption, an unsupported message, and a
+// interactive reply, a video or a document with no caption, an unsupported message, and a
 // delivery report of the agent's own reply, in value.statuses, reach no agent and write
 // nothing to Stream Chat.
 func (s *WhatsAppChannelSuite) TestAPhotoWithoutACaptionAndOtherKindsAreNotWritten() {
@@ -329,8 +348,10 @@ func (s *WhatsAppChannelSuite) TestAPhotoWithoutACaptionAndOtherKindsAreNotWritt
 		kind("location", map[string]any{"location": map[string]any{"latitude": 37.48, "longitude": -122.15, "name": "Dental Co"}}),
 		kind("button", map[string]any{"button": map[string]any{"payload": "yes", "text": "Yes"}}),
 		kind("interactive", map[string]any{"interactive": map[string]any{"type": "button_reply", "button_reply": map[string]any{"id": "yes", "title": "Yes"}}}),
-		kind("video", map[string]any{"video": media("video/mp4", map[string]any{"caption": "And this one?"})}),
-		kind("document", map[string]any{"document": media("application/pdf", map[string]any{"caption": "My x-ray", "filename": "xray.pdf"})}),
+		kind("video", map[string]any{"video": media("video/mp4", nil)}),
+		kind("video", map[string]any{"video": media("video/mp4", map[string]any{"caption": ""})}),
+		kind("document", map[string]any{"document": media("application/pdf", map[string]any{"filename": "xray.pdf"})}),
+		kind("document", map[string]any{"document": media("application/pdf", map[string]any{"caption": "", "filename": "xray.pdf"})}),
 		kind("unsupported", map[string]any{"errors": []map[string]any{{"code": 131051, "title": "Message type unknown"}}}),
 	)
 	statuses := []byte(`{"object":"whatsapp_business_account","entry":[{"id":"1","changes":[{"field":"messages","value":{` +
@@ -352,8 +373,12 @@ func (s *WhatsAppChannelSuite) TestAConnectionStillOnRevision1AnswersTextAlone()
 	ctx := context.Background()
 	raw, err := fs.ReadFile(providers.FS, "whatsapp.yaml")
 	s.Require().NoError(err)
-	also := "    also:\n      - match:\n          $.entry[*].changes[*].value.messages[*].type: image\n" +
-		"        text: $.entry[*].changes[*].value.messages[*].image.caption\n"
+	also := ""
+	for _, kind := range []string{"image", "video", "document"} {
+		also += "      - match:\n          $.entry[*].changes[*].value.messages[*].type: " + kind + "\n" +
+			"        text: $.entry[*].changes[*].value.messages[*]." + kind + ".caption\n"
+	}
+	also = "    also:\n" + also
 	s.Require().Contains(string(raw), also)
 	revision1 := strings.NewReplacer("\nrevision: 2\n", "\nrevision: 1\n", also, "").Replace(string(raw))
 	s.Require().NotContains(revision1, "also:")
@@ -365,7 +390,8 @@ func (s *WhatsAppChannelSuite) TestAConnectionStillOnRevision1AnswersTextAlone()
 		}))
 	person := "16505551234"
 
-	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"), s.text(person, "Hi"))))
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"), s.captioned(person, "video", "And this one?"),
+		s.captioned(person, "document", "My x-ray"), s.text(person, "Hi"))))
 
 	channel := s.threadChannel(person)
 	s.Equal("Hi", s.written(channel, 1)[0]["text"])
@@ -426,6 +452,14 @@ func (s *WhatsAppChannelSuite) photo(person, caption string) map[string]any {
 		"caption": caption, "mime_type": "image/jpeg", "sha256": "c3ludGhldGlj", "id": s.digits(),
 		"url": "https://lookaside.fbsbx.com/whatsapp_business/attachments/?mid=" + s.digits(),
 	}
+	return message
+}
+
+// captioned is a message of kind (image, video or document) with its caption, shaped as the
+// examples in image, video and document.
+func (s *WhatsAppChannelSuite) captioned(person, kind, caption string) map[string]any {
+	message := s.message(person, kind)
+	message[kind] = map[string]any{"caption": caption, "mime_type": "video/mp4", "sha256": "c3ludGhldGlj", "id": s.digits()}
 	return message
 }
 
