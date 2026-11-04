@@ -2544,44 +2544,54 @@ func (s *DataMoveSuite) TestACampaignStartedHereIsNoLongerTheMovesToName() {
 	s.Empty(campaigns, "the customer paused it here")
 }
 
-// ringOnSource rings a campaign's next contact on the source, as its runner does, and returns
-// it in a call.
-func (s *DataMoveSuite) ringOnSource(campaignID string) Contact {
-	contact, found, err := s.source.ClaimContact(s.ctx, campaignID)
+// dueOnSource is a running campaign on the source with two contacts due to be rung.
+func (s *DataMoveSuite) dueOnSource() string {
+	campaign := s.seedCampaign("acme", Draft)
+	_, _, err := s.source.AddContacts(s.ctx, campaign, []Contact{{ToNumber: "+15550101"}, {ToNumber: "+15550102"}})
 	s.Require().NoError(err)
-	s.Require().True(found)
-	return contact
+	_, err = s.source.DB().ExecContext(s.ctx, "UPDATE campaign_contacts SET next_attempt_at = now() WHERE campaign_id = ?", campaign)
+	s.Require().NoError(err)
+	s.setState(s.source, "acme", campaign, Running)
+	return campaign
 }
 
-// hangUpOnSource ends a call the source rang.
+// ringOnSource rings the source's next due contact, as a runner there does, and returns it in
+// a call.
+func (s *DataMoveSuite) ringOnSource() Contact {
+	claimed, err := s.source.ClaimDueContacts(s.ctx, "router-a", time.Now(), time.Hour, 1)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	return claimed[0].Contact
+}
+
+// hangUpOnSource ends a call the source rang, and the contact with it.
 func (s *DataMoveSuite) hangUpOnSource(contact Contact) {
-	contact.State = Done
-	s.Require().NoError(s.source.FinishContact(s.ctx, contact))
+	s.Require().NoError(s.source.SettleContact(s.ctx, "router-a", contact.ID, Settle{Stage: ContactCompleted, Attempt: 1}))
 }
 
-// startHere starts a moved campaign on the destination as campaign.Runner.Start does, and
-// returns the contact it rings first.
-func (s *DataMoveSuite) startHere(customerID, campaignID string) Contact {
-	s.Require().NoError(s.destination.ReleaseContacts(s.ctx, campaignID))
-	s.Require().NoError(s.destination.SetCampaignState(s.ctx, customerID, campaignID, Running))
-	contact, found, err := s.destination.ClaimContact(s.ctx, campaignID)
+// resumeHere resumes a moved campaign on the destination and returns the contacts a runner
+// there rings first.
+func (s *DataMoveSuite) resumeHere(campaign string) []Contact {
+	s.Require().NoError(s.destination.ResumeCampaign(s.ctx, "moved", campaign))
+	claimed, err := s.destination.ClaimDueContacts(s.ctx, "router-b", time.Now().Add(time.Minute), time.Hour, 10)
 	s.Require().NoError(err)
-	s.Require().True(found)
-	return contact
+	contacts := make([]Contact, 0, len(claimed))
+	for _, claim := range claimed {
+		contacts = append(contacts, claim.Contact)
+	}
+	return contacts
 }
 
 // The cut-over the docs give: pause the campaign at the source, let its calls end, then run the
 // last --once. The pause clears the move's mark, so --resume leaves the campaign alone, and
-// starting it here rings only those the source never rang.
+// resuming it here rings only those the source never rang.
 func (s *DataMoveSuite) TestACampaignPausedAtTheSourceBeforeTheLastCatchUpRingsNobodyTwiceHere() {
 	s.capture("acme")
-	running := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
-		{CampaignID: running, ToNumber: "+15550101"}, {CampaignID: running, ToNumber: "+15550102"}}))
-	inCall := s.ringOnSource(running)
+	running := s.dueOnSource()
+	inCall := s.ringOnSource()
 	cursor := s.move("acme", "moved")
 
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", running, Paused))
+	s.Require().NoError(s.source.PauseCampaign(s.ctx, "acme", running, ""))
 	s.hangUpOnSource(inCall)
 	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
 	s.Require().NoError(err)
@@ -2591,82 +2601,29 @@ func (s *DataMoveSuite) TestACampaignPausedAtTheSourceBeforeTheLastCatchUpRingsN
 	s.Empty(campaigns, "the user paused it at the source")
 	campaign, err := s.destination.Campaign(s.ctx, "moved", running)
 	s.Require().NoError(err)
-	s.Equal(Paused, campaign.State, "it rings here only once someone starts it")
+	s.Equal(Paused, campaign.State, "it rings here only once someone resumes it")
 
-	next := s.startHere("moved", running)
-	s.NotEqual(inCall.ID, next.ID, "the source rang them")
-	s.Equal("+15550102", next.ToNumber)
-	s.Equal(1, next.Attempts)
+	rung := s.resumeHere(running)
+	s.Require().Len(rung, 1)
+	s.Equal("+15550102", rung[0].ToNumber, "the source rang the other")
 }
 
 // A campaign running at the source when the last --once read it stays paused here, and the
 // cut-over names it. The contacts the source rang up to then are done here.
-func (s *DataMoveSuite) TestACampaignTheCopyPausedIsNamedAndStartsWhereTheCopyLeftOff() {
-	running := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
-		{CampaignID: running, ToNumber: "+15550101"}, {CampaignID: running, ToNumber: "+15550102"}}))
-	s.hangUpOnSource(s.ringOnSource(running))
+func (s *DataMoveSuite) TestACampaignTheCopyPausedIsNamedAndResumesWhereTheCopyLeftOff() {
+	running := s.dueOnSource()
+	s.hangUpOnSource(s.ringOnSource())
 	s.move("acme", "moved")
 
 	_, campaigns := s.resume("moved")
 	s.Equal([]string{running}, campaigns)
 	campaign, err := s.destination.Campaign(s.ctx, "moved", running)
 	s.Require().NoError(err)
-	s.Equal(Paused, campaign.State, "the cut-over starts no campaign")
+	s.Equal(Paused, campaign.State, "the cut-over resumes no campaign")
 
-	next := s.startHere("moved", running)
-	s.Equal("+15550102", next.ToNumber)
-	s.Equal(1, next.Attempts)
-}
-
-// A campaign the user paused at the source without waiting for its calls to end arrives paused
-// and unmarked with a contact still calling. The cut-over names it with how many, since a start
-// here rings them again.
-func (s *DataMoveSuite) TestACampaignPausedAtTheSourceWithContactsCallingIsNamedWithTheirCount() {
-	s.capture("acme")
-	inCalls := s.seedCampaign("acme", Running)
-	quiet := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
-		{CampaignID: inCalls, ToNumber: "+15550101"}, {CampaignID: inCalls, ToNumber: "+15550102"},
-		{CampaignID: inCalls, ToNumber: "+15550103"}, {CampaignID: quiet, ToNumber: "+15550104"}}))
-	s.ringOnSource(inCalls)
-	s.ringOnSource(inCalls)
-	s.hangUpOnSource(s.ringOnSource(quiet))
-	cursor := s.move("acme", "moved")
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", inCalls, Paused))
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", quiet, Paused))
-	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
-	s.Require().NoError(err)
-	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
-
-	_, campaigns := s.resume("moved")
-	s.Empty(campaigns, "the user paused both at the source")
-	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
-	s.Require().NoError(err)
-	s.Equal([]CampaignCalls{{ID: inCalls, Calls: 2}}, calling, "only the one with contacts in a call, counted")
-
-	first := s.startHere("moved", inCalls)
-	s.Equal(2, first.Attempts, "a start here rings the one the source was calling again")
-}
-
-func (s *DataMoveSuite) TestACampaignNotPausedHereIsNotNamedForItsCalls() {
-	running := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: running, ToNumber: "+15550101"}}))
-	s.ringOnSource(running)
-	marked := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: marked, ToNumber: "+15550103"}}))
-	s.ringOnSource(marked)
-	other := s.seedCampaign("other", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: other, ToNumber: "+15550102"}}))
-	s.ringOnSource(other)
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "other", other, Paused))
-	s.move("acme", "moved")
-	s.move("other", "moved-other")
-	s.startHere("moved", running)
-
-	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
-	s.Require().NoError(err)
-	s.Empty(calling, "one started here rings its own calls, the move's mark names its own, and another customer's is not its")
+	rung := s.resumeHere(running)
+	s.Require().Len(rung, 1)
+	s.Equal("+15550102", rung[0].ToNumber)
 }
 
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a

@@ -904,7 +904,9 @@ FROM %s`, sequence.name)
 // leaves it paused.
 //
 // A campaign running or scheduled there does not ring anybody here either way: every router
-// dials a running campaign, so it arrives paused and marked, and the cut-over resumes it here.
+// dials a running campaign, so it arrives paused, and marked so that the cut-over can name the
+// campaigns the source was still running. One the user paused there before the last catch-up
+// loses the mark: the copy holds every call it made there.
 func pauseImported(row json.RawMessage, active []string, paused string, claimed bool) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(row, &fields); err != nil {
@@ -1077,9 +1079,11 @@ func settleSkippedRuns(ctx context.Context, tx bun.Tx, customerID string, tasks 
 // cancelled or paused tasks here.
 //
 // It returns how many tasks it resumed, how many it left paused for want of a config, how many
-// for want of room, and the campaigns that were running or scheduled there. Those it leaves paused and
-// marked: the caller resumes each (ResumeCampaign), and any change of a campaign's state here
-// clears the mark (transitionIn). Running it again names nothing twice.
+// for want of room, and the campaigns still running or scheduled there at the last catch-up.
+// Those it leaves paused and marked: a contact the source rang after that is still enrolled
+// here, and resuming the campaign here (ResumeCampaign) rings it again, so that is left to a
+// person. Any change of a campaign's state here clears the mark (transitionIn). Running it
+// again resumes nothing twice.
 func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped, overLimit int64, campaigns []string, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var marked []ScheduledTask
@@ -1159,35 +1163,6 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 		return 0, 0, 0, nil, stack.Wrap(err)
 	}
 	return resumed, skipped, overLimit, campaigns, nil
-}
-
-// CampaignCalls is a campaign and how many of its contacts are in a call.
-type CampaignCalls struct {
-	ID    string `bun:"id"`
-	Calls int    `bun:"calls"`
-}
-
-// PausedCampaignsCalling returns the customer's campaigns that are paused here, not by the move,
-// and still hold contacts in a call, with how many each. The source was calling them at the
-// last catch-up: a start here releases them to pending (ReleaseContacts) and rings them again.
-func (s *Store) PausedCampaignsCalling(ctx context.Context, customerID string) ([]CampaignCalls, error) {
-	var calling []CampaignCalls
-	err := s.db.NewSelect().
-		TableExpr("campaigns AS c").
-		ColumnExpr("c.id AS id").
-		ColumnExpr("count(*) AS calls").
-		Join("JOIN campaign_contacts AS cc ON cc.campaign_id = c.id").
-		Where("c.customer_id = ?", customerID).
-		Where("c.state = ?", Paused).
-		Where("NOT c.move_paused").
-		Where("cc.state = ?", Calling).
-		Group("c.id").
-		Order("c.id").
-		Scan(ctx, &calling)
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: paused campaigns calling: %w", err))
-	}
-	return calling, nil
 }
 
 // scheduledTaskHolder is a user on an agent config, who holds at most its limit of active tasks.

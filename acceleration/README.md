@@ -2482,12 +2482,12 @@ point here, stop writing at the source.
 
 Cut over once SDKs point here:
 
-1. Pause each running campaign at the source (`POST /v1/agents/campaigns/{id}/pause`). Wait
-   until none of its contacts is `calling` there (`GET /v1/agents/campaigns/{id}/contacts`).
-   A pause stops every replica from taking its next contact. It ends the call in progress only
-   on the replica the request reaches: a call on another replica goes on until it ends, for
-   at most 15 minutes. A call that ends after the last `--once` is not carried, so with more
-   than one replica at the source, wait until no contact is `calling`.
+1. Pause each running or scheduled campaign at the source
+   (`POST /v1/agents/campaigns/{id}/pause`). Wait until none of its contacts is `in_progress`
+   there (`GET /v1/agents/campaigns/{id}/contacts?stage=in_progress`). A pause stops every
+   replica from taking its next contact, and a call in progress goes on until it ends, for at
+   most 15 minutes. A call that ends after the last `--once` is not carried: its contact
+   settles here with an `unknown` outcome.
 2. Run `replicate --from … --once` one last time, to pick up the last writes. The copy now
    holds every call the source made.
 3. Stop the source delivering. Do not pause the scheduled tasks there before that last
@@ -2501,7 +2501,7 @@ Cut over once SDKs point here:
 
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
 at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
-and resumes the marked campaigns. The source went on delivering between the last `--once` and its
+and names the marked campaigns. The source went on delivering between the last `--once` and its
 stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
 the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
 the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
@@ -2513,8 +2513,18 @@ and the command prints how many it left that way. A user holds at most the confi
 `max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
 made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
 and the rest stay paused and marked. The command prints how many; run it again once the user
-has made room. Every router here dials a running campaign, so a resumed one rings from here
-at once; one whose `start_at` has not come yet goes back to scheduled.
+has made room.
+
+`--resume` resumes no campaign. A campaign paused at the source in step 1 stays paused here and
+is not named: resume it here with `POST /v1/agents/campaigns/{id}/resume` when it is to ring
+again. Every router here dials a running campaign, so a resumed one rings from here at once; one
+whose `start_at` has not come yet goes back to scheduled. A campaign still running or scheduled
+at the source at the last `--once` stays paused here, and `--resume` names it: a contact the
+source rang after that is still `enrolled` here, and a resume here rings that contact again.
+Read its contacts at the source before you resume it here.
+
+Do not run `--once` again after `--resume`. Every run reads the source and makes it the truth
+again: it overwrites what was resumed here with what the source has.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app

@@ -40,15 +40,17 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
                 ROUTER_DATA_MOVE_RETENTION
   --resume      the cut-over, once the deployment copied from no longer delivers: resume
                 the scheduled tasks the copy paused because they were active there, each
-                at its first occurrence after now, and the campaigns that were running or
-                scheduled there
+                at its first occurrence after now, and name the campaigns still running or
+                scheduled there at the last --once, which it leaves paused. Do not run
+                --once again after --resume: every run makes the deployment copied from
+                the truth again
 
 Until the last --once the deployment copied from is the truth: a change it makes to a
 row overwrites what was done to that row here, a delete included, and --full overwrites
 every row. Once SDKs point here, stop writing there.
 
 Before the last --once, pause the campaigns there and wait for their calls to end. The
-copy then holds every call made there, and a campaign rings here only once it is started
+copy then holds every call made there, and a campaign rings here only once it is resumed
 here.
 
 Copy an app here from one deployment only. A copied agent log is known here by the id it
@@ -378,7 +380,9 @@ func caughtUpMessage(cursor int64, customerID string) string {
 		cursor, customerID, customerID)
 }
 
-// resumeMove is the cut-over: it resumes what the copy paused.
+// resumeMove is the cut-over: it resumes the scheduled tasks the copy paused and names the
+// campaigns the source was still running at the last catch-up. It resumes none: one the source
+// rang from after that would ring those contacts again here.
 func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
 	cutOver := time.Now()
 	if err := pgStore.SkipOccurrencesBeforeCutOver(ctx, customerID, cutOver, nextAfter(cutOver)); err != nil {
@@ -396,16 +400,14 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 		fmt.Fprintf(out, "left %d scheduled tasks paused: their user already holds the most active tasks the agent config allows. "+
 			"Run --resume again once the user has made room; the oldest are resumed first\n", overLimit)
 	}
-	var failed []error
 	for _, id := range campaigns {
-		if err := pgStore.ResumeCampaign(ctx, customerID, id); err != nil {
-			fmt.Fprintf(out, "could not resume campaign %s: %v\n", id, err)
-			failed = append(failed, fmt.Errorf("resume campaign %s: %w", id, err))
-			continue
-		}
-		fmt.Fprintf(out, "resumed campaign %s\n", id)
+		fmt.Fprintf(out, "campaign %s was still running or scheduled where it came from at the last --once, so it stays paused here: "+
+			"contacts rung there since then are still enrolled here, and resuming it here rings them again. "+
+			"Read its contacts there (GET /v1/agents/campaigns/%s/contacts) before you resume it here "+
+			"(POST /v1/agents/campaigns/%s/resume). "+
+			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n", id, id, id)
 	}
-	return errors.Join(failed...)
+	return nil
 }
 
 // nextAfter is a moved task's next occurrence after the cut-over, as a resume counts it
