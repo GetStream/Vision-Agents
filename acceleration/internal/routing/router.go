@@ -602,6 +602,9 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 	alias, ok := r.config.Aliases[target]
 	if !ok {
+		if instead, retired := r.config.Retired[target]; retired {
+			return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s is retired; ask for %s instead", target, instead)))
+		}
 		return nil, Refused(stack.Wrap(fmt.Errorf("routing: unknown target %q", target)))
 	}
 

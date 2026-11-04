@@ -1636,7 +1636,7 @@ between:
 | `tavily/basic`        | Index plus a written summary in the same round trip               |
 | `exa/auto`            | Exa choosing between its neural and keyword indexes               |
 | `tavily/advanced`     | Crawls the pages it finds rather than trusting the snippet        |
-| `perplexity/sonar`, `perplexity/sonar-pro` | A model reads the pages and writes the answer |
+| `perplexity/sonar`    | A model searches the web and writes the answer                    |
 
 A session that names nothing gets `search-fast`. Sonar is a target rather than a fork:
 because it is a language model in the middle of a conversation, whether it is worth its
