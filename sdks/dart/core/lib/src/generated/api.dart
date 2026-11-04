@@ -401,6 +401,7 @@ final class CreateResponseRequest {
     this.reasoningEffort,
     this.requestId,
     required this.text,
+    this.uiAction,
     this.videos,
   });
 
@@ -431,6 +432,10 @@ final class CreateResponseRequest {
         final Object value => _string(value, 'CreateResponseRequest.request_id'),
       },
       text: _string(json['text'], 'CreateResponseRequest.text'),
+      uiAction: switch (json['ui_action']) {
+        null => null,
+        final Object value => _object(value, 'CreateResponseRequest.ui_action'),
+      },
       videos: switch (json['videos']) {
         null => null,
         final Object value => [
@@ -447,6 +452,7 @@ final class CreateResponseRequest {
   final String? reasoningEffort;
   final String? requestId;
   final String text;
+  final Map<String, Object?>? uiAction;
   final List<VideoSource>? videos;
 
   Map<String, Object?> toJson() => {
@@ -456,6 +462,7 @@ final class CreateResponseRequest {
     'reasoning_effort': ?reasoningEffort,
     'request_id': ?requestId,
     'text': text,
+    'ui_action': ?uiAction,
     if (videos case final value?) 'videos': [for (final item in value) item.toJson()],
   };
 }

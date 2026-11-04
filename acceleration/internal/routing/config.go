@@ -268,6 +268,10 @@ type ProviderConfig struct {
 	// InputModalities are extra input kinds this model accepts, e.g. "image". Empty
 	// means text only, and a request carrying anything else is not routed here.
 	InputModalities []string `yaml:"input_modalities"`
+	// IgnoresTools is a model that takes the tools it is offered and never calls one. A
+	// shortcut that requires tools leaves it out, and a response offering tools is failed
+	// over and hedged around it.
+	IgnoresTools bool `yaml:"ignores_tools"`
 	// ContextWindow is how many tokens of prompt this host serves the model with, which
 	// can be less than its maker's. Compaction reads it; routing does not.
 	ContextWindow int64 `yaml:"context_window"`
@@ -381,6 +385,10 @@ type Alias struct {
 	// recording routes to the batch endpoint that is cheaper and more accurate than the
 	// same vendor's streaming one rather than being streamed at a socket.
 	RequireRecorded bool `yaml:"require_recorded"`
+	// RequireTools excludes models that ignore the tools they are offered, for a shortcut
+	// an agent holds a conversation on: its tools are how it ends, transfers or looks
+	// something up, and a turn answered by such a model does none of that.
+	RequireTools bool `yaml:"require_tools"`
 	// Tier restricts candidates to one tier. Empty accepts any.
 	Tier Tier `yaml:"tier"`
 	// Prefer is a "provider/model" that goes ahead of the ranking for as long as it is
@@ -398,6 +406,9 @@ func (a Alias) matches(provider ProviderConfig) bool {
 		return false
 	}
 	if a.RequireRecorded && provider.Realtime {
+		return false
+	}
+	if a.RequireTools && provider.IgnoresTools {
 		return false
 	}
 	if a.Multilingual && !provider.Multilingual() {

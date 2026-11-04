@@ -11,6 +11,7 @@ from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
     from ..models.audio_source import AudioSource
+    from ..models.create_response_request_ui_action import CreateResponseRequestUiAction
     from ..models.image_source import ImageSource
     from ..models.video_source import VideoSource
 
@@ -40,6 +41,10 @@ class CreateResponseRequest:
             fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened
             for a message handed out from a channel, that message is already there: nothing is written or uploaded for it,
             and a reused id is answered as a duplicate even with other text or images.
+        ui_action (CreateResponseRequestUiAction | Unset): What the person did in the generated UI of an earlier reply,
+            such as tapping a place or submitting a form, which the text says in their words: an object naming the reply
+            (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON.
+            Their message carries it as custom.ai_ui_action, and the model is told it after the text.
         videos (list[VideoSource] | Unset): Recorded clips to show the agent. The router samples evenly spaced frames
             from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a
             video, since none of the ones routed here take one whole.
@@ -51,6 +56,7 @@ class CreateResponseRequest:
     max_output_tokens: int | Unset = UNSET
     reasoning_effort: str | Unset = UNSET
     request_id: str | Unset = UNSET
+    ui_action: CreateResponseRequestUiAction | Unset = UNSET
     videos: list[VideoSource] | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
@@ -73,6 +79,10 @@ class CreateResponseRequest:
         reasoning_effort = self.reasoning_effort
 
         request_id = self.request_id
+
+        ui_action: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.ui_action, Unset):
+            ui_action = self.ui_action.to_dict()
 
         videos: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.videos, Unset):
@@ -98,6 +108,8 @@ class CreateResponseRequest:
             field_dict["reasoning_effort"] = reasoning_effort
         if request_id is not UNSET:
             field_dict["request_id"] = request_id
+        if ui_action is not UNSET:
+            field_dict["ui_action"] = ui_action
         if videos is not UNSET:
             field_dict["videos"] = videos
 
@@ -106,6 +118,9 @@ class CreateResponseRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.audio_source import AudioSource
+        from ..models.create_response_request_ui_action import (
+            CreateResponseRequestUiAction,
+        )
         from ..models.image_source import ImageSource
         from ..models.video_source import VideoSource
 
@@ -134,6 +149,13 @@ class CreateResponseRequest:
 
         request_id = d.pop("request_id", UNSET)
 
+        _ui_action = d.pop("ui_action", UNSET)
+        ui_action: CreateResponseRequestUiAction | Unset
+        if isinstance(_ui_action, Unset):
+            ui_action = UNSET
+        else:
+            ui_action = CreateResponseRequestUiAction.from_dict(_ui_action)
+
         _videos = d.pop("videos", UNSET)
         videos: list[VideoSource] | Unset = UNSET
         if _videos is not UNSET:
@@ -150,6 +172,7 @@ class CreateResponseRequest:
             max_output_tokens=max_output_tokens,
             reasoning_effort=reasoning_effort,
             request_id=request_id,
+            ui_action=ui_action,
             videos=videos,
         )
 

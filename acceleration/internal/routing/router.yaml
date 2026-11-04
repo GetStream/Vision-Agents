@@ -25,6 +25,10 @@
 # nothing. A request naming a data policy is routed only to models that meet it, and
 # unknown and unspecified meet nothing - a vendor who has said nothing is not a vendor who
 # has said no.
+#
+# ignores_tools marks a language model that takes the tools it is offered and never calls
+# one, and require_tools keeps a shortcut free of them. A response offering tools is also
+# failed over and hedged only to models that call them, whatever its target.
 
 stt:
   providers:
@@ -2608,9 +2612,12 @@ llm:
 
     # Moondream 3 over its OpenAI-compatible chat completions: a small vision model that
     # answers questions about a picture. It accepts tools and never calls one, so it is no
-    # model to hold a conversation, and nothing prefers it; a request names it to get it.
-    # An image costs about 740 input tokens. Pricing from https://moondream.ai/pricing;
-    # Moondream publish nothing this deployment can read about training or retention.
+    # model to hold a conversation: ignores_tools keeps it out of the shortcuts that
+    # require tools, and a response offering tools is failed over and hedged around it.
+    # It once answered llm-fast's hedge first whenever Gemini was slow, and the agent never
+    # transferred the call (AI-2496). An image costs about 740 input tokens. Pricing from
+    # https://moondream.ai/pricing; Moondream publish nothing this deployment can read
+    # about training or retention.
     - provider: moondream
       model: moondream3-preview
       description: "Moondream 3, a small vision model for questions about a picture. Takes no tools and has published no data policy."
@@ -2619,6 +2626,7 @@ llm:
       realtime: true
       tier: low-latency
       input_modalities: [image]
+      ignores_tools: true
       data_policy:
         trains_on_data: unknown
         retention: unknown
@@ -3048,6 +3056,7 @@ llm:
       title: Fast
       description: "The quickest strong answer in any language, for a live conversation. Prefers Gemini 3.8 Flash and fails over to the rest of the fast tier."
       require_realtime: true
+      require_tools: true
       tier: low-latency
       prefer: gemini/gemini-3.8-flash
 
@@ -3062,6 +3071,7 @@ llm:
     en-low-latency:
       languages: [en]
       require_realtime: true
+      require_tools: true
       tier: low-latency
 
     # With no model preferred, the fast tier is ordered on health alone, so this is

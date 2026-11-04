@@ -20,7 +20,8 @@ import (
 const lateAfter = 1200 * time.Millisecond
 
 // rig is a router over some candidates of one target, alpha/quick first and beta/steady behind
-// it, whose answers the test writes as it goes. It runs in a synctest bubble, so the clock is
+// it, and gamma/sight where a test names it, which ignores the tools it is offered as Moondream
+// does. The test writes their answers as it goes. It runs in a synctest bubble, so the clock is
 // the bubble's and a test moves it by sleeping.
 type rig struct {
 	session *Session
@@ -95,7 +96,7 @@ func newHedgeRig(t *testing.T, hedges Options, candidates ...string) *rig {
 		failing: map[string]error{},
 		scripts: map[string][]*llmtest.Script{},
 	}
-	models := map[string]string{"alpha": "quick", "beta": "steady"}
+	models := map[string]string{"alpha": "quick", "beta": "steady", "gamma": "sight"}
 	registry := NewRegistry()
 	var config routing.ModalityConfig
 	var members []string
@@ -104,7 +105,7 @@ func newHedgeRig(t *testing.T, hedges Options, candidates ...string) *rig {
 			return &pace{rig: r, name: name, model: spec.Model}, nil
 		})
 		config.Providers = append(config.Providers, routing.ProviderConfig{
-			Provider: name, Model: models[name], Languages: []string{"en"},
+			Provider: name, Model: models[name], Languages: []string{"en"}, IgnoresTools: name == "gamma",
 		})
 		members = append(members, name+"/"+models[name])
 	}

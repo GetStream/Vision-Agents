@@ -17,6 +17,8 @@ import VisionAgentsCore
 /// vision skill's requests to look with what the camera showed, and the preview is that view.
 struct VoiceMode: View {
     let chat: AgentChat
+    /// The chat's session, which voice is started on.
+    let session: AgentSession
 
     @Environment(\.dismiss) private var dismiss
     @StateObject private var current = CurrentVoice()
@@ -47,7 +49,7 @@ struct VoiceMode: View {
             AgentPresence(current: current, isStarting: voice == nil && failure == nil)
 
             if let request = chat.approvals.first {
-                ApprovalCard(request: request, session: chat.session)
+                ApprovalCard(request: request, session: session)
                     .id(request.id)
                     .padding(.horizontal)
             }
@@ -73,9 +75,9 @@ struct VoiceMode: View {
 
     private func start() async {
         do {
-            try await chat.session.startVoice()
+            try await session.startVoice()
             let voice = try await VoiceSession.attach(
-                agents: Assistant.agents, sessionID: chat.session.id)
+                agents: Assistant.agents, sessionID: session.id)
             current.session = voice
             await voice.session.start()
             await voice.join()
@@ -90,7 +92,7 @@ struct VoiceMode: View {
     /// own `AgentSession`: closing one ends the session, the chat's included.
     private func hangUp() async {
         await voice?.leave()
-        _ = try? await chat.session.stopVoice()
+        _ = try? await session.stopVoice()
         dismiss()
     }
 }

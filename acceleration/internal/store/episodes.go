@@ -133,7 +133,9 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 // touchThreadEpisodeQuery sets the last message of the thread's episode in progress, and
 // reads the episode. open holds the episode's row until the message commits, so a sweep
 // skips it meanwhile (closeIdleEpisodesQuery), and a touch that waited for a close finds the
-// episode no longer open.
+// episode no longer open. A message's time is when it was made or queued, so a message tried
+// again after a later one keeps the later one's time: the episode stays open from its last
+// message on.
 const touchThreadEpisodeQuery = `
 WITH open AS (
     SELECT id FROM episodes
@@ -142,7 +144,8 @@ WITH open AS (
 ), touched AS (
     INSERT INTO episode_activity (episode_id, last_message_at)
     SELECT id, ? FROM open
-    ON CONFLICT (episode_id) DO UPDATE SET last_message_at = excluded.last_message_at
+    ON CONFLICT (episode_id) DO UPDATE
+    SET last_message_at = GREATEST(episode_activity.last_message_at, excluded.last_message_at)
     RETURNING episode_id
 )
 SELECT ep.* FROM episodes AS ep JOIN touched ON touched.episode_id = ep.id`
