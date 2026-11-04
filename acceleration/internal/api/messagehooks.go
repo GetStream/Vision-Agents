@@ -405,7 +405,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return true
 	}
 
-	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID); elsewhere {
+	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID, dispatch.Messages); elsewhere {
 		return taken
 	}
 

@@ -32,9 +32,10 @@ type ForwardedDispatchSuite struct {
 	// other is the node the workers in a test connect to, and otherWorkers its pool.
 	other        *httptest.Server
 	otherWorkers *dispatch.Pool
-	// elsewhere is how a session on a third node, with no workers of its own, reaches the
-	// deployment's workers.
-	elsewhere *node.Workers
+	// elsewhere is how a session on a third node reaches the deployment's workers, and
+	// elsewhereWorkers that node's pool, empty unless a test connects a worker to it.
+	elsewhere        *node.Workers
+	elsewhereWorkers *dispatch.Pool
 }
 
 func TestForwardedDispatchSuite(t *testing.T) {
@@ -48,7 +49,8 @@ func (s *ForwardedDispatchSuite) SetupSuite() {
 	logger := slog.New(slog.DiscardHandler)
 	third := httptest.NewUnstartedServer(nil)
 	s.T().Cleanup(third.Close)
-	s.elsewhere = s.deploymentWorkers(dispatch.NewPool(), s.nodeDirectory(third, s.shard, logger), s.workBus(logger))
+	s.elsewhereWorkers = dispatch.NewPool()
+	s.elsewhere = s.deploymentWorkers(s.elsewhereWorkers, s.nodeDirectory(third, s.shard, logger), s.workBus(logger))
 }
 
 func (s *ForwardedDispatchSuite) TestARunningSessionsTextReachesAWorkerOnAnotherNode() {
@@ -83,6 +85,47 @@ func (s *ForwardedDispatchSuite) TestARunningSessionsTextWithNoWorkerAnywhereSay
 		dispatch.Message{SessionID: "session-1", Text: "where is my order?"})
 
 	s.ErrorIs(err, dispatch.ErrNoWorkers)
+}
+
+// A worker that only hosts tools takes no message: a node holding one and no other used to
+// keep the message and fail it, while a worker on another node waited for it.
+func (s *ForwardedDispatchSuite) TestARunningSessionsTextPassesAToolHostForAWorkerOnAnotherNode() {
+	_, release := s.elsewhereWorkers.Register(s.customerID(), dispatch.Registration{Capacity: 1, Handles: []dispatch.Kind{}})
+	defer release()
+	worker := s.waitsOnTheOtherNode()
+
+	workerID, err := s.elsewhere.AssignMessage(context.Background(), s.customerID(),
+		dispatch.Message{SessionID: "session-1", Text: "where is my order?"})
+	s.Require().NoError(err)
+
+	message := s.await(worker, "message")
+	s.Equal("where is my order?", message["text"])
+	s.NotEmpty(workerID)
+}
+
+func (s *ForwardedDispatchSuite) TestARunningSessionsTextGoesToAWorkerHereThatTakesMessages() {
+	here, release := s.elsewhereWorkers.Register(s.customerID(), dispatch.Registration{Capacity: 1, Handles: []dispatch.Kind{dispatch.Messages}})
+	defer release()
+	elsewhere := s.waitsOnTheOtherNode()
+
+	workerID, err := s.elsewhere.AssignMessage(context.Background(), s.customerID(),
+		dispatch.Message{SessionID: "session-1", Text: "where is my order?"})
+	s.Require().NoError(err)
+
+	s.Equal(here.ID, workerID)
+	s.sentNothing(elsewhere, "the message was carried to another node past a worker here")
+}
+
+// The error a node with only a tool host gave before it carried messages on, so a caller
+// logging it reads the same when no node anywhere has a worker taking messages.
+func (s *ForwardedDispatchSuite) TestARunningSessionsTextWithOnlyAToolHostAnywhereSaysNoWorkerHandlesMessages() {
+	_, release := s.elsewhereWorkers.Register(s.customerID(), dispatch.Registration{Capacity: 1, Handles: []dispatch.Kind{}})
+	defer release()
+
+	_, err := s.elsewhere.AssignMessage(context.Background(), s.customerID(),
+		dispatch.Message{SessionID: "session-1", Text: "where is my order?"})
+
+	s.EqualError(err, "dispatch: no worker for "+s.customerID()+" handles message work")
 }
 
 func (s *ForwardedDispatchSuite) TestAToolHostedByAWorkerOnAnotherNodeIsOfferedAndRunHere() {
@@ -224,6 +267,18 @@ func (s *ForwardedDispatchSuite) TestACallIsAnsweredByAWorkerOnTheNodeItArrivedA
 	s.sentNothing(elsewhere, "the call was carried to another node as well")
 }
 
+func (s *ForwardedDispatchSuite) TestACallArrivingWhereOnlyAWorkerForMessagesWaitsReachesTheWorkerOnAnotherNode() {
+	callID := s.holdsANumber()
+	_, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1, Handles: []dispatch.Kind{dispatch.Messages}})
+	defer release()
+	worker := s.waitsOnTheOtherNode()
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCall("default:"+callID)))
+
+	call := s.await(worker, "call")
+	s.Equal(callID, call["call_id"])
+}
+
 func (s *ForwardedDispatchSuite) TestACallIsNotCarriedToAnotherCustomersWorker() {
 	callID := s.holdsANumber()
 	somebodyElse := s.waitsOnTheOtherNodeAs(s.data.backendOfAnotherApp())
@@ -234,22 +289,63 @@ func (s *ForwardedDispatchSuite) TestACallIsNotCarriedToAnotherCustomersWorker()
 }
 
 func (s *ForwardedDispatchSuite) TestAMessageArrivingWhereNoWorkerWaitsReachesTheWorkerOnAnotherNode() {
-	channel := "chat-" + s.utils.uuid()
-	config := store.AgentConfig{CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(), Mode: "text"}
-	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	channel, config := s.textChannel()
 	worker := s.waitsOnTheOtherNode()
 
-	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", fmt.Sprintf(`{
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", arrivingMessage(channel, config)))
+
+	message := s.await(worker, "message")
+	s.Equal(channel, message["channel_id"])
+	s.Equal(config.ID, message["config_id"])
+}
+
+// The node a message lands on may hold only a worker hosting tools, which takes no message,
+// while the customer's worker taking messages waits on another (AI-2719).
+func (s *ForwardedDispatchSuite) TestAMessageArrivingWhereOnlyAToolHostWaitsReachesTheWorkerOnAnotherNode() {
+	channel, config := s.textChannel()
+	_, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1, Handles: []dispatch.Kind{}})
+	defer release()
+	worker := s.waitsOnTheOtherNode()
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", arrivingMessage(channel, config)))
+
+	message := s.await(worker, "message")
+	s.Equal(channel, message["channel_id"])
+}
+
+func (s *ForwardedDispatchSuite) TestAMessageIsAnsweredByAWorkerOnTheNodeItArrivedAtThatTakesMessages() {
+	channel, config := s.textChannel()
+	here, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1, Handles: []dispatch.Kind{dispatch.Messages}})
+	defer release()
+	elsewhere := s.waitsOnTheOtherNode()
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", arrivingMessage(channel, config)))
+
+	select {
+	case message := <-here.Messages():
+		s.Equal(channel, message.ChannelID)
+	case <-time.After(settleFor):
+		s.Fail("the message never reached the worker on the node it arrived at")
+	}
+	s.sentNothing(elsewhere, "the message was carried to another node as well")
+}
+
+// textChannel is a channel for the suite's app with a text agent's config declared on it.
+func (s *ForwardedDispatchSuite) textChannel() (string, store.AgentConfig) {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "config-" + s.utils.uuid(), Mode: "text"}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	return "chat-" + s.utils.uuid(), config
+}
+
+// arrivingMessage is Stream's hook for a message written in channel to config's agent.
+func arrivingMessage(channel string, config store.AgentConfig) string {
+	return fmt.Sprintf(`{
   "type": "message.new",
   "channel_id": %q,
   "channel_type": "agent",
   "channel_custom": {%q: %q},
   "message": {"id": "message-1", "text": "is anybody there?", "user": {"id": "sam", "name": "Sam"}}
-}`, channel, ConfigField, config.ID)))
-
-	message := s.await(worker, "message")
-	s.Equal(channel, message["channel_id"])
-	s.Equal(config.ID, message["config_id"])
+}`, channel, ConfigField, config.ID)
 }
 
 // holdsANumber gives the suite's app a number attached to a call, and returns the call.
