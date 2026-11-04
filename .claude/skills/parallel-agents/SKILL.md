@@ -14,9 +14,13 @@ a mistake that actually happened.
   (`TestTheTestingFileWinsOverTheEnvironment`). Setting the env alone does not isolate a run.
   - Each agent points `testing.yaml` at a database of its own, such as `model_router_test_<slug>_test`.
     Do it through a `go test -overlay` copy or in the agent's own worktree.
-  - It also sets `ROUTER_POSTGRES_DSN` (database `model_router_test_<slug>`) and `ROUTER_REDIS_ADDR`,
-    because the `internal/api` suites skip silently without them. It sets the Redis address in
-    its `testing.yaml` copy as well (see below).
+  - It also sets `ROUTER_POSTGRES_DSN` to the DSN of its `testing.yaml` copy (database
+    `model_router_test_<slug>_test`) and `ROUTER_REDIS_ADDR` to its own Redis. It sets the Redis
+    address in its `testing.yaml` copy as well (see below).
+  - `internal/testenv` replaces both variables with the `testing.yaml` values in every package that
+    imports it. `internal/imagerouter` and `internal/testenv/redisready` do not import it, so they
+    read the shell's values. With database `model_router_test_<slug>`, `imagerouter` failed: that
+    database does not exist, and the lookup below does not find it.
   - It restores `testing.yaml` before it commits. Never commit it.
   - Two agents on `model_router_test` drop each other's schema in the middle of a run.
 - **One Postgres server for all agents.** Agents share one test Postgres and each uses its own
