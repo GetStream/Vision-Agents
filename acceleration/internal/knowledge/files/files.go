@@ -588,7 +588,7 @@ func (s *Service) readPictures(ctx context.Context, payload readPayload, read *e
 			case wanted.picture >= 0:
 				read.Pictures[wanted.picture].Text = text
 			case wanted.mode == ocr.Figures:
-				read.Pages[wanted.page].Figures = text
+				read.Pages[wanted.page].Figures = unread(text, read.Pages[wanted.page].Text)
 			default:
 				read.Pages[wanted.page].Text = text
 				read.Pages[wanted.page].Scanned = false
