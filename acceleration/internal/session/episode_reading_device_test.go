@@ -317,6 +317,22 @@ func (s *EpisodeReadingSuite) TestADeviceCallSomebodyElseIsOnReadsNoCards() {
 	s.Equal("anya_123", created.CardsFor())
 }
 
+// Defect: a device session whose app has no Stream client, as Manager.stream binds one for a
+// customer with no identity (nowhere), asks it whether the app checks tokens and panics. It
+// reads no cards and names nobody.
+func (s *EpisodeReadingSuite) TestADeviceSessionWithNoStreamClientReadsNoCards() {
+	s.anyasCard()
+	spec := Spec{
+		ID: "session-" + uuid.NewString(), CustomerID: s.customerID, ConfigID: s.configID, EpisodeCards: true,
+		Text: true, PersistConversation: true, Caller: signedIn("anya_123").caller, CallerKind: auth.KindAuthenticated,
+	}
+
+	cards, person := s.manager.cards.read(s.ctx, spec, streamapp.Bound{})
+
+	s.Nil(cards)
+	s.Empty(person)
+}
+
 // Control, from base 3b7a53f97 (probe: this test on the base's code, base-probe.log): with
 // episode_cards off Anya's device session is handed what it was, her message and the system's
 // note of the date, and asks Stream nothing of her card, her omni-channel or the app.
