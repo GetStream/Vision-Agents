@@ -1,3 +1,4 @@
+-- +goose NO TRANSACTION
 -- +goose Up
 
 -- user_phones is what a customer's backend says about one of its users
@@ -14,9 +15,12 @@
 --   - phone is E.164, as omnichannel.Phone reads it and contact_map keeps it. It is never part of
 --     a channel id.
 --
--- A new table that no deployed router reads or writes: expand-only. A data move does not carry
--- it (store.dataTables), as it carries no contact_map row it would join.
-CREATE TABLE user_phones (
+-- A new table that no deployed router reads or writes, and a new index on contact_map that no
+-- deployed router depends on: expand-only. A data move does not carry the table
+-- (store.dataTables), as it carries no contact_map row it would join. Outside a transaction,
+-- so the index is built without stopping contact_map's writes; every statement is IF NOT
+-- EXISTS, so a run that failed half way runs again.
+CREATE TABLE IF NOT EXISTS user_phones (
     customer_id TEXT NOT NULL,
     stream_app_pk BIGINT NOT NULL,
     user_id TEXT NOT NULL CHECK (user_id <> ''),
@@ -27,7 +31,15 @@ CREATE TABLE user_phones (
 );
 
 -- A number linked to another user of the same app is refused (409 phone_taken).
-CREATE UNIQUE INDEX user_phones_phone ON user_phones (customer_id, stream_app_pk, phone);
+CREATE UNIQUE INDEX IF NOT EXISTS user_phones_phone ON user_phones (customer_id, stream_app_pk, phone);
+
+-- A link's join finds the rows on one omni-channel of an agent (store.joinLinked's born) by
+-- this, not by reading every row of the agent:
+-- on the message path for a linked person's first row, and on every PUT. A build that fails
+-- leaves the index invalid, and those reads slower, not wrong.
+CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_conversation
+    ON contact_map (customer_id, agent_config_id, conversation_id);
 
 -- +goose Down
-DROP TABLE user_phones;
+DROP INDEX CONCURRENTLY IF EXISTS contact_map_conversation;
+DROP TABLE IF EXISTS user_phones;
