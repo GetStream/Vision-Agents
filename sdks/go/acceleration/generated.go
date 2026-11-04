@@ -3579,7 +3579,7 @@ type AgentUser struct {
 
 // AgentUserRequest Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
 type AgentUserRequest struct {
-	// Phone The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+	// Phone The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
 	//
 	// Example: +15551234567
 	Phone *string `json:"phone"`
@@ -13021,7 +13021,7 @@ type ClientInterface interface {
 
 	// UpdateUserWithBody Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -13032,7 +13032,7 @@ type ClientInterface interface {
 
 	// UpdateUser Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -17869,7 +17869,7 @@ func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, r
 
 // UpdateUserWithBody Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -17890,7 +17890,7 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 
 // UpdateUser Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -34269,7 +34269,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateUserWithBodyWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -34280,7 +34280,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateUserWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -63926,7 +63926,7 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 
 // UpdateUserWithBodyWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -63943,7 +63943,7 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 
 // UpdateUserWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

@@ -371,6 +371,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A new phone link starts the number clean
+
+`PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716, #1728).
+
 ### An app's first `router replicate --once` is not refused as expired
 
 `GET /v1/data/changes` answered 410 to the cursor of an app's own export when other apps that are moving had changes after it, so the first `--once` stopped with "the source no longer keeps the changes since that cursor" and only a rerun went on. Change numbers are shared by every app, so those numbers are not a sign of pruning. Now a cursor gets 410 only when it is older than the oldest change still kept and the app has a change kept (AI-2683).
