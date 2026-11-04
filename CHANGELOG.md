@@ -363,7 +363,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A message reaches the worker that takes messages on another router
 
-A router that held only a customer's worker hosting tools kept an arriving message and failed it, with "nobody could answer an arriving message", while the customer's worker taking messages waited on another router. The same held for a call on a router whose worker took only messages. Now a router keeps a message or a call only when a worker connected to it takes that kind of work. Otherwise it hands the work to a router where a worker waits, as it did when no worker was connected to it. A router with such a worker still answers first. With no worker anywhere that takes the work, the error is the same as before (AI-2719).
+A router that held only a customer's worker hosting tools kept an arriving message and failed it, with "nobody could answer an arriving message", while the customer's worker taking messages waited on another router. The same held for a call on a router whose worker took only messages. Now a router keeps a message or a call only when a worker connected to it takes that kind of work. Otherwise it hands the work to a router where a worker waits, as it did when no worker was connected to it. A router with such a worker still answers first. With no worker anywhere that takes the work, the error is the same as before (#1725, AI-2719).
 
 ### Pausing a campaign stops its calls on every router
 
