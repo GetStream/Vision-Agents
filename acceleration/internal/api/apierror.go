@@ -123,6 +123,7 @@ const (
 	codeImageUnavailable        = "image_unavailable"
 	codeInvalidUsageCategories  = "invalid_usage_categories"
 	codeMemoryUnavailable       = "memory_unavailable"
+	codePhoneTaken              = "phone_taken"
 	// The price list's management operations (price_lists.go).
 	codeInvalidPrice         = "invalid_price"
 	codePriceMetersMismatch  = "price_meters_mismatch"

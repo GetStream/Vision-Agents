@@ -21,6 +21,7 @@ Which one a deployment uses is a property of the deployment rather than a choice
 | Credential | Who it is | Reaches |
 | --- | --- | --- |
 | `customerId` | A router with nothing in front of it, which is a laptop | everything |
+| `customerId` + `setUser` | A page on that laptop | the conversations that user owns |
 | `apiKey` + `apiSecret` | A process you run | everything |
 | `apiKey` + `token` | A browser | the conversations that user owns |
 
@@ -33,6 +34,8 @@ const api = new Client();
 // In a browser, with a token your backend minted for this user.
 const api = new Client({ apiKey: "vak_live_…", token: () => fetch("/api/token").then((r) => r.text()) });
 ```
+
+Search is the one routed modality a page may reach: `api.router({ config: "healthcare" }).search("what changed in the pricing page")`.
 
 `url` falls back to `STREAM_ACCELERATION_URL`, then Stream's hosted router, so it is only
 passed for a self-hosted or local one. The hosted router is us-east4's; for another region,
@@ -53,11 +56,18 @@ A router running locally with nothing in front of it is reached by customer id:
 const api = new Client({ url: "http://localhost:8080", customerId: "examples" });
 ```
 
+A page there names its user with `setUser`, and is then that user rather than the app's
+backend: it lists only their conversations, and `serverSide` is false. A server that passes
+`userId` instead stays the backend, acting for that user.
+
 It is a switch rather than an extra header or two because the two spellings contradict each
 other: a router reached directly needs `Stream-Auth-Type: server` before it admits a
 backend, and that is the one thing the proxy refuses. Opt in rather than let the presence of
 a credential decide, because a Stream key and secret are in the environment for plenty of
 reasons that have nothing to do with this router.
+
+A page that signs somebody out calls `api.clearUser()`, and a guest from `api.guestUser()` is
+acted as with `api.setUser(guest)`, which takes the token it was minted with.
 
 A secret belongs on a server. A browser holding one could rewrite every agent in the app,
 which is why the browser passes a token instead — and why the operations that configure an
@@ -94,6 +104,13 @@ await session.responses.create("Where is my order?");
 // Later: ana's conversations still running, without paging through every one that ended.
 const live = await support.sessions.query({ agentId: "ana-support", state: "live" });
 
+// This month's, labelled for the trip, the most recently changed first.
+const trip = await support.sessions.query({
+  createdSince: new Date("2026-11-01"),
+  custom: { topic: "lisbon" },
+  sort: "updated_at",
+});
+
 // Carry one on, running or ended, by the id of the session it was held in.
 const again = await support.sessions.resume(session.id);
 ```
@@ -107,10 +124,32 @@ and the hour in. Opened from a page and left out, it is the zone the browser rep
 device, when that reads as a zone name; anywhere else nothing is read from the machine, and
 `timezone: ""` sends none anywhere, leaving the user's stored zone to decide.
 
+`memory: {}` has the session recall what the agent learned about the user in earlier ones, and
+keep what it learns in this one, with `filter` and `app_id` to narrow it. From a page it is
+remembered for the user `setUser` named, whatever `user_id` it was handed, since a device may
+only name its own; a backend names whichever of its users it means, or the one it acts for.
+
 `session.close()` stops a conversation and keeps everything it recorded and remembered, so
 a conversation in writing is usually left running. `session.delete()`, or
 `sessions.delete(id)` without a handle, deletes it with its turns and what it taught
-memory.
+memory. A conversation this process is not holding is renamed with `sessions.update(id, …)`,
+put on its call and taken off with `sessions.startVoice(id)` and `sessions.stopVoice(id)`,
+stopped with `sessions.close(id)` and forked with `sessions.fork(id, …)`.
+
+### What the agent holds for later
+
+`api.scheduledTasks` is the reminders and later work agents hold for the user `setUser` named:
+what a person does with a reminder they already have. The agent makes one in a conversation,
+and the app's backend can make one in their name; a device cannot.
+
+```ts
+const page = await api.scheduledTasks.list({ state: "active" });
+await api.scheduledTasks.update(page.items[0].id, { next: { in: "PT15M" } }); // snooze
+await api.scheduledTasks.pause(id);
+await api.scheduledTasks.resume(id);
+const runs = await api.scheduledTasks.runs(id);
+await api.scheduledTasks.delete(id);
+```
 
 ## An agent
 
@@ -203,7 +242,9 @@ agent.tools.register<{ flight_id: string }>({
   default it keeps running and the model is told it is still going.
 - `timeoutMs` is how long one call may take, in place of the session's. A call that takes
   longer is aborted and fails.
-- `approval` is asked before each call runs. In writing the call waits in `session.approvals`.
+- `approval` is asked before each call runs. In writing the call waits in `session.approvals`
+  until `session.decide(id, { allowed })` answers it; a page follows the list in
+  `session.conversation`, which says when it changes, a cancel by the model included.
   On a voice call the agent asks the caller out loud, with each `{name}` in the title filled in
   from the call's arguments, and runs the call on a yes within 15 seconds, with
   `toolCallContext.approved` set. A `{name}` that is not in `parameters` is refused when the
@@ -218,6 +259,13 @@ then on, for a write that must not stop halfway, and resolves with the signal to
 only the timeout and the socket ending abort. When the call had already been stopped, that
 signal is already aborted with a `CallNotHeldError`. A call the router addresses to another
 watcher of the session (`run: false`) is left for whoever runs it.
+
+A function shows the model a picture by returning a `ToolOutput`: its `text`, and `images`
+as URLs or data URIs, which the model sees with that call's result.
+
+```ts
+run: async () => new ToolOutput({ text: "The desk, just now.", images: [{ url: dataUri }] }),
+```
 
 ## Agent dispatch
 
@@ -365,6 +413,8 @@ await voice.leave(); // and closes the session start() made; end() always does
 is a race, and rejects when it fails, for example when the person denies the microphone.
 Asking twice joins once. `VoiceSession.of(session)` joins a session that already has voice
 on, one switched over with `session.voice.start()`; leaving it leaves the session running.
+`VoiceSession.attach(api, sessionId)` does the same from the session's id alone, with a watcher
+of its own that runs no tools, as the phones do.
 
 `status` is what the agent is doing in the states `VoiceGlow` and `VoiceWave` in
 `stream-chat-react/ai-components` take: `connecting` until joined, `speaking` while the agent
@@ -383,6 +433,29 @@ What the agent is doing is on every session, voice or not, as `session.state`: `
 `listening`, `responding`, `working` (with the `skills` thinking) and `ended`. It is fed from
 the socket beside `events()`, so it takes nothing from a loop reading them, and has the same
 `get` and `subscribe`. It is not the session's lifecycle, which is `session.created.state`.
+
+`session.conversation` is the rest of what a page shows, fed the same way: `turns`, what this
+device typed, what was transcribed on the call and the agent's replies as they were written;
+`failure`, what the agent last reported going wrong, such as speech recognition on a call,
+with `failureContext` naming the part (`stt`, `llm`, `sts`, `tts`) and `failureAt` when, until
+the agent next hears, answers or speaks;
+`approvals`, the calls waiting for the person; and `connected`, with `socketError` saying why
+the socket stopped when it did not end normally. A failed join, mute or camera rejects and is
+kept as `failure` on the voice session's snapshot too.
+
+```ts
+const { turns, approvals, failure } = useSyncExternalStore(
+  session.conversation.subscribe,
+  session.conversation.get,
+);
+```
+
+When a call of one of the agent's connectors waits for the person to sign in, its step in the
+Chat channel is `awaiting_authorization`, with the router's sign-in page and a handoff token.
+A page opens it in a popup from a page of the session's `return_url` origin and posts it the
+token; Not now is `session.declineLogin(toolCallId)`, and the router ends the call and tells
+the agent. A `connector_scope_required` event, the step-up a call needs, reads as
+`connectorScopeRequiredOf(event)`.
 
 ## A reply as it is heard
 

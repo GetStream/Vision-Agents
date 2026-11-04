@@ -118,20 +118,25 @@ export class Responses {
 
   private readonly client: Client;
   private readonly sessionId: string;
+  private readonly asked: ((text: string) => void) | undefined;
 
-  constructor(client: Client, sessionId: string) {
+  /** `asked` hears each question as it goes, for a transcript that shows it before the router does. */
+  constructor(client: Client, sessionId: string, asked?: (text: string) => void) {
     this.client = client;
     this.sessionId = sessionId;
+    this.asked = asked;
     this.items = new Items(client, sessionId);
   }
 
   /**
    * Asks the agent something and names the turn it answers as.
    *
-   * A text-only question goes with a fresh request id, so a retry of it is answered once. One
-   * with images goes without one.
+   * Every question goes with a fresh request id, so a retry of it is answered once. A
+   * personal conversation kept in Stream Chat needs one, and with it the images, as data URIs,
+   * are uploaded to the channel and shown on the person's message.
    */
   create(text: string, options: CreateResponseOptions = {}): Promise<AgentResponse> {
+    this.asked?.(text);
     return createResponse(this.client, this.sessionId, text, options);
   }
 
@@ -167,7 +172,7 @@ export class Responses {
 }
 
 /**
- * Creates a response under `requestId`, or under a fresh one when the question is text only.
+ * Creates a response under `requestId`, or under a fresh one.
  *
  * Not exported from the package: naming the request is only for a dispatch worker answering an
  * inbound message, which passes back that message's own request id so the answer lands on it.
@@ -179,7 +184,7 @@ export async function createResponse(
   options: CreateResponseOptions = {},
   requestId = "",
 ): Promise<AgentResponse> {
-  const id = requestId || (options.images?.length ? "" : crypto.randomUUID());
+  const id = requestId || crypto.randomUUID();
   const created = await client.post("/v1/agents/sessions/{id}/responses", {
     path: { id: sessionId },
     body: {

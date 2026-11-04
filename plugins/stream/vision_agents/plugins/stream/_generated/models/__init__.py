@@ -39,6 +39,8 @@ from .agent_role import AgentRole
 from .agent_scheduling import AgentScheduling
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
+from .agent_user import AgentUser
+from .agent_user_request import AgentUserRequest
 from .analyze_reviews_request import AnalyzeReviewsRequest
 from .app_settings import AppSettings
 from .approved_connection_tool import ApprovedConnectionTool
@@ -622,6 +624,8 @@ __all__ = (
     "AgentScheduling",
     "AgentStats",
     "AgentTools",
+    "AgentUser",
+    "AgentUserRequest",
     "AnalyzeReviewsRequest",
     "AppSettings",
     "ApprovedConnectionTool",

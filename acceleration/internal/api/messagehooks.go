@@ -270,6 +270,14 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		if err != nil {
 			return false
 		}
+		// A session that started with a person's episode cards answers that person alone: a
+		// message by anybody else gets a session of its own, handed out below, which reads
+		// none of the first person's cards. The first session takes no new message from then
+		// on, and closes once it has answered what it was handed (retire).
+		if running && found.CardsFor() != "" && (found.CardsFor() != event.Message.User.ID || found.Retiring()) {
+			s.retire(found)
+			running = false
+		}
 		if running {
 			s.chatEpisode(ctx, origin, event, found.Spec())
 			// The session a worker opened to answer this channel answers in it, as a thread's
@@ -278,7 +286,11 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}
-				origin.answer(func() { s.followUpMessage(origin, found, event) })
+				owed := s.owing.owe(found.ID())
+				origin.answer(func() {
+					defer owed()
+					s.followUpMessage(origin, found, event)
+				})
 				return true
 			}
 			if found.Spec().PersistConversation {
@@ -388,7 +400,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			message.Text = s.heardText(ctx, heardFor, origin, event)
 		}
 		// Said before the worker has the message, so the session it opens for it finds it said.
-		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
+		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID, event.Message.User.ID)
 		worker, err := s.dispatch.AssignMessage(customerID, message)
 		if err != nil {
 			// Somebody has written to an agent that nothing is going to answer, which is the

@@ -225,6 +225,9 @@ type Manager struct {
 	// the recorders open for them (ended).
 	closing int
 	ended   sync.WaitGroup
+	// retiring holds the sessions retired (Retire) until they are closed (CloseRetired), or a
+	// look at them finds them ended.
+	retiring map[*Session]struct{}
 }
 
 // SetSchedulerKick hands the manager the scheduled-task worker's wake-up, so
@@ -476,8 +479,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			spec.PersistConversation = false
 		}
 	}
-	if cid, handed := m.handedOut(ctx, spec, stream); handed {
-		spec.ConversationID, spec.Dispatched = cid, true
+	if cid, by, handed := m.handedOut(ctx, spec, stream); handed {
+		spec.ConversationID, spec.Dispatched, spec.HandedOutBy = cid, true, by
 		ctx = persistent.RouterOpensDispatched(ctx, cid)
 	}
 	var conv *persistent.Conversation
@@ -494,6 +497,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
 		// no session that holds it.
 		if spec.ConversationID != "" && persistent.Openable(spec.ConversationID) {
+			m.awaitRetiring(ctx, spec.CustomerID, spec.ConversationID)
 			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
 		}
 		var truncated bool
@@ -867,8 +871,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	// The person's other episodes go first, as context before this conversation's own
 	// history, and only to the model: not to the title, the review or the reopened summary.
-	cards := m.cards.read(ctx, spec, stream)
+	cards, person := m.cards.read(ctx, spec, stream)
 	created.carded = len(cards) > 0
+	if created.carded {
+		created.cardsFor = person
+	}
 	built.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
@@ -1066,6 +1073,75 @@ func (m *Manager) supersede(spec Spec) {
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
+		}
+	}
+}
+
+// RetireWithin bounds how long a retiring session (Session.Retire) may take to write the
+// replies it owes before it is closed all the same: as long as a written message's answer may
+// take (api.askTimeout).
+const RetireWithin = 2 * time.Minute
+
+// retirePoll is how often a session being opened checks whether a retiring one holding its
+// conversation has ended. A choice: short against a reply of seconds.
+const retirePoll = 50 * time.Millisecond
+
+// Retire marks a session as closing once it has written the replies it owes, which its
+// caller closes it after (CloseRetired, from api.retire), and reports whether it was not retiring already. A
+// session opened on its conversation meanwhile waits for it to end (awaitRetiring), its close
+// included: Close takes it off the map before its conversation is let go.
+func (m *Manager) Retire(found *Session) bool {
+	if !found.retiring.CompareAndSwap(false, true) {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.retiring == nil {
+		m.retiring = map[*Session]struct{}{}
+	}
+	m.retiring[found] = struct{}{}
+	return true
+}
+
+// CloseRetired closes a session Retire retired and forgets it: Close is synchronous, so once it
+// returns no session opened on its conversation has it to wait for (awaitRetiring).
+func (m *Manager) CloseRetired(found *Session) (bool, error) {
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.retiring, found)
+	}()
+	return m.Close(found.ID(), OwnerOf(found.Spec()))
+}
+
+// awaitRetiring waits for each retiring session holding the persistent conversation cid to
+// end, so the session being opened on it neither takes it over, cutting the replies it owes
+// short (takeOver), nor is refused it as open already. Bounded by RetireWithin, and the
+// finishWithin its close may take, and by ctx; after that it is taken over as before. A
+// retired session found ended is forgotten.
+func (m *Manager) awaitRetiring(ctx context.Context, customer, cid string) {
+	m.mu.Lock()
+	var retiring []*Session
+	for found := range m.retiring {
+		switch {
+		case found.State() == Ended:
+			delete(m.retiring, found)
+		case found.spec.CustomerID == customer && found.holds(cid):
+			retiring = append(retiring, found)
+		}
+	}
+	m.mu.Unlock()
+	if len(retiring) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, RetireWithin+finishWithin)
+	defer cancel()
+	for _, found := range retiring {
+		for found.State() != Ended && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+			case <-time.After(retirePoll):
+			}
 		}
 	}
 }
@@ -1949,6 +2025,8 @@ type hookPinned struct {
 	// deployment is a hook the deployment signed, which pins no app: the session acts in
 	// whatever app its customer acts in by the time it starts.
 	deployment bool
+	// user is the Stream user who wrote the message handed out (HandOut).
+	user string
 }
 
 // PinHook remembers which app a hook for a customer's call or channel came from, for the
@@ -1957,19 +2035,20 @@ func (m *Manager) PinHook(customer, cid string, app int64) {
 	m.pin(customer, cid, hookPinned{app: app})
 }
 
-// HandOut remembers that a message written in a customer's channel cid was handed to one of
-// its workers, from a hook of app (deployment: the deployment signed it). The text session
-// the worker opens under the channel's id answers in that channel (handedOut). A hook of a
-// registered app pins the session's app too, as PinHook does.
+// HandOut remembers that a message user wrote in a customer's channel cid was handed to one
+// of its workers, from a hook of app (deployment: the deployment signed it). The text session
+// the worker opens under the channel's id answers in that channel (handedOut), and may read
+// user's episode cards (Spec.HandedOutBy). A hook of a registered app pins the session's app
+// too, as PinHook does.
 //
 // The worker opens its session with a request of its own, which any node may take, so the
 // Directory carries the hand-out to the others.
-func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, deployment bool) {
-	m.pin(customer, cid, hookPinned{app: app, handedOut: true, deployment: deployment})
+func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, deployment bool, user string) {
+	m.pin(customer, cid, hookPinned{app: app, handedOut: true, deployment: deployment, user: user})
 	if m.options.Directory == nil {
 		return
 	}
-	entry, err := json.Marshal(handOut{App: app, Deployment: deployment})
+	entry, err := json.Marshal(handOut{App: app, Deployment: deployment, User: user})
 	if err != nil {
 		m.logger.Warn("could not say a channel's message was handed to a worker", "channel", cid, "error", err)
 		return
@@ -1981,6 +2060,8 @@ func (m *Manager) HandOut(ctx context.Context, customer, cid string, app int64, 
 type handOut struct {
 	App        int64 `json:"app"`
 	Deployment bool  `json:"deployment"`
+	// User is empty in a hand-out a node from before it made, which names nobody.
+	User string `json:"user,omitempty"`
 }
 
 func (m *Manager) pin(customer, cid string, pinned hookPinned) {
@@ -2017,21 +2098,21 @@ func (m *Manager) hookPin(spec Spec) (int64, bool) {
 // persistent conversation it names no channel for, within hookPinFor of the hand-out. Any
 // other session keeps a channel of its own, as it always has: a device or a backend acting
 // for one of its users is not the worker, and a channel of another customer or app is not
-// the one handed out.
-func (m *Manager) handedOut(ctx context.Context, spec Spec, stream streamapp.Bound) (string, bool) {
+// the one handed out. by is who wrote the message handed out.
+func (m *Manager) handedOut(ctx context.Context, spec Spec, stream streamapp.Bound) (cid, by string, handed bool) {
 	if !spec.Text || !spec.PersistConversation || spec.Incognito || spec.ConversationID != "" || spec.Recall != nil ||
 		spec.CallerKind != auth.KindServer || spec.Caller.UserID != "" || stream.Client == nil {
-		return "", false
+		return "", "", false
 	}
-	cid := streamapp.AgentChannelType + ":" + spec.AgentID
+	cid = streamapp.AgentChannelType + ":" + spec.AgentID
 	pinned, ok := m.handOutOf(ctx, spec.CustomerID, cid)
 	if !ok {
-		return "", false
+		return "", "", false
 	}
 	if pinned.deployment == stream.Identity.Registered || (!pinned.deployment && stream.Identity.StreamApp != pinned.app) {
-		return "", false
+		return "", "", false
 	}
-	return cid, true
+	return cid, pinned.user, true
 }
 
 // handOutOf is the hand-out of a customer's channel within hookPinFor: this node's, else the
@@ -2055,7 +2136,7 @@ func (m *Manager) handOutOf(ctx context.Context, customer, cid string) (hookPinn
 	if entry == nil || json.Unmarshal(entry, &handed) != nil {
 		return hookPinned{}, false
 	}
-	return hookPinned{app: handed.App, deployment: handed.Deployment, handedOut: true}, true
+	return hookPinned{app: handed.App, deployment: handed.Deployment, handedOut: true, user: handed.User}, true
 }
 
 // ErrNoStreamApp is a conversation in writing asked to be kept by an app that has no Stream

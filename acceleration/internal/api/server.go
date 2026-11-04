@@ -403,6 +403,8 @@ type Server struct {
 	// chatCardsWriting counts the chat cards being written off a hook's request
 	// (ChatCardsRunning).
 	chatCardsWriting atomic.Int32
+	// owing is what each running session still owes an app chat's channel (retire).
+	owing owedReplies
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
 	// Stream, and how long to wait before each read. Tests replace both.
 	readCallStats  readCallStats
