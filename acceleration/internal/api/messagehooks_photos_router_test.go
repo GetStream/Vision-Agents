@@ -158,6 +158,29 @@ func (s *MessageHooksSuite) TestASecondPhotoSentAloneToAWorkersRunningSessionSho
 	s.Equal([]llm.ImagePart{{Data: pngStart, MIME: "image/png"}}, imagesIn(s.lastTurn(asked)))
 }
 
+// TestAPhotoAWorkersRunningSessionWasShownIsANoteInTheNextTurnsHistory fails on base, where the
+// photo sent alone left an empty turn in the history: it is the note that a photo was sent
+// (agent.PhotoNote), as a running session answering in writing keeps it, and not the photo again.
+func (s *MessageHooksSuite) TestAPhotoAWorkersRunningSessionWasShownIsANoteInTheNextTurnsHistory() {
+	s.workerAnswering("vision/vision-model")
+	seen := len(s.vision.requests())
+
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "", s.photoAt("/photo.png")))
+	s.askedOf(s.vision, seen)
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "and now? "+s.utils.uuid()))
+	s.askedOf(s.vision, seen+1)
+
+	var said []string
+	for _, message := range s.vision.requests()[seen+1].Input {
+		if message.Role == llm.User {
+			said = append(said, message.Content)
+		}
+	}
+	s.Contains(said, "[sent with a photo, not shown again]")
+	s.NotContains(said, "", "an empty turn is in the history")
+	s.False(llm.HasImage(s.vision.requests()[seen+1].Input), "a photo is seen with the message it came with alone")
+}
+
 // TestAPhotoSentWithTextToAWorkersRunningSessionShowsTheModelBoth fails on base, where only the
 // text reached the model.
 func (s *MessageHooksSuite) TestAPhotoSentWithTextToAWorkersRunningSessionShowsTheModelBoth() {
