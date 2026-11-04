@@ -5,6 +5,7 @@ package session
 import (
 	"context"
 	"strings"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
@@ -237,6 +238,17 @@ func (s *EpisodeReadingSuite) TestOnlyTheHandedOutSessionReadsAChatPersonsCards(
 	}
 	first := device("", "hello")
 	s.replyTo("hello")
+	// The resumed session reads the channel as it opens: once it holds her turn, or it reads
+	// nobody's cards for want of an author, whatever the case that reads them says.
+	kept := strings.TrimPrefix(first.Spec().ConversationID, "agent:")
+	s.Require().Eventually(func() bool {
+		for _, message := range s.chat.Stored(kept) {
+			if user, _ := message["user"].(map[string]any); user["id"] == "anya_123" && message["text"] == "hello" {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "her turn is not in the conversation's channel")
 	_, err := s.manager.Close(first.ID(), OwnerOf(first.Spec()))
 	s.Require().NoError(err)
 
