@@ -272,13 +272,10 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		}
 		// A session that started with a person's episode cards answers that person alone: a
 		// message by anybody else gets a session of its own, handed out below, which reads
-		// none of the first person's cards.
-		if running && found.CardsFor() != "" && found.CardsFor() != event.Message.User.ID {
-			if _, err := s.sessions.Close(found.ID(), session.OwnerOf(found.Spec())); err != nil {
-				s.logger.Error("could not close the session holding another person's episode cards",
-					"channel", event.ChannelID, "session", found.ID(), "error", err)
-				return false
-			}
+		// none of the first person's cards. The first session takes no new message from then
+		// on, and closes once it has answered what it was handed (retire).
+		if running && found.CardsFor() != "" && (found.CardsFor() != event.Message.User.ID || found.Retiring()) {
+			s.retire(found)
 			running = false
 		}
 		if running {
@@ -289,7 +286,11 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}
-				origin.answer(func() { s.followUpMessage(origin, found, event) })
+				owed := s.owing.owe(found.ID())
+				origin.answer(func() {
+					defer owed()
+					s.followUpMessage(origin, found, event)
+				})
 				return true
 			}
 			if found.Spec().PersistConversation {

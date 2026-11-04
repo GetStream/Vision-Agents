@@ -199,6 +199,9 @@ type Session struct {
 	// with (callCards.read), the only person it answers (CardsFor). Set once, before the
 	// session can be reached.
 	cardsFor string
+	// retiring is set once the session takes no new message and closes after the replies it
+	// owes (Retire).
+	retiring atomic.Bool
 	// transcribedInto is the channel a call's transcript is written into: the conversation's,
 	// else the agent id's. Empty when it is written nowhere the call may write, a device's
 	// call under a thread channel's agent id (persistent.Barred). Set once, before the
@@ -335,6 +338,14 @@ func (s *Session) current() *agent.Agent { return s.held.Load() }
 // agent channel, empty when it started with none there. Their cards are in its context, so it
 // answers nobody else (api.routeArrivingMessage).
 func (s *Session) CardsFor() string { return s.cardsFor }
+
+// Retire marks the session as closing once it has written the replies it owes, which its
+// caller closes it after (api.retire): a session opened on its conversation meanwhile waits
+// for it to end (Manager.Create). It reports whether the session was not retiring already.
+func (s *Session) Retire() bool { return s.retiring.CompareAndSwap(false, true) }
+
+// Retiring reports whether the session was retired (Retire).
+func (s *Session) Retiring() bool { return s.retiring.Load() }
 
 // Spec is what the session was asked for.
 func (s *Session) Spec() Spec {
@@ -605,6 +616,13 @@ func (s *Session) abandon() {
 
 // unwatchedFor reports whether the session holds the persistent conversation cid and
 // nobody is watching it.
+// holds reports whether the session holds the persistent conversation cid.
+func (s *Session) holds(cid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persisted != nil && s.persisted.CID() == cid && s.state != Ended
+}
+
 func (s *Session) unwatchedFor(cid string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()

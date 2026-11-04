@@ -388,6 +388,56 @@ func (s *ChatEpisodesSuite) TestAnotherUsersMessageGetsASessionWithoutThePersons
 	s.False(carded(s.askedWith(question)), "Bob's session reads Anya's card")
 }
 
+// Defect (R2.1): Bob's message closes the session holding Anya's cards at once, so her reply
+// still being written after the 5 s a closing session waits (finishWithin) is cut off, and
+// her message queued behind it is never answered; or the session the worker opens for Bob
+// takes her conversation over, cutting them off as well. Each of her replies takes 6 s here.
+// Bob's message is handed out while her first is written, and so is hers after his, never to
+// the session closing; her session answers both of hers with her cards and then closes; the
+// session opened for Bob waits for that, and reads none of her cards.
+func (s *ChatEpisodesSuite) TestAnotherUsersMessageLetsThePersonsSessionFinishItsReplies() {
+	const takes = 6 * time.Second
+	worker := s.worker()
+	config := s.config(true, "noted/noted-model")
+	s.says(config.ID, "my address is 1 Main St", worker)
+	s.cards(s.omniChannel(), 1)
+	s.channelID = "chat-" + s.utils.uuid()
+	anya := s.user
+	hello := "hello " + s.utils.uuid()
+	handed := s.says(config.ID, hello, worker)
+	anyas := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID})
+	s.ask(anyas.Id, hello)
+	s.Require().Eventually(func() bool { return s.completed() == 1 }, settleFor, 10*time.Millisecond, "her first reply")
+	s.slow(takes)
+
+	first, second := "when is my cleaning? "+s.utils.uuid(), "and the price? "+s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.inChat(config.ID, first))
+	s.True(carded(s.askedWith(first)), "her first question is answered by her session")
+	s.Require().Equal(http.StatusOK, s.inChat(config.ID, second))
+
+	s.user = "bob-" + s.utils.uuid()
+	question := "what is Anya's address? " + s.utils.uuid()
+	bobs := s.says(config.ID, question, worker)
+	s.Equal(s.user, bobs.UserID)
+	s.Equal(1, s.completed(), "Bob's message waited for her reply")
+	s.user = anya
+	after := "one more thing " + s.utils.uuid()
+	s.Equal(after, s.says(config.ID, after, worker).Text, "her message after Bob's went to the session closing")
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &bobs.AgentID, ConfigId: &bobs.ConfigID})
+	s.ask(opened.Id, question)
+	s.False(carded(s.askedWith(question)), "Bob's session reads Anya's card")
+
+	s.Eventually(func() bool {
+		var read Session
+		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+anyas.Id, nil, &read) == http.StatusOK && read.ClosedAt != nil
+	}, 3*takes, 20*time.Millisecond, "Anya's session still runs once her replies are written")
+	s.True(carded(s.askedWith(second)), "her queued question is answered by her session")
+	all := []string{"completed", "completed", "completed", "completed"}
+	var states []string
+	s.Eventually(func() bool { states = s.replies(); return slices.Equal(states, all) }, settleFor, 20*time.Millisecond)
+	s.Equal(all, states, "her first, both of hers and Bob's: one was cut off or never written")
+}
+
 // Defect (R1.2): the hand-out reaches another node without its author, so the worker's
 // session that node opens, as the load balancer may have it, reads none of Anya's cards.
 func (s *ChatEpisodesSuite) TestAWorkersSessionOnAnotherNodeReadsThePersonsCards() {
@@ -405,6 +455,35 @@ func (s *ChatEpisodesSuite) TestAWorkersSessionOnAnotherNodeReadsThePersonsCards
 		CreateResponseRequest{Text: hello, RequestId: pointerTo(s.utils.uuid())}, nil))
 
 	s.True(carded(s.askedWith(hello)))
+}
+
+// slow has every reply of the "noted" models opened so far take d.
+func (s *ChatEpisodesSuite) slow(d time.Duration) {
+	s.notedMu.Lock()
+	defer s.notedMu.Unlock()
+	for _, model := range s.noted {
+		model.mu.Lock()
+		model.takes = d
+		model.mu.Unlock()
+	}
+}
+
+// completed is how many replies in the test's channel were written to the end.
+func (s *ChatEpisodesSuite) completed() int {
+	return len(slices.DeleteFunc(s.replies(), func(state string) bool { return state != "completed" }))
+}
+
+// replies is the state of each reply written in the test's channel, oldest first.
+func (s *ChatEpisodesSuite) replies() []string {
+	var states []string
+	for _, stored := range s.chat.Stored(s.channelID) {
+		custom, _ := stored["custom"].(map[string]any)
+		if written, _ := custom["support_message"].(map[string]any); written != nil && written["role"] == "assistant" {
+			state, _ := written["state"].(string)
+			states = append(states, state)
+		}
+	}
+	return states
 }
 
 // says writes, as the test's user, text in the test's channel, which names the config given,

@@ -494,6 +494,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		// A channel OpenInApp refuses, such as a thread channel a request named, takes over
 		// no session that holds it.
 		if spec.ConversationID != "" && persistent.Openable(spec.ConversationID) {
+			m.awaitRetiring(ctx, spec.CustomerID, spec.ConversationID)
 			m.takeOver(spec.CustomerID, spec.ConversationID, spec.Thread)
 		}
 		var truncated bool
@@ -1069,6 +1070,43 @@ func (m *Manager) supersede(spec Spec) {
 		if err := found.Close(); err != nil {
 			m.logger.Warn("the session left behind did not end cleanly",
 				"session", found.id, "error", err)
+		}
+	}
+}
+
+// RetireWithin bounds how long a retiring session (Session.Retire) may take to write the
+// replies it owes before it is closed all the same: as long as a written message's answer may
+// take (api.askTimeout).
+const RetireWithin = 2 * time.Minute
+
+// retirePoll is how often a session being opened checks whether a retiring one holding its
+// conversation has ended. A choice: short against a reply of seconds.
+const retirePoll = 50 * time.Millisecond
+
+// awaitRetiring waits for each retiring session holding the persistent conversation cid to
+// end, so the session being opened on it neither takes it over, cutting the replies it owes
+// short (takeOver), nor is refused it as open already. Bounded by RetireWithin, and the
+// finishWithin its close may take, and by ctx; after that it is taken over as before.
+func (m *Manager) awaitRetiring(ctx context.Context, customer, cid string) {
+	m.mu.Lock()
+	var retiring []*Session
+	for _, found := range m.sessions {
+		if found.spec.CustomerID == customer && found.Retiring() && found.holds(cid) {
+			retiring = append(retiring, found)
+		}
+	}
+	m.mu.Unlock()
+	if len(retiring) == 0 {
+		return
+	}
+	ctx, cancel := context.WithTimeout(ctx, RetireWithin+finishWithin)
+	defer cancel()
+	for _, found := range retiring {
+		for found.State() != Ended && ctx.Err() == nil {
+			select {
+			case <-ctx.Done():
+			case <-time.After(retirePoll):
+			}
 		}
 	}
 }
