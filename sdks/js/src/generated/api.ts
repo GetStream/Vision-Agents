@@ -1382,6 +1382,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/knowledge/files": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Upload a file to a knowledge base, to be read in the background
+         * @description A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+         *     The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+         *     The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+         */
+        readonly post: operations["uploadKnowledgeFile"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/knowledge/urls": {
         readonly parameters: {
             readonly query?: never;
@@ -2916,6 +2938,27 @@ export type paths = {
          *     A failed generation is asked of the next candidate only when the provider never accepted the job, and never after a safety filter refused it, since asking the next vendor is shopping for a laxer filter.
          */
         readonly post: operations["generateImage"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
+    readonly "/v1/ocr": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Read the text of one page, and return it as Markdown
+         * @description Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+         *     A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+         */
+        readonly post: operations["readPage"];
         readonly delete?: never;
         readonly options?: never;
         readonly head?: never;
@@ -6621,18 +6664,33 @@ export type components = {
             readonly fallback_channels?: readonly string[] | null;
         };
         readonly IndexedKnowledgeDocument: {
+            /**
+             * Format: int64
+             * @description The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+             */
+            readonly bytes: number;
+            /**
+             * @description The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+             * @example application/pdf
+             */
+            readonly content_type: string;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good. */
+            readonly error?: string;
             readonly id: string;
             readonly namespace: string;
-            /** @description How many passages it was last cut into. */
+            /** @description How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet. */
+            readonly pages: number;
+            /** @description How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. */
             readonly passages: number;
             /**
              * @description What the document was posted as, and what its passages are keyed by.
              * @example pricing.md
              */
             readonly source: string;
-            /** @description The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none. */
+            readonly state: components["schemas"]["KnowledgeDocumentState"];
+            /** @description The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none. */
             readonly text?: string;
             /**
              * Format: date-time
@@ -6719,6 +6777,11 @@ export type components = {
             /** @description The document, whole. It is cut into passages here. */
             readonly text: string;
         };
+        /**
+         * @description Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+         * @enum {string}
+         */
+        readonly KnowledgeDocumentState: "pending" | "indexed" | "failed";
         readonly KnowledgePassage: {
             readonly id: string;
             /** @description The heading or file the passage sits under. */
@@ -7200,10 +7263,10 @@ export type components = {
         };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
-         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @enum {string}
          */
-        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "decision_model" | "image" | "detection" | "memory" | "knowledge" | "phone";
+        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "decision_model" | "image" | "detection" | "ocr" | "memory" | "knowledge" | "phone";
         readonly ModelCallTiming: {
             /**
              * Format: double
@@ -7285,6 +7348,65 @@ export type components = {
             /** @description Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which. */
             readonly skipped: readonly components["schemas"]["SkippedVendor"][];
         };
+        /**
+         * @description Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+         * @enum {string}
+         */
+        readonly OcrErrorCode: "provider_failed" | "timeout" | "cancelled";
+        /** @description Who reads the page, and what may happen to it afterwards. */
+        readonly OcrOptions: {
+            readonly data_policy?: components["schemas"]["DataPolicy"];
+            /** @description Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best. */
+            readonly figures?: boolean;
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. */
+            readonly providers?: readonly string[];
+            /**
+             * @description A provider/model or a shortcut. Defaults to ocr-default.
+             * @example ocr-vision
+             */
+            readonly target?: string;
+        };
+        readonly OcrRequest: {
+            /**
+             * Format: byte
+             * @description The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+             */
+            readonly image: string;
+            readonly options?: components["schemas"]["OcrOptions"];
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly OcrResult: {
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+             */
+            readonly cost_micros: number;
+            /** @description What went wrong, in words. Absent when the page was read. */
+            readonly error?: string;
+            readonly error_code?: components["schemas"]["OcrErrorCode"];
+            /**
+             * @description This response's own id, for logs. Nothing is stored under it.
+             * @example ocr_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+             */
+            readonly id: string;
+            /** @description The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed. */
+            readonly markdown: string;
+            /** @example mistral-ocr-4-1 */
+            readonly model?: string;
+            /**
+             * @description Who read it, or who failed to. Absent when nothing got as far as a provider.
+             * @example mistral
+             */
+            readonly provider?: string;
+            readonly status: components["schemas"]["OcrStatus"];
+        };
+        /**
+         * @description Whether the page was read. A failed reading says why in error_code and error.
+         * @enum {string}
+         */
+        readonly OcrStatus: "completed" | "failed";
         /** @description One tool as the model sees it. */
         readonly OfferedTool: {
             /** @description What the model is told the tool does. */
@@ -13734,6 +13856,68 @@ export interface operations {
             readonly 503: components["responses"]["Unavailable"];
         };
     };
+    readonly uploadKnowledgeFile: {
+        readonly parameters: {
+            readonly query: {
+                /** @description The knowledge base to read the file into. */
+                readonly namespace: string;
+                /** @description What the document is called and its passages keyed by. The file part's filename when left out. */
+                readonly source?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description The file, at most 50 MB.
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description The document, pending until its file is read */
+            readonly 202: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["IndexedKnowledgeDocument"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description The file is over 50 MB. */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description This deployment does not take files for knowledge, or could not keep this one. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+        };
+    };
     readonly listKnowledgeUrls: {
         readonly parameters: {
             readonly query?: {
@@ -17250,6 +17434,41 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ImageGeneration"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly readPage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OcrRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description What the page says, or why nothing was read */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OcrResult"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];

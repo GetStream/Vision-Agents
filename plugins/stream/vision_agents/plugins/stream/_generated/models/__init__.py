@@ -259,6 +259,7 @@ from .invocation_argument import InvocationArgument
 from .invocation_argument_type import InvocationArgumentType
 from .invocation_error_type import InvocationErrorType
 from .knowledge_document import KnowledgeDocument
+from .knowledge_document_state import KnowledgeDocumentState
 from .knowledge_passage import KnowledgePassage
 from .knowledge_url import KnowledgeUrl
 from .knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -307,6 +308,12 @@ from .model_overwrites_thinking import ModelOverwritesThinking
 from .model_overwrites_verbosity import ModelOverwritesVerbosity
 from .model_tokens import ModelTokens
 from .number_search_result import NumberSearchResult
+from .ocr_error_code import OcrErrorCode
+from .ocr_options import OcrOptions
+from .ocr_request import OcrRequest
+from .ocr_request_tags import OcrRequestTags
+from .ocr_result import OcrResult
+from .ocr_status import OcrStatus
 from .offered_tool import OfferedTool
 from .offered_tool_parameters import OfferedToolParameters
 from .offered_tools import OfferedTools
@@ -545,6 +552,7 @@ from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
 from .update_session_request_verbosity import UpdateSessionRequestVerbosity
 from .update_sip_trunk_request import UpdateSipTrunkRequest
+from .upload_knowledge_file_body import UploadKnowledgeFileBody
 from .usage_event import UsageEvent
 from .usage_event_attributes import UsageEventAttributes
 from .usage_event_page import UsageEventPage
@@ -831,6 +839,7 @@ __all__ = (
     "InvocationArgumentType",
     "InvocationErrorType",
     "KnowledgeDocument",
+    "KnowledgeDocumentState",
     "KnowledgePassage",
     "KnowledgeUrl",
     "KnowledgeUrlDeclaration",
@@ -879,6 +888,12 @@ __all__ = (
     "ModelOverwritesVerbosity",
     "ModelTokens",
     "NumberSearchResult",
+    "OcrErrorCode",
+    "OcrOptions",
+    "OcrRequest",
+    "OcrRequestTags",
+    "OcrResult",
+    "OcrStatus",
     "OfferedTool",
     "OfferedToolParameters",
     "OfferedTools",
@@ -1117,6 +1132,7 @@ __all__ = (
     "UpdateSessionRequestThinking",
     "UpdateSessionRequestVerbosity",
     "UpdateSipTrunkRequest",
+    "UploadKnowledgeFileBody",
     "UsageEvent",
     "UsageEventAttributes",
     "UsageEventPage",

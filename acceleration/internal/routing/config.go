@@ -61,6 +61,10 @@ const (
 	// is one unit of work, and the vendors differ in what they can find, what it costs and
 	// how long it takes.
 	Detection Modality = "detection"
+	// OCR is the text of a picture of a page. It is routed like detection: one page is one
+	// unit of work, and OCR models and vision language models will both read it, at
+	// different prices and speeds.
+	OCR Modality = "ocr"
 	// Memory, Knowledge and Phone are recorded but not routed: there is one memory store,
 	// one knowledge base and one vendor per number, so there is nothing to choose
 	// between. They are modalities so what they cost shows up in the same reporting as

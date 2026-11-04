@@ -4439,33 +4439,53 @@ components:
       type: object
     IndexedKnowledgeDocument:
       properties:
+        bytes:
+          description: The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+          format: int64
+          type: integer
+        content_type:
+          description: The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+          example: application/pdf
+          type: string
         created_at:
           format: date-time
+          type: string
+        error:
+          description: Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
           type: string
         id:
           type: string
         namespace:
           type: string
+        pages:
+          description: How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+          type: integer
         passages:
-          description: How many passages it was last cut into.
+          description: How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
           type: integer
         source:
           description: What the document was posted as, and what its passages are keyed by.
           example: pricing.md
           type: string
+        state:
+          $ref: '#/components/schemas/KnowledgeDocumentState'
         text:
-          description: The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+          description: 'The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.'
           type: string
         updated_at:
           description: When it was last written.
           format: date-time
           type: string
       required:
+        - bytes
+        - content_type
         - created_at
         - id
         - namespace
+        - pages
         - passages
         - source
+        - state
         - updated_at
       type: object
     IngestKnowledgeRequest:
@@ -4583,6 +4603,13 @@ components:
         - source
         - text
       type: object
+    KnowledgeDocumentState:
+      description: Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+      enum:
+        - pending
+        - indexed
+        - failed
+      type: string
     KnowledgePassage:
       properties:
         id:
@@ -5515,7 +5542,7 @@ components:
             $ref: '#/components/schemas/ContentPart'
           type: array
     Modality:
-      description: 'What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
+      description: 'What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
       enum:
         - stt
         - tts
@@ -5525,6 +5552,7 @@ components:
         - decision_model
         - image
         - detection
+        - ocr
         - memory
         - knowledge
         - phone
@@ -5664,6 +5692,85 @@ components:
         - numbers
         - skipped
       type: object
+    OcrErrorCode:
+      description: Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+      enum:
+        - provider_failed
+        - timeout
+        - cancelled
+      type: string
+    OcrOptions:
+      description: Who reads the page, and what may happen to it afterwards.
+      properties:
+        data_policy:
+          $ref: '#/components/schemas/DataPolicy'
+        figures:
+          description: Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+          type: boolean
+        providers:
+          description: A priority list of where to try, in the order given, which wins over target when it holds anything.
+          items:
+            type: string
+          type: array
+        target:
+          description: A provider/model or a shortcut. Defaults to ocr-default.
+          example: ocr-vision
+          type: string
+      type: object
+    OcrRequest:
+      properties:
+        image:
+          description: The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+          format: byte
+          type: string
+        options:
+          $ref: '#/components/schemas/OcrOptions'
+        tags:
+          additionalProperties:
+            type: string
+          type: object
+      required:
+        - image
+      type: object
+    OcrResult:
+      properties:
+        cost_micros:
+          description: Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+          format: int64
+          type: integer
+        error:
+          description: What went wrong, in words. Absent when the page was read.
+          type: string
+        error_code:
+          $ref: '#/components/schemas/OcrErrorCode'
+        id:
+          description: This response's own id, for logs. Nothing is stored under it.
+          example: ocr_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+          type: string
+        markdown:
+          description: The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+          type: string
+        model:
+          example: mistral-ocr-4-1
+          type: string
+        provider:
+          description: Who read it, or who failed to. Absent when nothing got as far as a provider.
+          example: mistral
+          type: string
+        status:
+          $ref: '#/components/schemas/OcrStatus'
+      required:
+        - cost_micros
+        - id
+        - markdown
+        - status
+      type: object
+    OcrStatus:
+      description: Whether the page was read. A failed reading says why in error_code and error.
+      enum:
+        - completed
+        - failed
+      type: string
     OfferedTool:
       description: One tool as the model sees it.
       properties:
@@ -14997,6 +15104,80 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: What a document was cut into, in order
+  /v1/agents/knowledge/files:
+    post:
+      description: |-
+        A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+        The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+        The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+      operationId: uploadKnowledgeFile
+      parameters:
+        - description: The knowledge base to read the file into.
+          in: query
+          name: namespace
+          required: true
+          schema:
+            minLength: 1
+            type: string
+        - description: What the document is called and its passages keyed by. The file part's filename when left out.
+          in: query
+          name: source
+          schema:
+            maxLength: 256
+            type: string
+      requestBody:
+        content:
+          multipart/form-data:
+            schema:
+              properties:
+                file:
+                  description: The file, at most 50 MB.
+                  format: binary
+                  type: string
+                  x-contentMediaType: application/octet-stream
+              required:
+                - file
+              type: object
+        required: true
+      responses:
+        "202":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/IndexedKnowledgeDocument'
+          description: The document, pending until its file is read
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: The file is over 50 MB.
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: This deployment does not take files for knowledge, or could not keep this one.
+      summary: Upload a file to a knowledge base, to be read in the background
   /v1/agents/knowledge/urls:
     get:
       operationId: listKnowledgeUrls
@@ -20459,6 +20640,49 @@ paths:
       summary: List the organization's teams
       tags:
         - Staff
+  /v1/ocr:
+    post:
+      description: |-
+        Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+        A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+      operationId: readPage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OcrRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OcrResult'
+          description: What the page says, or why nothing was read
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Read the text of one page, and return it as Markdown
   /v1/ops/customers/{customer_id}/connectors/{id}/provider-app:
     delete:
       description: |-

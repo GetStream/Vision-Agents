@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -76,6 +77,8 @@ type Streams struct {
 	Image *imagerouter.Router
 	// Detection finds objects in an image at /v1/detection.
 	Detection *detectionrouter.Router
+	// OCR reads the text of a page at /v1/ocr.
+	OCR *ocrrouter.Router
 }
 
 // start is the first frame on every modality socket. It says what to route to and what to

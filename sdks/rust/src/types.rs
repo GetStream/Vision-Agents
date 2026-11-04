@@ -6000,16 +6000,26 @@ impl ::std::convert::TryFrom<::std::string::String> for ImageSourceDetail {
     }
 }
 ///`IndexedKnowledgeDocument`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct IndexedKnowledgeDocument {
+    ///The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+    pub bytes: i64,
+    ///The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+    pub content_type: ::std::string::String,
     pub created_at: ::std::string::String,
+    ///Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
     pub namespace: ::std::string::String,
-    ///How many passages it was last cut into.
+    ///How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+    pub pages: i64,
+    ///How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
     pub passages: i64,
     ///What the document was posted as, and what its passages are keyed by.
     pub source: ::std::string::String,
-    ///The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+    pub state: KnowledgeDocumentState,
+    ///The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<::std::string::String>,
     ///When it was last written.
@@ -6199,6 +6209,61 @@ pub struct KnowledgeDocument {
     pub source: ::std::string::String,
     ///The document, whole. It is cut into passages here.
     pub text: ::std::string::String,
+}
+///Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeDocumentState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "indexed")]
+    Indexed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for KnowledgeDocumentState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Indexed => f.write_str("indexed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeDocumentState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "indexed" => Ok(Self::Indexed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`KnowledgePassage`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -7206,7 +7271,7 @@ impl ::std::convert::From<::std::vec::Vec<ContentPart>> for MessageContent {
         Self::Array(value)
     }
 }
-///What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+///What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7236,6 +7301,8 @@ pub enum Modality {
     Image,
     #[serde(rename = "detection")]
     Detection,
+    #[serde(rename = "ocr")]
+    Ocr,
     #[serde(rename = "memory")]
     Memory,
     #[serde(rename = "knowledge")]
@@ -7254,6 +7321,7 @@ impl ::std::fmt::Display for Modality {
             Self::DecisionModel => f.write_str("decision_model"),
             Self::Image => f.write_str("image"),
             Self::Detection => f.write_str("detection"),
+            Self::Ocr => f.write_str("ocr"),
             Self::Memory => f.write_str("memory"),
             Self::Knowledge => f.write_str("knowledge"),
             Self::Phone => f.write_str("phone"),
@@ -7272,6 +7340,7 @@ impl ::std::str::FromStr for Modality {
             "decision_model" => Ok(Self::DecisionModel),
             "image" => Ok(Self::Image),
             "detection" => Ok(Self::Detection),
+            "ocr" => Ok(Self::Ocr),
             "memory" => Ok(Self::Memory),
             "knowledge" => Ok(Self::Knowledge),
             "phone" => Ok(Self::Phone),
@@ -7488,6 +7557,161 @@ pub struct NumberSearchResult {
     pub numbers: ::std::vec::Vec<AvailableNumber>,
     ///Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
     pub skipped: ::std::vec::Vec<SkippedVendor>,
+}
+///Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OcrErrorCode {
+    #[serde(rename = "provider_failed")]
+    ProviderFailed,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for OcrErrorCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ProviderFailed => f.write_str("provider_failed"),
+            Self::Timeout => f.write_str("timeout"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrErrorCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "provider_failed" => Ok(Self::ProviderFailed),
+            "timeout" => Ok(Self::Timeout),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Who reads the page, and what may happen to it afterwards.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct OcrOptions {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub data_policy: ::std::option::Option<DataPolicy>,
+    ///Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub figures: ::std::option::Option<bool>,
+    ///A priority list of where to try, in the order given, which wins over target when it holds anything.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub providers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///A provider/model or a shortcut. Defaults to ocr-default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+///`OcrRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct OcrRequest {
+    ///The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+    pub image: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<OcrOptions>,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+}
+///`OcrResult`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct OcrResult {
+    ///Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+    pub cost_micros: i64,
+    ///What went wrong, in words. Absent when the page was read.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<OcrErrorCode>,
+    ///This response's own id, for logs. Nothing is stored under it.
+    pub id: ::std::string::String,
+    ///The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+    pub markdown: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///Who read it, or who failed to. Absent when nothing got as far as a provider.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    pub status: OcrStatus,
+}
+///Whether the page was read. A failed reading says why in error_code and error.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OcrStatus {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for OcrStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///One tool as the model sees it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

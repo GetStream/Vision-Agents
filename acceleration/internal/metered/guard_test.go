@@ -36,6 +36,7 @@ var vendorFacing = []facing{
 	{"internal/search", "Provider"},
 	{"internal/imagegen", "Provider"},
 	{"internal/detection", "Provider"},
+	{"internal/ocr", "Provider"},
 	{"internal/decisionmodel", "Provider"},
 	{"internal/tts/voices", "Cloner"},
 	{"internal/phone", "Provider"},
@@ -69,6 +70,7 @@ var modalities = map[string]string{
 	"internal/search":        "internal/search/searchsuite",
 	"internal/imagegen":      "internal/imagegen/imagegensuite",
 	"internal/detection":     "internal/detection/detectionsuite",
+	"internal/ocr":           "internal/ocr/ocrsuite",
 	"internal/decisionmodel": "internal/decisionmodel/decisionmodelsuite",
 }
 
@@ -115,6 +117,8 @@ var notVendors = map[string]string{
 	"internal/phone/vendors":           "the phone vendors' registry",
 	"internal/phone/region":            "which country a phone number is in, for prices and the channel limits",
 	"internal/phone/outcome":           "how a placed call ended, whichever vendor placed it",
+	"internal/knowledge/extract":       "how a PDF or an office file is read into text, before any store is written",
+	"internal/knowledge/files":         "the uploaded files read into passages in the background, written through internal/metered",
 	"internal/knowledge/ingest":        "how a document is cut into passages, whichever store they go to",
 	"internal/knowledge/urls":          "the pages a knowledge base is kept filled from, written through internal/metered",
 	"internal/sandbox/egress":          "the egress proxy that holds a sandbox's connector credentials, whichever provider runs it",

@@ -1414,6 +1414,27 @@ func (e InvocationErrorType) Valid() bool {
 	}
 }
 
+// Defines values for KnowledgeDocumentState.
+const (
+	KnowledgeDocumentStateFailed  KnowledgeDocumentState = "failed"
+	KnowledgeDocumentStateIndexed KnowledgeDocumentState = "indexed"
+	KnowledgeDocumentStatePending KnowledgeDocumentState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the KnowledgeDocumentState enum.
+func (e KnowledgeDocumentState) Valid() bool {
+	switch e {
+	case KnowledgeDocumentStateFailed:
+		return true
+	case KnowledgeDocumentStateIndexed:
+		return true
+	case KnowledgeDocumentStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for KnowledgeUrlState.
 const (
 	KnowledgeUrlStateFailed  KnowledgeUrlState = "failed"
@@ -1614,6 +1635,7 @@ const (
 	ModalityKnowledge     Modality = "knowledge"
 	ModalityLlm           Modality = "llm"
 	ModalityMemory        Modality = "memory"
+	ModalityOcr           Modality = "ocr"
 	ModalityPhone         Modality = "phone"
 	ModalitySearch        Modality = "search"
 	ModalitySts           Modality = "sts"
@@ -1635,6 +1657,8 @@ func (e Modality) Valid() bool {
 	case ModalityLlm:
 		return true
 	case ModalityMemory:
+		return true
+	case ModalityOcr:
 		return true
 	case ModalityPhone:
 		return true
@@ -1693,6 +1717,45 @@ func (e ModelOverwritesVerbosity) Valid() bool {
 	case ModelOverwritesVerbosityLow:
 		return true
 	case ModelOverwritesVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OcrErrorCode.
+const (
+	OcrErrorCodeCancelled      OcrErrorCode = "cancelled"
+	OcrErrorCodeProviderFailed OcrErrorCode = "provider_failed"
+	OcrErrorCodeTimeout        OcrErrorCode = "timeout"
+)
+
+// Valid indicates whether the value is a known member of the OcrErrorCode enum.
+func (e OcrErrorCode) Valid() bool {
+	switch e {
+	case OcrErrorCodeCancelled:
+		return true
+	case OcrErrorCodeProviderFailed:
+		return true
+	case OcrErrorCodeTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OcrStatus.
+const (
+	OcrStatusCompleted OcrStatus = "completed"
+	OcrStatusFailed    OcrStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the OcrStatus enum.
+func (e OcrStatus) Valid() bool {
+	switch e {
+	case OcrStatusCompleted:
+		return true
+	case OcrStatusFailed:
 		return true
 	default:
 		return false
@@ -5785,11 +5848,24 @@ type ImageSourceDetail string
 
 // IndexedKnowledgeDocument defines model for IndexedKnowledgeDocument.
 type IndexedKnowledgeDocument struct {
-	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
-	Namespace string    `json:"namespace"`
+	// Bytes The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+	Bytes int64 `json:"bytes"`
 
-	// Passages How many passages it was last cut into.
+	// ContentType The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+	//
+	// Example: application/pdf
+	ContentType string    `json:"content_type"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	// Error Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+	Error     *string `json:"error,omitempty"`
+	Id        string  `json:"id"`
+	Namespace string  `json:"namespace"`
+
+	// Pages How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+	Pages int `json:"pages"`
+
+	// Passages How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
 	Passages int `json:"passages"`
 
 	// Source What the document was posted as, and what its passages are keyed by.
@@ -5797,7 +5873,10 @@ type IndexedKnowledgeDocument struct {
 	// Example: pricing.md
 	Source string `json:"source"`
 
-	// Text The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+	// State Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+	State KnowledgeDocumentState `json:"state"`
+
+	// Text The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
 	Text *string `json:"text,omitempty"`
 
 	// UpdatedAt When it was last written.
@@ -5875,6 +5954,9 @@ type KnowledgeDocument struct {
 	// Text The document, whole. It is cut into passages here.
 	Text string `json:"text"`
 }
+
+// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+type KnowledgeDocumentState string
 
 // KnowledgePassage defines model for KnowledgePassage.
 type KnowledgePassage struct {
@@ -6443,7 +6525,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 type Modality string
 
 // ModelCallTiming defines model for ModelCallTiming.
@@ -6526,6 +6608,70 @@ type NumberSearchResult struct {
 	// Skipped Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
 	Skipped []SkippedVendor `json:"skipped"`
 }
+
+// OcrErrorCode Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+type OcrErrorCode string
+
+// OcrOptions Who reads the page, and what may happen to it afterwards.
+type OcrOptions struct {
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+
+	// Figures Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+	Figures *bool `json:"figures,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything.
+	Providers *[]string `json:"providers,omitempty"`
+
+	// Target A provider/model or a shortcut. Defaults to ocr-default.
+	//
+	// Example: ocr-vision
+	Target *string `json:"target,omitempty"`
+}
+
+// OcrRequest defines model for OcrRequest.
+type OcrRequest struct {
+	// Image The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+	Image []byte `json:"image"`
+
+	// Options Who reads the page, and what may happen to it afterwards.
+	Options *OcrOptions        `json:"options,omitempty"`
+	Tags    *map[string]string `json:"tags,omitempty"`
+}
+
+// OcrResult defines model for OcrResult.
+type OcrResult struct {
+	// CostMicros Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+	CostMicros int64 `json:"cost_micros"`
+
+	// Error What went wrong, in words. Absent when the page was read.
+	Error *string `json:"error,omitempty"`
+
+	// ErrorCode Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+	ErrorCode *OcrErrorCode `json:"error_code,omitempty"`
+
+	// Id This response's own id, for logs. Nothing is stored under it.
+	//
+	// Example: ocr_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+	Id string `json:"id"`
+
+	// Markdown The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+	Markdown string `json:"markdown"`
+
+	// Model Example: mistral-ocr-4-1
+	Model *string `json:"model,omitempty"`
+
+	// Provider Who read it, or who failed to. Absent when nothing got as far as a provider.
+	//
+	// Example: mistral
+	Provider *string `json:"provider,omitempty"`
+
+	// Status Whether the page was read. A failed reading says why in error_code and error.
+	Status OcrStatus `json:"status"`
+}
+
+// OcrStatus Whether the page was read. A failed reading says why in error_code and error.
+type OcrStatus string
 
 // OfferedTool One tool as the model sees it.
 type OfferedTool struct {
@@ -10112,6 +10258,21 @@ type ListKnowledgeDocumentsParams struct {
 	Namespace *string `form:"namespace,omitempty" json:"namespace,omitempty"`
 }
 
+// UploadKnowledgeFileMultipartBody defines parameters for UploadKnowledgeFile.
+type UploadKnowledgeFileMultipartBody struct {
+	// File The file, at most 50 MB.
+	File openapi_types.File `json:"file"`
+}
+
+// UploadKnowledgeFileParams defines parameters for UploadKnowledgeFile.
+type UploadKnowledgeFileParams struct {
+	// Namespace The knowledge base to read the file into.
+	Namespace string `form:"namespace" json:"namespace"`
+
+	// Source What the document is called and its passages keyed by. The file part's filename when left out.
+	Source *string `form:"source,omitempty" json:"source,omitempty"`
+}
+
 // ListKnowledgeUrlsParams defines parameters for ListKnowledgeUrls.
 type ListKnowledgeUrlsParams struct {
 	// Namespace One knowledge base. Omit to list every page the customer has.
@@ -10639,6 +10800,9 @@ type ClaimGuestUserJSONRequestBody = ClaimGuestRequest
 // IngestKnowledgeJSONRequestBody defines body for IngestKnowledge for application/json ContentType.
 type IngestKnowledgeJSONRequestBody = IngestKnowledgeRequest
 
+// UploadKnowledgeFileMultipartRequestBody defines body for UploadKnowledgeFile for multipart/form-data ContentType.
+type UploadKnowledgeFileMultipartRequestBody UploadKnowledgeFileMultipartBody
+
 // AddKnowledgeUrlJSONRequestBody defines body for AddKnowledgeUrl for application/json ContentType.
 type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 
@@ -10734,6 +10898,9 @@ type DetectJSONRequestBody = DetectionRequest
 
 // GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
 type GenerateImageJSONRequestBody = ImageGenerationRequest
+
+// ReadPageJSONRequestBody defines body for ReadPage for application/json ContentType.
+type ReadPageJSONRequestBody = OcrRequest
 
 // SaveBusinessProfileJSONRequestBody defines body for SaveBusinessProfile for application/json ContentType.
 type SaveBusinessProfileJSONRequestBody = BusinessProfileRequest
@@ -12062,6 +12229,17 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 	ListKnowledgeDocumentPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// UploadKnowledgeFileWithBody Upload a file to a knowledge base, to be read in the background
+	//
+	// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+	// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+	// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+	UploadKnowledgeFileWithBody(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListKnowledgeUrls The pages a knowledge base is kept filled from
 	//
 	// Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
@@ -13166,6 +13344,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadPageWithBody Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadPage Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPage(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetBusinessProfile Get the business profile
 	//
@@ -16019,6 +16217,27 @@ func (c *Client) ListKnowledgeDocumentPassages(ctx context.Context, id string, r
 	return c.Client.Do(req)
 }
 
+// UploadKnowledgeFileWithBody Upload a file to a knowledge base, to be read in the background
+//
+// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+func (c *Client) UploadKnowledgeFileWithBody(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUploadKnowledgeFileRequestWithBody(c.Server, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListKnowledgeUrls The pages a knowledge base is kept filled from
 //
 // Corresponds with GET /v1/agents/knowledge/urls (the `ListKnowledgeUrls` operationId).
@@ -18314,6 +18533,46 @@ func (c *Client) GenerateImageWithBody(ctx context.Context, contentType string, 
 // Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 func (c *Client) GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGenerateImageRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadPageWithBody Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *Client) ReadPageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadPageRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadPage Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *Client) ReadPage(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadPageRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -23848,6 +24107,70 @@ func NewListKnowledgeDocumentPassagesRequest(server string, id string) (*http.Re
 	return req, nil
 }
 
+// NewUploadKnowledgeFileRequestWithBody constructs an http.Request for the UploadKnowledgeFile method, with any body, and a specified content type
+func NewUploadKnowledgeFileRequestWithBody(server string, params *UploadKnowledgeFileParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/files")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace", params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewListKnowledgeUrlsRequest constructs an http.Request for the ListKnowledgeUrls method
 func NewListKnowledgeUrlsRequest(server string, params *ListKnowledgeUrlsParams) (*http.Request, error) {
 	var err error
@@ -27876,6 +28199,46 @@ func NewGenerateImageRequestWithBody(server string, contentType string, body io.
 	}
 
 	operationPath := fmt.Sprintf("/v1/image/generations")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReadPageRequest calls the generic ReadPage builder with application/json body
+func NewReadPageRequest(server string, body ReadPageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadPageRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReadPageRequestWithBody constructs an http.Request for the ReadPage method, with any body, and a specified content type
+func NewReadPageRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ocr")
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -33032,6 +33395,17 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 	ListKnowledgeDocumentPassagesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentPassagesResponse, error)
 
+	// UploadKnowledgeFileWithBodyWithResponse Upload a file to a knowledge base, to be read in the background
+	//
+	// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+	// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+	// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+	UploadKnowledgeFileWithBodyWithResponse(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKnowledgeFileResponse, error)
+
 	// ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -34246,6 +34620,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
+
+	// ReadPageWithBodyWithResponse Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPageResponse, error)
+
+	// ReadPageWithResponse Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPageWithResponse(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPageResponse, error)
 
 	// GetBusinessProfileWithResponse Get the business profile
 	//
@@ -43134,6 +43528,114 @@ func (r ListKnowledgeDocumentPassagesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListKnowledgeDocumentPassagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UploadKnowledgeFileResponse202Headers the declared response headers of an HTTP 202 response for UploadKnowledgeFile
+type UploadKnowledgeFileResponse202Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// UploadKnowledgeFileResponse402Headers the declared response headers of an HTTP 402 response for UploadKnowledgeFile
+type UploadKnowledgeFileResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type UploadKnowledgeFileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *IndexedKnowledgeDocument
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *UploadKnowledgeFileResponse202Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *UploadKnowledgeFileResponse402Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON202() *IndexedKnowledgeDocument {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON413() *ErrorResponse {
+	return r.JSON413
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UploadKnowledgeFileResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UploadKnowledgeFileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UploadKnowledgeFileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UploadKnowledgeFileResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -52184,6 +52686,114 @@ func (r GenerateImageResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GenerateImageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReadPageResponse200Headers the declared response headers of an HTTP 200 response for ReadPage
+type ReadPageResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ReadPageResponse402Headers the declared response headers of an HTTP 402 response for ReadPage
+type ReadPageResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ReadPageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OcrResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ReadPageResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ReadPageResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadPageResponse) GetJSON200() *OcrResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReadPageResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ReadPageResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ReadPageResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ReadPageResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReadPageResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReadPageResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ReadPageResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadPageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadPageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadPageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadPageResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -61926,6 +62536,23 @@ func (c *ClientWithResponses) ListKnowledgeDocumentPassagesWithResponse(ctx cont
 	return ParseListKnowledgeDocumentPassagesResponse(rsp)
 }
 
+// UploadKnowledgeFileWithBodyWithResponse Upload a file to a knowledge base, to be read in the background
+//
+// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+func (c *ClientWithResponses) UploadKnowledgeFileWithBodyWithResponse(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKnowledgeFileResponse, error) {
+	rsp, err := c.UploadKnowledgeFileWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUploadKnowledgeFileResponse(rsp)
+}
+
 // ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 //
 // Returns a wrapper object for the known response body format(s).
@@ -63859,6 +64486,38 @@ func (c *ClientWithResponses) GenerateImageWithResponse(ctx context.Context, bod
 		return nil, err
 	}
 	return ParseGenerateImageResponse(rsp)
+}
+
+// ReadPageWithBodyWithResponse Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *ClientWithResponses) ReadPageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPageResponse, error) {
+	rsp, err := c.ReadPageWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadPageResponse(rsp)
+}
+
+// ReadPageWithResponse Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *ClientWithResponses) ReadPageWithResponse(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPageResponse, error) {
+	rsp, err := c.ReadPage(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadPageResponse(rsp)
 }
 
 // GetBusinessProfileWithResponse Get the business profile
@@ -74649,6 +75308,132 @@ func ParseListKnowledgeDocumentPassagesResponse(rsp *http.Response) (*ListKnowle
 	return response, nil
 }
 
+// ParseUploadKnowledgeFileResponse parses an HTTP response from a UploadKnowledgeFileWithResponse call
+func ParseUploadKnowledgeFileResponse(rsp *http.Response) (*UploadKnowledgeFileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UploadKnowledgeFileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest IndexedKnowledgeDocument
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers UploadKnowledgeFileResponse202Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 402:
+		var headers UploadKnowledgeFileResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseListKnowledgeUrlsResponse parses an HTTP response from a ListKnowledgeUrlsWithResponse call
 func ParseListKnowledgeUrlsResponse(rsp *http.Response) (*ListKnowledgeUrlsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -85251,6 +86036,132 @@ func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, err
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GenerateImageResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReadPageResponse parses an HTTP response from a ReadPageWithResponse call
+func ParseReadPageResponse(rsp *http.Response) (*ReadPageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadPageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OcrResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ReadPageResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ReadPageResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
