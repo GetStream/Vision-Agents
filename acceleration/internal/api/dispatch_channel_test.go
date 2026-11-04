@@ -67,6 +67,34 @@ func (s *MessageHooksSuite) TestAMessageWrittenAgainIsAnsweredByTheSessionAlread
 	s.nothingReaches(s.worker, "a message to a running session was dispatched again")
 }
 
+// TestAnotherPersonsMessageIsAnsweredByTheWorkersSessionWithTheCardsOff is the control for
+// R1.1 (AI-2632), from base c9a61fc90, where it passes: a session that read no episode cards,
+// as every session of a config with episode_cards off, answers whoever writes in its channel.
+// Catches the rule that a carded session answers its person alone reaching a session that
+// holds no cards.
+func (s *MessageHooksSuite) TestAnotherPersonsMessageIsAnsweredByTheWorkersSessionWithTheCardsOff() {
+	handed := s.handedOut()
+	opened := s.workersSession(handed)
+	s.asked(opened.Id, handed.Text)
+	s.answered(handed.Text, finishedReply)
+
+	ctx, bob, text := context.Background(), "bob", "and what about Spain?"
+	_, err := s.chat.Client.Chat().SendMessage(ctx, chatlog.ChannelType, s.channelID,
+		&getstream.SendMessageRequest{Message: getstream.MessageRequest{Text: &text, UserID: &bob}})
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/chat/hooks/stream", fmt.Sprintf(`{
+  "type": "message.new",
+  "cid": "agent:%s",
+  "channel_id": %q,
+  "channel_type": "agent",
+  "channel_custom": {},
+  "message": {"id": "message-2", "text": %q, "user": {"id": %q, "name": "Bob"}}
+}`, s.channelID, s.channelID, text, bob)))
+
+	s.answered(handed.Text, finishedReply, text, finishedReply)
+	s.nothingReaches(s.worker, "another person's message to a running session was dispatched again")
+}
+
 // TestOnlyTheBackendOfTheChannelsCustomerOpensItsChannel: a session another customer's
 // backend, the customer's own end user, or its backend acting for one of its users opens
 // under the channel's id keeps a channel of its own, as on base.

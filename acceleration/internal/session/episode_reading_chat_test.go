@@ -331,3 +331,31 @@ func (s *EpisodeReadingSuite) TestAHandOutNamingNobodyReadsNoCards() {
 
 	s.Nil(s.handed(s.deploymentChat(chat, "", true, "hello")))
 }
+
+// Defect (R1.1): a session that read a person's cards does not say whose, so the router cannot
+// keep anybody else's message from it. It names Anya once it read her card, and nobody when it
+// read none: in a channel Bob wrote in too, and with the cards off, as at base.
+func (s *EpisodeReadingSuite) TestAChatSessionNamesThePersonWhoseCardsItRead() {
+	s.at(-3600)
+	earlier := s.chatChannel("anya_123")
+	s.write(earlier, "anya_123", "my address is 1 Main St", nil)
+	s.summarize(s.chatEpisode("anya_123", earlier, 0), "Gave her address: 1 Main St.")
+	s.at(0)
+	for name, c := range map[string]struct {
+		bobWrites, cards bool
+		holds            string
+	}{
+		"Anya alone":         {false, true, "anya_123"},
+		"Bob wrote too":      {true, true, ""},
+		"with the cards off": {false, false, ""},
+	} {
+		chat := s.chatChannel("anya_123")
+		s.write(chat, "anya_123", "hello", nil)
+		if c.bobWrites {
+			s.write(chat, "bob_456", "hi", nil)
+		}
+		created, _ := s.workerSession(chat, 0, true, "anya_123", c.cards, "hello "+uuid.NewString())
+
+		s.Equal(c.holds, created.CardsFor(), name)
+	}
+}

@@ -249,6 +249,39 @@ func (s *ChatEpisodesSuite) TestStreamRefusingTheCardStillAnswersTheMessage() {
 	s.Never(func() bool { return len(s.chat.Stored(omni)) > 0 }, dropped, 20*time.Millisecond)
 }
 
+// Defect (R1.1): a worker's session that read Anya's cards answers Bob's message in her
+// channel with them in its context. Her own next message is answered there, while Bob's closes
+// it and is handed out anew, and the session opened for it reads none of her cards.
+func (s *ChatEpisodesSuite) TestAnotherUsersMessageGetsASessionWithoutThePersonsCards() {
+	worker := s.worker()
+	config := s.config(true, "noted/noted-model")
+	s.says(config.ID, "my address is 1 Main St", worker)
+	s.cards(s.omniChannel(), 1)
+	s.channelID = "chat-" + s.utils.uuid()
+	hello := "hello " + s.utils.uuid()
+	handed := s.says(config.ID, hello, worker)
+	anyas := s.serverClient.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID})
+	s.ask(anyas.Id, hello)
+	s.True(carded(s.askedWith(hello)), "Anya's own session reads her card")
+
+	again := "anything new? " + s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.inChat(config.ID, again))
+	s.True(carded(s.askedWith(again)), "her own message is answered by her session")
+	s.Empty(worker, "her own message was handed out again")
+
+	s.user = "bob-" + s.utils.uuid()
+	question := "what is Anya's address? " + s.utils.uuid()
+	bobs := s.says(config.ID, question, worker)
+	s.Equal(s.user, bobs.UserID)
+	s.Eventually(func() bool {
+		var read Session
+		return s.serverClient.do(http.MethodGet, "/v1/agents/sessions/"+anyas.Id, nil, &read) == http.StatusOK && read.ClosedAt != nil
+	}, settleFor, 10*time.Millisecond, "Anya's session still runs")
+	opened := s.serverClient.createSession(CreateSessionRequest{AgentId: &bobs.AgentID, ConfigId: &bobs.ConfigID})
+	s.ask(opened.Id, question)
+	s.False(carded(s.askedWith(question)), "Bob's session reads Anya's card")
+}
+
 // Defect (R1.2): the hand-out reaches another node without its author, so the worker's
 // session that node opens, as the load balancer may have it, reads none of Anya's cards.
 func (s *ChatEpisodesSuite) TestAWorkersSessionOnAnotherNodeReadsThePersonsCards() {

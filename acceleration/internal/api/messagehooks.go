@@ -270,6 +270,17 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		if err != nil {
 			return false
 		}
+		// A session that started with a person's episode cards answers that person alone: a
+		// message by anybody else gets a session of its own, handed out below, which reads
+		// none of the first person's cards.
+		if running && found.CardsFor() != "" && found.CardsFor() != event.Message.User.ID {
+			if _, err := s.sessions.Close(found.ID(), session.OwnerOf(found.Spec())); err != nil {
+				s.logger.Error("could not close the session holding another person's episode cards",
+					"channel", event.ChannelID, "session", found.ID(), "error", err)
+				return false
+			}
+			running = false
+		}
 		if running {
 			s.chatEpisode(ctx, origin, event, found.Spec())
 			// The session a worker opened to answer this channel answers in it, as a thread's

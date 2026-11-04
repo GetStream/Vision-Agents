@@ -867,8 +867,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 	// The person's other episodes go first, as context before this conversation's own
 	// history, and only to the model: not to the title, the review or the reopened summary.
-	cards, _ := m.cards.read(ctx, spec, stream)
+	cards, person := m.cards.read(ctx, spec, stream)
 	created.carded = len(cards) > 0
+	if created.carded {
+		created.cardsFor = person
+	}
 	built.RestoreHistory(append(cards, previous...))
 	// A reopened chat is reviewed again when it ends, and its summary is of all of it.
 	if !spec.Reopened.IsZero() {
