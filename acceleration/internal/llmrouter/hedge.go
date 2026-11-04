@@ -161,7 +161,7 @@ func (a *hedgeAttempt) stalled() bool {
 // askAnother opens the response on another candidate of the same target, which is a child of
 // this session for as long as its stream runs.
 func (s *Session) askAnother(ctx context.Context, params llm.ResponseParams, hedge *hedgeAttempt) (*llm.Stream, func(), error) {
-	child, err := s.hedge(ctx)
+	child, err := s.hedge(ctx, params)
 	if err != nil {
 		return nil, nil, err
 	}
