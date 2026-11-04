@@ -29,7 +29,9 @@ def manual_pdf() -> None:
     pdf = canvas.Canvas(str(HERE / "manual.pdf"), pagesize=A4)
     for page in range(1, 13):
         pdf.setFont("Helvetica", 8)
-        pdf.drawString(20 * mm, HEIGHT - 12 * mm, "Equipment Manual - Kitchen Operations")
+        pdf.drawString(
+            20 * mm, HEIGHT - 12 * mm, "Equipment Manual - Kitchen Operations"
+        )
         pdf.drawString(WIDTH / 2, 10 * mm, str(page))
         y = HEIGHT - 30 * mm
         pdf.setFont("Helvetica-Bold", 18)
@@ -70,12 +72,16 @@ def manual_pdf() -> None:
                 ("Ice machine", "Weekly", "Manager"),
             ]
             for row in rows:
-                pdf.setFont("Helvetica-Bold" if row[0] == "Equipment" else "Helvetica", 10)
+                pdf.setFont(
+                    "Helvetica-Bold" if row[0] == "Equipment" else "Helvetica", 10
+                )
                 for column, cell in enumerate(row):
                     pdf.drawString((20 + column * 45) * mm, y, cell)
                 y -= 6 * mm
             pdf.setFont("Helvetica", 10)
-            pdf.drawString(20 * mm, y - 4 * mm, "Log every cleaning in the station binder.")
+            pdf.drawString(
+                20 * mm, y - 4 * mm, "Log every cleaning in the station binder."
+            )
         pdf.showPage()
     pdf.save()
 
@@ -165,8 +171,12 @@ Breaks are taken in the back room.
 
 def office_files() -> None:
     (HERE / "handbook.md").write_text(HANDBOOK)
-    subprocess.run(["pandoc", "handbook.md", "-o", "handbook.docx"], cwd=HERE, check=True)
-    subprocess.run(["pandoc", "handbook.md", "-s", "-o", "handbook.rtf"], cwd=HERE, check=True)
+    subprocess.run(
+        ["pandoc", "handbook.md", "-o", "handbook.docx"], cwd=HERE, check=True
+    )
+    subprocess.run(
+        ["pandoc", "handbook.md", "-s", "-o", "handbook.rtf"], cwd=HERE, check=True
+    )
     odt = HANDBOOK.replace(
         '```{=openxml}\n<w:p><w:r><w:br w:type="page"/></w:r></w:p>\n'
         "<w:p><w:r><w:lastRenderedPageBreak/><w:t>Page two starts with the break policy.</w:t></w:r></w:p>\n```",
@@ -174,7 +184,9 @@ def office_files() -> None:
         "<text:p>Page two starts with the break policy.</text:p>\n```",
     )
     (HERE / "handbook-odt.md").write_text(odt)
-    subprocess.run(["pandoc", "handbook-odt.md", "-o", "handbook.odt"], cwd=HERE, check=True)
+    subprocess.run(
+        ["pandoc", "handbook-odt.md", "-o", "handbook.odt"], cwd=HERE, check=True
+    )
     (HERE / "handbook.md").unlink()
     (HERE / "handbook-odt.md").unlink()
 
@@ -204,7 +216,11 @@ def menu_xlsx() -> None:
     menu = book.active
     menu.title = "Menu"
     menu.append(["Item", "Price", "Calories"])
-    for row in [("Chicken sandwich", 4.5, 440), ("Nuggets (8)", 3.95, 250), ("Lemonade", 2.25, 220)]:
+    for row in [
+        ("Chicken sandwich", 4.5, 440),
+        ("Nuggets (8)", 3.95, 250),
+        ("Lemonade", 2.25, 220),
+    ]:
         menu.append(row)
     for cell in menu["B"][1:]:
         cell.number_format = '"$"#,##0.00'
@@ -223,4 +239,6 @@ if __name__ == "__main__":
     encrypted_pdf()
     office_files()
     menu_xlsx()
-    (HERE / "corrupt.pdf").write_bytes(b"%PDF-1.7\n1 0 obj << /Type /Catalog >>\ntrailer\n%%EOF\n")
+    (HERE / "corrupt.pdf").write_bytes(
+        b"%PDF-1.7\n1 0 obj << /Type /Catalog >>\ntrailer\n%%EOF\n"
+    )
