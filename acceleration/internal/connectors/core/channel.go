@@ -1245,7 +1245,7 @@ func (m *MediaRule) file(root any, bound []int) []Media {
 		source = m.ID
 	}
 	value, hasSource, err := readPath(root, source, bound)
-	if err != nil || !hasSource || value == "" {
+	if err != nil || !hasSource {
 		return nil
 	}
 	mime, hasMIME, err := readPath(root, m.MIMEType, bound)
