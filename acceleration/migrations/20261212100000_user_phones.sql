@@ -19,7 +19,9 @@
 -- deployed router depends on: expand-only. A data move does not carry the table
 -- (store.dataTables), as it carries no contact_map row it would join. Outside a transaction,
 -- so the index is built without stopping contact_map's writes; every statement is IF NOT
--- EXISTS, so a run that failed half way runs again.
+-- EXISTS. A CONCURRENTLY build that failed leaves its index invalid, which a run again skips
+-- once goose has recorded the version: store.usageIndexes names the index, and each start
+-- drops an invalid one and builds it again (store.ensureUsageIndexes).
 CREATE TABLE IF NOT EXISTS user_phones (
     customer_id TEXT NOT NULL,
     stream_app_pk BIGINT NOT NULL,
@@ -35,8 +37,8 @@ CREATE UNIQUE INDEX IF NOT EXISTS user_phones_phone ON user_phones (customer_id,
 
 -- A link's join finds the rows on one omni-channel of an agent (store.joinLinked's born) by
 -- this, not by reading every row of the agent:
--- on the message path for a linked person's first row, and on every PUT. A build that fails
--- leaves the index invalid, and those reads slower, not wrong.
+-- on the message path for a linked person's first row, and on every PUT. Until it is built,
+-- those reads are slower, not wrong.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_conversation
     ON contact_map (customer_id, agent_config_id, conversation_id);
 

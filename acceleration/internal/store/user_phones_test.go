@@ -153,6 +153,9 @@ func (s *StoreSuite) TestTheDeploymentsOwnAppIsOneAppWhateverItsPin() {
 		"a link made with the app's id is the link of 0")
 	s.Require().NoError(s.store.UnlinkUserPhone(s.ctx, "acme-app", 0, "bob"))
 	s.Equal(1, s.rows("SELECT count(*) FROM user_phones"), "anya's link alone")
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "acme-app", UserID: "bob", Phone: "+15550199"}))
+	s.Require().NoError(s.store.UnlinkUserPhone(s.ctx, "acme-app", 4242, "bob"))
+	s.Equal(1, s.rows("SELECT count(*) FROM user_phones"), "a link made with 0 is unlinked with the app's id")
 }
 
 // Catches a link keyed by user id alone: anya of app 7 is not anya of app 4242.

@@ -1446,6 +1446,24 @@ func (s *StoreSuite) TestMigrateRebuildsAGrantsIndexLeftInvalid() {
 	s.True(valid, "dropped and built again")
 }
 
+func (s *StoreSuite) TestMigrateRebuildsTheContactIndexLeftInvalid() {
+	// As a CONCURRENTLY build that failed leaves it: the migration's IF NOT EXISTS skips it.
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE pg_index SET indisvalid = false WHERE indexrelid = to_regclass('contact_map_conversation')")
+	s.Require().NoError(err)
+	var valid bool
+	read := func() {
+		s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+			"SELECT indisvalid FROM pg_index WHERE indexrelid = to_regclass('contact_map_conversation')").Scan(&valid))
+	}
+	read()
+	s.Require().False(valid)
+
+	s.Require().NoError(s.store.Migrate(s.ctx))
+
+	read()
+	s.True(valid, "dropped and built again")
+}
+
 // The reconcile reads every shard every few minutes, so it reads only the rows naming a grant,
 // by the partial index, rather than every request.
 func (s *StoreSuite) TestTheGrantReconcileReadsByTheGrantsIndex() {
