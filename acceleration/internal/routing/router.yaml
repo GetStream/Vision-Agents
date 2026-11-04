@@ -3221,24 +3221,20 @@ search:
       realtime: true
       tier: high-quality
 
-    # Sonar reads the pages and writes the answer, so this is a language model in the
-    # middle of a conversation and is priced and timed like one. The rate is the $5 per
-    # 1,000 request fee at low context plus an allowance for the tokens a search-shaped
-    # question spends, which is what makes it an estimate rather than a published number.
+    # Sonar searches the web and writes the answer, so this is a language model in the
+    # middle of a conversation and is priced and timed like one: through Perplexity's
+    # Agent API, its tokens and each web search it runs, which the row counts as a request.
     - provider: perplexity
       model: sonar
-      description: "Reads the pages and writes the answer, so it is timed and priced like a language model."
+      description: "Searches the web and writes the answer, so it is timed and priced like a language model."
       languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
       realtime: true
       tier: high-quality
 
-    # Sonar Pro searches more widely before it answers and costs more per request to do it.
-    - provider: perplexity
-      model: sonar-pro
-      description: "Sonar that searches more widely before it answers, at a higher price."
-      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
-      realtime: true
-      tier: high-quality
+  retired:
+    # Perplexity ended Sonar Chat Completions on 2026-09-27, and the Agent API has no Sonar
+    # Pro model.
+    perplexity/sonar-pro: perplexity/sonar
 
   aliases:
     # Whichever provider answers quickest, in whatever language. The shorthand a session
