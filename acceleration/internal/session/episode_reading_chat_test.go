@@ -5,6 +5,7 @@ package session
 import (
 	"cmp"
 	"context"
+	"fmt"
 	"strings"
 	"time"
 
@@ -107,7 +108,7 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsTheSMSCardOfThePersonLinkedTo
 	s.chatEpisode("anya_123", chat, 0)
 	s.Nil(s.handed(s.deploymentChat(chat, "anya_123", true, "and on Saturday?")), "before the link her chat is a person of its own")
 	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE contact_map SET conversation_id = ? WHERE customer_id = ? AND kind = ? AND address = ?",
-		sms.Contact.ConversationID, s.customerID, store.ContactStreamUser, "anya_123")
+		sms.Contact.ConversationID, s.customerID, store.ContactStreamUser, fmt.Sprintf("%d:anya_123", suiteDeploymentApp))
 	s.Require().NoError(err)
 	s.write(chat, "anya_123", "and the dentist's name?", nil)
 
