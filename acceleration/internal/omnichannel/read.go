@@ -254,7 +254,7 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard,
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	if r.Data.Channel == nil || r.Data.Channel.Custom[conversation.CustomerField] != card.CustomerID {
+	if r.Data.Channel == nil || !theirs(r.Data.Channel.Custom, card) {
 		return nil, nil
 	}
 	messages := append([]getstream.MessageResponse(nil), r.Data.Messages...)
@@ -310,6 +310,18 @@ func callerOf(card store.EpisodeCard, participantID string) bool {
 	}
 	person, err := Phone(number)
 	return err == nil && person.Address == card.ContactAddress
+}
+
+// theirs is whether a card's channel is its customer's. The router stamps every channel it
+// makes with its customer (conversation.CustomerField). An app chat's channel is made by the
+// customer's own app and carries none of the router's stamps; it names the agent config that
+// answers in it (api.ConfigField), as it did when its message opened the chat episode, and a
+// config is one customer's. A stamp, where there is one, decides.
+func theirs(custom map[string]any, card store.EpisodeCard) bool {
+	if stamped, ok := custom[conversation.CustomerField]; ok {
+		return stamped == card.CustomerID
+	}
+	return card.Source == store.EpisodeChat && card.AgentConfigID != "" && custom[configField] == card.AgentConfigID
 }
 
 // lineOf is who a thread channel's message is from: the person for one a person wrote (no
