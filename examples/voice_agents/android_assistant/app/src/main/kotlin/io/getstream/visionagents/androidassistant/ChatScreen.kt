@@ -110,6 +110,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                 },
                 emptyContent = { Welcome() },
                 contentPadding = PaddingValues(bottom = barHeight),
+                ui = viewModel.uiHost,
             )
 
             // The conversation fades away under the composer rather than stopping at a hairline,

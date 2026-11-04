@@ -669,6 +669,17 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 		return store.ChannelThread{}, store.AgentConfig{}, nil, err
 	}
 	read, rule, err := b.read(connection, definition, *message)
+	if errors.Is(err, errNotRead) {
+		// The events route reads with the latest revision, so a message only a newer revision
+		// reads, such as WhatsApp's photo by its caption (revision 2, AI-2133) on a connection
+		// still on revision 1, is one this connection does not take. Delivering it again finds
+		// the same revision, so it is dropped, not answered 500. It is a warn, not an info: the
+		// same drop is a pinned revision reading the message with another thread key or id.
+		b.logger.Warn("dropped an inbound message the revision of its connection does not read",
+			"connector", message.ConnectorID, "customer", app.CustomerID, "connection", connection.ID,
+			"revision", connection.DefinitionRevision)
+		return store.ChannelThread{}, store.AgentConfig{}, nil, nil
+	}
 	if err != nil {
 		return store.ChannelThread{}, store.AgentConfig{}, nil, err
 	}
@@ -798,9 +809,12 @@ func (b *Bridge) read(connection store.ConnectorConnection, definition store.Con
 			return found, definition.Manifest.Channel.Messages, nil
 		}
 	}
-	return core.ChannelMessage{}, core.MessageRule{}, stack.Wrap(fmt.Errorf("channelbridge: revision %d of %s does not read message %s the way the event's did",
-		connection.DefinitionRevision, connection.ConnectorID, message.ProviderMessageID))
+	return core.ChannelMessage{}, core.MessageRule{}, stack.Wrap(fmt.Errorf("channelbridge: revision %d of %s does not read message %s the way the event's did: %w",
+		connection.DefinitionRevision, connection.ConnectorID, message.ProviderMessageID, errNotRead))
 }
+
+// errNotRead is a message the revision of its connection does not read as the event's did.
+var errNotRead = errors.New("not read by the connection's revision")
 
 // writeInto writes message into its thread channel as its author under the Stream message id
 // id, creating the channel the first time, with the agent config that answers it.

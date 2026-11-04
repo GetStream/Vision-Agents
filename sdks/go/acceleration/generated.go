@@ -3110,7 +3110,7 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
+	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3280,7 +3280,7 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -10525,10 +10525,12 @@ type GetPricesParams struct {
 // ListLimitsParams defines parameters for ListLimits.
 type ListLimitsParams struct {
 	// Subject Only limits on this subject. team lists the teams' limits, category every other category's.
-	Subject  *LimitSubject  `form:"subject,omitempty" json:"subject,omitempty"`
-	Level    *LimitLevel    `form:"level,omitempty" json:"level,omitempty"`
-	AppId    *string        `form:"app_id,omitempty" json:"app_id,omitempty"`
-	ApiKey   *string        `form:"api_key,omitempty" json:"api_key,omitempty"`
+	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	Level   *LimitLevel   `form:"level,omitempty" json:"level,omitempty"`
+	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// ApiKeyId Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string        `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 	UserId   *string        `form:"user_id,omitempty" json:"user_id,omitempty"`
 	Team     *string        `form:"team,omitempty" json:"team,omitempty"`
 	Category *string        `form:"category,omitempty" json:"category,omitempty"`
@@ -10543,12 +10545,14 @@ type ListLimitsParams struct {
 
 // ListLimitGrantsParams defines parameters for ListLimitGrants.
 type ListLimitGrantsParams struct {
-	Subject  *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
-	AppId    *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
-	ApiKey   *string       `form:"api_key,omitempty" json:"api_key,omitempty"`
-	UserId   *string       `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Team     *string       `form:"team,omitempty" json:"team,omitempty"`
-	Category *string       `form:"category,omitempty" json:"category,omitempty"`
+	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// ApiKeyId Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
+	UserId   *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Team     *string `form:"team,omitempty" json:"team,omitempty"`
+	Category *string `form:"category,omitempty" json:"category,omitempty"`
 
 	// State Only grants in this state. Omitted is every one.
 	State *LimitGrantState `form:"state,omitempty" json:"state,omitempty"`
@@ -10567,8 +10571,8 @@ type GetLimitUsageParams struct {
 	// AppId The app of each subject, for every subject but organization, category and team. One goes with every subject.
 	AppId *[]string `form:"app_id,omitempty" json:"app_id,omitempty"`
 
-	// ApiKey The key of each subject, for subject api_key.
-	ApiKey *[]string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *[]string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId The end user of each subject, for subject user.
 	UserId *[]string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10621,8 +10625,8 @@ type GetSpendParams struct {
 	// Tag Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
 	Tag *[]string `form:"tag,omitempty" json:"tag,omitempty"`
 
-	// ApiKey Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
-	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only count usage for this end user of the app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10682,8 +10686,8 @@ type ListUsageEventsParams struct {
 	// Meter Only this kind of work, such as llm or runtime.
 	Meter *string `form:"meter,omitempty" json:"meter,omitempty"`
 
-	// ApiKey Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
-	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -14100,7 +14104,7 @@ type ClientInterface interface {
 
 	// GetLimitUsage Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -14269,7 +14273,7 @@ type ClientInterface interface {
 
 	// ListUsageEvents List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -20138,7 +20142,7 @@ func (c *Client) UnrevokeLimitGrant(ctx context.Context, grantId int64, body Unr
 
 // GetLimitUsage Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -20497,7 +20501,7 @@ func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, r
 
 // ListUsageEvents List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //
@@ -30507,9 +30511,9 @@ func NewListLimitsRequest(server string, params *ListLimitsParams) (*http.Reques
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -30697,9 +30701,9 @@ func NewListLimitGrantsRequest(server string, params *ListLimitGrantsParams) (*h
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -30977,9 +30981,9 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -31426,9 +31430,9 @@ func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, e
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -31930,9 +31934,9 @@ func NewListUsageEventsRequest(server string, params *ListUsageEventsParams) (*h
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -35444,7 +35448,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetLimitUsageWithResponse Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -35635,7 +35639,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListUsageEventsWithResponse List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -65815,7 +65819,7 @@ func (c *ClientWithResponses) UnrevokeLimitGrantWithResponse(ctx context.Context
 
 // GetLimitUsageWithResponse Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -66120,7 +66124,7 @@ func (c *ClientWithResponses) GetTurnStatsWithResponse(ctx context.Context, para
 
 // ListUsageEventsWithResponse List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //

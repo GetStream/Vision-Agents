@@ -278,7 +278,7 @@ type ListLimitsParams struct {
 	Subject  LimitSubject  `query:"subject" doc:"Only limits on this subject. team lists the teams' limits, category every other category's."`
 	Level    LimitLevel    `query:"level"`
 	AppId    string        `query:"app_id"`
-	ApiKey   string        `query:"api_key"`
+	ApiKeyId string        `query:"api_key_id" doc:"Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call."`
 	UserId   string        `query:"user_id"`
 	Team     string        `query:"team"`
 	Category string        `query:"category"`
@@ -300,7 +300,7 @@ const maxUsageSubjects = 100
 type LimitUsageParams struct {
 	Subject  LimitSubject `query:"subject" required:"true"`
 	AppId    []string     `query:"app_id,explode" maxItems:"100" doc:"The app of each subject, for every subject but organization, category and team. One goes with every subject."`
-	ApiKey   []string     `query:"api_key,explode" maxItems:"100" doc:"The key of each subject, for subject api_key."`
+	ApiKeyId []string     `query:"api_key_id,explode" maxItems:"100" doc:"The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call."`
 	UserId   []string     `query:"user_id,explode" maxItems:"100" doc:"The end user of each subject, for subject user."`
 	Team     []string     `query:"team,explode" maxItems:"100" doc:"The team of each subject, for subject team or app_team."`
 	Category []string     `query:"category,explode" maxItems:"100" doc:"The usage category of each subject, for subject category or app_category."`
@@ -309,7 +309,7 @@ type LimitUsageParams struct {
 // targets are the subjects the params name, in order: every list of more than one names that
 // many subjects, each taking its place's id, and a list of one goes with every subject.
 func (p *LimitUsageParams) targets() ([]LimitTarget, error) {
-	lists := map[string][]string{"app_id": p.AppId, "api_key": p.ApiKey, "user_id": p.UserId, "team": p.Team, "category": p.Category}
+	lists := map[string][]string{"app_id": p.AppId, "api_key_id": p.ApiKeyId, "user_id": p.UserId, "team": p.Team, "category": p.Category}
 	count := 1
 	for _, list := range lists {
 		count = max(count, len(list))
@@ -333,7 +333,7 @@ func (p *LimitUsageParams) targets() ([]LimitTarget, error) {
 	}
 	targets := make([]LimitTarget, count)
 	for i := range targets {
-		targets[i] = LimitTarget{Subject: p.Subject, AppId: at(p.AppId, i), ApiKey: at(p.ApiKey, i), UserId: at(p.UserId, i),
+		targets[i] = LimitTarget{Subject: p.Subject, AppId: at(p.AppId, i), ApiKey: at(p.ApiKeyId, i), UserId: at(p.UserId, i),
 			Team: at(p.Team, i), Category: at(p.Category, i)}
 	}
 	return targets, nil
@@ -496,7 +496,7 @@ func (s *Server) registerLimits(api huma.API) {
 			"effective amount, its baseline since a reset and its room, and for the organization the "+
 			"operator's spend hard limit, which is what admission refuses first, the same on every subject. "+
 			"Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id "+
-			"(app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within "+
+			"(app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within "+
 			"one app or once per subject, so every list has one value or one per subject. One subject "+
 			"answers a list of one. Spend is read from the usage records, so it is what admission counts "+
 			"within a few seconds.")
@@ -582,8 +582,9 @@ func actorName(audit store.LimitAudit) string {
 }
 
 // target is the subject, the level and the ids a write names, as the table keeps them. A team
-// is kept as the category team:<name>.
-func target(sent LimitTarget, level LimitLevel, organization string) (usage.SubjectRef, store.LimitLevel, error) {
+// is kept as the category team:<name>. A refusal names the key by keyField: api_key in a body,
+// api_key_id in a usage read's query.
+func target(sent LimitTarget, level LimitLevel, organization, keyField string) (usage.SubjectRef, store.LimitLevel, error) {
 	ref := usage.SubjectRef{OrganizationID: organization, AppID: strings.TrimSpace(sent.AppId), APIKey: sent.ApiKey, UserID: sent.UserId}
 	if _, team := usage.TeamOf(sent.Category); team {
 		return ref, "", APIError{Type: ErrorTypeInvalidRequest, Code: codeUseTeam,
@@ -632,18 +633,22 @@ func target(sent LimitTarget, level LimitLevel, organization string) (usage.Subj
 		"user_id": chosen == store.LevelUser,
 	}
 	for name, value := range map[string]string{"app_id": ref.AppID, "api_key": ref.APIKey, "user_id": ref.UserID} {
+		field := name
+		if name == "api_key" {
+			field = keyField
+		}
 		switch {
 		case wants[name] && value == "":
-			return ref, "", invalidRequest(fmt.Sprintf("a limit on %s at level %s names %s", sent.Subject, chosen, name))
+			return ref, "", invalidRequest(fmt.Sprintf("a limit on %s at level %s names %s", sent.Subject, chosen, field))
 		case !wants[name] && value != "":
-			return ref, "", invalidRequest(fmt.Sprintf("a limit on %s at level %s names no %s", sent.Subject, chosen, name))
+			return ref, "", invalidRequest(fmt.Sprintf("a limit on %s at level %s names no %s", sent.Subject, chosen, field))
 		}
 	}
 	if ref.AppID != "" && usage.IDProblem(ref.AppID) != "" {
 		return ref, "", invalidRequest("app_id holds a character an id may not, or is over 255 bytes")
 	}
 	if ref.APIKey != "" && !limitKeyID.MatchString(ref.APIKey) {
-		return ref, "", invalidRequest("api_key is 1 to 128 characters of A-Z, a-z, 0-9, _ and -, and an origin such as hook:chat is no key")
+		return ref, "", invalidRequest(keyField + " is 1 to 128 characters of A-Z, a-z, 0-9, _ and -, and an origin such as hook:chat is no key")
 	}
 	if ref.UserID != "" && (!limitUserID.MatchString(ref.UserID) || usage.IDProblem(ref.UserID) != "") {
 		return ref, "", invalidRequest("user_id is 1 to 255 characters of A-Z, a-z, 0-9, @, _, ., - and space, as Stream Chat's user ids are")
@@ -749,7 +754,7 @@ func (s *Server) listLimits(ctx context.Context, organization string, request *L
 		return nil, invalidRequest(err.Error())
 	}
 	filter := store.LimitFilter{
-		OrganizationID: organization, Level: store.LimitLevel(request.Level), AppID: request.AppId, APIKey: request.ApiKey,
+		OrganizationID: organization, Level: store.LimitLevel(request.Level), AppID: request.AppId, APIKey: request.ApiKeyId,
 		UserID: request.UserId, Category: request.Category, Interval: usage.Interval(request.Interval),
 	}
 	switch request.Subject {
@@ -791,7 +796,7 @@ func (s *Server) listLimits(ctx context.Context, organization string, request *L
 }
 
 func (s *Server) createLimit(ctx context.Context, organization string, sent LimitInput, audit store.LimitAudit) (*createdLimitResponse, error) {
-	ref, level, err := target(sent.LimitTarget, sent.Level, organization)
+	ref, level, err := target(sent.LimitTarget, sent.Level, organization, "api_key")
 	if err != nil {
 		return nil, err
 	}
@@ -902,7 +907,7 @@ func (s *Server) deleteLimit(ctx context.Context, organization string, id int64,
 
 // usageTarget is the subject a read or a reset names, whose ids are exactly the subject's own:
 // a usage read is of one subject, never a default.
-func usageTarget(sent LimitTarget, organization string) (usage.SubjectRef, error) {
+func usageTarget(sent LimitTarget, organization, keyField string) (usage.SubjectRef, error) {
 	level := store.LevelOrganization
 	switch sent.Subject {
 	case LimitSubjectApp, LimitSubjectAppCategory, LimitSubjectAppTeam:
@@ -912,7 +917,7 @@ func usageTarget(sent LimitTarget, organization string) (usage.SubjectRef, error
 	case LimitSubjectUser:
 		level = store.LevelUser
 	}
-	ref, _, err := target(sent, LimitLevel(level), organization)
+	ref, _, err := target(sent, LimitLevel(level), organization, keyField)
 	return ref, err
 }
 
@@ -923,7 +928,7 @@ func (s *Server) limitUsage(ctx context.Context, organization string, billed boo
 	}
 	refs := make([]usage.SubjectRef, len(targets))
 	for i, sent := range targets {
-		if refs[i], err = usageTarget(sent, organization); err != nil {
+		if refs[i], err = usageTarget(sent, organization, "api_key_id"); err != nil {
 			return nil, err
 		}
 	}
@@ -1042,7 +1047,7 @@ func hardLimitUsage(limits usage.Limits, windows usage.SpendWindows, held policy
 }
 
 func (s *Server) resetLimitUsage(ctx context.Context, organization string, billed bool, sent LimitResetInput, audit store.LimitAudit) (*subjectUsageResponse, error) {
-	ref, err := usageTarget(sent.LimitTarget, organization)
+	ref, err := usageTarget(sent.LimitTarget, organization, "api_key")
 	if err != nil {
 		return nil, err
 	}

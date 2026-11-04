@@ -4,6 +4,7 @@ import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
@@ -16,10 +17,12 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Delete
 import androidx.compose.material.icons.outlined.EditNote
 import androidx.compose.material.icons.outlined.Search
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.NavigationDrawerItem
 import androidx.compose.material3.OutlinedTextField
@@ -33,6 +36,7 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
+import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
@@ -51,7 +55,8 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 /**
- * The drawer: a new conversation, a search, and the conversations there were, by day.
+ * The drawer: a new conversation, the settings, a search, and the conversations there were, by
+ * day.
  *
  * [selected] is the conversation open beside this, or null for a new one. Holding a
  * conversation offers to delete it.
@@ -64,6 +69,7 @@ fun ConversationList(
     onNew: () -> Unit,
     onOpen: (Session) -> Unit,
     onDelete: (Session) -> Unit,
+    onSettings: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     val items by conversations.items.collectAsStateWithLifecycle()
@@ -80,13 +86,18 @@ fun ConversationList(
     }
 
     Column(modifier.fillMaxSize()) {
-        NavigationDrawerItem(
-            label = { Text("New chat", style = MaterialTheme.typography.titleMedium) },
-            icon = { Icon(Icons.Outlined.EditNote, contentDescription = null) },
-            selected = false,
-            onClick = onNew,
-            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
-        )
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            NavigationDrawerItem(
+                label = { Text("New chat", style = MaterialTheme.typography.titleMedium) },
+                icon = { Icon(Icons.Outlined.EditNote, contentDescription = null) },
+                selected = false,
+                onClick = onNew,
+                modifier = Modifier.weight(1f).padding(start = 12.dp, top = 8.dp, bottom = 8.dp),
+            )
+            IconButton(onClick = onSettings, modifier = Modifier.padding(horizontal = 8.dp)) {
+                Icon(Icons.Outlined.Settings, contentDescription = "Settings")
+            }
+        }
 
         OutlinedTextField(
             value = searchText,

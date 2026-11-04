@@ -3886,7 +3886,7 @@ export type paths = {
         };
         /**
          * Read what subjects spent against their limits
-         * @description Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+         * @description Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
          *
          *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
          */
@@ -4133,7 +4133,7 @@ export type paths = {
         };
         /**
          * List the usage events
-         * @description Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+         * @description Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
          *
          *     Server-side only: a request that is not server-side answers 403 server_side_only.
          */
@@ -4278,7 +4278,7 @@ export type components = {
             /** Format: date-time */
             readonly created_at: string;
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards. */
+            /** @description Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off. */
             readonly episode_cards?: boolean;
             readonly greeting?: components["schemas"]["Greeting"];
             readonly guardrail?: string;
@@ -4395,7 +4395,7 @@ export type components = {
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
+            /** @description Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
             readonly episode_cards?: boolean;
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
@@ -19401,7 +19401,8 @@ export interface operations {
     readonly listLimits: {
         readonly parameters: {
             readonly query?: {
-                readonly api_key?: string;
+                /** @description Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 readonly app_id?: string;
                 readonly category?: string;
                 /** @description The next_cursor of the previous page, sent with the same filters. */
@@ -19591,7 +19592,8 @@ export interface operations {
     readonly listLimitGrants: {
         readonly parameters: {
             readonly query?: {
-                readonly api_key?: string;
+                /** @description Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 readonly app_id?: string;
                 readonly category?: string;
                 /** @description The next_cursor of the previous page, sent with the same filters. */
@@ -19762,8 +19764,8 @@ export interface operations {
     readonly getLimitUsage: {
         readonly parameters: {
             readonly query: {
-                /** @description The key of each subject, for subject api_key. */
-                readonly api_key?: readonly string[] | null;
+                /** @description The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: readonly string[] | null;
                 /** @description The app of each subject, for every subject but organization, category and team. One goes with every subject. */
                 readonly app_id?: readonly string[] | null;
                 /** @description The usage category of each subject, for subject category or app_category. */
@@ -19911,8 +19913,8 @@ export interface operations {
     readonly getSpend: {
         readonly parameters: {
             readonly query: {
-                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. */
-                readonly api_key?: string;
+                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 /** @description Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several. */
                 readonly category?: readonly string[];
                 /** @description Start of the window, inclusive. */
@@ -20210,8 +20212,8 @@ export interface operations {
     readonly listUsageEvents: {
         readonly parameters: {
             readonly query?: {
-                /** @description Only work started with this public API key, or by this origin of work no key started, such as hook:chat. */
-                readonly api_key?: string;
+                /** @description Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 /** @description With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused. */
                 readonly app_id?: string;
                 /** @description Only work carrying this usage category, as the tokens name it. Not with team. */

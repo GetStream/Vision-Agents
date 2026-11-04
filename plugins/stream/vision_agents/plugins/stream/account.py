@@ -96,7 +96,7 @@ class Usage:
         """
         if team is not None:
             check_team(team)
-        query: dict[str, Any] = _set(api_key=api_key, user_id=user_id, team=team)
+        query: dict[str, Any] = _set(api_key_id=api_key, user_id=user_id, team=team)
         if tags:
             query["tag"] = list(tags)
         if categories:

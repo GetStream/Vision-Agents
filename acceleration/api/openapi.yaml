@@ -260,7 +260,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          description: Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
+          description: Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
           type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
@@ -479,7 +479,7 @@ components:
         dispatch:
           $ref: '#/components/schemas/AgentDispatch'
         episode_cards:
-          description: 'Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person''s omni-channel: an agent channel for each person and agent, keyed by the caller''s E.164 number or by the app chat''s Stream user id. On, a session on a thread channel, on an app chat''s agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. An app chat''s agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
+          description: 'Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person''s omni-channel: an agent channel for each person and agent, keyed by the caller''s E.164 number or by the app chat''s Stream user id. On, a session on a thread channel, on an app chat''s agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person''s other episode cards: a summary, or the last lines of the episode''s channel while there is none. So does a session the person''s own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat''s agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user''s token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.'
           type: boolean
         greeting:
           $ref: '#/components/schemas/Greeting'
@@ -19953,10 +19953,12 @@ paths:
           name: app_id
           schema:
             type: string
-        - explode: false
+        - description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+          explode: false
           in: query
-          name: api_key
+          name: api_key_id
           schema:
+            description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -20215,10 +20217,12 @@ paths:
           name: app_id
           schema:
             type: string
-        - explode: false
+        - description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+          explode: false
           in: query
-          name: api_key
+          name: api_key_id
           schema:
+            description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -20433,7 +20437,7 @@ paths:
   /v1/manage/spend/limits/usage:
     get:
       description: |-
-        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
         Stream staff only, for support: it needs the manage key, and is audited with source manage. A limit staff write is the customer's like any other, and the customer can change it.
       operationId: manageGetLimitUsage
@@ -20455,12 +20459,12 @@ paths:
             maxItems: 100
             nullable: true
             type: array
-        - description: The key of each subject, for subject api_key.
+        - description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
           explode: true
           in: query
-          name: api_key
+          name: api_key_id
           schema:
-            description: The key of each subject, for subject api_key.
+            description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             items:
               type: string
             maxItems: 100
@@ -23324,10 +23328,12 @@ paths:
           name: app_id
           schema:
             type: string
-        - explode: false
+        - description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+          explode: false
           in: query
-          name: api_key
+          name: api_key_id
           schema:
+            description: Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -23599,10 +23605,12 @@ paths:
           name: app_id
           schema:
             type: string
-        - explode: false
+        - description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+          explode: false
           in: query
-          name: api_key
+          name: api_key_id
           schema:
+            description: Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             type: string
         - explode: false
           in: query
@@ -23834,7 +23842,7 @@ paths:
   /v1/spend/limits/usage:
     get:
       description: |-
-        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+        Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 
         Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
       operationId: getLimitUsage
@@ -23856,12 +23864,12 @@ paths:
             maxItems: 100
             nullable: true
             type: array
-        - description: The key of each subject, for subject api_key.
+        - description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
           explode: true
           in: query
-          name: api_key
+          name: api_key_id
           schema:
-            description: The key of each subject, for subject api_key.
+            description: The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             items:
               type: string
             maxItems: 100
@@ -24154,12 +24162,12 @@ paths:
             items:
               type: string
             type: array
-        - description: Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
+        - description: Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
           explode: false
           in: query
-          name: api_key
+          name: api_key_id
           schema:
-            description: Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
+            description: Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             maxLength: 255
             type: string
         - description: Only count usage for this end user of the app.
@@ -24568,7 +24576,7 @@ paths:
   /v1/usage/events:
     get:
       description: |-
-        Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+        Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 
         Server-side only: a request that is not server-side answers 403 server_side_only.
       operationId: listUsageEvents
@@ -24612,12 +24620,12 @@ paths:
             description: Only this kind of work, such as llm or runtime.
             maxLength: 255
             type: string
-        - description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+        - description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
           explode: false
           in: query
-          name: api_key
+          name: api_key_id
           schema:
-            description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+            description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
             maxLength: 255
             type: string
         - description: Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.

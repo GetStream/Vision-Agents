@@ -477,6 +477,83 @@ func (s *DataMoveSuite) TestAnExpiredCursorSaysToExportAgain() {
 	s.ErrorIs(err, ErrChangesExpired)
 }
 
+// The numbers are shared by every customer, so the ones between an export's cursor and the
+// customer's first change after it can be another customer's.
+func (s *DataMoveSuite) TestTheFirstChangeAfterAnExportIsAnsweredWhenOthersChangedInBetween() {
+	s.capture("other")
+	s.seedAgentConfig(s.source, "other", "before")
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "other", "between")
+	first := s.seedAgentConfig(s.source, "acme", "first")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), first)
+}
+
+func (s *DataMoveSuite) TestACursorWhoseNextChangeWasPrunedSaysToExportAgain() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.age()
+	s.seedAgentConfig(s.source, "acme", "kept")
+	s.prune()
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+func (s *DataMoveSuite) TestACursorRightBeforeTheOldestChangeKeptIsAnswered() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.age()
+	next := s.seedAgentConfig(s.source, "acme", "next")
+	s.prune()
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// A customer with nothing kept may have had nothing to record: a follower waiting out a quiet
+// spell longer than the retention gets an empty page, as it did before the numbers were read
+// across customers.
+func (s *DataMoveSuite) TestAQuietCustomerWhoseCursorAgedOutIsNotRefused() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "other", "aged out too")
+	s.age()
+	s.prune()
+	s.seedAgentConfig(s.source, "other", "later")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Empty(changes)
+}
+
+// age makes every change recorded so far older than the retention prune keeps.
+func (s *DataMoveSuite) age() {
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE data_changes SET at = now() - interval '30 days'")
+	s.Require().NoError(err)
+}
+
+func (s *DataMoveSuite) prune() {
+	removed, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
+	s.Require().NoError(err)
+	s.Require().Positive(removed)
+}
+
 func (s *DataMoveSuite) TestPruningDropsWhatNobodyCanResumeFrom() {
 	s.capture("acme")
 	s.seedAgentConfig(s.source, "acme", "old")
@@ -740,6 +817,101 @@ func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsCredentialsBeh
 
 	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
 	s.assertArrivedWithoutCredentials(id, "acme")
+}
+
+func (s *DataMoveSuite) TestCopyingAgainKeepsAConnectionAuthorizedAgainOnTheDestination() {
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	authorized := s.authorizeAgain(s.destination, "moved", id)
+	// The source is still live during a move, and a refresh there rewrites its row after the
+	// owner authorized the connection here.
+	s.authorizeAgain(s.source, "acme", id)
+
+	s.move("acme", "moved")
+
+	s.assertCredentialsKept(authorized)
+}
+
+func (s *DataMoveSuite) TestAChangeAppliedLaterKeepsAConnectionAuthorizedAgainOnTheDestination() {
+	s.capture("acme")
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	authorized := s.authorizeAgain(s.destination, "moved", id)
+	s.authorizeAgain(s.source, "acme", id)
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	s.assertCredentialsKept(authorized)
+}
+
+func (s *DataMoveSuite) TestCopyingAgainStillUpdatesAConnectionNotAuthorizedOnTheDestination() {
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE connector_connections SET label = 'renamed' WHERE id = ?", id)
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	s.assertArrivedWithoutCredentials(id, "moved")
+	moved, err := s.destination.ConnectorConnection(s.ctx, "moved", id)
+	s.Require().NoError(err)
+	s.Equal("renamed", moved.Label, "the source's edit arrives")
+}
+
+func (s *DataMoveSuite) TestCopyingAgainDuringARefreshOnTheDestinationKeepsItsCredentials() {
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	s.authorizeAgain(s.destination, "moved", id)
+
+	err := s.destination.WithLockedConnectorConnection(s.ctx, "moved", id,
+		func(connection *ConnectorConnection, checkpoint func() error) (bool, error) {
+			// The resolver checkpoints the row before the refresh token leaves.
+			connection.Status = ConnectionNeedsReauthorization
+			s.Require().NoError(checkpoint())
+			// A repeat copy lands while the provider answers.
+			s.move("acme", "moved")
+			connection.Status = ConnectionConnected
+			connection.Revision++
+			connection.CredentialsSealed = []byte("rotated on moved")
+			connection.CredentialsKEKVersion = 1
+			return true, nil
+		})
+
+	s.Require().NoError(err, "the rotated credentials are saved")
+	held, err := s.destination.ConnectorConnection(s.ctx, "moved", id)
+	s.Require().NoError(err)
+	s.Equal(ConnectionConnected, held.Status)
+	s.Equal([]byte("rotated on moved"), held.CredentialsSealed)
+}
+
+// authorizeAgain saves new credentials onto a connection, as a consent or a refresh does, and
+// returns the connection as it was saved.
+func (s *DataMoveSuite) authorizeAgain(store *Store, customerID, id string) ConnectorConnection {
+	connection, err := store.ConnectorConnection(s.ctx, customerID, id)
+	s.Require().NoError(err)
+	expires := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Microsecond)
+	connection.Status = ConnectionConnected
+	connection.Revision++
+	connection.CredentialsSealed = []byte("sealed on " + customerID)
+	connection.CredentialsKEKVersion = 1
+	connection.ExpiresAt = &expires
+	s.Require().NoError(store.SaveConnectorConnectionAtRevision(s.ctx, &connection, connection.Revision-1))
+	return connection
+}
+
+// assertCredentialsKept checks the destination still holds the credential state a save left:
+// the sealed credentials open only at the revision and key version they were sealed under.
+func (s *DataMoveSuite) assertCredentialsKept(saved ConnectorConnection) {
+	held, err := s.destination.ConnectorConnection(s.ctx, saved.CustomerID, saved.ID)
+	s.Require().NoError(err)
+	s.Equal(ConnectionConnected, held.Status)
+	s.Equal(saved.Revision, held.Revision)
+	s.Equal(saved.CredentialsSealed, held.CredentialsSealed)
+	s.Equal(saved.CredentialsKEKVersion, held.CredentialsKEKVersion)
+	s.Require().NotNil(held.ExpiresAt)
+	s.True(saved.ExpiresAt.Equal(*held.ExpiresAt))
 }
 
 // seedScheduledTask stores a task on the source in a state, claimed by a worker there, with a

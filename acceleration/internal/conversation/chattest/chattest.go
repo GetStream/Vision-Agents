@@ -31,6 +31,8 @@ type store struct {
 	trunks   map[string]map[string]any
 	// calls are the participant ids in each call's session, by "<type>:<id>".
 	calls map[string][]string
+	// callMembers are the member ids of each call, by "<type>:<id>".
+	callMembers map[string][]string
 	// made are the bodies calls were created with, by "<type>:<id>", with the custom an
 	// update merged in.
 	made     map[string]map[string]any
@@ -135,7 +137,7 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, calls: map[string][]string{}, made: map[string]map[string]any{}, hooks: map[string][]json.RawMessage{},
+		rules: map[string]map[string]any{}, calls: map[string][]string{}, callMembers: map[string][]string{}, made: map[string]map[string]any{}, hooks: map[string][]json.RawMessage{},
 		updates: map[string][]json.RawMessage{}, events: map[string][]map[string]any{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
@@ -304,6 +306,13 @@ func (s *Server) PutCall(callType, id string, participants ...string) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	s.db.calls[callType+":"+id] = participants
+}
+
+// PutCallMembers has the call hold the members named, whether in its session or not.
+func (s *Server) PutCallMembers(callType, id string, members ...string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.callMembers[callType+":"+id] = members
 }
 
 // Trunks are the ids of the SIP trunks the app holds now.
@@ -765,6 +774,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
 		}
 		result["call"] = call
+		members := []map[string]any{}
+		for _, id := range db.callMembers[cid] {
+			members = append(members, map[string]any{"user_id": id, "role": "user"})
+		}
+		result["members"] = members
 	case r.Method == http.MethodPost && len(parts) >= 4 && parts[len(parts)-3] == "call" && parts[len(parts)-4] == "video":
 		// A get-or-create loads a call that is already there and creates only a missing one
 		// (getstream.io/video/docs/react/guides/joining-and-creating-calls/), so the call

@@ -4448,8 +4448,9 @@ pub struct ManageListLimitsQuery {
     pub level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
+    /// Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4474,8 +4475,9 @@ pub struct ManageListLimitGrantsQuery {
     pub subject: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
+    /// Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4502,9 +4504,9 @@ pub struct ManageGetLimitUsageQuery {
     /// The app of each subject, for every subject but organization, category and team. One goes with every subject.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
-    /// The key of each subject, for subject api_key.
+    /// The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     /// The end user of each subject, for subject user.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -4637,8 +4639,9 @@ pub struct ListLimitsQuery {
     pub level: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
+    /// Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4661,8 +4664,9 @@ pub struct ListLimitGrantsQuery {
     pub subject: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
+    /// Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -4687,9 +4691,9 @@ pub struct GetLimitUsageQuery {
     /// The app of each subject, for every subject but organization, category and team. One goes with every subject.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub app_id: Option<String>,
-    /// The key of each subject, for subject api_key.
+    /// The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     /// The end user of each subject, for subject user.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -4745,9 +4749,9 @@ pub struct GetSpendQuery {
     /// Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tag: Option<String>,
-    /// Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
+    /// Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     /// Only count usage for this end user of the app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -4811,9 +4815,9 @@ pub struct ListUsageEventsQuery {
     /// Only this kind of work, such as llm or runtime.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub meter: Option<String>,
-    /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
+    /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key: Option<String>,
+    pub api_key_id: Option<String>,
     /// Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
