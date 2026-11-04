@@ -18,8 +18,9 @@ id: slack
 # A new revision for any change to what this file says; see AGENTS.md. 2 adds
 # endpoints.resource. 3 renames client.policy to client.registration. 4 adds the channel
 # block that reads tokens_revoked and app_uninstalled. 5 captures user_id from $.user_id,
-# where the live token response has it. 6 marks 1 to 4 broken.
-revision: 6
+# where the live token response has it. 6 marks 1 to 4 broken. 7 lists the tools that only
+# read.
+revision: 7
 # Revisions 1 to 4 captured user_id at $.authed_user.id. The live oauth.v2.user.access
 # response (token rotation on) has user_id at the top and no authed_user: router log
 # «capture user_id: token_response has no $.authed_user.id» on 2026-10-08, and the shape the
@@ -133,6 +134,25 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read. [mcp] describes the tools without naming them; Slack's audit
+    # logs reference, «Slack Model Context Protocol (MCP) Server»
+    # (https://docs.slack.dev/reference/audit-logs-api/methods-actions-reference/#mcp-server,
+    # opened 2026-11-04), names these, each as «An AI app searched ...» or «An AI app read
+    # ...» on behalf of a user. It names slack_send_message, slack_create_canvas and
+    # slack_update_canvas as sending, creating and updating, so they are left out with every
+    # other tool that sends, schedules, drafts, reacts, creates, updates or uploads. Left out
+    # too, with no vendor page naming what they do: slack_read_file (which [mcp] does not
+    # say returns the content or a URL), slack_read_list, slack_list_channel_members,
+    # slack_list_user_channels and slack_search_emojis, as is a tool added later.
+    read_only_tools:
+      - slack_search_public
+      - slack_search_public_and_private
+      - slack_search_channels
+      - slack_search_users
+      - slack_read_channel
+      - slack_read_thread
+      - slack_read_canvas
+      - slack_read_user_profile
 # Slack tells the app about its grants as Events API events to the app's Request URL
 # ([revoked], [uninstalled]), which for the operator's app is
 # POST /v1/agents/connectors/events/slack. Nobody writes to this connector, so the block has
