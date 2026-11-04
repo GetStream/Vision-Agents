@@ -240,14 +240,15 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	inbound := message.Message()
 	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
 		"seq", message.Seq)
-	// Before the episode opens: a message that is only photos none of which downloaded is
-	// not written, so it opens no episode whose card nothing would ever write.
-	files, wanted, err := b.download(ctx, thread, inbound, log)
+	// Before the episode opens: a message that is only files named by id, none of them a
+	// photo that downloaded, has nothing to write or answer, so it opens no episode whose card
+	// nothing would ever write.
+	files, named, err := b.download(ctx, thread, inbound, log)
 	if err != nil {
 		return err
 	}
-	if wanted > 0 && len(files) == 0 && inbound.Text == "" && len(photos(inbound.Media)) == 0 {
-		log.Warn("an inbound message that is only photos none of which could be downloaded is not written or answered")
+	if named > 0 && len(files) == 0 && inbound.Text == "" && len(photos(inbound.Media)) == 0 {
+		log.Warn("an inbound message that is only files none of which could be downloaded is not written or answered")
 		return nil
 	}
 	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
