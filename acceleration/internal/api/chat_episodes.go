@@ -1,6 +1,7 @@
 package api
 
 import (
+	"cmp"
 	"context"
 	"strings"
 	"sync"
@@ -26,6 +27,14 @@ const chatCardTimeout = 30 * time.Second
 // a call has its call's card, whose lines a chat episode in the same channel would cut short
 // (store.EpisodeCards, until).
 //
+// The episode is the person's only in a channel whose members are that person alone, or that
+// person and the agent, the Stream user the agent writes its replies as (its agent id, which a
+// worker's session takes from the channel's id): the rule a session reads the cards by
+// (omnichannel.Between). The members are the ones Stream sends with the message; none sent is
+// no person, and opens nothing. The episode starts when Stream made the message that opened
+// it, so the summary, which reads the lines from the start on (omnichannel.linesOf), holds it:
+// the open comes after it, on the router's clock.
+//
 // Every message calls Open, which keeps the episode open (episode_activity.last_message_at).
 // A message delivered again, by Stream or by the queue's next try, finds the episode its first
 // delivery opened (store.OpenEpisode, episodes_open_thread), so it opens no second one and
@@ -42,6 +51,11 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 			"stream_app", origin.app)
 		return
 	}
+	if !omnichannel.Between(event.members(), event.Message.User.ID, cmp.Or(answering.AgentID, event.ChannelID)) {
+		s.logger.Info("no episode card for a message in a channel that is not the person's alone", "channel", event.ChannelID,
+			"stream_app", origin.app)
+		return
+	}
 	opened, err := s.chatCards.Open(ctx, omnichannel.Episode{
 		CustomerID:    answering.CustomerID,
 		AgentConfigID: answering.ConfigID,
@@ -49,6 +63,7 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 		Person:        person,
 		Source:        store.EpisodeChat,
 		ThreadChannel: chatlog.ChannelType + ":" + event.ChannelID,
+		StartedAt:     event.created(),
 		StreamAppPK:   origin.app,
 	})
 	if err != nil {
