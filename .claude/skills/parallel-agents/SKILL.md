@@ -18,6 +18,16 @@ a mistake that actually happened.
     because the `internal/api` suites skip silently without them.
   - It restores `testing.yaml` before it commits. Never commit it.
   - Two agents on `model_router_test` drop each other's schema in the middle of a run.
+- **One Postgres server for all agents.** Agents share one test Postgres and each uses its own
+  database on it. Do not start a Postgres container per agent. Eight of them, with fsync on, put
+  the Docker VM into swap. Run the shared server with `fsync=off`, `synchronous_commit=off` and
+  `full_page_writes=off`: the suites truncate their tables before every test, and each `TRUNCATE`
+  waits on fsync.
+  - Keep its data on disk, not on tmpfs. One server held 765 MB over 59 test databases.
+  - Give each agent its own Redis. The router's Redis config has no database number or key
+    prefix, so two agents on one Redis share counters, health and session keys.
+  - When the agent is done, drop its databases (`DROP DATABASE … WITH (FORCE)`) and remove its
+    Redis.
 - **One package at a time.** Run integration tests with `-p 1`. Packages that run in parallel try to
   create the same new database and fail with a duplicate key.
 - **Migration versions.** goose is strict. A migration older than the newest version a database
@@ -35,8 +45,13 @@ a mistake that actually happened.
 - **Generated files.** Do not hand-merge `acceleration/api/openapi.yaml` or the generated clients.
   Take either side, regenerate them (see `acceleration/README.md`), and check the result with
   `.agents/skills/pr-review/scripts/generated.sh <repo root> origin/accelerate`.
-- **CI does not run `-tags integration`.** A green CI says nothing about the integration suites.
-  Every PR lists its manual integration runs and how many tests they skipped.
+- **CI runs the integration suites.** `Integration (router)` (`.github/workflows/integration.yml`)
+  runs each Postgres package in its own job on every PR. Do not repeat those packages locally:
+  run the suites you touched, and read CI for the rest.
+  - CI leaves out the vendor suites that need API keys (tts, stt, llm, sts, search, imagegen,
+    detection), and `imagerouter` and `dlc` skip themselves there. Run those by hand when you
+    touch them, and list the runs in the PR.
+  - The check is not required on `accelerate`. Wait for it to pass before you merge.
 
 ## Review and merge one PR at a time
 
