@@ -342,6 +342,15 @@ func (s *Server) routedConfig() routing.Config {
 	return config
 }
 
+// billed is every item of work the deployment bills, the routed providers in config where it
+// was not told.
+func (s *Server) billed(config routing.Config) []pricing.Item {
+	if len(s.billable) > 0 {
+		return s.billable
+	}
+	return routing.Items(config)
+}
+
 // getActivePriceList answers the list in force at a moment, read from the database rather
 // than from this router's memory, so it answers for any moment and for every router at once.
 func (s *Server) getActivePriceList(ctx context.Context, request *getActivePriceListRequest) (*priceListResponse, error) {
@@ -377,7 +386,7 @@ func (s *Server) getActivePriceList(ctx context.Context, request *getActivePrice
 		entry.Local = isLocal(entry, local)
 		answer.Entries = append(answer.Entries, renderPriceEntry(entry, row.EffectiveAt))
 	}
-	for _, item := range list.Unpriced(routing.Items(config)) {
+	for _, item := range list.Unpriced(s.billed(config)) {
 		answer.Unpriced = append(answer.Unpriced, priceItemOf(item))
 	}
 	for _, row := range snapshot.Upcoming {
@@ -447,7 +456,7 @@ func (s *Server) previewPriceChange(ctx context.Context, request *previewPriceCh
 	if err != nil {
 		return nil, err
 	}
-	writes, err = before.Assign(writes)
+	writes, err = before.Assign(withTwins(before, writes))
 	if refused := refusedSKU(err); refused != nil {
 		return nil, refused
 	}
@@ -479,7 +488,7 @@ func (s *Server) createPriceChange(ctx context.Context, request *createPriceChan
 	actor := managedBy(ctx)
 	change, rows, replayed, err := s.store.CreatePriceChange(ctx, store.PriceChangeWrite{
 		Name: input.Name, Reason: input.Reason, Source: input.Source, EffectiveAt: input.EffectiveAt,
-		Entries: writes, IdempotencyKey: request.IdempotencyKey, ActorID: actor.ID, ActorName: actor.Name,
+		Entries: writes, Expand: withTwins, IdempotencyKey: request.IdempotencyKey, ActorID: actor.ID, ActorName: actor.Name,
 	}, func(before store.PriceListAt, assigned []store.PriceEntryWrite) error {
 		preview, err := s.previewOf(before, assigned)
 		if err != nil {
@@ -624,6 +633,58 @@ func priceEntryWrites(input PriceChangeInput) ([]store.PriceEntryWrite, error) {
 	return writes, nil
 }
 
+// withTwins is writes, each of a modality a customer may bring their own key for followed by its
+// BYOK twin where the change does not write the twin itself, as a price file's entries are. A
+// new entry's twin is written when the list in force has none, at the vendor's rates and
+// pricing.BYOKFeeBps of them; a twin staff priced is kept. A withdrawal withdraws the twin in
+// force with it. A new item taking a renamed item's SKU gives its twin the renamed twin's.
+// Without the twin, the work done on a customer's own key would have no price.
+func withTwins(before store.PriceListAt, writes []store.PriceEntryWrite) []store.PriceEntryWrite {
+	inForce := map[string]bool{}
+	skuOf := map[string]string{}
+	ownerOf := map[string]pricing.Entry{}
+	for _, row := range before.Entries {
+		entry := row.Entry()
+		inForce[prices.Name(entry)] = true
+		skuOf[prices.Name(entry)] = entry.SKU
+		ownerOf[entry.SKU] = entry
+	}
+	// renamedTwinSKU is the SKU of the twin of the item whose SKU entry takes, empty when there
+	// is none.
+	renamedTwinSKU := func(entry pricing.Entry) string {
+		owner, ok := ownerOf[entry.SKU]
+		if entry.SKU == "" || !ok {
+			return ""
+		}
+		owner.BYOK = true
+		return skuOf[prices.Name(owner)]
+	}
+	written := map[string]bool{}
+	for _, write := range writes {
+		written[prices.Name(write.Entry)] = true
+	}
+	all := make([]store.PriceEntryWrite, 0, len(writes))
+	for _, write := range writes {
+		all = append(all, write)
+		paired := pricing.WithBYOK([]pricing.Entry{write.Entry})
+		if len(paired) < 2 {
+			continue
+		}
+		twin := paired[1]
+		name := prices.Name(twin)
+		switch {
+		case written[name]:
+		case write.Withdrawn && inForce[name]:
+			all = append(all, store.PriceEntryWrite{Entry: twin, Withdrawn: true})
+		case !write.Withdrawn && !inForce[name]:
+			twin.SKU = renamedTwinSKU(write.Entry)
+			all = append(all, store.PriceEntryWrite{Entry: pricing.Priced(twin)})
+		}
+		written[name] = true
+	}
+	return all
+}
+
 // previewOf is what writes, with their SKUs, do to the list a change lands on: every item it
 // moves, before and after, and whether it needs confirming. Entries that do not make a list
 // with the rest are invalid_price, naming the item and what is wrong.
@@ -660,7 +721,7 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 		return PricePreview{}, invalidPrice(strings.TrimPrefix(err.Error(), "pricing: "))
 	}
 
-	// The items to show: every one the change writes, and every routed one that becomes
+	// The items to show: every one the change writes, and every billed one that becomes
 	// unpriced.
 	var items []pricing.Item
 	seen := map[string]bool{}
@@ -674,15 +735,16 @@ func (s *Server) previewOf(before store.PriceListAt, writes []store.PriceEntryWr
 	for _, write := range writes {
 		add(write.Entry)
 	}
+	billed := s.billed(config)
 	routed := map[string]bool{}
-	for _, item := range routing.Items(config) {
+	for _, item := range billed {
 		routed[itemName(item)] = true
 	}
 	wasUnpriced := map[string]bool{}
-	for _, item := range beforeList.Unpriced(routing.Items(config)) {
+	for _, item := range beforeList.Unpriced(billed) {
 		wasUnpriced[itemName(item)] = true
 	}
-	for _, item := range afterList.Unpriced(routing.Items(config)) {
+	for _, item := range afterList.Unpriced(billed) {
 		if !wasUnpriced[itemName(item)] {
 			add(pricing.Entry{Modality: item.Modality, Provider: item.Provider, Model: item.Model, Region: item.Region, BYOK: item.BYOK})
 		}
@@ -1037,7 +1099,10 @@ func (s *Server) registerPriceLists(api huma.API) {
 			"Every entry names its `region`, such as `us` or `eu`, else the change is a 400 `validation_failed`, " +
 			"and `byok: true` prices work done with the customer's own key, whose vendor bills the customer. " +
 			"Both are matched exactly: an entry prices work of its own region and `byok` only, and an item with " +
-			"no entry of its own is unpriced, never priced by another region's or the other `byok` state's.\n\n" +
+			"no entry of its own is unpriced, never priced by another region's or the other `byok` state's. " +
+			"A new `llm`, `knowledge` or `sandbox` item is written with its `byok` entry beside it, at a fifth " +
+			"of the vendor's rates, unless the change sets that entry itself or one is in force, and a withdrawn " +
+			"one has its `byok` entry withdrawn with it; a renamed item's `byok` entry keeps the old one's SKU.\n\n" +
 			"Every item has one SKU, kept across its price changes, which each row it prices records. An entry " +
 			"without `sku` keeps the item's, or gives a new item one made from its modality, provider, model, " +
 			"`when`, `region` and `byok` (`llm-openai-gpt-6-luna-service-tier-flex-us`, " +

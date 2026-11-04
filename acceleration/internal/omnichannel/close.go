@@ -92,7 +92,7 @@ type CloserOptions struct {
 // Every card update is a partial message update of the one card message. Stream Chat sends
 // message.updated «when a message is updated» and message.new only «when a new message is
 // added on a channel» (https://getstream.io/chat/docs/go-golang/event_object/); the message
-// hook asks for message.new only (chat.messageHookEvents), so no update of a card reaches it. Several routers close and summarize each episode once: the store closes each
+// hook and Chat delivery carry message.new only, so no update of a card reaches it. Several routers close and summarize each episode once: the store closes each
 // in one transaction that one of them wins (store.CloseIdleEpisodes, store.EndCallEpisodes),
 // and leases its summary to the winner.
 type Closer struct {
@@ -262,7 +262,7 @@ func (c *Closer) write(ctx context.Context, episode store.ClosedEpisode) error {
 	}
 	card := store.EpisodeCard{
 		Episode: episode.Episode, Until: episode.EndedAt,
-		ContactKind: episode.ContactKind, ContactAddress: episode.ContactAddress,
+		ContactKind: episode.ContactKind, ContactAddress: episode.ContactAddress, AgentConfigID: episode.AgentConfigID,
 	}
 	lines, err := linesOf(ctx, bound, card, conversation.MaxHistoryMessages, true)
 	if err != nil {

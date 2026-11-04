@@ -107,6 +107,10 @@ type Options struct {
 	// ReplayReasoning sends each earlier assistant turn's thinking back with it, for a model
 	// trained on conversations that kept it.
 	ReplayReasoning bool
+	// SystemTurnsAsUser sends a system message that comes after the conversation has started
+	// as a user message, for a server whose chat template refuses a system turn anywhere but
+	// first, or lifts it into the system prompt, which would change the prefix every turn.
+	SystemTurnsAsUser bool
 	// ResultsFollowCalls is set for a server that refuses a conversation in which anything
 	// comes between a tool call and its results, as MiniMax's does with a 400: what the
 	// caller said while a tool ran is moved after the results (StrictToolOrder).
@@ -541,13 +545,21 @@ func (l *LLM) params(request llm.ResponseParams) openai.ChatCompletionNewParams 
 		input = StrictToolOrder(input)
 	}
 	var pendingImages []openai.ChatCompletionContentPartUnionParam
+	started := false
 	for _, message := range input {
 		if message.Role != llm.ToolResult && len(pendingImages) > 0 {
 			messages = append(messages, openai.UserMessage(pendingImages))
 			pendingImages = nil
 		}
+		if message.Role != llm.System {
+			started = true
+		}
 		switch message.Role {
 		case llm.System:
+			if started && l.options.SystemTurnsAsUser {
+				messages = append(messages, openai.UserMessage(messageText(message)))
+				continue
+			}
 			messages = append(messages, openai.SystemMessage(messageText(message)))
 		case llm.Assistant:
 			assistant := assistantMessage(message, l.options.UnsignedCall)

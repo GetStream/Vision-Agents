@@ -9,6 +9,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // testTimeout is a timeout short enough to wait out in a test.
@@ -108,7 +109,8 @@ func (s *SessionSuite) holdsClaims() bool {
 	if address == "" {
 		return false
 	}
-	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(redisready.Ready(address))
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
 	s.Require().NoError(err)
 	s.T().Cleanup(client.Close)
 	directory, err := node.NewDirectory(node.DirectoryOptions{
@@ -179,7 +181,7 @@ func (s *SessionSuite) TestTimeoutCallsOnAnEndedSessionDoNothing() {
 	created := s.joins(Spec{})
 	ended := make(chan struct{}, 4)
 	created.mu.Lock()
-	created.end = func(TimeoutReason) { ended <- struct{}{} }
+	created.end = func(EndReason) { ended <- struct{}{} }
 	created.mu.Unlock()
 
 	// A leave reported while the session is still closing must not set a new timeout.

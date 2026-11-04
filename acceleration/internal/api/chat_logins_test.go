@@ -24,6 +24,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/schemes/oauth2code"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/sources/mcp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -414,8 +415,8 @@ func (s *ChatLoginsSuite) TestAConsentFinishedWithoutAHandBackIsPickedUpByTheWai
 
 // TestANewChatUsesTheCallersOneConnectedConnection is AI-994 (F41 of the plugin migration
 // run): three chats with no selection. The first asks, and its login connects the caller's
-// connection; the second and third run the tool on it with no login, as a chat did with
-// user_plugins. One connection and one consent.
+// connection; the second and third run the tool on it with no login, as a chat did before
+// connectors. One connection and one consent.
 func (s *ChatLoginsSuite) TestANewChatUsesTheCallersOneConnectedConnection() {
 	connector, grant := s.connector()
 	config := s.config(connector, grant)
@@ -943,7 +944,8 @@ func (m *loggingInLLM) Create(_ context.Context, params llm.ResponseParams) (*ll
 	offers := func(name string) bool {
 		return slices.ContainsFunc(params.Tools, func(tool llm.Tool) bool { return tool.Name == name })
 	}
-	asked := len(params.Input) > 0 && params.Input[len(params.Input)-1].Role == llm.User
+	said := harness.WithoutNotes(params.Input)
+	asked := len(said) > 0 && said[len(said)-1].Role == llm.User && params.ToolChoice != "none"
 	switch {
 	case asked && offers(connectorEcho):
 		// The binding opened when the session did, on the connection it chose.

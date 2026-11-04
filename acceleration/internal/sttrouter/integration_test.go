@@ -18,6 +18,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/deepgram"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testaudio"
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 type STTRouterIntegrationSuite struct {
@@ -58,7 +59,7 @@ func (s *STTRouterIntegrationSuite) SetupSuite() {
 	s.Require().NoError(pgStore.Migrate(s.ctx))
 	s.store = pgStore
 
-	liveClient, err := live.New(live.Options{Address: address})
+	liveClient, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	s.Require().NoError(err)
 	s.live = liveClient
 

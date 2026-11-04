@@ -61,6 +61,8 @@ type SecretsOptions struct {
 // (https://www.daytona.io/docs/en/secrets.md): one organization secret per grant holds the
 // credential and its hosts, and the sandbox's env var holds the secret's placeholder, which
 // Daytona's egress replaces only in a request header sent over HTTPS to one of the hosts.
+// Known limit: it replaces in any header, not only Authorization (the proxy broker replaces only
+// in Authorization); code can send the placeholder to a granted host in a header of its choice.
 type Secrets struct {
 	client  *sdk.Client
 	options SecretsOptions

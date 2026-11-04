@@ -19,6 +19,9 @@ const (
 	ChatInboundFailed = "failed"
 )
 
+// ErrNoChatInbound is a queued Stream Chat message no row is stored for (ChatInboundBySeq).
+var ErrNoChatInbound = errors.New("store: no such queued chat inbound message")
+
 // chatInboundDoneKeep is how long an answered message's row is kept, so a delivery Stream
 // makes again queues nothing. It is channelMessageKeep, the span thread channels already drop
 // a message's second delivery in.
@@ -54,12 +57,15 @@ type ChatInbound struct {
 	NextAttemptAt time.Time  `bun:"next_attempt_at,notnull"`
 	ReceivedAt    time.Time  `bun:"received_at,notnull"`
 	FinishedAt    *time.Time `bun:"finished_at"`
+	// Heard is what the voice recording sent with the message said, once it was heard
+	// (KeepChatInboundHeard); nil before.
+	Heard *string `bun:"heard"`
 }
 
 // chatInboundColumns are the columns a ChatInbound is read from, named rather than taken
 // with *, so a router older than a migration that adds one still reads the rows.
 const chatInboundColumns = "cd.seq, cd.stream_app, cd.message_id, cd.customer_id, cd.deployment, cd.api_key, cd.body, " +
-	"cd.state, cd.attempts, cd.next_attempt_at, cd.received_at, cd.finished_at"
+	"cd.state, cd.attempts, cd.next_attempt_at, cd.received_at, cd.finished_at, cd.heard"
 
 // QueueChatInbound queues delivery to be answered, due at delivery.NextAttemptAt. A message
 // already queued under the same app and id, answered or given up within its keep, is not
@@ -155,6 +161,19 @@ func (s *Store) claimChatInbound(ctx context.Context, query string, now time.Tim
 	return claimed, nil
 }
 
+// ChatInboundBySeq returns the message queued as seq, in whatever state it is.
+func (s *Store) ChatInboundBySeq(ctx context.Context, seq int64) (ChatInbound, error) {
+	var delivery ChatInbound
+	err := s.db.NewRaw("SELECT "+chatInboundColumns+" FROM chat_inbound AS cd WHERE cd.seq = ?", seq).Scan(ctx, &delivery)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ChatInbound{}, stack.Wrap(fmt.Errorf("%w: %d", ErrNoChatInbound, seq))
+	}
+	if err != nil {
+		return ChatInbound{}, stack.Wrap(fmt.Errorf("store: chat inbound: %w", err))
+	}
+	return delivery, nil
+}
+
 // NextChatInboundAt is when the queued message due first is due, leased ones at the end of
 // their lease. found is false when no message is queued at all.
 func (s *Store) NextChatInboundAt(ctx context.Context) (next time.Time, found bool, err error) {
@@ -232,6 +251,19 @@ WHERE stream_app = ? AND message_id = ? AND state = 'queued'`,
 		return false, stack.Wrap(fmt.Errorf("store: start chat inbound answer: %w", err))
 	}
 	return affected == 1, nil
+}
+
+// KeepChatInboundHeard keeps what the voice recording of the message queued under streamApp and
+// messageID said, so a later try of it hands that on rather than hearing it again. What was
+// kept first stays.
+func (s *Store) KeepChatInboundHeard(ctx context.Context, streamApp int64, messageID, heard string) error {
+	if _, err := s.db.NewRaw(`
+UPDATE chat_inbound SET heard = ?
+WHERE stream_app = ? AND message_id = ? AND heard IS NULL`,
+		heard, streamApp, messageID).Exec(ctx); err != nil {
+		return stack.Wrap(fmt.Errorf("store: keep chat inbound heard: %w", err))
+	}
+	return nil
 }
 
 // ReleaseChatInboundAnswer queues again a message whose answer started (StartChatInboundAnswer)

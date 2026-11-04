@@ -290,11 +290,14 @@ and waits, and nothing has to be publicly reachable.
 dispatch, _ := agents.NewDispatch(agents.DispatchOptions{Capacity: 8})
 
 dispatch.OnMessage(func(ctx context.Context, message agents.InboundMessage) error {
+    if message.SessionID != "" {
+        return dispatch.Answer(ctx, message)
+    }
     conversation, err := dispatch.Conversation(ctx, message, build)
     if err != nil {
         return err
     }
-    return conversation.Respond(message.Text)
+    return conversation.Respond(message.Text, message.Images...)
 })
 
 dispatch.Run(ctx)
@@ -309,6 +312,11 @@ Nothing is waited for after `Respond`, because the answer is written into the ch
 backend as it is generated: the person who wrote is already reading it. Questions on one
 channel are answered one at a time, so a second message written in quick succession waits
 for the first answer rather than landing on top of it.
+
+A message written to a running session whose agent leaves text to dispatch carries its
+`SessionID`, and `Answer` has that session's model answer it, with the photos sent with it.
+`message.Images` are those photos, as URLs to fetch, which `Respond` takes beside the text.
+A photo sent with no text is handed over too, with an empty `Text`.
 
 Several workers can wait at once, in which case the router shares the work between them.
 `Capacity` is a promise about what this process can hold: a full worker is passed over

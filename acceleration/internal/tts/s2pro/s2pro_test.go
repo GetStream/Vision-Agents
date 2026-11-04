@@ -368,6 +368,46 @@ func (s *S2ProSuite) TestAudioGoesToTheOldestUtteranceInFlight() {
 	s.InDelta(100.0, settled[1].AudioDurationMs, 1.0)
 }
 
+// The deployment speaks only flushed text and sends no final for a cancel of text it was
+// never asked to say, so an utterance cut before its final text is settled at the barge-in,
+// and text for its id after it is an utterance of its own with its own completion.
+func (s *S2ProSuite) TestAnUtteranceCutBeforeItsFinalTextEndsAtTheBargeIn() {
+	fake := newFakeDeployment()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer provider.Close()
+	settled := func() tts.SynthesisComplete {
+		events := s.collect(provider, func(event tts.Event) bool {
+			_, done := event.(tts.SynthesisComplete)
+			return done
+		})
+		return events[len(events)-1].(tts.SynthesisComplete)
+	}
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "abc"}))
+	s.Require().NoError(provider.Interrupt())
+	cut := settled()
+	s.Equal("u1", cut.SynthesisID)
+	s.EqualValues(3, cut.Characters, "the cut utterance is accounted for with the text it was sent")
+	s.True(cut.Interrupted)
+
+	s.Require().NoError(provider.Synthesize(tts.Request{ID: "u1", Text: "defgh", Final: true}))
+	frames := s.clientFrames(conn, 4)
+	var sent []string
+	for _, frame := range frames {
+		sent = append(sent, frame.Type+":"+frame.ID+":"+frame.Text)
+	}
+	s.Equal([]string{"text:u1:abc", "cancel:u1:", "text:u1:defgh", "flush:u1:"}, sent,
+		"the cut text is dropped by the deployment before the next text for the id")
+
+	s.Require().NoError(speak(conn, make([]int16, DefaultSampleRate/10)))
+	s.Require().NoError(finish(conn, "u1", false))
+	next := settled()
+	s.Equal("u1", next.SynthesisID)
+	s.EqualValues(5, next.Characters, "the next utterance is only its own text")
+	s.False(next.Interrupted)
+}
+
 func (s *S2ProSuite) TestAServerErrorForOneUtteranceIsNotFatal() {
 	fake := newFakeDeployment()
 	defer fake.close()

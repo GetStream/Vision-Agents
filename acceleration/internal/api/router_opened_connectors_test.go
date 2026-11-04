@@ -24,13 +24,12 @@ import (
 )
 
 // RouterOpenedConnectorsSuite pins AI-1000 (Kanat's decision of 2026-10-09): a session the
-// router opens itself, for a plugin event (pluginevents.Service.run) or for a message on a
-// channel line (channels.Service.answer), gets the implied connection of AI-994 as a session
-// an app opens does. A binding of connection type session that names no connection uses the
-// caller's only connected connection to its connector (session.impliedSelection), with the
-// trust user_plugins already gave these callers: the end user whose login subscribed to the
-// event, or the number that wrote (phone:+E164) or the user it was linked to. Two connected
-// connections, an app-owned one, or no verified caller imply nothing.
+// router opens itself, for a message on a channel line (channels.Service.answer), gets the
+// implied connection of AI-994 as a session an app opens does. A binding of connection type
+// session that names no connection uses the caller's only connected connection to its
+// connector (session.impliedSelection): the number that wrote (phone:+E164) or the user it
+// was linked to. Two connected connections, an app-owned one, or no verified caller imply
+// nothing.
 //
 // The model is the logging-in one (loggingInLLM): it runs crm's echo when it is offered, so an
 // echo result in the session is the implied connection having been used.
@@ -39,8 +38,6 @@ type RouterOpenedConnectorsSuite struct {
 	provider *fakeprovider.Server
 	// token is an access token the fake issued, which every bearer connection here holds.
 	token string
-	// sentry stands in for the plugin server events are subscribed on.
-	sentry *eventServer
 	// meta stands in for Meta's Cloud API, which answers on a WhatsApp line go to.
 	meta *metaAPI
 }
@@ -56,9 +53,6 @@ func (s *RouterOpenedConnectorsSuite) SetupSuite() {
 		ToolSources: map[string]core.ToolSource{mcp.Kind: mcp.New()},
 	}
 	s.connectorHTTP = s.provider.Client()
-	s.sentry = &eventServer{subscriptions: map[string]eventSubscription{}}
-	s.pluginMCP = httptest.NewTLSServer(http.HandlerFunc(s.sentry.serve))
-	s.T().Cleanup(s.pluginMCP.Close)
 	s.meta = &metaAPI{}
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.meta.serve))
 	s.T().Cleanup(s.channelAPI.Close)
@@ -70,63 +64,6 @@ func (s *RouterOpenedConnectorsSuite) SetupSuite() {
 // the ones it makes.
 func (s *RouterOpenedConnectorsSuite) SetupTest() {
 	s.useApp(s.data.createApp())
-}
-
-func (s *RouterOpenedConnectorsSuite) TestAPluginEventUsesTheSubscribersOneConnectedConnection() {
-	user := s.utils.uuid()
-	connector := s.connector()
-	mine := s.userConnection(connector, user)
-	config := s.subscribed(connector, s.grant(mine), &user)
-
-	s.deliverEvent(config)
-
-	s.Eventually(func() bool { return s.echoed(config.Name, user) == 1 }, settleFor, 50*time.Millisecond,
-		"the tool ran on the subscriber's one connection, with no connector_bindings")
-}
-
-func (s *RouterOpenedConnectorsSuite) TestAPluginEventImpliesNothingWhenTheSubscriberHasTwoConnected() {
-	user := s.utils.uuid()
-	connector := s.connector()
-	first := s.userConnection(connector, user)
-	s.userConnection(connector, user)
-	config := s.subscribed(connector, s.grant(first), &user)
-	before := s.provider.Hits(fakeprovider.PathMCP)
-
-	s.deliverEvent(config)
-
-	s.settled(config.Name, user)
-	s.Zero(s.echoed(config.Name, user))
-	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP), "neither connection reached the provider")
-}
-
-// An app-owned connection is the app's, not the subscriber's: a session binding never
-// implies it.
-func (s *RouterOpenedConnectorsSuite) TestAPluginEventImpliesNoAppOwnedConnection() {
-	user := s.utils.uuid()
-	connector := s.connector()
-	config := s.subscribed(connector, s.grant(s.appConnection(connector)), &user)
-	before := s.provider.Hits(fakeprovider.PathMCP)
-
-	s.deliverEvent(config)
-
-	s.settled(config.Name, user)
-	s.Zero(s.echoed(config.Name, user))
-	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
-}
-
-// An event subscribed with the app's login opens a conversation as nobody (no Caller), so
-// there is no verified person whose connection it could be. The app's own connection is not
-// used either.
-func (s *RouterOpenedConnectorsSuite) TestAPluginEventTheAppSubscribedImpliesNothing() {
-	connector := s.connector()
-	config := s.subscribed(connector, s.grant(s.appConnection(connector)), nil)
-	before := s.provider.Hits(fakeprovider.PathMCP)
-
-	s.deliverEvent(config)
-
-	s.settled(config.Name, "")
-	s.Zero(s.echoed(config.Name, ""))
-	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
 }
 
 // The number that wrote is the caller, as phone:+E164, and its one connected connection is
@@ -175,7 +112,8 @@ func (s *RouterOpenedConnectorsSuite) TestAMessageFromANumberNotLinkedYetImplies
 
 	s.Eventually(func() bool { return len(s.meta.to(writer)) == 1 }, settleFor, 50*time.Millisecond)
 	s.Contains(s.meta.to(writer)[0], "code")
-	s.Empty(s.sessionsOf(config.Name, ""), "no conversation opened")
+	s.Never(func() bool { return len(s.sessionsOf(config.Name, "")) > 0 }, time.Second, 50*time.Millisecond,
+		"no conversation opened")
 	s.Equal(before, s.provider.Hits(fakeprovider.PathMCP))
 }
 
@@ -277,53 +215,6 @@ func (s *RouterOpenedConnectorsSuite) grant(connection string) map[string]any {
 func binding(connector string, grant map[string]any) []map[string]any {
 	return []map[string]any{{"name": "crm", "connector_id": connector,
 		"connection": map[string]any{"type": "session"}, "tools": []map[string]any{grant}}}
-}
-
-// subscribed is a text agent on the logging-in model binding crm, declaring sentry's
-// issue.created, logged into Sentry by the app or by the end user named, and subscribed.
-func (s *RouterOpenedConnectorsSuite) subscribed(connector string, grant map[string]any, userID *string) AgentConfig {
-	request := map[string]any{
-		"name": "watcher-" + s.utils.uuid(), "mode": "text", "llm": "logging-in/login-model",
-		"plugin_events": []map[string]any{{"plugin": "sentry", "event": "issue.created",
-			"arguments": map[string]any{"project": "web"}}},
-		"connectors": binding(connector, grant),
-	}
-	if userID == nil {
-		request["plugins"] = []map[string]any{{"name": "sentry", "user": false}}
-	} else {
-		request["plugins"] = []map[string]any{{"name": "sentry", "user": true}}
-	}
-	var config AgentConfig
-	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &config))
-
-	login := store.PluginConnection{
-		CustomerID: s.customerID(), ConfigID: config.Id, PluginID: "sentry",
-		Status: store.PluginConnected, AccessToken: "token-" + s.utils.uuid(),
-	}
-	if userID != nil {
-		login.UserID = *userID
-	}
-	s.sentry.name(login.AccessToken, config.Name)
-	s.Require().NoError(s.store.UpsertPluginConnection(context.Background(), &login))
-	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.Id)
-	s.Require().NoError(err)
-	s.events.Reconcile(context.Background(), stored)
-	return config
-}
-
-// deliverEvent posts one issue.created to config's subscription, signed as Sentry signs it.
-func (s *RouterOpenedConnectorsSuite) deliverEvent(config AgentConfig) {
-	id := "evt-" + s.utils.uuid()
-	body, err := json.Marshal(map[string]any{
-		"eventId": id, "name": "issue.created", "timestamp": time.Now().UTC().Format(time.RFC3339),
-		"data": map[string]any{"project": "web", "title": "TypeError in checkout"}, "cursor": nil,
-	})
-	s.Require().NoError(err)
-	sub := s.sentry.subscription(s.T(), config.Name)
-	response, err := signedPost(sub.url, sub.secret, id, body)
-	s.Require().NoError(err)
-	defer response.Body.Close()
-	s.Require().Equal(http.StatusAccepted, response.StatusCode)
 }
 
 // lineAgent is a WhatsApp line connected for a number nobody else in the run uses, and a text

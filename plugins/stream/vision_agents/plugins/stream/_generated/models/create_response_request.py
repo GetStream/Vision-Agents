@@ -10,6 +10,7 @@ from typing_extensions import Self
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.audio_source import AudioSource
     from ..models.create_response_request_ui_action import CreateResponseRequestUiAction
     from ..models.image_source import ImageSource
     from ..models.video_source import VideoSource
@@ -22,7 +23,10 @@ T = TypeVar("T", bound="CreateResponseRequest")
 class CreateResponseRequest:
     """
     Attributes:
-        text (str): What to answer, as though it had been said.
+        text (str): What to answer, as though it had been said. May be empty when images or audio carry the question.
+            Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data
+            URIs, at most 8, with or without a request_id.
+        audio (AudioSource | Unset):
         images (list[ImageSource] | Unset):
         max_output_tokens (int | Unset): Caps this answer, reasoning included, and the replies that finish it after its
             tools. Omitted keeps the session's.
@@ -32,8 +36,11 @@ class CreateResponseRequest:
         request_id (str | Unset): Generated and sent by the SDKs, one per question, so a retry of the same question is
             answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream
             Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the
-            person's message, and videos are refused. A retry with the same id, text and images starts no second turn and
-            returns no id.
+            person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model
+            alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not
+            fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened
+            for a message handed out from a channel, that message is already there: nothing is written or uploaded for it,
+            and a reused id is answered as a duplicate even with other text or images.
         ui_action (CreateResponseRequestUiAction | Unset): What the person did in the generated UI of an earlier reply,
             such as tapping a place or submitting a form, which the text says in their words: an object naming the reply
             (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON.
@@ -44,6 +51,7 @@ class CreateResponseRequest:
     """
 
     text: str
+    audio: AudioSource | Unset = UNSET
     images: list[ImageSource] | Unset = UNSET
     max_output_tokens: int | Unset = UNSET
     reasoning_effort: str | Unset = UNSET
@@ -54,6 +62,10 @@ class CreateResponseRequest:
 
     def to_dict(self) -> dict[str, Any]:
         text = self.text
+
+        audio: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.audio, Unset):
+            audio = self.audio.to_dict()
 
         images: list[dict[str, Any]] | Unset = UNSET
         if not isinstance(self.images, Unset):
@@ -86,6 +98,8 @@ class CreateResponseRequest:
                 "text": text,
             }
         )
+        if audio is not UNSET:
+            field_dict["audio"] = audio
         if images is not UNSET:
             field_dict["images"] = images
         if max_output_tokens is not UNSET:
@@ -103,6 +117,7 @@ class CreateResponseRequest:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.audio_source import AudioSource
         from ..models.create_response_request_ui_action import (
             CreateResponseRequestUiAction,
         )
@@ -111,6 +126,13 @@ class CreateResponseRequest:
 
         d = dict(src_dict)
         text = d.pop("text")
+
+        _audio = d.pop("audio", UNSET)
+        audio: AudioSource | Unset
+        if isinstance(_audio, Unset):
+            audio = UNSET
+        else:
+            audio = AudioSource.from_dict(_audio)
 
         _images = d.pop("images", UNSET)
         images: list[ImageSource] | Unset = UNSET
@@ -145,6 +167,7 @@ class CreateResponseRequest:
 
         create_response_request = cls(
             text=text,
+            audio=audio,
             images=images,
             max_output_tokens=max_output_tokens,
             reasoning_effort=reasoning_effort,

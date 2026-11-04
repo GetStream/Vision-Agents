@@ -3,6 +3,7 @@ package gemini
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"testing"
@@ -42,6 +43,66 @@ func (s *GeminiSuite) drain(provider *STS) []sts.Event {
 			return events
 		}
 	}
+}
+
+// counted is what Live reports for a reply: 120 tokens of audio heard and 50 spoken.
+func counted() serverMessage {
+	return serverMessage{UsageMetadata: &usageMetadata{
+		PromptTokenCount: 120, ResponseTokenCount: 50,
+		PromptTokensDetails:   []modalityTokens{{Modality: "AUDIO", TokenCount: 120}},
+		ResponseTokensDetails: []modalityTokens{{Modality: "AUDIO", TokenCount: 50}},
+	}}
+}
+
+func (s *GeminiSuite) TestACutReplyIsBilledWithTheUsageItsTurnBrings() {
+	provider := s.newProvider()
+	provider.handleMessage(spoke(4_800))
+	s.Require().NoError(provider.Interrupt(0))
+	for _, event := range s.drain(provider) {
+		s.NotEqual("sts.ResponseComplete", fmt.Sprintf("%T", event), "what it cost has not come yet")
+	}
+
+	provider.handleMessage(counted())
+	provider.handleMessage(turnComplete())
+
+	complete := s.completed(provider)
+	s.True(complete.Interrupted)
+	s.EqualValues(50, complete.Usage.OutputTokens, "the server's count, not nothing")
+	s.False(complete.Usage.Estimated)
+}
+
+func (s *GeminiSuite) TestACutReplyWhoseTurnNeverEndsIsEstimatedWhenTheConnectionDrops() {
+	provider := s.newProvider()
+	provider.handleMessage(spoke(4_800)) // 200 ms
+	provider.handleMessage(counted())
+	provider.handleMessage(turnComplete())
+	s.completed(provider)
+
+	provider.handleMessage(spoke(2_400)) // 100 ms
+	s.Require().NoError(provider.Interrupt(0))
+	provider.handleReadError(errors.New("connection reset"))
+
+	s.Equal(sts.Usage{
+		InputTokens: 120, InputAudioTokens: 120,
+		OutputTokens: 25, OutputAudioTokens: 25,
+		Estimated: true,
+	}, s.completed(provider).Usage, "the last reply's input, and 50 audio tokens per 200 ms")
+}
+
+func (s *GeminiSuite) TestAReplyClosedBeforeAnyUsageIsEstimatedAtTheDefaultRate() {
+	provider := s.newProvider()
+	provider.handleMessage(spoke(24_000)) // a second
+	s.Require().NoError(provider.Close())
+
+	var completes []sts.ResponseComplete
+	for event := range provider.Events() {
+		if complete, ok := event.(sts.ResponseComplete); ok {
+			completes = append(completes, complete)
+		}
+	}
+	s.Require().Len(completes, 1)
+	s.True(completes[0].Usage.Estimated)
+	s.EqualValues(audioTokensPerSecond, completes[0].Usage.OutputAudioTokens)
 }
 
 // completed is the one reply settled so far.
@@ -645,6 +706,25 @@ func (s *GeminiSuite) TestAnActivityOfAnotherTypeLeavesTheLastWordHeard() {
 		}
 	}
 	s.True(stopped.At.After(heardBy.Add(-100*time.Millisecond)), "only an ACTIVITY_END places the stop")
+}
+
+func (s *GeminiSuite) TestAStopHeardDuringAReplyIsMarkedAnswered() {
+	// The reply open when the caller stops takes the stop; a stop with none open gets a reply
+	// of its own, so only the first is answered.
+	provider := s.newProvider()
+	provider.handleMessage(heard("hello"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(heard("mhm"))
+	provider.handleMessage(spoke(2400))
+	provider.handleMessage(turnComplete())
+
+	var answered []bool
+	for _, event := range s.drain(provider) {
+		if typed, ok := event.(sts.SpeechStopped); ok {
+			answered = append(answered, typed.Answered)
+		}
+	}
+	s.Equal([]bool{false, true}, answered)
 }
 
 func (s *GeminiSuite) TestAStopHeardDuringAReplyIsNotKeptForTheNext() {

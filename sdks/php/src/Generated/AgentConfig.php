@@ -18,12 +18,13 @@ final readonly class AgentConfig
         // Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it....
         public string $region,
         public \DateTimeImmutable $updatedAt,
+        public ?AgentCalls $calls = null,
         public ?AgentChannels $channels = null,
         // The bindings exactly as they were written. Absent when there are none.
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
-        // Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each se...
+        // Whether each phone call and each app chat conversation under this agent writes an episode card into the per...
         public ?bool $episodeCards = null,
         public ?Greeting $greeting = null,
         public ?string $guardrail = null,
@@ -36,14 +37,6 @@ final readonly class AgentConfig
         /** @var list<LeftOutConnector>|null */
         public ?array $leftOutConnectors = null,
         public ?string $llm = null,
-        /** @var list<McpServer>|null */
-        public ?array $mcpServers = null,
-        // Deprecated: use the events of a fixed binding under connectors.
-        /** @var list<PluginEvent>|null */
-        public ?array $pluginEvents = null,
-        // Deprecated: use connectors, a binding to a connector.
-        /** @var list<mixed>|null */
-        public ?array $plugins = null,
         public ?ResumeHistory $resumeHistory = null,
         // Absent when calls are reviewed by Stream's default guide.
         public ?AgentReview $review = null,
@@ -84,6 +77,7 @@ final readonly class AgentConfig
             name: Json::string($data, 'name'),
             region: Json::string($data, 'region'),
             updatedAt: Json::date($data, 'updated_at'),
+            calls: array_key_exists('calls', $data) && $data['calls'] !== null ? AgentCalls::fromArray(Json::object($data, 'calls')) : null,
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
@@ -96,9 +90,6 @@ final readonly class AgentConfig
             knowledgeNamespace: array_key_exists('knowledge_namespace', $data) && $data['knowledge_namespace'] !== null ? Json::string($data, 'knowledge_namespace') : null,
             leftOutConnectors: array_key_exists('left_out_connectors', $data) && $data['left_out_connectors'] !== null ? array_map(LeftOutConnector::fromArray(...), Json::objects($data, 'left_out_connectors')) : null,
             llm: array_key_exists('llm', $data) && $data['llm'] !== null ? Json::string($data, 'llm') : null,
-            mcpServers: array_key_exists('mcp_servers', $data) && $data['mcp_servers'] !== null ? array_map(McpServer::fromArray(...), Json::objects($data, 'mcp_servers')) : null,
-            pluginEvents: array_key_exists('plugin_events', $data) && $data['plugin_events'] !== null ? array_map(PluginEvent::fromArray(...), Json::objects($data, 'plugin_events')) : null,
-            plugins: array_key_exists('plugins', $data) && $data['plugins'] !== null ? Json::list($data, 'plugins') : null,
             resumeHistory: array_key_exists('resume_history', $data) && $data['resume_history'] !== null ? ResumeHistory::fromArray(Json::object($data, 'resume_history')) : null,
             review: array_key_exists('review', $data) && $data['review'] !== null ? AgentReview::fromArray(Json::object($data, 'review')) : null,
             role: array_key_exists('role', $data) && $data['role'] !== null ? Json::enum($data, 'role', AgentRole::class) : null,
@@ -134,6 +125,9 @@ final readonly class AgentConfig
         $out['name'] = $this->name;
         $out['region'] = $this->region;
         $out['updated_at'] = Json::dateValue($this->updatedAt);
+        if ($this->calls !== null) {
+            $out['calls'] = $this->calls->toArray();
+        }
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();
         }
@@ -169,15 +163,6 @@ final readonly class AgentConfig
         }
         if ($this->llm !== null) {
             $out['llm'] = $this->llm;
-        }
-        if ($this->mcpServers !== null) {
-            $out['mcp_servers'] = array_map(static fn (McpServer $each): array => $each->toArray(), $this->mcpServers);
-        }
-        if ($this->pluginEvents !== null) {
-            $out['plugin_events'] = array_map(static fn (PluginEvent $each): array => $each->toArray(), $this->pluginEvents);
-        }
-        if ($this->plugins !== null) {
-            $out['plugins'] = $this->plugins;
         }
         if ($this->resumeHistory !== null) {
             $out['resume_history'] = $this->resumeHistory->toArray();

@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/google/uuid"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -98,7 +100,91 @@ func (s *MessagePhotosSuite) TestAtMostAsManyPhotosAsARunTakes() {
 	s.Equal(fmt.Sprintf("https://cdn.example/%d.jpg", maxRunImages-1), photos[maxRunImages-1].URL, "the first ones, in order")
 }
 
-func (s *MessagePhotosSuite) TestAPhotoAloneOutsideAThreadChannelIsNotAddressed() {
-	s.False(addressed(s.sent("support-chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)))
-	s.False(addressed(s.sent("chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)))
+// A photo sent alone is written to the agent on any agent channel, not only a thread's.
+func (s *MessagePhotosSuite) TestAPhotoAloneOutsideAThreadChannelIsAddressed() {
+	s.True(addressed(s.sent("support-chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)))
+	s.True(addressed(s.sent("chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)))
+}
+
+// Control, as on base: a photo alone in a session command channel, which the session API
+// answers, or in a channel that is not an agent's, is not addressed.
+func (s *MessagePhotosSuite) TestAPhotoAloneInASessionCommandOrTeamChannelIsNotAddressed() {
+	photo := `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`
+	s.False(addressed(s.sent("support-"+uuid.NewString(), photo)))
+	team := s.sent("chat-1", photo)
+	team.ChannelType = "messaging"
+	s.False(addressed(team))
+}
+
+// Control, as on base: a photo alone the agent wrote itself carries a source and is not
+// addressed.
+func (s *MessagePhotosSuite) TestAPhotoAloneTheAgentWroteIsNotAddressed() {
+	event := s.sent("chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"}]`)
+	event.Message.Source = json.RawMessage(`"agent"`)
+	s.False(addressed(event))
+}
+
+// Control, as on base: a video sent alone has nothing that answers here read it, on a thread
+// channel or any other.
+func (s *MessagePhotosSuite) TestAVideoAloneIsNotAddressed() {
+	video := `[{"type":"video","asset_url":"https://cdn.example/a.mp4","mime_type":"video/mp4"}]`
+	s.False(addressed(s.sent("chat-1", video)))
+	s.False(addressed(s.sent("thread-1", video)))
+}
+
+// A voice recording or an audio file sent alone is written to the agent, which hears it: the
+// first of them, by its asset_url.
+func (s *MessagePhotosSuite) TestAVoiceRecordingOrAudioAloneIsAddressedAndHeardByItsAssetURL() {
+	for attachments, want := range map[string]string{
+		`[{"type":"voiceRecording","asset_url":"https://cdn.example/a.aac","mime_type":"audio/aac"}]`:                                  "https://cdn.example/a.aac",
+		`[{"type":"audio","asset_url":"https://cdn.example/a.mp3","mime_type":"audio/mpeg"}]`:                                          "https://cdn.example/a.mp3",
+		`[{"type":"voiceRecording","asset_url":"https://cdn.example/1.aac"},{"type":"audio","asset_url":"https://cdn.example/2.mp3"}]`: "https://cdn.example/1.aac",
+		`[{"type":"voiceRecording","asset_url":5},"audio",null,{"type":"voiceRecording","asset_url":"https://cdn.example/a.aac"}]`:     "https://cdn.example/a.aac",
+	} {
+		event := s.sent("chat-1", attachments)
+		source, sent := event.recording()
+		s.True(sent, attachments)
+		s.Equal(want, source, attachments)
+		s.True(addressed(event), attachments)
+		s.Empty(event.photos(), attachments)
+	}
+}
+
+// What is no voice recording: one with no asset_url, an audio file sent as a file, another
+// type, a type spelled otherwise, and attachments that are no list.
+func (s *MessagePhotosSuite) TestWhatIsNoVoiceRecording() {
+	for _, attachments := range []string{
+		`[{"type":"voiceRecording","mime_type":"audio/aac"}]`,
+		`[{"type":"voiceRecording","image_url":"https://cdn.example/a.aac"}]`,
+		`[{"type":"file","asset_url":"https://cdn.example/a.mp3","mime_type":"audio/mpeg"}]`,
+		`[{"type":"video","asset_url":"https://cdn.example/a.mp4"}]`,
+		`[{"type":"VoiceRecording","asset_url":"https://cdn.example/a.aac"}]`,
+		`{"type":"voiceRecording","asset_url":"https://cdn.example/a.aac"}`,
+		`null`, `{}`,
+	} {
+		event := s.sent("chat-1", attachments)
+		_, sent := event.recording()
+		s.False(sent, attachments)
+		s.False(addressed(event), attachments)
+	}
+}
+
+// Control, as on base: a voice recording the agent wrote itself, which it shows on a person's
+// message, carries a source and is not addressed, nor is one in a session command channel.
+func (s *MessagePhotosSuite) TestAVoiceRecordingTheAgentWroteOrInACommandChannelIsNotAddressed() {
+	recording := `[{"type":"voiceRecording","asset_url":"https://cdn.example/a.aac"}]`
+	event := s.sent("chat-1", recording)
+	event.Message.Source = json.RawMessage(`"agent"`)
+	s.False(addressed(event))
+	s.False(addressed(s.sent("support-"+uuid.NewString(), recording)))
+}
+
+// A worker is handed a message's photos as their URLs, in order, and a message with none
+// as nil, which writes no images into its frame.
+func (s *MessagePhotosSuite) TestAWorkerIsHandedThePhotosByTheirURLs() {
+	event := s.sent("chat-1", `[{"type":"image","image_url":"https://cdn.example/a.jpg"},{"type":"file","asset_url":"https://cdn.example/a.pdf"},{"type":"image","asset_url":"https://cdn.example/b.png"}]`)
+
+	s.Equal([]dispatch.Image{{URL: "https://cdn.example/a.jpg"}, {URL: "https://cdn.example/b.png"}}, event.dispatchedPhotos())
+	s.Nil(s.sent("chat-1", `[{"type":"file","asset_url":"https://cdn.example/a.pdf"}]`).dispatchedPhotos())
+	s.Nil(s.sent("chat-1", `null`).dispatchedPhotos())
 }

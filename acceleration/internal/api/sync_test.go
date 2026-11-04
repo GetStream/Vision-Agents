@@ -4,6 +4,8 @@ package api
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -109,6 +111,32 @@ func (s *SyncSuite) TestSyncingAnAgentStoresItsScheduling() {
 	s.Equal("Europe/Amsterdam", value(again.Config.Scheduling.DefaultTimezone))
 }
 
+func (s *SyncSuite) TestSyncingAnAgentStoresItsCalls() {
+	calls := callsExample()
+	result := s.sync(map[string]any{"name": "concierge", "hash": "v1", "calls": calls})
+
+	other := s.sync(map[string]any{"name": "by-put", "hash": "v1"})
+	var put AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+other.Config.Id,
+		map[string]any{"name": "by-put", "calls": calls}, &put))
+	synced, err := json.Marshal(result.Config.Calls)
+	s.Require().NoError(err)
+	direct, err := json.Marshal(put.Calls)
+	s.Require().NoError(err)
+	s.JSONEq(string(direct), string(synced))
+	s.Contains(string(synced), "+442071234567")
+
+	again := s.sync(map[string]any{"name": "concierge", "hash": "v2"})
+	kept, err := json.Marshal(again.Config.Calls)
+	s.Require().NoError(err)
+	s.JSONEq(string(direct), string(kept), "a directory that says nothing leaves what is stored")
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+		map[string]any{"name": "concierge", "hash": "v3", "calls": map[string]any{
+			"transfer": map[string]any{"destinations": []any{map[string]any{"name": "A", "number": "12"}}}}})
+	s.Equal(http.StatusBadRequest, status)
+}
+
 func (s *SyncSuite) TestASyncNamingAnUnknownDefaultTimezoneIsRefused() {
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
 		map[string]any{"name": "concierge", "hash": "v1",
@@ -127,25 +155,6 @@ func (s *SyncSuite) TestSyncingAnAgentStoresHowItsSandboxIsBuilt() {
 	// A directory that stops saying how is not one that wants the build thrown away.
 	again := s.sync(map[string]any{"name": "artist", "hash": "v2", "sandbox": "daytona"})
 	s.Equal(300000, value(value(again.Config.SandboxOptions).TimeoutMs))
-}
-
-func (s *SyncSuite) TestSyncingAnAgentStoresTheMCPServersItNamesByURL() {
-	result := s.sync(map[string]any{
-		"name": "concierge", "hash": "v1",
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-	})
-
-	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(result.Config.McpServers))
-}
-
-func (s *SyncSuite) TestASyncNamingAPrivateMCPServerIsRefusedWithAPlainError() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
-		"name": "concierge", "hash": "v1",
-		"mcp_servers": []map[string]any{{"name": "wwsd", "url": privateMCPURLs[1]}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable")
 }
 
 func (s *SyncSuite) TestSyncingAVoiceAgentStoresItsSubagent() {
@@ -190,6 +199,17 @@ func (s *SyncSuite) TestASyncAskingForTooMuchMemoryIsRefused() {
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "memory_gb")
+}
+
+func (s *SyncSuite) TestASyncAllowingAnIPAddressAsADomainIsRefused() {
+	for _, address := range []string{"203.0.113.7", "203.0.113.7:443", "[2001:db8::7]"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
+			map[string]any{"name": "artist", "hash": "v1", "sandbox": "daytona",
+				"sandbox_options": map[string]any{"allowed_domains": []string{"api.example.com", address}}})
+
+		s.Equal(http.StatusBadRequest, status, address)
+		s.Contains(failure, fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", address), address)
+	}
 }
 
 func (s *SyncSuite) TestASyncThatNamesNoModelLeavesTheOneStored() {
@@ -726,32 +746,6 @@ func (s *SyncSuite) TestASyncAnswersToolPatterns() {
 	s.Equal([]string{"*"}, value(value(s.configsNamed("support")[0].Connectors)[0].ToolPatterns))
 }
 
-func (s *SyncSuite) TestASyncAddingAPluginABindingIsCalledIsRefused() {
-	s.sync(map[string]any{"name": "support", "hash": "v1", "connectors": []map[string]any{sessionSlack("linear")}})
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": "support", "hash": "v2", "plugins": []string{"linear"}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
-	s.Equal("v1", value(s.configsNamed("support")[0].SyncHash))
-}
-
-// A sync that sends plugins writes them, an empty list included: only a sync that leaves them
-// out keeps the stored ones.
-func (s *SyncSuite) TestASyncSendingPluginsWritesThemAndASyncLeavingThemOutKeepsThem() {
-	stored := func() []PluginEntry { return value(s.configsNamed("support")[0].Plugins) }
-
-	s.sync(map[string]any{"name": "support", "hash": "v1", "plugins": []string{"linear"}})
-	s.Equal([]PluginEntry{{Name: "linear"}}, stored())
-
-	s.sync(map[string]any{"name": "support", "hash": "v2", "instructions": "be kind"})
-	s.Equal([]PluginEntry{{Name: "linear"}}, stored(), "a sync that leaves plugins out keeps them")
-
-	s.sync(map[string]any{"name": "support", "hash": "v3", "plugins": []string{}})
-	s.Empty(stored(), "a sync that sends an empty list takes them out")
-}
-
 // pdfSkill is a skill synced from a folder that brings a reference and a script.
 func pdfSkill() []map[string]any {
 	return []map[string]any{{
@@ -866,17 +860,17 @@ func (s *SyncSuite) TestASyncedSandboxBindingToAConnectorWithoutASandboxBlockIsR
 }
 
 // A sync stores a config as a save does, so it too refuses nessy beside an outbound tool.
-func (s *SyncSuite) TestASyncedNessyBesideAnMCPServerIsRefusedAndStoresNothing() {
+func (s *SyncSuite) TestASyncedNessyBesideANetworkedSandboxIsRefusedAndStoresNothing() {
 	s.useApp(s.data.createAppAdmitting(store.AppSettings{InternalConnectors: new(true)}))
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sync", map[string]any{
 		"name": "athena", "hash": "v1", "connectors": []map[string]any{sessionNessy("customers")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+		"sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
-		`and MCP server "tablejourney" can send data out`)
+		`and the sandbox's network access can send data out`)
 	s.Empty(s.configsNamed("athena"))
 }
 

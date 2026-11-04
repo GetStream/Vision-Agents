@@ -8,13 +8,11 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/slackapps"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
@@ -156,7 +154,6 @@ func (s *Server) registerConnectorProviderApps(api huma.API) {
 			"there is one app per customer and connector, never a second. A connector that does " +
 			"not authorize at Slack, or whose client.registration does not list managed, " +
 			"refuses it. No response carries a token or a secret.\n\n" +
-			messageHookNote + "\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
 		// Huma describes the body of the default status (200) alone, so 201 names it here.
@@ -194,7 +191,6 @@ func (s *Server) registerConnectorProviderApps(api huma.API) {
 			"holds it (<client.env>_MCP_APP_ID, _MCP_CLIENT_ID, _MCP_CLIENT_SECRET and " +
 			"_MCP_SIGNING_SECRET), as the customer's provider app, so its events reach that " +
 			"customer. One customer per app: another customer's record of it is a conflict.\n\n" +
-			messageHookNote + "\n\n" +
 			"Stream staff only: it needs the ops key.",
 		Tags:     []string{staffTag},
 		Security: opsSecurity,
@@ -204,7 +200,7 @@ func (s *Server) registerConnectorProviderApps(api huma.API) {
 				"application/json": {Schema: &huma.Schema{Ref: "#/components/schemas/ConnectorProviderApp"}},
 			}},
 		},
-		Errors: append(slices.Clone(staffErrors), http.StatusServiceUnavailable),
+		Errors: staffErrors,
 	}, s.setOperatorProviderApp)
 	huma.Register(api, huma.Operation{
 		OperationID:   "deleteOperatorProviderApp",
@@ -269,7 +265,6 @@ func (s *Server) setConnectorProviderApp(ctx context.Context, request *providerA
 	}
 
 	var answer *providerAppResponse
-	var pinned int64
 	err = s.store.WithConnectorProviderAppLock(ctx, customerID, manifest.ID, func() error {
 		token, err := s.configToken(ctx, customerID, manifest.ID, request.Body.ConfigRefreshToken)
 		if err != nil {
@@ -283,7 +278,7 @@ func (s *Server) setConnectorProviderApp(ctx context.Context, request *providerA
 			if err := s.applyProviderAppManifest(ctx, manifest, template, token, existing.ProviderAppID); err != nil {
 				return err
 			}
-			answer, pinned = &providerAppResponse{Status: http.StatusOK, Body: providerAppOf(existing)}, existing.StreamAppPK
+			answer = &providerAppResponse{Status: http.StatusOK, Body: providerAppOf(existing)}
 			return nil
 		case !errors.Is(err, store.ErrNoConnectorOAuthClient):
 			return err
@@ -306,13 +301,10 @@ func (s *Server) setConnectorProviderApp(ctx context.Context, request *providerA
 		if err := s.applyProviderAppManifest(ctx, manifest, template, token, created.AppID); err != nil {
 			return err
 		}
-		answer, pinned = &providerAppResponse{Status: http.StatusCreated, Body: providerAppOf(*record)}, record.StreamAppPK
+		answer = &providerAppResponse{Status: http.StatusCreated, Body: providerAppOf(*record)}
 		return nil
 	})
 	if err != nil {
-		return nil, err
-	}
-	if err := s.pointMessageHook(ctx, customerID, pinned); err != nil {
 		return nil, err
 	}
 	return answer, nil
@@ -405,9 +397,6 @@ func (s *Server) setOperatorProviderApp(ctx context.Context, request *operatorPr
 	if err != nil {
 		return nil, providerAppPutFailure(err)
 	}
-	if err := s.pointMessageHook(ctx, request.CustomerID, record.StreamAppPK); err != nil {
-		return nil, err
-	}
 	status := http.StatusOK
 	if created {
 		status = http.StatusCreated
@@ -428,106 +417,6 @@ func (s *Server) deleteOperatorProviderApp(ctx context.Context, request *operato
 		return nil, err
 	}
 	return nil, nil
-}
-
-// messageHookNote is what the PUTs that make a provider app (both provider app PUTs and the
-// oauth-client PUT) say of the message hook they point.
-const messageHookNote = "When the provider app is pinned to a Stream app the customer registered, the " +
-	"router then points that app's message hook at itself, at ROUTER_PUBLIC_URL" + chat.MessageHookPath +
-	"/{stream app id}: it adds the hook, or updates the one already there, so the messages written " +
-	"in the app's thread channels reach the router. A router without ROUTER_PUBLIC_URL points " +
-	"none and logs a warning. When Stream refuses, the provider app is kept, the answer is a 503, " +
-	"and putting it again points the hook again."
-
-// pointMessageHook makes the customer's Stream app the provider app is pinned to deliver new
-// messages to this router (T48, AI-887): ROUTER_PUBLIC_URL, chat.MessageHookPath, then the
-// app's id, the route receiveMessageEvent serves and checks with that app's own keys
-// (verifyHook), as `router phone hooks -url <public> -app <id>` points it by hand. Only the
-// PUTs that make a provider app call it: both provider app PUTs and the oauth-client PUT of a
-// connector whose channel reads the app's events (readsProviderAppEvents). They are served
-// only with connectors on: cmd/router sets ConnectorSecrets, SlackApps and
-// OperatorProviderApps only then.
-//
-// A pin of zero, or the deployment's own app, names no app of the customer's: the
-// deployment's hooks are the operator's to point, so nothing is asked of Stream. A router
-// without ROUTER_PUBLIC_URL has no URL to point at; it warns and the PUT goes on. Stream
-// refusing fails the PUT, as it fails `router phone hooks` (cmd/phone/main.go), with the
-// record kept: a PUT again points the hook again. Two routers pointing one app converge: the
-// hook is matched by its URL (chat.PointMessageHook).
-func (s *Server) pointMessageHook(ctx context.Context, customerID string, pin int64) error {
-	if s.stream == nil || pin == 0 || pin == s.stream.DeploymentApp() {
-		return nil
-	}
-	public := strings.TrimRight(s.publicURL, "/")
-	if public == "" {
-		s.logger.Warn("no message hook was pointed at this router: ROUTER_PUBLIC_URL is not set",
-			"customer", customerID, "stream_app", pin)
-		return nil
-	}
-	bound, err := s.stream.ForApp(ctx, customerID, pin)
-	if err == nil {
-		_, err = chat.StreamOf(bound.Client).PointMessageHook(ctx, public+chat.MessageHookPath+"/"+strconv.FormatInt(pin, 10))
-	}
-	if err != nil {
-		s.logger.Error("could not point the message hook of a customer's Stream app", "customer", customerID, "stream_app", pin, "error", err)
-		return unavailable("the provider app is kept, but its Stream app's message hook could not be pointed at this router: put it again")
-	}
-	return nil
-}
-
-// WarnWithoutMessageHooks says once, at startup, for each Stream app a provider app is pinned
-// to, when that app sends its new messages nowhere this router answers them: the messages the
-// bridge writes into its thread channels are then stored and never answered, and nothing else
-// on this router says why (AI-990 F19 for the deployment's own app; this is app mode's).
-//
-// It runs only in app mode with connectors on and ROUTER_PUBLIC_URL set: in deployment mode
-// every provider app is pinned to the deployment's own app, which cmd/router's
-// warnWithoutMessageHook checks. It only reads, one GET of each app's settings, with the
-// check the startup one uses (chat.Stream.DeliversMessagesTo): pointMessageHook points the
-// hook when a provider app is put, and an app pointed elsewhere since, or before that PUT
-// pointed it, is what is left to see. A record of a connector whose channel does not read the
-// app's events (readsProviderAppEvents) is not checked, nor one pinned to the deployment's
-// own app, which pointMessageHook leaves to the operator (PinnedProviderApps has no pin of
-// zero). A check that fails is a warning, never a reason not to start.
-func (s *Server) WarnWithoutMessageHooks(ctx context.Context) {
-	public := strings.TrimRight(s.publicURL, "/")
-	if s.store == nil || s.connectorSecrets == nil || s.stream == nil || !s.stream.PerApp() || public == "" {
-		return
-	}
-	pinned, err := s.store.PinnedProviderApps(ctx)
-	if err != nil {
-		s.logger.Warn("stream: could not list the provider apps whose message hooks to check", "error", err)
-		return
-	}
-	hook := public + chat.MessageHookPath
-	checked := map[int64]bool{}
-	for _, app := range pinned {
-		// The deployment's own app's hooks are the operator's, as pointMessageHook leaves them.
-		if checked[app.StreamAppPK] || app.StreamAppPK == s.stream.DeploymentApp() {
-			continue
-		}
-		definition, err := s.store.LatestConnectorDefinition(ctx, app.CustomerID, app.ConnectorID)
-		if err != nil || !readsProviderAppEvents(definition.Manifest) {
-			continue
-		}
-		checked[app.StreamAppPK] = true
-		bound, err := s.stream.ForApp(ctx, app.CustomerID, app.StreamAppPK)
-		pointed := false
-		if err == nil {
-			pointed, err = chat.StreamOf(bound.Client).DeliversMessagesTo(ctx, hook)
-		}
-		switch {
-		case err != nil:
-			s.logger.Warn("stream: could not read a provider app's Stream app hooks, so whether its messages reach this router is unknown",
-				"customer", app.CustomerID, "connector", app.ConnectorID, "provider_app", app.ProviderAppID,
-				"stream_app", app.StreamAppPK, "hook", hook, "error", err)
-		case !pointed:
-			s.logger.Warn("stream: a provider app's Stream app sends no new message to this router, so a message written "+
-				"in its thread channels is stored and never answered; put the provider app again to point the hook",
-				"customer", app.CustomerID, "connector", app.ConnectorID, "provider_app", app.ProviderAppID,
-				"stream_app", app.StreamAppPK, "hook", hook+"/"+strconv.FormatInt(app.StreamAppPK, 10))
-		}
-	}
 }
 
 // managedConnector is the customer's latest definition of a connector the router can create a

@@ -1,7 +1,8 @@
 import Foundation
-import StreamChatA2UI
 import SwiftUI
 
+// Built into one module with StreamChatA2UI's code, whose prompt builder isn't public.
+//
 // Writes what the agent is told to write replies' UI in A2UI with, in the basic catalog and the
 // app's own components. `generate.sh` runs it:
 //

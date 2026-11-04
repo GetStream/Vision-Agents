@@ -3,10 +3,13 @@ package llm
 import (
 	"context"
 	"errors"
+	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -53,7 +56,12 @@ type scripted struct {
 }
 
 func (s *scripted) Advance(w *ResponseWriter) bool {
-	if s.closed.Load() || len(s.chunks) == 0 {
+	if s.closed.Load() {
+		// As every provider does: closing cancels the request, which it reports as a cancel.
+		w.Cancelled()
+		return false
+	}
+	if len(s.chunks) == 0 {
 		return false
 	}
 	next := s.chunks[0]
@@ -165,6 +173,7 @@ func (s *LLMSuite) TestAScreenThatRefusesFailsAResponseThatAlreadyFinished() {
 	s.Equal(StatusFailed, stream.Response().Status)
 	s.IsType(ResponseFailed{}, events[len(events)-2])
 	s.Empty(stream.Response().ToolCalls, "a refused response's calls must not reach a caller that runs them")
+	s.True(stream.Response().Refused)
 }
 
 func (s *LLMSuite) TestAScreenThatAllowsKeepsTheCallsTheResponseAskedFor() {
@@ -247,8 +256,27 @@ func (s *LLMSuite) TestAScreenThatRefusesMidAnswerClosesTheUpstream() {
 	s.drain(stream)
 
 	s.ErrorIs(stream.Err(), refusal)
-	s.Equal(StatusFailed, stream.Response().Status)
+	s.Equal(StatusFailed, stream.Response().Status, "the provider reported the screen's close as a cancel")
+	s.True(stream.Response().Refused)
 	s.NotContains(stream.Response().OutputText, "system prompt")
+}
+
+func (s *LLMSuite) TestAScreenedResponseItsCallerClosedIsCancelledNotRefused() {
+	verdict := make(chan error, 1)
+	stream := s.stream(
+		func(w *ResponseWriter) { w.OutputText("Sure, ") },
+		func(w *ResponseWriter) { w.OutputText("never arrives") },
+	).Screen(verdict)
+
+	s.Require().True(stream.Next())
+	s.Require().True(stream.Next())
+	s.Require().NoError(stream.Close())
+	verdict <- nil
+	s.drain(stream)
+
+	s.NoError(stream.Err())
+	s.Equal(StatusCancelled, stream.Response().Status)
+	s.False(stream.Response().Refused)
 }
 
 func (s *LLMSuite) TestStreamAssemblesTheAnswerFromItsDeltas() {
@@ -707,4 +735,59 @@ func (s *LLMSuite) TestALeadingTagIsTrimmedFromTheDeltasAndTheResponse() {
 	}
 	s.Equal("Sure, what time?", spoken)
 	s.Equal("Sure, what time?", stream.Response().OutputText)
+}
+
+func (s *LLMSuite) TestAClosedStreamNobodyReadsOutDrainsItselfForTheWatchers() {
+	synctest.Test(s.T(), func(t *testing.T) {
+		var mu sync.Mutex
+		var watched []Event
+		seen := func() []Event {
+			mu.Lock()
+			defer mu.Unlock()
+			return watched
+		}
+		stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+			Observe(func(event Event) {
+				mu.Lock()
+				defer mu.Unlock()
+				watched = append(watched, event)
+			})
+		require.True(t, stream.Next())
+		require.NoError(t, stream.Close())
+
+		time.Sleep(drainGrace - time.Millisecond)
+		synctest.Wait()
+		require.Len(t, seen(), 1, "the caller has drainGrace to read it out itself")
+
+		time.Sleep(time.Millisecond)
+		synctest.Wait()
+		require.Len(t, seen(), 2)
+		require.Equal(t, StatusCancelled, seen()[1].(ResponseCompleted).Response.Status)
+	})
+}
+
+func (s *LLMSuite) TestACallerReadingAfterTheDrainStillSeesEveryEventOnce() {
+	var watched []Event
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+		Observe(func(event Event) { watched = append(watched, event) })
+	require.True(s.T(), stream.Next())
+	stream.Close()
+	stream.drain()
+
+	events := s.drain(stream)
+	s.Require().Len(events, 1)
+	s.IsType(ResponseCompleted{}, events[0], "the end the caller waits for is still there to read")
+	s.Len(watched, 2, "and the watchers saw it once")
+	s.Equal(StatusCancelled, stream.Response().Status)
+}
+
+func (s *LLMSuite) TestAStreamReadToItsEndBeforeTheGraceIsNotDrainedAgain() {
+	var watched int
+	stream := s.stream(func(w *ResponseWriter) { w.OutputText("Hi") }).
+		Observe(func(Event) { watched++ })
+	stream.Close()
+	s.drain(stream)
+	stream.drain()
+
+	s.Equal(2, watched)
 }

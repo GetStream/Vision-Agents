@@ -10,7 +10,9 @@ import (
 	"fmt"
 	"image"
 	"image/png"
+	"maps"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -21,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionmodel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagerouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
@@ -28,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
@@ -120,6 +124,7 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "echo", Model: "local-model", Languages: []string{"la"}, Local: true},
 		routing.ProviderConfig{Provider: "noted", Model: "noted-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "tooling", Model: "tool-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "hanging-up", Model: "hanging-up-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "connecting", Model: "connector-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "logging-in", Model: "login-model", Languages: []string{"la"}},
@@ -130,6 +135,8 @@ func reasoningConfig() routing.ModalityConfig {
 		routing.ProviderConfig{Provider: "counted", Model: "counted-model", Languages: []string{"la"},
 			Price: routing.Price{PerMillionInputTokens: 1, PerMillionCachedInputTokens: 0.5, PerMillionOutputTokens: 10}},
 		routing.ProviderConfig{Provider: "failing", Model: "failing-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "screened", Model: "screened-model", Languages: []string{"la"}},
+		routing.ProviderConfig{Provider: "guarded", Model: "guarded-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "checking", Model: "checking-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "summarising", Model: "summarising-model", Languages: []string{"la"}},
 		routing.ProviderConfig{Provider: "analysing", Model: "analysing-model", Languages: []string{"la"}},
@@ -191,6 +198,9 @@ type scriptedLLM struct {
 	analyses bool
 	// refuses, when set, is what every request is refused with.
 	refuses error
+	// refusesQuoting, when set, has a request quoting it refused as the prompt injection
+	// screen refuses one, after a word of the reply had streamed.
+	refusesQuoting string
 }
 
 func (s *scriptedLLM) Start(context.Context) error { return nil }
@@ -204,12 +214,15 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 	if !first && s.then != "" {
 		reply = s.then
 	}
+	// Echoing is what the model was told: its instructions and the harness's notes, which is
+	// where what moves on during a call, such as the day, is told. Reciting is the conversation
+	// it was handed, without them.
 	if s.echoes {
-		reply = params.Instructions
+		reply = toldModel(params)
 	}
 	if s.recites {
 		handed := make([]string, 0, len(params.Input))
-		for _, message := range params.Input {
+		for _, message := range harness.WithoutNotes(params.Input) {
 			handed = append(handed, string(message.Role)+": "+message.Content)
 		}
 		reply = strings.Join(handed, "\n")
@@ -264,6 +277,11 @@ func (s *scriptedLLM) Create(ctx context.Context, params llm.ResponseParams) (*l
 		Provider:   s.Provider(),
 		Model:      s.Model(),
 	})
+	if s.refusesQuoting != "" && slices.ContainsFunc(params.Input, func(m llm.Message) bool { return strings.Contains(m.Content, s.refusesQuoting) }) {
+		script.OutputText("I")
+		script.Fail(fmt.Errorf("%w: instruction_override", policy.ErrPromptInjection), "llm")
+		return script.Stream(), nil
+	}
 	script.OutputText(reply)
 	if s.usage != (llm.Usage{}) {
 		script.Usage(s.usage)
@@ -494,14 +512,22 @@ func (l *saidLog) spoken() []string {
 }
 
 // recordedTranscriber transcribes whatever it is handed into the same transcript, so a job
-// can be followed from the row it creates to the result a caller reads back.
+// can be followed from the row it creates to the result a caller reads back. A WAV (wavOf) is
+// heard as the words a test wrote into it instead, so a voice note says what the test needs:
+// nothing, or anything. Its words refuseForMoney and failToTranscribe are not heard: the first
+// is refused for money, the second fails.
 type recordedTranscriber struct{ model string }
+
+const (
+	refuseForMoney   = "refuse for money"
+	failToTranscribe = "fail to transcribe"
+)
 
 func transcriberRegistry() *sttrouter.Transcribers {
 	registry := sttrouter.NewTranscriberRegistry()
 	registry.Register("stub", func(spec routing.Spec) (stt.Transcriber, error) {
 		return &recordedTranscriber{model: spec.Model}, nil
-	})
+	}, routing.OverrideRegion)
 	return registry
 }
 
@@ -510,6 +536,15 @@ func (t *recordedTranscriber) Transcribe(_ context.Context, recording stt.Record
 		Text:            "a call costs a penny",
 		Language:        "en",
 		AudioDurationMs: 4000,
+	}
+	if said, ok := bytes.CutPrefix(recording.Audio, []byte(wavHeader)); ok {
+		switch string(said) {
+		case refuseForMoney:
+			return stt.Transcription{}, fmt.Errorf("stub: %w", policy.ErrBudgetSpent)
+		case failToTranscribe:
+			return stt.Transcription{}, errors.New("stub: the provider answered 500")
+		}
+		transcription.Text = string(said)
 	}
 	if recording.Words {
 		transcription.Words = []stt.Word{
@@ -821,13 +856,15 @@ func stsrouterStub() (*stsrouter.Router, error) {
 	config := routing.ModalityConfig{
 		Providers: []routing.ProviderConfig{{
 			Provider: "stub", Model: "stub-sts", Languages: []string{"en"}, Realtime: true,
+			// What a session's speech-to-speech agent asks of its model (MessageHooksSuite).
+			Terms: []options.Term{options.InputTranscript, options.OutputTranscript},
 		}},
 		// A title is what makes a shortcut a listed route (speech_recorders_test.go reads the list).
 		Aliases: map[string]routing.Alias{"sts-fast": {Title: "Fast", RequireRealtime: true}},
 	}
 	registry := stsrouter.NewRegistry()
 	registry.Register("stub", func(routing.Spec) (sts.STS, error) {
-		stub := newStubConversation(sts.Capabilities{})
+		stub := newStubConversation(sts.Capabilities{InputTranscript: true, OutputTranscript: true})
 		select {
 		case conversing <- stub:
 		default:
@@ -896,13 +933,14 @@ func (s *stubConversation) Capabilities() sts.Capabilities { return s.capabiliti
 type knowledgeBase struct {
 	mu        sync.Mutex
 	namespace string
-	passages  map[string]knowledge.Document
+	// passages are each namespace's, by id.
+	passages map[string]map[string]knowledge.Document
 	// down makes every write fail, naming the namespace as turbopuffer's errors do.
 	down bool
 }
 
 func newKnowledgeBase() *knowledgeBase {
-	return &knowledgeBase{passages: map[string]knowledge.Document{}}
+	return &knowledgeBase{passages: map[string]map[string]knowledge.Document{}}
 }
 
 // failWrites makes every write fail until it is called with false.
@@ -929,33 +967,48 @@ func (b *knowledgeBase) Upsert(_ context.Context, namespace string, documents []
 		return knowledge.Billed{}, fmt.Errorf("turbopuffer: write to %s: 503 Service Unavailable", namespace)
 	}
 	b.namespace = namespace
+	if b.passages[namespace] == nil {
+		b.passages[namespace] = map[string]knowledge.Document{}
+	}
 	billed := knowledge.Billed{Requests: 1}
 	for _, document := range documents {
-		b.passages[document.ID] = document
+		b.passages[namespace][document.ID] = document
 		billed.BytesWritten += passageBytes(document)
 	}
 	return billed, nil
 }
 
-func (b *knowledgeBase) Delete(_ context.Context, _ string, ids []string) (knowledge.Billed, error) {
+func (b *knowledgeBase) Delete(_ context.Context, namespace string, ids []string) (knowledge.Billed, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	billed := knowledge.Billed{Requests: 1}
 	for _, id := range ids {
-		delete(b.passages, id)
+		delete(b.passages[namespace], id)
 		billed.BytesWritten += int64(len(id))
 	}
 	return billed, nil
 }
 
-func (b *knowledgeBase) Fetch(_ context.Context, _ string, ids []string) (knowledge.Found, error) {
+func (b *knowledgeBase) Drop(_ context.Context, namespace string) (knowledge.Dropped, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.down {
+		return knowledge.Dropped{}, fmt.Errorf("turbopuffer: delete %s: 503 Service Unavailable", namespace)
+	}
+	_, existed := b.passages[namespace]
+	delete(b.passages, namespace)
+	return knowledge.Dropped{Existed: existed, Billed: knowledge.Billed{Requests: 1}}, nil
+}
+
+func (b *knowledgeBase) Fetch(_ context.Context, namespace string, ids []string) (knowledge.Found, error) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
 	found := knowledge.Found{Billed: knowledge.Billed{Requests: 1, BytesQueried: knowledgeQueried}}
 	for _, id := range ids {
-		if document, ok := b.passages[id]; ok {
+		if document, ok := b.passages[namespace][id]; ok {
 			found.Documents = append(found.Documents, document)
 			found.BytesReturned += passageBytes(document)
 		}
@@ -978,14 +1031,23 @@ func (b *knowledgeBase) Provider() string { return "kept" }
 
 func (b *knowledgeBase) Close() error { return nil }
 
-// stored is the namespace last written to and the passages it holds.
+// holds reports whether the provider has the namespace.
+func (b *knowledgeBase) holds(namespace string) bool {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	_, ok := b.passages[namespace]
+	return ok
+}
+
+// stored is the namespace last written to and the passages every namespace holds.
 func (b *knowledgeBase) stored() (string, map[string]knowledge.Document) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	copied := make(map[string]knowledge.Document, len(b.passages))
-	for id, document := range b.passages {
-		copied[id] = document
+	copied := map[string]knowledge.Document{}
+	for _, passages := range b.passages {
+		maps.Copy(copied, passages)
 	}
 	return b.namespace, copied
 }

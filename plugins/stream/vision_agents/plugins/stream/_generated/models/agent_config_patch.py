@@ -13,6 +13,7 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
     from ..models.agent_config_patch_tags import AgentConfigPatchTags
     from ..models.agent_connector_binding import AgentConnectorBinding
@@ -38,6 +39,7 @@ class AgentConfigPatch:
     ignored.
 
         Attributes:
+            calls (AgentCalls | Unset): The tools an agent on a phone call is offered: end the call, press keys, transfer.
             channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
                 number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
                 that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
@@ -58,13 +60,17 @@ class AgentConfigPatch:
             keyterms (list[str] | Unset):
             knowledge_namespace (str | Unset):
             llm (str | Unset):
-            mcp_servers (list[McpServer] | Unset):
+            mcp_servers (list[McpServer] | Unset): No longer read: a server named by URL is now a custom connector, so
+                create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names
+                nothing.
             mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
                 what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
                 speech target and a session created from it needs no call to join.
             name (str | Unset): What the config is called, which is unique among the customer's own.
-            plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
-            plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
+            plugin_events (list[PluginEvent] | Unset): No longer read: plugins were replaced by connectors, so name the
+                provider under connectors. A non-empty list is refused (400); an empty one names nothing.
+            plugins (list[PluginWithOptions | str] | Unset): No longer read: plugins were replaced by connectors, so name
+                the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
             region (str | Unset): Where the agent's work is done: us or eu for now. A change naming a model with no instance
                 there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming
                 each. Example: eu.
@@ -102,6 +108,7 @@ class AgentConfigPatch:
                 voice name instead.
     """
 
+    calls: AgentCalls | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
@@ -139,6 +146,10 @@ class AgentConfigPatch:
 
     def to_dict(self) -> dict[str, Any]:
         from ..models.plugin_with_options import PluginWithOptions
+
+        calls: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.calls, Unset):
+            calls = self.calls.to_dict()
 
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
@@ -269,6 +280,8 @@ class AgentConfigPatch:
         field_dict: dict[str, Any] = {}
 
         field_dict.update({})
+        if calls is not UNSET:
+            field_dict["calls"] = calls
         if channels is not UNSET:
             field_dict["channels"] = channels
         if connectors is not UNSET:
@@ -342,6 +355,7 @@ class AgentConfigPatch:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
         from ..models.agent_config_patch_tags import AgentConfigPatchTags
         from ..models.agent_connector_binding import AgentConnectorBinding
@@ -358,6 +372,13 @@ class AgentConfigPatch:
         from ..models.session_video import SessionVideo
 
         d = dict(src_dict)
+        _calls = d.pop("calls", UNSET)
+        calls: AgentCalls | Unset
+        if isinstance(_calls, Unset):
+            calls = UNSET
+        else:
+            calls = AgentCalls.from_dict(_calls)
+
         _channels = d.pop("channels", UNSET)
         channels: AgentChannels | Unset
         if isinstance(_channels, Unset):
@@ -539,6 +560,7 @@ class AgentConfigPatch:
         voice = d.pop("voice", UNSET)
 
         agent_config_patch = cls(
+            calls=calls,
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,

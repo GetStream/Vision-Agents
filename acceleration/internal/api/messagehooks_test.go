@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -26,6 +27,11 @@ type MessageHooksSuite struct {
 	channelID string
 	// logged is what the router logged, at debug and up.
 	logged *lockedLog
+	// worker is what the customer's worker is handed, once a test connected one (handedOut).
+	worker <-chan dispatch.Message
+	// images serves a PNG at /photo.png and /other.png and nothing anywhere else, for photos
+	// sent in the channel.
+	images *httptest.Server
 }
 
 func TestMessageHooksSuite(t *testing.T) {
@@ -35,6 +41,11 @@ func TestMessageHooksSuite(t *testing.T) {
 func (s *MessageHooksSuite) SetupSuite() {
 	s.logged = &lockedLog{}
 	s.logs = s.logged
+	s.imageHTTP = &http.Client{}
+	s.images = photoServer("/photo.png", "/other.png")
+	s.T().Cleanup(s.images.Close)
+	// A recording written to a speech-to-speech session is not heard.
+	s.speechToSpeech = true
 	s.RouterSuite.SetupSuite()
 }
 
@@ -181,7 +192,7 @@ func (s *MessageHooksSuite) TestAStoreFailureReadingTheDeclaredConfigIsAnError()
 	cancel()
 	before := len(s.logged.String())
 
-	_, _, found, err := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
+	_, _, _, found, err := s.router.ownerOf(ctx, hookOrigin{customer: s.customerID(), app: 77}, messageEvent{
 		ChannelID: s.channelID, ChannelCustom: map[string]any{ConfigField: "config-unread"},
 	})
 

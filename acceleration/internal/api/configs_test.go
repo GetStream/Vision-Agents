@@ -5,28 +5,19 @@ package api
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"net/http"
 	"strings"
-	"sync"
-	"sync/atomic"
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 type ConfigsSuite struct {
 	RouterSuite
-	// describing runs whenever the router asks a config's MCP server about itself, which a
-	// save does between checking the config and writing it. Nil runs nothing.
-	describing atomic.Pointer[func()]
-	// logged is what the router logged, for the tests of the deprecation it warns of.
-	logged *lockedLog
 }
 
 func TestConfigsSuite(t *testing.T) {
@@ -35,18 +26,9 @@ func TestConfigsSuite(t *testing.T) {
 
 // SetupSuite registers the scheme the built-ins name, so the app can define a custom
 // connector of its own, and seeds the built-ins as a router start does. Seeding is
-// idempotent, so suites running beside this one see the same rows. An MCP server is
-// reached by no one, as mcpTransport's default, after running describing.
+// idempotent, so suites running beside this one see the same rows.
 func (s *ConfigsSuite) SetupSuite() {
 	s.connectors = core.Registry{Schemes: map[string]core.Scheme{"oauth2_code": namedScheme("oauth2_code")}}
-	s.pluginHTTP = &http.Client{Transport: roundTripper(func(*http.Request) (*http.Response, error) {
-		if describing := s.describing.Load(); describing != nil {
-			(*describing)()
-		}
-		return nil, errors.New("tests reach no real MCP server")
-	})}
-	s.logged = &lockedLog{}
-	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), providers.FS))
 }
@@ -257,6 +239,12 @@ func (s *ConfigsSuite) TestAConfigReadBackIsSavedAsItWas() {
 			var saved AgentConfig
 			s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id, read, &saved))
 			s.Equal("Be brief.", value(saved.Instructions))
+			s.Contains(read, "calls", "every config renders its calls")
+			savedCalls, err := json.Marshal(saved.Calls)
+			s.Require().NoError(err)
+			readCalls, err := json.Marshal(read["calls"])
+			s.Require().NoError(err)
+			s.JSONEq(string(readCalls), string(savedCalls), "a config saved as read keeps its calls")
 			if scheduling == nil {
 				s.NotContains(read, "scheduling", "a config that never set scheduling renders none")
 				s.Nil(saved.Scheduling)
@@ -443,250 +431,27 @@ func (s *ConfigsSuite) TestAnAllowedDomainWithACommaIsRefused() {
 	s.Contains(failure, "allowed_domains")
 }
 
-func (s *ConfigsSuite) TestAConfigRemembersTheMCPServersItNamesByURL() {
-	created := s.createConfig(map[string]any{"name": "concierge", "mcp_servers": []map[string]any{
-		{"name": "tablejourney", "url": "https://tablejourney.com/mcp"},
-	}})
-
-	var read AgentConfig
-	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
-	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp"}}, value(read.McpServers))
-
-	var patched AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"mcp_servers": []map[string]any{}}, &patched))
-	s.Nil(patched.McpServers)
-}
-
-func (s *ConfigsSuite) TestAConfigRemembersHowItReachesAPlugin() {
-	created := s.createConfig(map[string]any{
-		"name": "triage",
-		"plugins": []any{
-			"sentry",
-			map[string]any{"name": "linear", "user": true, "readonly": true, "scopes": []string{"read", " "}},
-			map[string]any{"name": "google_calendar", "user": true},
-		},
-	})
-
-	var read AgentConfig
-	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
-	s.Equal([]PluginEntry{
-		{Name: "sentry"},
-		{Name: "linear", Readonly: pointerTo(true), Scopes: &[]string{"read"}},
-		{Name: "google_calendar"},
-	}, value(read.Plugins), "user is answered only where it differs from the catalog")
-
-	var raw map[string]any
-	s.Require().Equal(http.StatusOK,
-		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &raw))
-	s.Equal("sentry", raw["plugins"].([]any)[0], "an entry with no options answers as its id")
-
-	var patched AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"plugins": []any{"linear"}}, &patched))
-	s.Equal([]PluginEntry{{Name: "linear"}}, value(patched.Plugins))
-}
-
-func (s *ConfigsSuite) TestAPluginLeftToTheCatalogIsConnectedTheWayTheCatalogSays() {
-	created := s.createConfig(map[string]any{
-		"name":    "triage",
-		"plugins": []any{"sentry", "google_calendar", map[string]any{"name": "linear", "user": false}},
-	})
-
-	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), created.Id)
-	s.Require().NoError(err)
-	s.Equal([]store.PluginEntry{{Name: "sentry"}, {Name: "google_calendar", User: true}, {Name: "linear"}},
-		stored.Plugins, "a company's account is the app's, a person's own each user's, unless the entry says")
-	s.Equal([]PluginEntry{{Name: "sentry"}, {Name: "google_calendar"}, {Name: "linear", User: pointerTo(false)}},
-		value(created.Plugins))
-}
-
-func (s *ConfigsSuite) TestAReadonlyPluginWithNoReadOnlyEndpointIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "triage",
-		"plugins": []any{map[string]any{"name": "sentry", "readonly": true}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "read-only")
-}
-
-func (s *ConfigsSuite) TestAConfigRemembersWhichToolsetsAPluginIsLimitedTo() {
-	created := s.createConfig(map[string]any{
-		"name":    "scheduler",
-		"plugins": []any{map[string]any{"name": "calcom", "user": true, "toolsets": []string{"bookings", "availability"}}},
-	})
-
-	s.Equal([]PluginEntry{{Name: "calcom", Toolsets: &[]string{"bookings", "availability"}}},
-		value(created.Plugins))
-}
-
-func (s *ConfigsSuite) TestAToolsetThePluginDoesNotHaveIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "scheduler",
-		"plugins": []any{map[string]any{"name": "calcom", "user": true, "toolsets": []string{"invoices"}}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "invoices")
-}
-
-func (s *ConfigsSuite) TestAConfigRemembersWhichToolsEachServerOffers() {
-	created := s.createConfig(map[string]any{
-		"name":    "researcher",
-		"plugins": []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"search_files", "read_*"}}},
-		"mcp_servers": []map[string]any{
-			{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"search_restaurants"}},
-		},
-	})
-
-	s.Equal([]PluginEntry{{Name: "google_drive", Tools: &[]string{"search_files", "read_*"}}},
-		value(created.Plugins))
-	s.Equal([]McpServer{{Name: "tablejourney", Url: "https://tablejourney.com/mcp", Tools: &[]string{"search_restaurants"}}},
-		value(created.McpServers))
-}
-
-func (s *ConfigsSuite) TestAToolPatternThatCannotBeReadIsRefused() {
-	for _, body := range []map[string]any{
-		{"name": "researcher", "plugins": []any{map[string]any{"name": "google_drive", "user": true, "tools": []string{"read_[*"}}}},
-		{"name": "researcher", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp", "tools": []string{"read_[*"}}}},
-	} {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", body)
-
-		s.Equal(http.StatusBadRequest, status)
-		s.Contains(failure, "read_[*")
-	}
-}
-
-func (s *ConfigsSuite) TestAScopeThePluginsServerDoesNotAcceptIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "researcher",
-		"plugins": []any{map[string]any{"name": "google_drive", "scopes": []string{"https://www.googleapis.com/auth/gmail.readonly"}}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "gmail.readonly")
-}
-
-func (s *ConfigsSuite) TestAPluginNotInTheCatalogIsRefused() {
-	for _, entry := range []any{"jira", map[string]any{"name": "jira", "readonly": true}} {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-			"name":    "triage",
-			"plugins": []any{entry},
-		})
-
-		s.Equal(http.StatusBadRequest, status)
-		s.Contains(failure, "jira")
-	}
-}
-
-func (s *ConfigsSuite) TestAPluginNamedTwiceInAListIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":    "triage",
-		"plugins": []any{"linear", map[string]any{"name": "linear", "readonly": true}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "linear is named twice")
-}
-
-func (s *ConfigsSuite) TestAPluginEntryThatIsNeitherAnIdNorAnObjectIsRefused() {
-	for _, entry := range []any{"", 7, map[string]any{"readonly": true}} {
-		status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-			"name":    "triage",
-			"plugins": []any{entry},
-		})
-
-		s.Equal(http.StatusBadRequest, status, "%v", entry)
-	}
-}
-
-func (s *ConfigsSuite) TestAnMCPServerThatCannotBeNamedOrReachedSafelyIsRefused() {
-	for _, refused := range []struct {
-		server  map[string]any
-		failure string
-	}{
-		{map[string]any{"name": "tablejourney", "url": "http://tablejourney.com/mcp"}, "https"},
-		{map[string]any{"name": "slack", "url": "https://mcp.slack.example/mcp"}, "catalog"},
-		{map[string]any{"name": "table__journey", "url": "https://tablejourney.com/mcp"}, "__"},
-		{map[string]any{"name": "TableJourney", "url": "https://tablejourney.com/mcp"}, "name"},
-	} {
+// The sandbox's egress proxy refuses every address host, so an address among the allowed
+// domains would never be reached. A name that only starts like an address is a name.
+func (s *ConfigsSuite) TestAnAllowedDomainThatIsAnIPAddressIsRefused() {
+	for _, address := range []string{"203.0.113.7", "203.0.113.7:443", "203.0.113.7.", "2001:db8::7", "[2001:db8::7]",
+		"[2001:db8::7]:443", "[2001:db8::7].", "::ffff:203.0.113.7", "fe80::1%eth0"} {
 		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-			map[string]any{"name": "concierge", "mcp_servers": []map[string]any{refused.server}})
+			map[string]any{"name": "researcher", "sandbox": "daytona",
+				"sandbox_options": map[string]any{"allowed_domains": []string{"api.example.com", address}}})
 
-		s.Equal(http.StatusBadRequest, status, refused.server)
-		s.Contains(failure, refused.failure)
+		s.Equal(http.StatusBadRequest, status, address)
+		s.Contains(failure, fmt.Sprintf("sandbox_options.allowed_domains: %q is not a domain", address), address)
 	}
-}
 
-func (s *ConfigsSuite) TestTwoMCPServersWithOneNameAreRefused() {
-	server := map[string]any{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-		map[string]any{"name": "concierge", "mcp_servers": []map[string]any{server, server}})
-
+	created := s.createConfig(map[string]any{"name": "researcher", "sandbox": "daytona",
+		"sandbox_options": map[string]any{"allowed_domains": []string{"203.0.113.7.example.com", "1-2-3-4.example.com", "example.com."}}})
+	s.Equal([]string{"203.0.113.7.example.com", "1-2-3-4.example.com", "example.com."},
+		value(value(created.SandboxOptions).AllowedDomains))
+	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"sandbox_options": map[string]any{"allowed_domains": []string{"203.0.113.7"}}})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "twice")
-}
-
-// privateMCPURLs are servers a session could never reach, since it dials only public
-// addresses: one on a private network, a loopback or link-local address, or a name that
-// does not resolve.
-var privateMCPURLs = []string{
-	"https://10.1.2.3/mcp",            // Private-Use, RFC 1918
-	"https://100.101.102.103/mcp",     // a Tailscale node: 100.64.0.0/10, https://tailscale.com/kb/1015/100.x-addresses
-	"https://[fd7a:115c:a1e0::1]/mcp", // a Tailscale node over IPv6: fd7a:115c:a1e0::/48, same page
-	"https://127.0.0.1:8443/mcp",      // Loopback, RFC 1122 section 3.2.1.3
-	"https://169.254.169.254/mcp",     // the cloud metadata server, Link Local, RFC 3927
-	"https://localhost/mcp",           // resolves to loopback, RFC 6761 section 6.3
-	"https://mcp.wwsd.invalid/mcp",    // never resolves, RFC 6761 section 6.4
-}
-
-func (s *ConfigsSuite) TestAnMCPServerOnAPrivateAddressIsRefusedWithAPlainError() {
-	for _, url := range privateMCPURLs {
-		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
-			map[string]any{"name": "concierge", "mcp_servers": []map[string]any{{"name": "wwsd", "url": url}}})
-
-		s.Equal(http.StatusBadRequest, status, url)
-		s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable", url)
-	}
-}
-
-func (s *ConfigsSuite) TestARefusalNamesThePrivateMCPServerAfterAPublicOne() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "concierge",
-		"mcp_servers": []map[string]any{
-			{"name": "docs", "url": "https://8.8.8.8/mcp"}, // public, Google DNS
-			{"name": "wwsd", "url": privateMCPURLs[1]},
-		}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "mcp_servers: wwsd: only public https URLs are reachable")
-	s.NotContains(failure, "docs")
-}
-
-func (s *ConfigsSuite) TestReplacingOrPatchingAConfigRefusesAPrivateMCPServer() {
-	created := s.createConfig(map[string]any{"name": "concierge"})
-	servers := []map[string]any{{"name": "wwsd", "url": privateMCPURLs[1]}}
-
-	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "concierge", "mcp_servers": servers})
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "wwsd: only public https URLs are reachable")
-
-	status, failure = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"mcp_servers": servers})
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "wwsd: only public https URLs are reachable")
-}
-
-func (s *ConfigsSuite) TestAPublicMCPServerKeepsThePathAndQueryItWasGiven() {
-	created := s.createConfig(map[string]any{"name": "concierge",
-		"mcp_servers": []map[string]any{{"name": "wwsd", "url": "https://8.8.8.8/mcp?workspace=wwsd"}}})
-
-	s.Equal([]McpServer{{Name: "wwsd", Url: "https://8.8.8.8/mcp?workspace=wwsd"}}, value(created.McpServers))
+	s.Contains(failure, `"203.0.113.7" is not a domain`)
 }
 
 // webhookGuardrail is a guardrail.md asking the server at url.
@@ -763,14 +528,49 @@ func (s *ConfigsSuite) TestAPublicGuardrailWebhookIsKeptAsWritten() {
 	s.Equal(webhookGuardrail("https://[2001:4860:4860::8888]/check"), value(patched.Guardrail))
 }
 
-func (s *ConfigsSuite) TestAConfigStoredWithAPrivateMCPServerStillReads() {
-	config := store.AgentConfig{CustomerID: s.customerID(), Name: "concierge", Mode: "text",
-		MCPServers: []store.MCPServer{{Name: "wwsd", URL: privateMCPURLs[1]}}}
-	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+// TestAConfigStoredNamingPluginsAndMCPServersReadsWithoutThem: a row written before they were
+// refused still reads, in the config and in the list, and shows none of them, so a client that
+// saves what it read back is not refused for what it never set.
+func (s *ConfigsSuite) TestAConfigStoredNamingPluginsAndMCPServersReadsWithoutThem() {
+	config := s.storedWithPlugins()
 
-	var read AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+config.ID, nil, &read))
-	s.Equal([]McpServer{{Name: "wwsd", Url: privateMCPURLs[1]}}, value(read.McpServers))
+	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/configs/"+config.ID, nil)
+	s.Require().Equal(http.StatusOK, status)
+	var read map[string]any
+	s.Require().NoError(json.Unmarshal(raw, &read))
+	s.Equal("Be brief.", read["instructions"])
+	for _, key := range []string{"plugins", "plugin_events", "mcp_servers"} {
+		s.NotContains(read, key)
+	}
+	status, raw = s.serverClient.call(http.MethodGet, "/v1/agents/configs", nil)
+	s.Require().Equal(http.StatusOK, status)
+	s.Contains(string(raw), config.ID)
+	for _, key := range []string{`"plugins"`, `"plugin_events"`, `"mcp_servers"`} {
+		s.NotContains(string(raw), key)
+	}
+
+	for _, key := range []string{"id", "created_at", "updated_at", "sync_hash", "duration"} {
+		delete(read, key)
+	}
+	var saved AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config.ID, read, &saved))
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.ID)
+	s.Require().NoError(err)
+	s.Empty(stored.Plugins, "a save writes none")
+	s.Empty(stored.PluginEvents)
+	s.Empty(stored.MCPServers)
+}
+
+// storedWithPlugins is a config whose row names a plugin, a plugin event and an MCP server, as
+// one saved before they were refused does: written by the store, as no request can now.
+func (s *ConfigsSuite) storedWithPlugins() store.AgentConfig {
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "legacy-" + s.utils.uuid(), Mode: "text",
+		Instructions: "Be brief.",
+		Plugins:      []store.PluginEntry{{Name: "linear"}},
+		PluginEvents: []store.PluginEvent{{Plugin: "linear", Event: "issue.created"}},
+		MCPServers:   []store.MCPServer{{Name: "wwsd", URL: "https://mcp.wwsd.invalid/mcp"}}}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	return config
 }
 
 func (s *ConfigsSuite) TestAVoiceConfigPinnedToABatchTranscriberIsRefused() {
@@ -1214,35 +1014,6 @@ func (s *ConfigsSuite) TestAFixedBindingToADeletedConnectionIsRefused() {
 	s.Contains(failure, connection)
 }
 
-// The save checks the connection, then asks its MCP servers about themselves, then writes.
-// A delete in between is seen by the write, which runs in a transaction of its own (AI-889).
-func (s *ConfigsSuite) TestAFixedBindingToAConnectionDeletedDuringTheSaveIsRefused() {
-	connection := s.connection("")
-	var once sync.Once
-	deleted := make(chan error, 1)
-	describing := func() {
-		once.Do(func() {
-			deleted <- s.store.DeleteUnboundConnectorConnection(context.Background(), s.customerID(), connection)
-		})
-	}
-	s.describing.Store(&describing)
-	defer s.describing.Store(nil)
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":        "support",
-		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}},
-		"connectors":  []map[string]any{fixedSlack("inbox", connection)},
-	})
-
-	s.Require().Len(deleted, 1, "the connection was deleted while the save described its MCP server")
-	s.Require().NoError(<-deleted)
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, connection)
-	var listed []AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs", nil, &listed))
-	s.Empty(listed, "nothing is stored")
-}
-
 func (s *ConfigsSuite) TestAFixedBindingNeedsAConnection() {
 	binding := fixedSlack("crm", "")
 	binding["connection"] = map[string]any{"type": "fixed"}
@@ -1526,7 +1297,7 @@ func (s *ConfigsSuite) TestAToolPatternThatCannotMatchIsRefused() {
 		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "not a tool name or pattern")
+	s.Equal(`connector binding "inbox" has a tool_patterns entry that is not a tool name or pattern`, failure)
 }
 
 func (s *ConfigsSuite) TestMoreThan128ToolPatternsAreRefused() {
@@ -1814,97 +1585,6 @@ func (s *ConfigsSuite) TestAFixedBindingThroughAnotherConnectorsConnectionIsRefu
 	s.Contains(failure, slack)
 }
 
-// A binding called what a plugin is, to another connector: the session keeps the plugin
-// (Spec.withoutBoundPlugins drops only a plugin whose connector a binding names), and both
-// would offer linear__<tool>.
-func (s *ConfigsSuite) TestABindingCalledWhatAPluginOfTheConfigIsIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "plugins": []string{"linear"}, "connectors": []map[string]any{sessionSlack("linear")},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
-}
-
-// The plugin entry the binding shares its name with must be the binding's own connector: a
-// binding called linear to the connector slack leaves both offering linear__<tool>.
-func (s *ConfigsSuite) TestABindingCalledWhatAPluginIsToAnotherConnectorIsRefusedWhenThePluginIsNotItsConnector() {
-	binding := sessionSlack("linear")
-	binding["connector_id"] = "slack"
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "support", "plugins": []string{"linear", "slack"}, "connectors": []map[string]any{binding},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `plugin "linear"`)
-}
-
-func (s *ConfigsSuite) TestABindingCalledWhatAUserPluginOfTheConfigIsIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":       "support",
-		"plugins":    []any{map[string]any{"name": "linear", "user": true}},
-		"connectors": []map[string]any{sessionSlack("linear")},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `plugin "linear"`)
-}
-
-// TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs: router plugins migrate binds
-// a plugin entry under the plugin's id, to the connector of that id, and keeps the entry
-// (AI-994 F42). The session drops the entry for the binding (Spec.withoutBoundPlugins), so the
-// two never offer the same name, and the config stays editable.
-func (s *ConfigsSuite) TestABindingToThePluginsOwnConnectorIsCalledWhatThePluginIs() {
-	for _, user := range []bool{false, true} {
-		created := s.createConfig(map[string]any{
-			"name":       "support-" + s.utils.uuid(),
-			"plugins":    []any{map[string]any{"name": "slack", "user": user}},
-			"connectors": []map[string]any{sessionSlack("slack")},
-		})
-
-		s.Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-			map[string]any{"instructions": "Answer briefly."}, nil), "user: %v", user)
-
-		read := s.read(created.Id)
-		s.Equal("Answer briefly.", value(read.Instructions), "user: %v", user)
-		s.Len(value(read.Connectors), 1, "user: %v", user)
-	}
-}
-
-// TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound: the deprecation warning is the
-// evidence for removing plugins, so an entry the session drops for a binding (a migrated
-// config's, with connectors on) is not real use, and an entry no binding replaces (linear, beside a slack binding) is.
-func (s *ConfigsSuite) TestASavedPluginEntryABindingReplacesIsNotCountedAsUnbound() {
-	migrated := s.createConfig(map[string]any{
-		"name":       "migrated-" + s.utils.uuid(),
-		"plugins":    []any{map[string]any{"name": "slack"}},
-		"connectors": []map[string]any{sessionSlack("slack")},
-	})
-	live := s.createConfig(map[string]any{
-		"name":       "live-" + s.utils.uuid(),
-		"plugins":    []any{map[string]any{"name": "slack"}, map[string]any{"name": "linear"}},
-		"connectors": []map[string]any{sessionSlack("inbox")},
-	})
-
-	for id, unbound := range map[string]string{migrated.Id: "unbound=0", live.Id: "unbound=1"} {
-		lines := deprecations(s.logged, plugins.PathConfigSave, id)
-		s.Require().Len(lines, 1, id)
-		s.Contains(lines[0], " "+unbound+" ", id)
-	}
-}
-
-func (s *ConfigsSuite) TestABindingCalledWhatAnMCPServerOfTheConfigIsIsRefused() {
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name":        "support",
-		"mcp_servers": []map[string]any{{"name": "crm", "url": "https://8.8.8.8/mcp"}},
-		"connectors":  []map[string]any{sessionSlack("crm")},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `MCP server "crm"`)
-}
-
 func (s *ConfigsSuite) TestABindingWithANullToolsListIsRefused() {
 	binding := sessionSlack("inbox")
 	binding["tools"] = nil
@@ -1913,27 +1593,6 @@ func (s *ConfigsSuite) TestABindingWithANullToolsListIsRefused() {
 		map[string]any{"name": "support", "connectors": []map[string]any{binding}})
 
 	s.Equal(http.StatusBadRequest, status)
-}
-
-func (s *ConfigsSuite) TestPatchingInAPluginABindingIsCalledIsRefused() {
-	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
-
-	status, failure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
-		map[string]any{"plugins": []string{"linear"}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
-	s.Nil(s.read(created.Id).Plugins)
-}
-
-func (s *ConfigsSuite) TestUpdatingInAPluginAKeptBindingIsCalledIsRefused() {
-	created := s.createConfig(map[string]any{"name": "support", "connectors": []map[string]any{sessionSlack("linear")}})
-
-	status, failure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "support", "plugins": []string{"linear"}})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "plugin")
 }
 
 func (s *ConfigsSuite) TestMoreBindingsThanAConfigMayHoldAreRefused() {
@@ -2200,14 +1859,12 @@ func (s *ConfigsSuite) TestNessyBesideSeveralOutboundToolsNamesThemAll() {
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
 		"name": "athena", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
-		"connectors":  []map[string]any{sessionGitHubGranting("code", "create_issue"), sessionNessy("customers")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-		"plugins":     []map[string]any{{"name": "github"}},
+		"connectors": []map[string]any{sessionGitHubGranting("code", "create_issue"), sessionNessy("customers")},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `connector binding "customers" binds "nessy"`)
-	s.Contains(failure, `and connector binding "code", MCP server "tablejourney", plugin "github", `+
+	s.Contains(failure, `and connector binding "code", `+
 		`the sandbox's network access can send data out with no person's approval`)
 }
 
@@ -2315,34 +1972,6 @@ func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
 	s.Len(value(created.Connectors), 2)
 }
 
-func (s *ConfigsSuite) TestNessyBesideAnMCPServerIsRefused() {
-	s.useInternalApp()
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `and MCP server "tablejourney" can send data out`)
-}
-
-// A plugin's read-only endpoint offers no tool that writes (PluginEntry.Readonly), so only the
-// plugin reached at its full one is refused.
-func (s *ConfigsSuite) TestNessyBesideAPluginIsRefusedUnlessItIsReadOnly() {
-	s.useInternalApp()
-	s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
-		"plugins": []map[string]any{{"name": "linear", "readonly": true}}})
-
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
-		"name": "builder", "connectors": []map[string]any{sessionNessy("customers")},
-		"plugins": []map[string]any{{"name": "linear", "readonly": true}, {"name": "github"}},
-	})
-
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, `and plugin "github" can send data out`)
-}
-
 // A sandbox reaches no network unless its options open some (sandbox.Config.Isolated), and
 // options with no sandbox run no code.
 func (s *ConfigsSuite) TestNessyBesideASandboxIsRefusedOnlyWhenItReachesTheNetwork() {
@@ -2375,16 +2004,16 @@ func (s *ConfigsSuite) TestAnUpdateOrAPatchBringingNessyBesideAnOutboundToolIsRe
 		"connectors": []map[string]any{sessionNessy("customers")}})
 
 	updated, updateFailure := s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+created.Id,
-		map[string]any{"name": "athena", "mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}}})
+		map[string]any{"name": "athena", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true}})
 	patched, patchFailure := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
 		map[string]any{"connectors": []map[string]any{sessionNessy("customers"), sessionGitHubGranting("code", "create_issue")}})
 
 	s.Equal(http.StatusBadRequest, updated)
-	s.Contains(updateFailure, `and MCP server "tablejourney" can send data out`)
+	s.Contains(updateFailure, `and the sandbox's network access can send data out`)
 	s.Equal(http.StatusBadRequest, patched)
 	s.Contains(patchFailure, `and connector binding "code" can send data out`)
 	s.Len(value(s.read(created.Id).Connectors), 1)
-	s.Nil(s.read(created.Id).McpServers)
+	s.Nil(s.read(created.Id).Sandbox)
 }
 
 // TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTools is the control: the base,
@@ -2392,9 +2021,7 @@ func (s *ConfigsSuite) TestAnUpdateOrAPatchBringingNessyBesideAnOutboundToolIsRe
 func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsItsOutboundTools() {
 	created := s.createConfig(map[string]any{
 		"name": "builder", "sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
-		"connectors":  []map[string]any{sessionGitHubGranting("code", "create_issue")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
-		"plugins":     []map[string]any{{"name": "github"}},
+		"connectors": []map[string]any{sessionGitHubGranting("code", "create_issue")},
 	})
 
 	s.Len(value(created.Connectors), 1)
@@ -2478,4 +2105,103 @@ func (s *ConfigsSuite) TestAToolOutputRetentionOutsideItsBoundsIsRefusedOnEveryW
 		map[string]any{"tools": tooLong})
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "tools.output_retention")
+}
+
+func callsExample() map[string]any {
+	return map[string]any{
+		"end_call": map[string]any{"enabled": true, "when": "the caller says goodbye"},
+		"press":    map[string]any{"enabled": false},
+		"transfer": map[string]any{"enabled": true, "destinations": []any{
+			map[string]any{"name": "Support", "number": "+15550001111", "when": "billing questions", "warm": true},
+			map[string]any{"name": "Sales", "number": "+442071234567"},
+		}},
+	}
+}
+
+func (s *ConfigsSuite) readCalls(id string) map[string]any {
+	var read map[string]any
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+id, nil, &read))
+	calls, ok := read["calls"].(map[string]any)
+	s.Require().True(ok, "calls rendered")
+	return calls
+}
+
+func (s *ConfigsSuite) TestAConfigWithoutCallsReadsTheDefaults() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	calls := s.readCalls(created.Id)
+	s.Equal(false, calls["end_call"].(map[string]any)["enabled"])
+	s.Equal(true, calls["press"].(map[string]any)["enabled"])
+	transfer := calls["transfer"].(map[string]any)
+	s.Equal(true, transfer["enabled"])
+	s.Empty(transfer["destinations"])
+}
+
+func (s *ConfigsSuite) TestAConfigRemembersItsCalls() {
+	created := s.createConfig(map[string]any{"name": "support", "calls": callsExample()})
+	s.Equal(callsExample(), s.readCalls(created.Id))
+}
+
+func (s *ConfigsSuite) TestACallsToolLeftOutOfAnUpdateKeepsItsSettings() {
+	created := s.createConfig(map[string]any{"name": "support", "calls": callsExample()})
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"calls": map[string]any{"end_call": map[string]any{"enabled": false}}}, nil))
+	calls := s.readCalls(created.Id)
+	s.Equal(false, calls["end_call"].(map[string]any)["enabled"])
+	s.Len(calls["transfer"].(map[string]any)["destinations"], 2, "transfer was not sent, so it stays")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support", "calls": map[string]any{"transfer": map[string]any{"enabled": true}}}, nil))
+	calls = s.readCalls(created.Id)
+	s.Empty(calls["transfer"].(map[string]any)["destinations"], "a tool sent replaces its settings whole")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+created.Id,
+		map[string]any{"name": "support"}, nil))
+	s.Equal(false, s.readCalls(created.Id)["end_call"].(map[string]any)["enabled"], "calls left out keeps everything")
+}
+
+func (s *ConfigsSuite) TestCallsAreChecked() {
+	destination := func(name, number string) map[string]any {
+		return map[string]any{"name": name, "number": number}
+	}
+	many := []any{}
+	for i := range 21 {
+		many = append(many, destination(fmt.Sprintf("Desk %d", i), "+15550001111"))
+	}
+	for name, destinations := range map[string][]any{
+		"number without plus":  {destination("Sales", "5550001111")},
+		"number too short":     {destination("Sales", "+1555")},
+		"duplicate name":       {destination("Sales", "+15550001111"), destination(" sales ", "+15550002222")},
+		"empty name":           {destination("", "+15550001111")},
+		"blank name":           {destination("  ", "+15550001111")},
+		"too many":             many,
+		"when over 1000 chars": {map[string]any{"name": "Sales", "number": "+15550001111", "when": strings.Repeat("a", 1001)}},
+	} {
+		s.Run(name, func() {
+			calls := map[string]any{"transfer": map[string]any{"enabled": true, "destinations": destinations}}
+			status, _ := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+				map[string]any{"name": "support-" + s.utils.uuid(), "calls": calls})
+			s.Equal(http.StatusBadRequest, status)
+
+			created := s.createConfig(map[string]any{"name": "ok-" + s.utils.uuid()})
+			status, _ = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+				map[string]any{"calls": calls})
+			s.Equal(http.StatusBadRequest, status)
+		})
+	}
+}
+
+func (s *ConfigsSuite) TestCallsWhenIsCountedInCharactersNotBytes() {
+	long := strings.Repeat("щ", 1000)
+	created := s.createConfig(map[string]any{"name": "support", "calls": map[string]any{
+		"end_call": map[string]any{"enabled": true, "when": long},
+		"transfer": map[string]any{"enabled": true, "destinations": []any{
+			map[string]any{"name": "Sales", "number": "+15550001111", "when": long}}},
+	}})
+	calls := s.readCalls(created.Id)
+	s.Equal(long, calls["end_call"].(map[string]any)["when"])
+
+	status, _ := s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id,
+		map[string]any{"calls": map[string]any{"end_call": map[string]any{"when": strings.Repeat("a", 1001)}}})
+	s.Equal(http.StatusBadRequest, status)
 }

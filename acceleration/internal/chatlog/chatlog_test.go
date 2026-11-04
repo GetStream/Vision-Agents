@@ -209,7 +209,7 @@ func (s *ChatLogSuite) TestALimitedAppIsNotAskedAgainOnEveryTick() {
 	writer.show()
 
 	sends := 0
-	for _, asked := range chat.Requests("test") {
+	for _, asked := range chat.Requests(chat.Key) {
 		if strings.HasSuffix(asked.Path, "/message") {
 			sends++
 		}
@@ -815,6 +815,34 @@ func (s *ChatLogSuite) TestATranscriptChannelIsStampedWithItsCustomer() {
 	s.Equal("customer-1", created["custom"].(map[string]any)[conversation.CustomerField])
 }
 
+func (s *ChatLogSuite) TestACallDoesNotRestampAChannelAnotherCustomerOpenedFirst() {
+	// Agent ids are the customers' own words, so in a shared app another customer can open
+	// the channel first. The stamp it put there stays: a call naming the same agent id
+	// does not take the channel, nor its transcript, over.
+	chat := chattest.NewServer(s.T())
+	creator := "reader-customer-2"
+	_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), ChannelType, "agent-1",
+		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{
+			CreatedByID: &creator, Custom: map[string]any{conversation.CustomerField: "customer-2"},
+		}})
+	s.Require().NoError(err)
+	log, err := New(Options{
+		AgentID: "agent-1", CustomerID: "customer-1",
+		Agent: User{ID: "vision-agent"}, APIKey: "key", APISecret: "secret",
+		Logger: slog.New(slog.DiscardHandler),
+	})
+	s.Require().NoError(err)
+	log.client = chat.Client
+
+	s.Require().NoError(log.Start(context.Background()))
+	log.Close()
+
+	kept, ok := chat.Channel("agent-1")
+	s.Require().True(ok)
+	s.Equal("customer-2", kept["custom"].(map[string]any)[conversation.CustomerField])
+	s.Equal(creator, kept["created_by_id"])
+}
+
 func (s *ChatLogSuite) TestReadingATranscriptCreatesNoChannel() {
 	// A get-or-create here would leave an empty channel in the app for every call that
 	// was asked about and never written.
@@ -830,7 +858,10 @@ func (s *ChatLogSuite) TestReadingATranscriptCreatesNoChannel() {
 }
 
 func (s *ChatLogSuite) TestATranscriptIsReadOnlyFromAChannelTheCustomerHolds() {
-	chat := s.useChat()
+	// Not useChat: a channel keeps the data it was created with, so the stamp goes on
+	// when it is first made.
+	chat := chattest.NewServer(s.T())
+	s.log.client = chat.Client
 	_, err := chat.Client.Chat().GetOrCreateChannel(context.Background(), ChannelType, s.log.channel,
 		&getstream.GetOrCreateChannelRequest{Data: &getstream.ChannelInput{
 			CreatedByID: &s.log.agent.ID, Custom: map[string]any{conversation.CustomerField: "customer-2"},
@@ -1183,7 +1214,7 @@ func (s *ChatLogSuite) trail(chat *chattest.Server, turns ...string) []string {
 	}
 	events := chat.Events(s.log.channel)
 	var trail []string
-	for _, asked := range chat.Requests("test") {
+	for _, asked := range chat.Requests(chat.Key) {
 		switch {
 		case strings.HasSuffix(asked.Path, "/event"):
 			event := events[0]

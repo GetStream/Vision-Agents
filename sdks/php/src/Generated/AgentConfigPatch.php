@@ -15,6 +15,7 @@ use GetStream\VisionAgents\Json;
 final readonly class AgentConfigPatch
 {
     public function __construct(
+        public ?AgentCalls $calls = null,
         public ?AgentChannels $channels = null,
         // The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they rep...
         /** @var list<AgentConnectorBinding>|null */
@@ -31,15 +32,16 @@ final readonly class AgentConfigPatch
         public ?array $keyterms = null,
         public ?string $knowledgeNamespace = null,
         public ?string $llm = null,
+        // No longer read: a server named by URL is now a custom connector, so create one for its URL and name it unde...
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
         // What the config is called, which is unique among the customer's own.
         public ?string $name = null,
-        // Deprecated: use the events of a fixed binding under connectors.
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<PluginEvent>|null */
         public ?array $pluginEvents = null,
-        // Deprecated: use connectors, a binding to a connector.
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         // Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowled...
@@ -76,6 +78,7 @@ final readonly class AgentConfigPatch
     public static function fromArray(array $data): self
     {
         return new self(
+            calls: array_key_exists('calls', $data) && $data['calls'] !== null ? AgentCalls::fromArray(Json::object($data, 'calls')) : null,
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
@@ -121,6 +124,9 @@ final readonly class AgentConfigPatch
     public function toArray(): array
     {
         $out = [];
+        if ($this->calls !== null) {
+            $out['calls'] = $this->calls->toArray();
+        }
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();
         }

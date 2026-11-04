@@ -203,7 +203,7 @@ func (s *CallsSuite) TestAGuestImportedAsMintedIsNoGuestTheRouterMinted() {
 		s.Equal(http.StatusBadRequest, status, path)
 		s.Equal(errUserInSharedApp.Message, failure, path)
 	}
-	status, failure := s.anonymousClient.failure(http.MethodPost, "/v1/agents/guests",
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/guests",
 		map[string]any{"id": imported})
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "not a guest of this app")
@@ -462,6 +462,192 @@ func (s *CallsSuite) TestACallWithoutASessionRowReadsItsAgentChannel() {
 
 	s.Require().Len(read, 1)
 	s.Equal("said on the call", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallWhoseSessionRowIsGoneReadsItsSessionsChannel() {
+	// A deleted session leaves its conversation in Chat and its call row behind. A new
+	// conversation is named after its session, so that is where the call wrote.
+	call := s.started(store.Call{})
+	s.inChannel(call.ID, s.customerID(), call.StartedAt.Add(time.Minute), "said on the deleted session")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "said on another call of the agent")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said on the deleted session", read[0].Text)
+}
+
+func (s *CallsSuite) TestADeletedSessionsCallBoundToAConversationReadsThatConversation() {
+	// The call row names the conversation the call was bound to, which is not named after
+	// the call, so with the session's row gone it is the only place that tells.
+	conversation := "support-" + s.utils.uuid()
+	call := s.started(store.Call{ConversationID: "agent:" + conversation})
+	s.inChannel(conversation, s.customerID(), call.StartedAt.Add(time.Minute), "said in the conversation")
+	s.inChannel(call.ID, s.customerID(), call.StartedAt.Add(time.Minute), "channel named after the call")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "the agent's channel")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said in the conversation", read[0].Text)
+}
+
+func (s *CallsSuite) TestADeletedSessionsConversationIsReadOnlyInTheCallsWindow() {
+	// The conversation holds what was typed before and after the call too.
+	ended := s.base.Add(10 * time.Minute)
+	conversation := "support-" + s.utils.uuid()
+	call := s.started(store.Call{ConversationID: "agent:" + conversation, EndedAt: &ended})
+	s.inChannel(conversation, s.customerID(), call.StartedAt.Add(-time.Hour), "typed before the call")
+	s.inChannel(conversation, s.customerID(), call.StartedAt.Add(time.Minute), "said on the call")
+	s.inChannel(conversation, s.customerID(), ended.Add(time.Hour), "typed after the call")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said on the call", read[0].Text)
+}
+
+func (s *CallsSuite) TestADeletedSessionsConversationHoldingNothingReadsTheCallsOwnChannel() {
+	// A bound conversation with nothing from the call in it is no answer: the call may
+	// have written under its own id, as a call bound to nothing does.
+	conversation := "support-" + s.utils.uuid()
+	call := s.started(store.Call{ConversationID: "agent:" + conversation})
+	s.inChannel(conversation, s.customerID(), call.StartedAt.Add(-time.Hour), "typed long before the call")
+	s.inChannel(call.ID, s.customerID(), call.StartedAt.Add(time.Minute), "said under the call's id")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said under the call's id", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallBoundToItsOwnChannelReadsEachChannelOnce() {
+	// The call row names agent:<call id>, which is the channel the call is named after:
+	// listing it twice would put the same question to Stream twice.
+	call := s.started(store.Call{ConversationID: "agent:" + s.utils.uuid()})
+	call.ConversationID = "agent:" + call.ID
+
+	var channels []string
+	for _, read := range s.router.transcriptReads(context.Background(), s.customerID(), call) {
+		channels = append(channels, read.Channel)
+	}
+
+	s.Equal([]string{call.ID, call.AgentID}, channels)
+}
+
+func (s *CallsSuite) TestADeletedSessionsConversationOfAnotherCustomerIsNotRead() {
+	conversation := "support-" + s.utils.uuid()
+	call := s.started(store.Call{ConversationID: "agent:" + conversation})
+	s.inChannel(conversation, s.data.createApp().app.ID, call.StartedAt.Add(time.Minute), "said to another customer")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Empty(read)
+}
+
+func (s *CallsSuite) TestASessionRowNamesTheConversationBeforeTheCallRowDoes() {
+	// While the session's row is there it is the newer word on where the conversation is.
+	named := "support-" + s.utils.uuid()
+	callRows := "support-" + s.utils.uuid()
+	call := s.started(store.Call{ConversationID: "agent:" + callRows})
+	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
+		ID: call.ID, CustomerID: s.customerID(), AgentID: call.AgentID,
+		ConversationID: "agent:" + named, CallID: call.CallID,
+	}))
+	s.inChannel(named, s.customerID(), call.StartedAt.Add(time.Minute), "said where the session's row says")
+	s.inChannel(callRows, s.customerID(), call.StartedAt.Add(time.Minute), "said where the call row says")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said where the session's row says", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallWhoseSessionChannelHoldsNothingReadsItsAgentChannel() {
+	// An empty channel under the call's id is no answer: the agent's channel may hold the call.
+	call := s.started(store.Call{})
+	s.inChannel(call.ID, s.customerID(), call.StartedAt.Add(-time.Hour), "said long before the call")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "said on the call")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("said on the call", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallWhoseSessionRowIsGoneDoesNotReadAnotherCustomersChannel() {
+	call := s.started(store.Call{})
+	s.inChannel(call.ID, s.data.createApp().app.ID, call.StartedAt.Add(time.Minute), "said to another customer")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Empty(read)
+}
+
+func (s *CallsSuite) TestAnEndedCallWithoutASessionRowReadsOnlyItsWindowOnEveryChannel() {
+	// Neither channel is the call's alone: what was said before or after the call is not
+	// its transcript, whichever channel is read.
+	ended := s.base.Add(10 * time.Minute)
+	call := s.started(store.Call{EndedAt: &ended})
+	s.inChannel(call.ID, s.customerID(), ended.Add(time.Hour), "session channel, after the call")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(-time.Hour), "agent channel, before the call")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "agent channel, on the call")
+	s.inChannel(call.AgentID, s.customerID(), ended.Add(time.Hour), "agent channel, after the call")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Require().Len(read, 1)
+	s.Equal("agent channel, on the call", read[0].Text)
+}
+
+func (s *CallsSuite) TestACallWithASessionRowReadsOnlyItsRowsChannel() {
+	// The row names the conversation; a channel named after the call or its agent is
+	// not read when the conversation holds nothing in the window.
+	call := s.started(store.Call{})
+	conversation := "support-" + s.utils.uuid()
+	s.Require().NoError(s.store.SaveSession(context.Background(), &store.AgentSession{
+		ID: call.ID, CustomerID: s.customerID(), AgentID: call.AgentID,
+		ConversationID: "agent:" + conversation, CallID: call.CallID,
+	}))
+	s.inChannel(conversation, s.customerID(), call.StartedAt.Add(-time.Hour), "the conversation, before the call")
+	s.inChannel(call.ID, s.customerID(), call.StartedAt.Add(time.Minute), "channel named after the call")
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "the agent's channel")
+
+	var read []TranscriptMessage
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, &read))
+
+	s.Empty(read)
+}
+
+func (s *CallsSuite) TestAFailedFirstReadOfATranscriptIsReturned() {
+	// A channel Chat could not answer for is no empty channel: the next one is not tried
+	// as if it were, and the caller is not told nobody spoke.
+	call := s.started(store.Call{})
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "said on the call")
+	s.chat.Fail(http.MethodPost, "/chat/channels")
+	s.T().Cleanup(func() { s.chat.Heal(http.MethodPost, "/chat/channels") })
+
+	s.Equal(http.StatusInternalServerError, s.serverClient.do(http.MethodGet,
+		"/v1/agents/calls/"+call.ID+"/transcript", nil, nil))
 }
 
 func (s *CallsSuite) TestReadingACallsTranscriptCreatesNoChannel() {

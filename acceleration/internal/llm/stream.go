@@ -20,7 +20,7 @@ import (
 type Puller interface {
 	// Advance reads the next chunk and records what it carried on the writer. It returns
 	// false when the response has ended, at which point Err reports why and the upstream
-	// has been released. It is called only from the goroutine calling Next.
+	// has been released. It is called from one goroutine at a time.
 	Advance(w *ResponseWriter) bool
 	// Err is the failure that ended the stream, if there was one. A cancelled upstream is
 	// not one: closing a stream is how a response is abandoned.
@@ -34,11 +34,18 @@ type Puller interface {
 //
 // It is pulled rather than pushed, in the manner of the OpenAI SDK's own streams: Next
 // advances it, Current is the event it advanced to, and Response is the whole answer once
-// Next has returned false. A Stream is used from one goroutine; only Close may be called
+// Next has returned false. A Stream is read from one goroutine; only Close may be called
 // from another.
 type Stream struct {
 	writer *ResponseWriter
 	puller Puller
+
+	// reading is held by whatever is advancing the stream: its caller, or the drain a Close
+	// left unread starts.
+	reading sync.Mutex
+	// recorded is how many of the pending events the watchers have already seen, which a
+	// drain does without taking them off the stream.
+	recorded int
 
 	current  Event
 	response Response
@@ -103,31 +110,62 @@ func Replay(events ...Event) *Stream {
 // Next advances to the next event, returning false once the response has settled. The last
 // event of every stream is a ResponseCompleted, whatever ended it.
 func (s *Stream) Next() bool {
+	s.reading.Lock()
+	defer s.reading.Unlock()
 	for {
 		if len(s.writer.pending) > 0 {
 			s.current = s.writer.pending[0]
 			s.writer.pending = s.writer.pending[1:]
-			s.record(s.current)
+			if s.recorded > 0 {
+				s.recorded--
+			} else {
+				s.record(s.current)
+			}
 			return true
 		}
-		if s.ended {
+		if !s.pull() {
 			return false
 		}
-		if s.exhausted || !s.puller.Advance(s.writer) {
-			s.ended = true
-			if s.screened != nil {
-				<-s.screened
-			}
-			if refused := s.refused.Load(); refused != nil {
-				s.writer.settle(*refused)
-				continue
-			}
-			// A stream the caller closed was abandoned rather than finished, however the
-			// provider happened to notice.
-			if s.closed.Load() {
-				s.writer.Cancelled()
-			}
-			s.writer.settle(s.puller.Err())
+	}
+}
+
+// pull has the provider add to the pending events, settling the response once the upstream
+// is done, and returns false once nothing more can come.
+func (s *Stream) pull() bool {
+	if s.ended {
+		return false
+	}
+	if s.exhausted || !s.puller.Advance(s.writer) {
+		s.ended = true
+		if s.screened != nil {
+			<-s.screened
+		}
+		if refused := s.refused.Load(); refused != nil {
+			s.writer.refuse(*refused)
+			return true
+		}
+		// A stream the caller closed was abandoned rather than finished, however the
+		// provider happened to notice.
+		if s.closed.Load() {
+			s.writer.Cancelled()
+		}
+		s.writer.settle(s.puller.Err())
+	}
+	return true
+}
+
+// drain reads a closed stream to its end for the watchers, so what the response generated is
+// recorded even when its caller walked away without reading it out. The events stay pending:
+// a caller that does read on still sees every one, the ResponseCompleted it waits for too.
+func (s *Stream) drain() {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	for {
+		for ; s.recorded < len(s.writer.pending); s.recorded++ {
+			s.record(s.writer.pending[s.recorded])
+		}
+		if !s.pull() {
+			return
 		}
 	}
 }
@@ -141,6 +179,8 @@ func (s *Stream) Next() bool {
 // before the first Next, on the goroutine that then hands the stream over. Closing the
 // stream from another goroutine is what ends the wait early.
 func (s *Stream) Await() bool {
+	s.reading.Lock()
+	defer s.reading.Unlock()
 	for seen := 0; ; {
 		for ; seen < len(s.writer.pending); seen++ {
 			switch s.writer.pending[seen].(type) {
@@ -159,6 +199,8 @@ func (s *Stream) Await() bool {
 // or it ends, and returns the answer's text so far. Like Await it takes nothing off the
 // stream and runs before the first Next.
 func (s *Stream) Lead(enough func(text string) bool) string {
+	s.reading.Lock()
+	defer s.reading.Unlock()
 	for seen := 0; ; {
 		var text strings.Builder
 		for _, event := range s.writer.pending {
@@ -185,6 +227,8 @@ func (s *Stream) Cut(from, to int) {
 	if to <= from {
 		return
 	}
+	s.reading.Lock()
+	defer s.reading.Unlock()
 	var text strings.Builder
 	first := -1
 	for i, event := range s.writer.pending {
@@ -218,26 +262,44 @@ func (s *Stream) Cut(from, to int) {
 }
 
 // Current is the event Next advanced to.
-func (s *Stream) Current() Event { return s.current }
+func (s *Stream) Current() Event {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	return s.current
+}
 
 // Err is the provider failure that ended the stream, or nil. A stream that was closed
 // part-way through did not fail: it was abandoned.
-func (s *Stream) Err() error { return stack.Wrap(s.err) }
+func (s *Stream) Err() error {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	return stack.Wrap(s.err)
+}
 
 // Response is the whole answer. It is settled once Next has returned false, and reports
 // what had arrived so far before then.
-func (s *Stream) Response() Response { return s.response }
+func (s *Stream) Response() Response {
+	s.reading.Lock()
+	defer s.reading.Unlock()
+	return s.response
+}
+
+// drainGrace is how long a closed stream is left to its caller to read out before the stream
+// reads itself out for the watchers.
+var drainGrace = 5 * time.Second
 
 // Close abandons the response. It is how barge-in stops a model mid-sentence, and it is
 // safe to call from another goroutine and more than once.
 //
-// The stream still has to be drained afterwards: a response that was cut short still
-// generated tokens, and it is the ResponseCompleted at the end that reports them.
+// The stream should still be drained afterwards: a response that was cut short still
+// generated tokens, and it is the ResponseCompleted at the end that reports them. One left
+// undrained drains itself for the watchers after drainGrace.
 func (s *Stream) Close() error {
 	s.closeOnce.Do(func() {
 		s.closed.Store(true)
 		if s.puller != nil {
 			s.closeErr = s.puller.Close()
+			time.AfterFunc(drainGrace, s.drain)
 		}
 	})
 	return stack.Wrap(s.closeErr)
@@ -320,6 +382,7 @@ type ResponseWriter struct {
 	usage              Usage
 	usageReported      bool
 	timedOut           bool
+	refused            bool
 	serviceTier        string
 	status             ResponseStatus
 	incompleteReason   string
@@ -463,6 +526,15 @@ func (w *ResponseWriter) Fail(err error, context string, fatal bool) {
 // Text is the answer so far, reasoning excluded.
 func (w *ResponseWriter) Text() string { return w.text.String() }
 
+// refuse settles the response as failed with a screen's refusal. The screen closed the
+// upstream to stop it, which a provider reports as a cancel, so the refusal is reported
+// whatever the provider made of it.
+func (w *ResponseWriter) refuse(reason error) {
+	w.refused = true
+	w.Fail(reason, "stream", false)
+	w.settle(nil)
+}
+
 // settle queues the event that ends the stream. A response that produced nothing reports a
 // zero time to first token rather than the whole duration.
 func (w *ResponseWriter) settle(failure error) {
@@ -498,6 +570,7 @@ func (w *ResponseWriter) settle(failure error) {
 		Usage:              w.usage,
 		UsageReported:      w.usageReported,
 		TimedOut:           w.timedOut,
+		Refused:            w.refused,
 		ServiceTier:        w.serviceTier,
 		Status:             w.status,
 		IncompleteReason:   w.incompleteReason,

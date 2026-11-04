@@ -68,6 +68,8 @@ func (SpeechStarted) isSTSEvent() {}
 type SpeechStopped struct {
 	Participant Participant
 	At          time.Time
+	// Answered says a reply already open takes the stop, so no reply follows for it.
+	Answered bool
 }
 
 func (SpeechStopped) isSTSEvent() {}
@@ -141,7 +143,13 @@ type Usage struct {
 	// a reply too short to move the vendor's rounded figure.
 	BilledAudioMs int64
 	AudioBilled   bool
+	// Estimated is usage the vendor never reported, for a reply cut off before it said, which
+	// the adapter filled in from what the reply streamed (Estimator).
+	Estimated bool
 }
+
+// Counted reports whether the vendor said what the reply used.
+func (u Usage) Counted() bool { return u.InputTokens > 0 || u.OutputTokens > 0 }
 
 // ResponseComplete settles one reply. It is the natural unit of billable work, the way
 // SynthesisComplete is for a voice, and Interrupted true is the one signal that the caller
@@ -189,6 +197,9 @@ func (ToolCancel) isSTSEvent() {}
 // report is cumulative, and the last comes as the session closes.
 type SessionUsage struct {
 	Seconds int64
+	// Final is the report the vendor sends as the session closes. A session that ends without
+	// one is billed the seconds it was open beyond the last report, on the router's clock.
+	Final bool
 }
 
 func (SessionUsage) isSTSEvent() {}

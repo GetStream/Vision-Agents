@@ -687,3 +687,43 @@ func TestARepeatCreatedWithItsStartPassedStartsAtItsNextOccurrence(t *testing.T)
 		})
 	}
 }
+
+func TestAStartMovesOnlyWhenItsClockReadingDiffers(t *testing.T) {
+	stored := time.Date(2026, 10, 20, 23, 0, 0, 0, time.UTC)
+	for name, test := range map[string]struct {
+		input Input
+		moves bool
+	}{
+		"the stored wall":                  {Input{At: "2026-10-20T23:00"}, false},
+		"the stored wall with seconds":     {Input{At: "2026-10-20T23:00:00"}, false},
+		"the stored wall, space form":      {Input{At: "2026-10-20 23:00"}, false},
+		"the stored wall as a UTC instant": {Input{At: "2026-10-20T23:00:00Z"}, false},
+		"the stored wall as an offset":     {Input{At: "2026-10-21T04:30:00+05:30"}, false},
+		"the same date, a later time":      {Input{At: "2026-10-20T23:01"}, true},
+		"the same date, an earlier time":   {Input{At: "2026-10-20T05:00"}, true},
+		"the same date, later by seconds":  {Input{At: "2026-10-20T23:00:30"}, true},
+		"the same time, the next date":     {Input{At: "2026-10-21T23:00"}, true},
+		"the same time, a date earlier":    {Input{At: "2026-10-19T23:00"}, true},
+		"in":                               {Input{In: "PT3H"}, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			test.input.Timezone, test.input.Repeat = "UTC", "FREQ=DAILY"
+			require.Equal(t, test.moves, parse(t, test.input).MovesStartFrom(stored))
+		})
+	}
+}
+
+func TestAStoredTimeOfDayReadsAsTheStoredStart(t *testing.T) {
+	stored := time.Date(2026, 10, 20, 23, 0, 0, 0, time.UTC)
+	for at, want := range map[string]string{
+		"23:00":               "2026-10-20T23:00:00",
+		"23:00:00":            "2026-10-20T23:00:00",
+		" 23:00 ":             "2026-10-20T23:00:00",
+		"23:01":               "23:01",
+		"23:00:30":            "23:00:30",
+		"2026-10-21T23:00":    "2026-10-21T23:00",
+		"2026-10-20T23:00:00": "2026-10-20T23:00:00",
+	} {
+		require.Equal(t, want, StoredClock(at, stored), at)
+	}
+}

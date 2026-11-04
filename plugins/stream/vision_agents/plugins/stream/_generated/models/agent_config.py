@@ -15,6 +15,7 @@ from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
 
 if TYPE_CHECKING:
+    from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
     from ..models.agent_config_tags import AgentConfigTags
     from ..models.agent_connector_binding import AgentConnectorBinding
@@ -24,9 +25,6 @@ if TYPE_CHECKING:
     from ..models.agent_tools import AgentTools
     from ..models.greeting import Greeting
     from ..models.left_out_connector import LeftOutConnector
-    from ..models.mcp_server import McpServer
-    from ..models.plugin_event import PluginEvent
-    from ..models.plugin_with_options import PluginWithOptions
     from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
@@ -48,6 +46,7 @@ class AgentConfig:
         region (str): Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox
             are in it. us unless the agent's agent.yaml or config names another. Example: us.
         updated_at (datetime.datetime):
+        calls (AgentCalls | Unset): The tools an agent on a phone call is offered: end the call, press keys, transfer.
         channels (AgentChannels | Unset): The lines this agent answers on besides its Stream Chat channel. Each names a
             number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message
             that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest
@@ -56,8 +55,9 @@ class AgentConfig:
             are none.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
-        episode_cards (bool | Unset): Whether each phone call under this agent writes an episode card into the caller's
-            omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+        episode_cards (bool | Unset): Whether each phone call and each app chat conversation under this agent writes an
+            episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel
+            of the person and the agent alone, or a phone call starts with the person's other cards.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset):
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
@@ -70,9 +70,6 @@ class AgentConfig:
             out, because the app has no connection by the id or label they name: an agent that runs without them until the
             connection exists and it syncs again. Only a sync writes them. Absent when there are none.
         llm (str | Unset):
-        mcp_servers (list[McpServer] | Unset):
-        plugin_events (list[PluginEvent] | Unset): Deprecated: use the events of a fixed binding under connectors.
-        plugins (list[PluginWithOptions | str] | Unset): Deprecated: use connectors, a binding to a connector.
         resume_history (ResumeHistory | Unset): How a conversation is handed back to the model when a session carries it
             on.
         review (AgentReview | Unset): How a finished call under an agent is reviewed.
@@ -113,6 +110,7 @@ class AgentConfig:
     name: str
     region: str
     updated_at: datetime.datetime
+    calls: AgentCalls | Unset = UNSET
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
@@ -125,9 +123,6 @@ class AgentConfig:
     knowledge_namespace: str | Unset = UNSET
     left_out_connectors: list[LeftOutConnector] | Unset = UNSET
     llm: str | Unset = UNSET
-    mcp_servers: list[McpServer] | Unset = UNSET
-    plugin_events: list[PluginEvent] | Unset = UNSET
-    plugins: list[PluginWithOptions | str] | Unset = UNSET
     resume_history: ResumeHistory | Unset = UNSET
     review: AgentReview | Unset = UNSET
     role: AgentRole | Unset = UNSET
@@ -149,8 +144,6 @@ class AgentConfig:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.plugin_with_options import PluginWithOptions
-
         created_at = self.created_at.isoformat()
 
         id = self.id
@@ -162,6 +155,10 @@ class AgentConfig:
         region = self.region
 
         updated_at = self.updated_at.isoformat()
+
+        calls: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.calls, Unset):
+            calls = self.calls.to_dict()
 
         channels: dict[str, Any] | Unset = UNSET
         if not isinstance(self.channels, Unset):
@@ -206,31 +203,6 @@ class AgentConfig:
                 left_out_connectors.append(left_out_connectors_item)
 
         llm = self.llm
-
-        mcp_servers: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.mcp_servers, Unset):
-            mcp_servers = []
-            for mcp_servers_item_data in self.mcp_servers:
-                mcp_servers_item = mcp_servers_item_data.to_dict()
-                mcp_servers.append(mcp_servers_item)
-
-        plugin_events: list[dict[str, Any]] | Unset = UNSET
-        if not isinstance(self.plugin_events, Unset):
-            plugin_events = []
-            for plugin_events_item_data in self.plugin_events:
-                plugin_events_item = plugin_events_item_data.to_dict()
-                plugin_events.append(plugin_events_item)
-
-        plugins: list[dict[str, Any] | str] | Unset = UNSET
-        if not isinstance(self.plugins, Unset):
-            plugins = []
-            for plugins_item_data in self.plugins:
-                plugins_item: dict[str, Any] | str
-                if isinstance(plugins_item_data, PluginWithOptions):
-                    plugins_item = plugins_item_data.to_dict()
-                else:
-                    plugins_item = plugins_item_data
-                plugins.append(plugins_item)
 
         resume_history: dict[str, Any] | Unset = UNSET
         if not isinstance(self.resume_history, Unset):
@@ -302,6 +274,8 @@ class AgentConfig:
                 "updated_at": updated_at,
             }
         )
+        if calls is not UNSET:
+            field_dict["calls"] = calls
         if channels is not UNSET:
             field_dict["channels"] = channels
         if connectors is not UNSET:
@@ -326,12 +300,6 @@ class AgentConfig:
             field_dict["left_out_connectors"] = left_out_connectors
         if llm is not UNSET:
             field_dict["llm"] = llm
-        if mcp_servers is not UNSET:
-            field_dict["mcp_servers"] = mcp_servers
-        if plugin_events is not UNSET:
-            field_dict["plugin_events"] = plugin_events
-        if plugins is not UNSET:
-            field_dict["plugins"] = plugins
         if resume_history is not UNSET:
             field_dict["resume_history"] = resume_history
         if review is not UNSET:
@@ -373,6 +341,7 @@ class AgentConfig:
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
         from ..models.agent_config_tags import AgentConfigTags
         from ..models.agent_connector_binding import AgentConnectorBinding
@@ -382,9 +351,6 @@ class AgentConfig:
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting
         from ..models.left_out_connector import LeftOutConnector
-        from ..models.mcp_server import McpServer
-        from ..models.plugin_event import PluginEvent
-        from ..models.plugin_with_options import PluginWithOptions
         from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
@@ -401,6 +367,13 @@ class AgentConfig:
         region = d.pop("region")
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
+
+        _calls = d.pop("calls", UNSET)
+        calls: AgentCalls | Unset
+        if isinstance(_calls, Unset):
+            calls = UNSET
+        else:
+            calls = AgentCalls.from_dict(_calls)
 
         _channels = d.pop("channels", UNSET)
         channels: AgentChannels | Unset
@@ -461,47 +434,6 @@ class AgentConfig:
                 left_out_connectors.append(left_out_connectors_item)
 
         llm = d.pop("llm", UNSET)
-
-        _mcp_servers = d.pop("mcp_servers", UNSET)
-        mcp_servers: list[McpServer] | Unset = UNSET
-        if _mcp_servers is not UNSET:
-            mcp_servers = []
-            for mcp_servers_item_data in _mcp_servers:
-                mcp_servers_item = McpServer.from_dict(mcp_servers_item_data)
-
-                mcp_servers.append(mcp_servers_item)
-
-        _plugin_events = d.pop("plugin_events", UNSET)
-        plugin_events: list[PluginEvent] | Unset = UNSET
-        if _plugin_events is not UNSET:
-            plugin_events = []
-            for plugin_events_item_data in _plugin_events:
-                plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
-
-                plugin_events.append(plugin_events_item)
-
-        _plugins = d.pop("plugins", UNSET)
-        plugins: list[PluginWithOptions | str] | Unset = UNSET
-        if _plugins is not UNSET:
-            plugins = []
-            for plugins_item_data in _plugins:
-
-                def _parse_plugins_item(data: object) -> PluginWithOptions | str:
-                    try:
-                        if not isinstance(data, dict):
-                            raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
-                        )
-
-                        return componentsschemas_plugin_entry_type_1
-                    except (TypeError, ValueError, AttributeError, KeyError):
-                        pass
-                    return cast(PluginWithOptions | str, data)
-
-                plugins_item = _parse_plugins_item(plugins_item_data)
-
-                plugins.append(plugins_item)
 
         _resume_history = d.pop("resume_history", UNSET)
         resume_history: ResumeHistory | Unset
@@ -591,6 +523,7 @@ class AgentConfig:
             name=name,
             region=region,
             updated_at=updated_at,
+            calls=calls,
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
@@ -603,9 +536,6 @@ class AgentConfig:
             knowledge_namespace=knowledge_namespace,
             left_out_connectors=left_out_connectors,
             llm=llm,
-            mcp_servers=mcp_servers,
-            plugin_events=plugin_events,
-            plugins=plugins,
             resume_history=resume_history,
             review=review,
             role=role,

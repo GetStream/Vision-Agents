@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -55,8 +56,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/quota"
@@ -99,6 +98,9 @@ type serverSideContextKey struct{}
 // name when one person's sessions are kept from another's.
 type kindContextKey struct{}
 
+// requestKeyContextKey holds the key of the app the proxy vouched for the request with.
+type requestKeyContextKey struct{}
+
 // clientAccessibleExtension is what the spec marks the few operations an end user's device
 // may reach with. Everything else is server-side only, and the check reads the mark from
 // the operations themselves rather than from a list kept here, so what a generated SDK documents
@@ -121,7 +123,11 @@ type Options struct {
 	// reports not ready until it is ready, and a price change made through the management API
 	// is read back at once. Nil serves the price list operations from Store alone.
 	Prices *pricing.Active
-	Store  *store.Store
+	// Billable is every item of work the deployment bills (billable.Items), which the price
+	// list's unpriced and a price change's preview are checked against. Empty is the routed
+	// providers alone.
+	Billable []pricing.Item
+	Store    *store.Store
 	// Configs reads and writes the tenant's configuration -- keys, policies, agent and
 	// router configs, voices -- through whatever cache is in front of Postgres. Built
 	// over Store when it is not given, in which case every read is a query.
@@ -167,10 +173,6 @@ type Options struct {
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
 	Simulations *simulation.Runner
-	// PluginEvents subscribes agents to their plugins' MCP events and answers deliveries.
-	// Absent without a database or sessions, in which case a config's plugin_events are
-	// stored but nothing subscribes to them.
-	PluginEvents *pluginevents.Service
 	// Channels answers what arrives on the app's WhatsApp, text and iMessage lines. Absent
 	// without a database, sessions or a key encryption key, in which case a line cannot be
 	// connected and nothing is delivered.
@@ -233,9 +235,10 @@ type Options struct {
 	// PrivateModelEndpoints lets a customer's model sit on a private address or plain http,
 	// which only a router no other tenant shares should allow.
 	PrivateModelEndpoints bool
-	// PublicURL is where this process is reachable, which plugin OAuth callbacks need.
+	// PublicURL is where this process is reachable, which connector OAuth callbacks need.
 	PublicURL string
-	// DashboardURL is where a finished plugin login sends the browser.
+	// DashboardURL is where a finished connector consent sends the browser when no return_url
+	// was given, and the page a consent is launched from.
 	DashboardURL string
 	// AuthMode is how this deployment decided that, which a handler needs when the mode
 	// itself is the answer: moving a customer's data is refused outright in noauth,
@@ -319,10 +322,7 @@ type Options struct {
 	// how much of X-Forwarded-For is believed when working out who a request is from.
 	// Empty means none of it is, and the connection's own address is used.
 	TrustedProxies []netip.Prefix
-	// PluginHTTP reaches plugins' MCP servers and their auth servers: a login, its callback,
-	// and a config's MCP servers describing themselves. Absent reaches only public hosts.
-	PluginHTTP *http.Client
-	Logger     *slog.Logger
+	Logger         *slog.Logger
 }
 
 // Server serves the router's HTTP API.
@@ -330,6 +330,7 @@ type Server struct {
 	routers            map[routing.Modality]routing.Inspector
 	pricer             pricing.Pricer
 	prices             *pricing.Active
+	billable           []pricing.Item
 	store              *store.Store
 	configs            *appconfig.Store
 	users              *users.Recorder
@@ -361,8 +362,6 @@ type Server struct {
 	corsOrigins        []string
 	publicURL          string
 	dashboardURL       string
-	oauth              *plugins.Auth
-	pluginEvents       *pluginevents.Service
 	channels           *channels.Service
 	dlc                *dlc.Service
 	gate               *dlc.Gate
@@ -393,6 +392,14 @@ type Server struct {
 	mcpEvents       *mcpevents.Service
 	// episodes ends a call's episodes on call.session_ended.
 	episodes *omnichannel.Closer
+	// chatCards opens the episodes of the app chat and writes their cards (chatEpisode); nil
+	// without a store or Stream clients.
+	chatCards *omnichannel.Cards
+	// chatCardsWriting counts the chat cards being written off a hook's request
+	// (ChatCardsRunning).
+	chatCardsWriting atomic.Int32
+	// owing is what each running session still owes an app chat's channel (retire).
+	owing owedReplies
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
 	// Stream, and how long to wait before each read. Tests replace both.
 	readCallStats  readCallStats
@@ -517,6 +524,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		routers:            options.Routers,
 		pricer:             pricer,
 		prices:             options.Prices,
+		billable:           options.Billable,
 		store:              options.Store,
 		configs:            configs,
 		users:              recorder,
@@ -563,21 +571,14 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		operatorApps:       options.OperatorProviderApps,
 		trusted:            options.TrustedProxies,
 		upgrader:           newUpgrader(authMode),
-		oauth: &plugins.Auth{
-			HTTP:         options.PluginHTTP,
-			PublicURL:    options.PublicURL,
-			DashboardURL: options.DashboardURL,
-			Clients:      session.PluginClients(options.Store, options.Secrets),
-		},
-		pluginEvents: options.PluginEvents,
-		channels:     options.Channels,
-		dlc:          options.DLC,
-		gate:         options.Gate,
-		opsKey:       options.OpsKey,
-		manageKey:    options.ManageKey,
-		popularity:   newPopularity(options.Store, logger),
-		logger:       logger,
-		draining:     make(chan struct{}),
+		channels:           options.Channels,
+		dlc:                options.DLC,
+		gate:               options.Gate,
+		opsKey:             options.OpsKey,
+		manageKey:          options.ManageKey,
+		popularity:         newPopularity(options.Store, logger),
+		logger:             logger,
+		draining:           make(chan struct{}),
 	}
 	if options.Store != nil && options.ConnectorSecrets != nil {
 		credentials, err := pgsealed.New(options.Store, options.ConnectorSecrets)
@@ -605,6 +606,9 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.channelBridge == nil {
 		server.channelBridge = droppingBridge{logger: logger}
+	}
+	if cards, err := omnichannel.New(omnichannel.Options{Store: options.Store, Stream: options.Stream}); err == nil {
+		server.chatCards = cards
 	}
 	serverSide, err := serverSideRoutes(server.newAPI(chi.NewRouter()).OpenAPI())
 	if err != nil {
@@ -635,6 +639,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 	}
 	if server.phone != nil {
 		server.phone.OnUnanswered(server.endUnanswered)
+		server.phone.OnMachine(server.tellMachine)
 	}
 	return server, nil
 }
@@ -698,6 +703,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST "+scheduledPeerPath, s.deliverScheduledForPeer)
 	mux.HandleFunc("POST "+chatInboundPeerPath, s.answerChatInboundForPeer)
 	mux.HandleFunc("POST "+unansweredPeerPath, s.endUnansweredForPeer)
+	mux.HandleFunc("POST "+machinePeerPath, s.tellMachineForPeer)
 	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", s.watchSession)
 	mux.HandleFunc("GET /v1/agents/socket", s.openSocketSession)
 	mux.HandleFunc("GET /v1/{modality}/stream", s.streamModality)
@@ -705,13 +711,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/answer/{token}", s.answerPhoneCall)
 	mux.HandleFunc("POST /v1/phone/status/{token}", s.receiveCallStatus)
+	mux.HandleFunc("POST /v1/phone/machine/{token}", s.receiveCallMachine)
 	mux.HandleFunc("POST "+phone.CallHookPath, s.receiveCallEvent)
 	mux.HandleFunc("POST "+phone.CallHookPath+"/{app}", s.receiveCallEvent)
 	mux.HandleFunc("POST "+telnyxCallHookPath, s.receiveTelnyxCall)
 	mux.HandleFunc("POST "+chat.MessageHookPath, s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chat.MessageHookPath+"/{app}", s.receiveMessageEvent)
 	mux.HandleFunc("POST "+chatInboundPath, s.receiveChatInbound)
-	mux.HandleFunc("GET "+plugins.CallbackPath, s.finishPluginLogin)
 	mux.HandleFunc("GET "+connectorLaunchPath+"{id}", s.serveConnectorLaunch)
 	mux.HandleFunc("POST "+connectorLaunchPath+"{id}", s.handOffConnectorLaunch)
 	mux.HandleFunc("GET "+ConnectorCallbackPath, s.finishConnectorConsent)
@@ -725,8 +731,6 @@ func (s *Server) Handler() http.Handler {
 			mux.HandleFunc(method+" "+connectionProxyPath+"*", s.proxyConnection)
 		}
 	}
-	mux.HandleFunc("GET /v1/agents/plugins/{plugin_id}/logo", s.servePluginLogo)
-	mux.HandleFunc("POST "+plugins.EventsPath+"{token}", s.receivePluginEvent)
 	mux.HandleFunc("POST "+mcpevents.Path+"{token}", s.receiveConnectionEvent)
 	mux.HandleFunc("GET "+channels.HookPath+"{token}", s.receiveChannelMessage)
 	mux.HandleFunc("POST "+channels.HookPath+"{token}", s.receiveChannelMessage)
@@ -1035,7 +1039,7 @@ func (l *loggedResponse) Unwrap() http.ResponseWriter {
 // a path that spells it differently.
 //
 // An operation declaring no security at all is skipped in both directions. It is reached
-// before there is a caller to classify — the health check and the plugin redirect, where
+// before there is a caller to classify — the health check and the consent callback, where
 // the browser arrives from the identity provider — so there is nobody to refuse.
 func serverSideRoutes(document *huma.OpenAPI) (*http.ServeMux, error) {
 	operations := specifiedOperations(document)
@@ -1145,6 +1149,7 @@ func (s *Server) withCustomer(next http.Handler) http.Handler {
 			ctx = context.WithValue(ctx, organizationContextKey{}, principal.OrganizationID)
 			ctx = context.WithValue(ctx, serverSideContextKey{}, principal.ServerSide)
 			ctx = context.WithValue(ctx, kindContextKey{}, principal.Kind)
+			ctx = context.WithValue(ctx, requestKeyContextKey{}, s.vouchedKey(r, principal))
 			ctx = routing.WithCaller(ctx, routing.Caller{
 				UserID:     principal.UserID,
 				IP:         s.callerIP(r, principal.UserID),
@@ -1204,6 +1209,16 @@ func (s *Server) keepServerToken(ctx context.Context, r *http.Request, customer 
 	if err := s.stream.KeepToken(ctx, customer, strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader)), token); err != nil {
 		s.logger.Warn("stream: could not keep the server token the proxy forwarded", "customer_id", customer, "error", err)
 	}
+}
+
+// vouchedKey is the app's key the proxy forwarded a server token with, which is the key the
+// caller used. A proxy that could not mint that token names the key it authenticated the
+// caller with instead. It is believed only where that token is, from a proxy that declares kinds.
+func (s *Server) vouchedKey(r *http.Request, principal auth.Principal) string {
+	if s.authMode != auth.Proxy || !s.proxyDeclaresKind {
+		return ""
+	}
+	return cmp.Or(strings.TrimSpace(r.Header.Get(auth.ServerTokenKeyHeader)), principal.APIKey)
 }
 
 // recordUser writes down the end user a request is for, so an app can ask who its users
@@ -1343,6 +1358,12 @@ func CallerFrom(ctx context.Context) routing.Caller {
 func KindFrom(ctx context.Context) auth.Kind {
 	kind, _ := ctx.Value(kindContextKey{}).(auth.Kind)
 	return kind
+}
+
+// requestKeyFrom is the app's key the request was made with, empty where no proxy said.
+func requestKeyFrom(ctx context.Context) string {
+	key, _ := ctx.Value(requestKeyContextKey{}).(string)
+	return key
 }
 
 // OwnerFrom is who the request may reach sessions as: the customer, the end user behind

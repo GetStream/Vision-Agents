@@ -290,12 +290,12 @@ func (s *Server) createCallToken(ctx context.Context, request *createCallTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
+	token, apiKey, err := s.stream.MintUserToken(ctx, bound, requestKeyFrom(ctx), userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
 
-	return &createCallTokenResponse{Body: CallToken{ApiKey: bound.Identity.APIKey,
+	return &createCallTokenResponse{Body: CallToken{ApiKey: apiKey,
 		Token:     token,
 		UserId:    userID,
 		UserName:  userName,
@@ -382,12 +382,12 @@ func (s *Server) createChatToken(ctx context.Context, request *createChatTokenRe
 	}
 
 	expiresAt := time.Now().UTC().Add(listenerTokenValidity)
-	token, err := s.stream.MintUserToken(ctx, bound, userID, listenerTokenValidity)
+	token, apiKey, err := s.stream.MintUserToken(ctx, bound, requestKeyFrom(ctx), userID, listenerTokenValidity)
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
 
-	return &createChatTokenResponse{Body: ChatToken{ApiKey: bound.Identity.APIKey,
+	return &createChatTokenResponse{Body: ChatToken{ApiKey: apiKey,
 		Token:       token,
 		UserId:      userID,
 		UserName:    userName,
@@ -561,7 +561,14 @@ func (s *Server) transcriptOf(ctx context.Context, customerID string, call store
 	if err != nil {
 		return nil, err
 	}
-	return chatlog.NewReaderFromClient(bound.Client).Transcript(ctx, s.transcriptRead(ctx, customerID, call))
+	reader := chatlog.NewReaderFromClient(bound.Client)
+	said := []chatlog.Spoken{}
+	for _, read := range s.transcriptReads(ctx, customerID, call) {
+		if said, err = reader.Transcript(ctx, read); err != nil || len(said) > 0 {
+			return said, err
+		}
+	}
+	return said, nil
 }
 
 // agentStream is the app an agent's channel is in: the one its most recent session was
@@ -587,25 +594,38 @@ func (s *Server) agentStream(ctx context.Context, customerID, agentID string) (s
 // disagree, so the first and last lines are not lost to a timestamp a moment off.
 const transcriptSlack = 2 * time.Second
 
-// transcriptRead is where a call's transcript was written. A call bound to a conversation
-// wrote into that conversation's channel, beside what was typed before and after it, so
-// only the call's own window is read. A call with no session row read its agent's channel
-// before there were session rows, and still does.
-func (s *Server) transcriptRead(ctx context.Context, customerID string, call store.Call) chatlog.Read {
-	channel := call.AgentID
-	if stored, err := s.store.StoredSession(ctx, customerID, call.ID); err == nil {
-		channel = transcriptChannel(stored)
-	}
-	read := chatlog.Read{
-		Channel:  channel,
+// transcriptReads is where a call's transcript may have been written, most likely first. A
+// call bound to a conversation wrote into that conversation's channel, beside what was
+// typed before and after it, so only the call's own window is read. A call whose session
+// row is gone, as a deleted session's is while its conversation stays in Stream Chat, wrote
+// into the conversation its call row names (a call from before that column names none),
+// else into the channel a new conversation is named after its session
+// (session.Manager.Create); failing that it read its agent's channel, as a call from before
+// there were session rows still does. The session's row is written behind the call's, so a
+// call that just ended is read once its writer has caught up.
+func (s *Server) transcriptReads(ctx context.Context, customerID string, call store.Call) []chatlog.Read {
+	window := chatlog.Read{
 		Customer: customerID,
 		Agent:    call.AgentID,
 		From:     call.StartedAt.Add(-transcriptSlack),
 	}
 	if call.EndedAt != nil {
-		read.To = call.EndedAt.Add(transcriptSlack)
+		window.To = call.EndedAt.Add(transcriptSlack)
 	}
-	return read
+	channels := []string{call.ID, call.AgentID}
+	if call.ConversationID != "" {
+		channels = slices.Compact([]string{conversationChannel(call.ConversationID), call.ID, call.AgentID})
+	}
+	if stored, err := s.storedSession(ctx, customerID, call.ID); err == nil {
+		channels = []string{transcriptChannel(stored)}
+	}
+	reads := make([]chatlog.Read, 0, len(channels))
+	for _, channel := range channels {
+		read := window
+		read.Channel = channel
+		reads = append(reads, read)
+	}
+	return reads
 }
 
 // getCallEvents returns what the conversation decided on one call, oldest first.
@@ -1228,7 +1248,7 @@ func (*CallTokens) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.S
 // InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
 type InputParts struct {
 	Images          int64 `json:"images" doc:"Pictures, attached or returned by a tool."`
-	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and plugin guidance."`
+	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and connector guidance."`
 	Messages        int64 `json:"messages" doc:"The conversation's words, from either side."`
 	ToolDefinitions int64 `json:"tool_definitions" doc:"The tools the model was offered: their names, descriptions and schemas."`
 	ToolUse         int64 `json:"tool_use" doc:"The tools the model called, and what they returned."`
@@ -1348,7 +1368,7 @@ func (DecisionKind) Schema(registry huma.Registry) *huma.Schema {
 // ModelCallTiming is the ModelCallTiming schema.
 type ModelCallTiming struct {
 	DurationMs   *float64  `json:"duration_ms,omitempty" doc:"Request to completed response or failed create."`
-	ErrorCode    *string   `json:"error_code,omitempty" doc:"Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key."`
+	ErrorCode    *string   `json:"error_code,omitempty" doc:"Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key."`
 	InputTokens  *int64    `json:"input_tokens,omitempty"`
 	Model        string    `json:"model"`
 	OperationId  *string   `json:"operation_id,omitempty" doc:"Response ID for this operation; retries can share an ID."`

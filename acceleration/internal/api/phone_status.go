@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 )
 
 // unansweredPeerPath is where a router asks the router holding a placed call's session to end
@@ -36,8 +38,20 @@ func (s *Server) endUnanswered(ctx context.Context, customerID, sessionID string
 	}()
 }
 
-// endUnansweredNow is endUnanswered on the caller's goroutine.
+// endUnansweredNow is endUnanswered on the caller's goroutine. The stored call is checked
+// before the session is ended here or a peer is asked to, so that which node holds the session
+// does not change the outcome.
 func (s *Server) endUnansweredNow(ctx context.Context, customerID, sessionID string) {
+	_, unanswered, err := s.unansweredCall(ctx, customerID, sessionID)
+	if err != nil {
+		s.logger.Error("could not read an unanswered call", "session", sessionID, "error", err)
+		return
+	}
+	if !unanswered {
+		s.logger.Info("kept the session of an unanswered call: its stored call does not say nobody answered",
+			"session", sessionID)
+		return
+	}
 	if s.sessions.EndUnanswered(customerID, sessionID) || s.directory == nil || s.forwarder == nil {
 		return
 	}
@@ -77,7 +91,8 @@ func (s *Server) askToEndUnanswered(ctx context.Context, address string, asked u
 
 // endUnansweredForPeer is endUnanswered's other end. Anything not handed over by a peer is
 // answered as no such route: the request names a customer outright, which is only a peer's to
-// say.
+// say. Even a peer's word is checked against the call as stored: one that is not kept, or that
+// somebody answered or is still ringing, is answered as no such call and nothing is ended.
 func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 	if !node.Forwarded(r.Context()) {
 		writeError(w, notFound("no such route"))
@@ -88,8 +103,42 @@ func (s *Server) endUnansweredForPeer(w http.ResponseWriter, r *http.Request) {
 		writeError(w, invalidRequest("the request could not be read"))
 		return
 	}
-	if s.sessions != nil {
-		s.sessions.EndUnanswered(asked.CustomerID, asked.SessionID)
+	if s.sessions == nil {
+		w.WriteHeader(http.StatusNoContent)
+		return
 	}
+	// The asker sends this once its own call's row says nobody answered.
+	call, unanswered, err := s.unansweredCall(r.Context(), asked.CustomerID, asked.SessionID)
+	switch {
+	case err != nil:
+		s.logger.Error("could not read a peer's unanswered call", "session", asked.SessionID, "error", err)
+		writeError(w, internalError())
+		return
+	case !unanswered:
+		s.logger.Warn("refused a peer's ask to end a session its stored call does not say went unanswered",
+			"session", asked.SessionID)
+		writeError(w, errUnknownCall)
+		return
+	}
+	s.sessions.EndUnanswered(call.CustomerID, call.CallID)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// unansweredCall reads the call stored for the customer's session and reports whether it says
+// nobody answered; one not kept does not. Read returns the newest call placed into the session,
+// so with two calls in one session a report for the older one does not end it while the newer
+// rings: ending the session would strand that call.
+func (s *Server) unansweredCall(ctx context.Context, customerID, sessionID string) (outcome.Call, bool, error) {
+	// A node without a store keeps no calls to check against.
+	if s.phone == nil || s.phone.Outcomes() == nil {
+		return outcome.Call{}, false, nil
+	}
+	call, err := s.phone.Outcomes().Read(ctx, customerID, sessionID)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return outcome.Call{}, false, nil
+	}
+	if err != nil {
+		return outcome.Call{}, false, err
+	}
+	return call, call.NobodyAnswered(), nil
 }

@@ -55,7 +55,7 @@ func (s *IdleTimeoutSuite) TestEveryServerClosesIdleConnections() {
 				return true
 			}
 			servers[name]++
-			s.Contains([]string{"idleTimeout", "proxy.IdleTimeout()"}, idleTimeoutOf(fset, literal),
+			s.Contains([]string{"idleTimeout", "proxy.KeepAliveTimeout()"}, idleTimeoutOf(fset, literal),
 				"%s sets no IdleTimeout of the router's", fset.Position(literal.Pos()))
 			return true
 		})
@@ -109,7 +109,9 @@ func (s *IdleTimeoutSuite) TestIdleTimeoutOutlastsEveryPoolingClient() {
 // metrics listeners and idleTimeout shortened, and sends one request on a keep-alive
 // connection to each. The server must then close the connection. A server that loses its
 // IdleTimeout, or has it overwritten after its literal, keeps the connection open and the
-// read times out.
+// read times out. Each answer must come from the listener's own server: the API server has an
+// IdleTimeout too, so if it answered on another listener's address the test would prove
+// nothing about that listener.
 func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 	previous := idleTimeout
 	idleTimeout = 300 * time.Millisecond
@@ -122,18 +124,36 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 		name    string
 		setting *string
 		path    string
+		// body is text only that listener's server answers with: pprof.Cmdline writes the
+		// process arguments, and the Prometheus handler writes TYPE lines. The API and peer
+		// servers share one handler, so for them the distinct addresses checked below and the
+		// router still running at the end show each listened on its own.
+		body string
 	}{
-		{"api", &settings.Addr, "/health"},
-		{"peer", &settings.Node.Listen, "/health"},
-		{"pprof", &settings.PprofAddr, "/debug/pprof/cmdline"},
-		{"metrics", &settings.MetricsAddr, "/metrics"},
+		{"api", &settings.Addr, "/health", ""},
+		{"peer", &settings.Node.Listen, "/health", ""},
+		{"pprof", &settings.PprofAddr, "/debug/pprof/cmdline", os.Args[0]},
+		{"metrics", &settings.MetricsAddr, "/metrics", "# TYPE "},
 	}
+	// The process id spreads parallel packages over the range.
+	base := 20000 + (os.Getpid()%2000)*6
+	// Holding the first free port makes a call site that scans each listener from its own base
+	// pick the held port's neighbour twice, and fail.
+	held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.freePort(base)))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = held.Close() })
+	ports := s.freePorts(base, len(listeners))
+	addresses := map[string]string{}
+	var given []string
 	for i, listener := range listeners {
-		// 20000-32767 is below the ephemeral ranges of Linux (32768-60999) and macOS
-		// (49152-65535), so a client's own connection does not take the port. The
-		// process id spreads parallel packages over the range.
-		*listener.setting = s.freeAddress(20000 + (os.Getpid()%2000)*6 + i)
+		*listener.setting = fmt.Sprintf("127.0.0.1:%d", ports[i])
+		other, taken := addresses[*listener.setting]
+		s.Require().False(taken, "%s and %s were given one address, %s", other, listener.name, *listener.setting)
+		addresses[*listener.setting] = listener.name
+		given = append(given, *listener.setting)
 	}
+	// A table row that points at the wrong setting leaves another one empty or set twice.
+	s.Require().Equal(given, []string{settings.Addr, settings.Node.Listen, settings.PprofAddr, settings.MetricsAddr}, "a row points at the wrong setting")
 
 	stopped := make(chan error, 1)
 	go func() { stopped <- run(settings, slog.New(slog.DiscardHandler)) }()
@@ -159,13 +179,18 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 			defer conn.Close() //nolint:errcheck // the test is ending
 			reader := bufio.NewReader(conn)
 
+			// A listener that accepts but is never served would hang the read below; the same 20 s
+			// as the idle read further down.
+			s.Require().NoError(conn.SetReadDeadline(time.Now().Add(20 * time.Second)))
 			_, err := fmt.Fprintf(conn, "GET %s HTTP/1.1\r\nHost: x\r\n\r\n", listener.path)
 			s.Require().NoError(err)
 			response, err := http.ReadResponse(reader, nil)
 			s.Require().NoError(err)
-			_, err = io.Copy(io.Discard, response.Body)
+			body, err := io.ReadAll(response.Body)
 			s.Require().NoError(err)
 			s.Require().NoError(response.Body.Close())
+			s.Equal(http.StatusOK, response.StatusCode, "%s answered %s", listener.name, listener.path)
+			s.Contains(string(body), listener.body, "another server answered on the %s address", listener.name)
 
 			// A server without IdleTimeout never closes the connection, so 20 s still fails it, and is
 			// generous for a starved CI runner (a stalled VM overran 5 s).
@@ -174,21 +199,67 @@ func (s *IdleTimeoutSuite) TestEveryListenerClosesAnIdleConnection() {
 			s.True(errors.Is(err, io.EOF), "the server held an idle connection open: %v", err)
 		})
 	}
+
+	// A bind failure of the API or peer listener ends run; pprof and metrics retry instead, so their subtests check the body.
+	select {
+	case err := <-stopped:
+		stopped <- err // the cleanup reads it, and must not signal a router that has ended
+		s.Failf("the router stopped while the listeners were checked", "%v", err)
+	default:
+	}
 }
 
-// freeAddress is the first loopback address from port up that nothing listens on.
-func (s *IdleTimeoutSuite) freeAddress(port int) string {
-	for ; port < 32768; port++ {
-		addr := fmt.Sprintf("127.0.0.1:%d", port)
-		opened, err := net.Listen("tcp", addr)
+// TestFreePortsDiffer holds the first candidate port, which pushes the first listener on to
+// the next port. The ports must still all differ: scanning each from the same start would
+// give every one of them that next port.
+func (s *IdleTimeoutSuite) TestFreePortsDiffer() {
+	start := 20000 + (os.Getpid()%2000)*6
+	held, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", s.freePort(start)))
+	s.Require().NoError(err)
+	defer held.Close() //nolint:errcheck // the test is ending
+
+	ports := s.freePorts(start, 4)
+	s.Len(ports, 4)
+	chosen := map[int]bool{}
+	for _, port := range ports {
+		s.False(chosen[port], "port %d was chosen twice in %v", port, ports)
+		chosen[port] = true
+	}
+}
+
+// TestFreePortWraps: a scan that starts past 32767, as the one after the last port of the
+// range does, wraps to 20000 and stays out of the ephemeral ranges.
+func (s *IdleTimeoutSuite) TestFreePortWraps() {
+	port := s.freePort(32768)
+	s.GreaterOrEqual(port, 20000)
+	s.Less(port, 32768)
+}
+
+// freePorts is n different ports nothing listens on. Each scan starts after the previous port.
+func (s *IdleTimeoutSuite) freePorts(from, n int) []int {
+	ports := make([]int, n)
+	for i := range ports {
+		ports[i] = s.freePort(from)
+		from = ports[i] + 1
+	}
+	return ports
+}
+
+// freePort is the first loopback port from the given one up to 32767, wrapping to 20000, that
+// nothing listens on. 20000-32767 is below the ephemeral ranges of Linux (32768-60999) and macOS
+// (49152-65535), so a client's own connection does not take the port.
+func (s *IdleTimeoutSuite) freePort(from int) int {
+	for i := 0; i < 32768-20000; i++ {
+		port := 20000 + (from-20000+i)%(32768-20000)
+		opened, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", port))
 		if err != nil {
 			continue
 		}
 		s.Require().NoError(opened.Close())
-		return addr
+		return port
 	}
 	s.FailNow("no free port in 20000-32767")
-	return ""
+	return 0
 }
 
 func (s *IdleTimeoutSuite) dialWhenListening(addr string) net.Conn {

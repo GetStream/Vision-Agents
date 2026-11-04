@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
@@ -71,8 +72,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
@@ -173,7 +172,6 @@ const usage = `usage: router [--config path] [command]
   keys create           mint a credential for an app, printing the secret once
   replicate             copy another deployment's data here and follow its changes
   stream-apps           look after the Stream apps customers registered in app mode
-  plugins migrate       move the plugin rows onto connectors, by hand; --apply writes
   prices                read and check the price list (router prices for its commands)
   usage replay          write the usage rows a log says were lost, once each (--from path)
   usage reship          send this shard's shipped or refused rows to the usage service again (--since, --rejected)
@@ -259,8 +257,6 @@ func dispatchCommand(command string, args []string, settings config.Config, logg
 		return runReplicate(args, settings, logger)
 	case "stream-apps":
 		return runStreamApps(args, settings, logger)
-	case "plugins":
-		return runPlugins(args, settings, logger)
 	case "prices":
 		return runPrices(args, settings, logger)
 	case "usage":
@@ -606,6 +602,14 @@ func run(settings config.Config, logger *slog.Logger) error {
 	} else {
 		logger.Warn("no database configured, statistics will not be recorded", "setting", "postgres.dsn")
 	}
+	// Checked against the list in force: the database's once read, which holds what staff
+	// priced since the files, else the files'.
+	billed := billable.Items(billableOf(settings, capabilities, vendorConfig))
+	if activePrices != nil {
+		logUnpriced(activePrices.List(), billed, logger)
+	} else {
+		logUnpriced(fallbackPrices, billed, logger)
+	}
 	// After the store, which holds the apps' own OAuth clients oauth2_code looks up.
 	connectors, err := newConnectorRegistry(settings, api.ConnectorClients(pgStore, connectorSecrets, os.Getenv))
 	if err != nil {
@@ -710,6 +714,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// with limits off. Money is read from the usage service, and from Postgres without one.
 	warnLimits(settings, logger)
 	warnKnowledgeLimits(settings, logger)
+	// Checked here as well as where the backends are built, since a router that cannot build
+	// them serves without knowledge rather than failing.
+	if err := knowledgeRegionsApart(knowledgeRegions(settings.Knowledge)); err != nil {
+		return err
+	}
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
@@ -1045,7 +1054,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		pgStore.SetStreamPins(streamPins(streamClients))
 	}
 	go learnDeploymentApp(ctx, streamClients, logger)
-	go warnWithoutMessageHook(ctx, settings, streamClients, logger)
 
 	// Texts, call minutes, numbers and 10DLC fees are all telephony rows, through one recorder.
 	var phoneRecorder *routing.Recorder
@@ -1073,7 +1081,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		// A call whose end was never announced is ended at the longest a call may last, and a
 		// leg whose row was lost is recorded again. Months of numbers and of 10DLC campaigns are
 		// billed by jobs of their own (router usage numbers, router usage dlc).
-		go telephony.RunLegSweep(ctx, phone.LegSweepEvery)
+		go telephony.RunLegSweep(ctx, legSweepEvery)
 		go checkCallHook(ctx, settings, logger)
 		startPhoneSweeper(ctx, telephony, logger)
 	}
@@ -1099,12 +1107,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	pluginAuth := &plugins.Auth{
-		PublicURL:    settings.PublicURL,
-		DashboardURL: settings.DashboardURL,
-		Clients:      session.PluginClients(pgStore, secrets),
-	}
-
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
 	sessionConnectors := session.Connectors{Registry: connectors, Transports: connectorTransports,
@@ -1115,7 +1117,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1137,23 +1139,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer campaigns.Close()
-	}
-
-	// A plugin event opens a conversation and is subscribed to from a row, so events need
-	// both. Elsewhere a config's plugin_events are stored and nothing subscribes to them.
-	var events *pluginevents.Service
-	if pgStore != nil && sessions != nil {
-		events, err = pluginevents.New(pluginevents.Options{
-			Store:    pgStore,
-			Sessions: sessions,
-			Auth:     pluginAuth,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		events.Start()
-		defer events.Close()
 	}
 
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
@@ -1311,6 +1296,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Routers:               routers,
 		Pricer:                prices,
 		Prices:                activePrices,
+		Billable:              billed,
 		Voices:                voiceService,
 		VoiceLibrary:          library,
 		KnowledgeURLs:         pages,
@@ -1332,7 +1318,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
-		PluginEvents:          events,
 		DLC:                   registrations,
 		Gate:                  dlcGate,
 		OpsKey:                settings.Auth.OpsKey,
@@ -1527,13 +1512,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		deliveries.Start(ctx)
 		defer deliveries.Close()
 	}
-	// App mode's counterpart of warnWithoutMessageHook: the Stream apps provider apps are
-	// pinned to, read once, within the one attempt's time the deployment's own check gets.
-	go func() {
-		attempt, cancel := context.WithTimeout(ctx, learnTimeout)
-		defer cancel()
-		server.WarnWithoutMessageHooks(attempt)
-	}()
 
 	handler := server.Handler()
 	public, err := listen(settings.Addr, settings.ListenFD, "listen_fd")
@@ -1587,7 +1565,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1702,10 +1680,11 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, and chat answers a router holds; one without one of them holds none of its work. A
-// turn counts until it ends, also before the session it opens is counted.
+// over, chat answers and the app chat's episode cards a router holds; one without one of them
+// holds none of its work. A turn counts until it ends, also before the session it opens is
+// counted.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker) int {
+	deliveries *chatinbound.Worker, server *api.Server) int {
 	held := 0
 	if sessions != nil {
 		held += sessions.Len()
@@ -1718,6 +1697,9 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge 
 	}
 	if deliveries != nil {
 		held += deliveries.Running()
+	}
+	if server != nil {
+		held += server.ChatCardsRunning()
 	}
 	return held
 }
@@ -1939,7 +1921,6 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	stream *streamapp.Clients,
-	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
@@ -1986,7 +1967,6 @@ func buildSessions(
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,
-		PluginAuth:         pluginAuth,
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
@@ -2091,12 +2071,9 @@ func knowledgeAccounts(settings config.Knowledge, timeout time.Duration, logger 
 // gcp-us-central1, as before regions. One key, TURBOPUFFER_API_KEY, is the organization's in
 // every turbopuffer region.
 func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) (map[string]knowledge.Backend, error) {
-	mapped := maps.Clone(settings.Regions)
-	if mapped == nil {
-		mapped = map[string]string{}
-	}
-	if _, ok := mapped[pricing.DefaultRegion]; !ok {
-		mapped[pricing.DefaultRegion] = ""
+	mapped := knowledgeRegions(settings)
+	if err := knowledgeRegionsApart(mapped); err != nil {
+		return nil, err
 	}
 	backends := make(map[string]knowledge.Backend, len(mapped))
 	for region, theirs := range mapped {
@@ -2107,6 +2084,35 @@ func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger 
 		backends[region] = backend
 	}
 	return backends, nil
+}
+
+// knowledgeRegions is each region knowledge is kept in, mapped to the turbopuffer region the
+// settings name for it, the default region always among them and empty where none is named.
+func knowledgeRegions(settings config.Knowledge) map[string]string {
+	mapped := maps.Clone(settings.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	return mapped
+}
+
+// knowledgeRegionsApart refuses two regions kept in one turbopuffer region, the default
+// region's included: its knowledge bases would be listed under both, and the storage job would
+// bill each twice.
+func knowledgeRegionsApart(mapped map[string]string) error {
+	served := map[string]string{}
+	for _, region := range slices.Sorted(maps.Keys(mapped)) {
+		theirs := turbopuffer.Region(mapped[region])
+		if other, ok := served[theirs]; ok {
+			return fmt.Errorf("knowledge.regions (ROUTER_KNOWLEDGE_REGIONS) keeps %s and %s in one turbopuffer region, %s: "+
+				"give each its own", other, region, theirs)
+		}
+		served[theirs] = region
+	}
+	return nil
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.
@@ -2215,23 +2221,14 @@ func buildVoices(
 // the embedded vendor.json), priced as a first load prices them, with the models the routing
 // config runs itself marked local: every row is priced by it on a router with no database,
 // and until the database is read on one with. A price: block in the
-// routing config is no longer read, which is said at start, and so is billable work the
-// list has no price for, so it can be priced before a row of it is recorded at nothing.
+// routing config is no longer read, which is said at start.
 func newPrices(capabilities routing.Config, files store.PriceLoad, version string, logger *slog.Logger) (*pricing.List, error) {
 	if ignored := pricedProviders(capabilities); len(ignored) > 0 {
 		logger.Warn("price: in the routing config is ignored; prices come from prices/vendor.json and "+
 			"ROUTER_PRICES_FILE. router prices export --from <config> --out <file> moves them into a file for ROUTER_PRICES_FILE",
 			"providers", ignored)
 	}
-	list, err := pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
-	if err != nil {
-		return nil, err
-	}
-	for _, item := range list.Unpriced(routing.Items(capabilities)) {
-		logger.Error("billable work has no price", "modality", item.Modality, "provider", item.Provider, "model", item.Model,
-			"region", item.Region, "byok", item.BYOK)
-	}
-	return list, nil
+	return pricing.NewList(version, prices.WithLocal(files.Entries, routing.LocalItems(capabilities)), logger)
 }
 
 // newActivePrices is the price list every row is priced by on a router with a database: the
@@ -2280,7 +2277,7 @@ func buildPhone(
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
 		Store:     pgStore,
-		Apps:      phoneApps{clients: stream},
+		Apps:      phone.AppsOf(stream),
 		Recorder:  recorder,
 		Gate:      gate,
 		PublicURL: settings.PublicURL,
@@ -2334,8 +2331,14 @@ func closePhone(telephony *phone.Service, logger *slog.Logger) {
 }
 
 // dlcPollEvery is how often the use cases a vendor holds are asked after, for the reports
-// its hook missed. A campaign takes days, so this is not what makes one quick.
-const dlcPollEvery = 15 * time.Minute
+// its hook missed. A campaign takes days, so this is not what makes one quick. It and
+// telnyxDLC are variables, and so is legSweepEvery, so a test of the router's start can sweep
+// and poll sooner, against a vendor of its own.
+var (
+	legSweepEvery = phone.LegSweepEvery
+	dlcPollEvery  = 15 * time.Minute
+	telnyxDLC     dlctelnyx.Options
+)
 
 // buildDLC wires 10DLC review and the gate every text and call passes. Without a database
 // there is nothing to register or enforce. Without a Telnyx key Stream's approval is final,
@@ -2366,8 +2369,8 @@ func buildDLC(
 			"audio_minutes", settings.Sandbox.AudioMinutesPerDay)
 	}
 
-	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Logger: logger}
-	if registrar, err := dlctelnyx.New(dlctelnyx.Options{}); err == nil {
+	options := dlc.Options{Store: pgStore, PublicURL: settings.PublicURL, Recorder: recorder, Booker: gate, Logger: logger}
+	if registrar, err := dlctelnyx.New(telnyxDLC); err == nil {
 		options.Registrar = registrar
 	} else {
 		logger.Debug("no 10DLC registrar, Stream's approval of a use case is final", "error", err)

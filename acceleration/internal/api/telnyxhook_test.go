@@ -129,7 +129,7 @@ func (s *TelnyxHookSuite) TestWithoutAConfiguredTeXMLApplicationNoCallIsAnswered
 func (s *TelnyxHookSuite) TestWithoutAKeyringACallSaysWhatToSet() {
 	s.attach(s.e164, "sip:"+s.e164+"@trunk.sip.example.test", "trunk-user", "trunk-password")
 	sealed := s.router.phone
-	s.router.phone = s.telephonySealedBy(nil, slog.New(slog.NewTextHandler(s.logged, nil)))
+	s.router.phone = s.telephonySealedBy(nil, nil, slog.New(slog.NewTextHandler(s.logged, nil)))
 	defer func() { s.router.phone = sealed }()
 
 	status, _, body := s.deliver(s.call(s.e164), true)

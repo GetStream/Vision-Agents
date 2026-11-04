@@ -58,23 +58,29 @@ func (a *Agent) Prompt(ctx context.Context, text string) error {
 	return session.Prompt(text)
 }
 
+// errNativeTakesNoImages is a typed turn with images for a speech-to-speech agent.
+var errNativeTakesNoImages = errors.New("agent: a speech-to-speech agent takes no images on a typed turn")
+
+// errNotJoined is a typed turn for an agent that has not joined, or has left.
+var errNotJoined = errors.New("agent: not joined")
+
 // respondNative injects a typed turn. The model answers it as it would a spoken one, and
 // the reply arrives on the same events. Images are refused: what a native model sees is
 // its own business, and a typed turn is words. Whether a scheduled task fired it is kept
 // for the work the model hands over until the caller is next heard.
 func (a *Agent) respondNative(ctx context.Context, text string, images []llm.ImagePart) error {
 	if len(images) > 0 {
-		return stack.Wrap(errors.New("agent: a speech-to-speech agent takes no images on a typed turn"))
+		return stack.Wrap(errNativeTakesNoImages)
 	}
 	session := a.speech()
 	if session == nil {
-		return stack.Wrap(errors.New("agent: not joined"))
+		return stack.Wrap(errNotJoined)
 	}
 	caller := stt.Participant{ID: "caller"}
 	// A typed turn is not transcribed, so it is written into the history here, where a
 	// spoken one is written when the model reports having heard it.
 	a.mu.Lock()
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	a.history = append(a.history, llm.Message{Role: llm.User, Content: harness.Defang(text)})
 	a.heardText = text
 	a.lastParticipant = caller
 	a.scheduled = routing.ScheduledTurn(ctx)
@@ -185,18 +191,41 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 			}
 			a.mu.Unlock()
 			continue
+		case sts.ResponseStarted:
+			// Kept here, in order with the tool calls and the caller's speech, so a call of
+			// this reply that arrives after the caller is heard is still the task's.
+			// The first reply after the caller stopped answers them, even when a scheduled
+			// turn was typed in before it began: the server answers that turn after it.
+			a.mu.Lock()
+			if a.nativeAnswerDue {
+				a.answerReply = typed.ResponseID
+			} else if a.scheduled {
+				a.scheduledReply = typed.ResponseID
+			}
+			a.nativeAnswerDue = false
+			a.mu.Unlock()
+			a.goodbyeBegan(typed.ResponseID)
 		case sts.SpeechStarted:
 			// The caller is heard, so the turn is no longer the scheduled task's. Cleared
 			// here rather than in consumeSTS: a tool call that follows runs at once, ahead
-			// of the queue.
+			// of the queue. A call already asked keeps the mark it arrived with.
 			a.mu.Lock()
 			a.nativeListening = true
 			a.scheduled = false
+			if a.goodbye != nil {
+				a.goodbye.cancel()
+			}
 			a.mu.Unlock()
 		case sts.SpeechStopped:
+			// A stop is answered by the next reply: the one the server opens for it, or,
+			// when a reply was still open, the one asked for after that reply ends
+			// (openairealtime's owe). On Gemini the open reply takes it, and none follows.
 			a.mu.Lock()
 			a.nativeListening = false
+			a.nativeAnswerDue = !typed.Answered
 			a.mu.Unlock()
+		case sts.AudioChunk:
+			a.goodbyeBegan(typed.ResponseID)
 		}
 		if complete, ok := event.(sts.ResponseComplete); ok && complete.Interrupted {
 			a.mu.Lock()
@@ -376,6 +405,10 @@ func (a *Agent) recoverNative(p *pipeline, retry bool, failure error) {
 	}
 
 	a.mu.Lock()
+	// The goodbye was dropped with the session, so it is as heard as it will ever be.
+	if a.goodbye != nil {
+		a.goodbye.finishLocked()
+	}
 	a.generating = false
 	a.utterances = 0
 	a.speakingTurn = ""
@@ -482,7 +515,7 @@ func (a *Agent) heardNative(transcript sts.InputTranscript) {
 		a.mu.Unlock()
 		return
 	}
-	a.history = append(a.history, llm.Message{Role: llm.User, Content: text})
+	a.history = append(a.history, llm.Message{Role: llm.User, Content: harness.Defang(text)})
 	a.heardText = text
 	a.lastParticipant = participant
 	a.lastHeardAt = time.Now()
@@ -492,7 +525,7 @@ func (a *Agent) heardNative(transcript sts.InputTranscript) {
 	a.mu.Unlock()
 
 	a.logger.Debug("heard", "participant", participant.ID, "text", text)
-	a.emitter.Send(Heard{Participant: participant, Text: text, Language: transcript.Language})
+	sendHeard(a.emitter, a.options.OnHeard, Heard{Participant: participant, Text: text, Language: transcript.Language})
 }
 
 // saidNative reports what the model wrote down of itself. Deltas are what a watcher reads
@@ -518,6 +551,21 @@ func (a *Agent) saidNative(transcript sts.OutputTranscript) {
 	}
 	a.mu.Unlock()
 	a.emitter.Send(ResponseDelta{TurnID: transcript.ResponseID, Text: transcript.Text})
+}
+
+// goodbyeBegan notes the reply a native model gives after end_call ran. It is read in
+// provider order, where everything after the call is the model answering it: a new reply, or
+// more audio from the one that made the call, which is how a model that carries on in the
+// same reply says goodbye.
+func (a *Agent) goodbyeBegan(responseID string) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	bye := a.goodbye
+	if bye == nil || bye.reply != "" || bye.finished {
+		return
+	}
+	bye.reply = responseID
+	close(bye.started)
 }
 
 // replyStarted opens a turn for a reply the model began.
@@ -609,6 +657,11 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	a.generating = false
 	a.saying = ""
+	// A goodbye cut short is either the caller talking, which SpeechStarted cancels, or a
+	// lost session, which recoverNative finishes: providers report both as interrupted.
+	if bye := a.goodbye; bye != nil && bye.reply == complete.ResponseID && !complete.Interrupted {
+		bye.finishLocked()
+	}
 	if said != "" {
 		a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: said})
 	}
@@ -716,7 +769,7 @@ func (a *Agent) nativeDelegate(call llm.ToolCall) ([]llm.ContentPart, bool, erro
 			history = append(history, message)
 		}
 	}
-	charged := a.chargedLocked(context.Background())
+	charged := a.chargedLocked(context.Background(), a.toolScheduled[call.ID])
 	a.mu.Unlock()
 	id, err := a.harness.Delegate(charged, arguments.Skill, arguments.Prompt, call.ID, nil, history)
 	if err != nil {

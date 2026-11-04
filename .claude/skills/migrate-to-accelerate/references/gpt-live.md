@@ -53,7 +53,7 @@ Tools live on the delegated backend, not the voice model:
 | --- | --- |
 | Backend `tools: [{type: function, name, parameters}]` | `@agent.llm.register_function(description=...)` with the same name/parameters |
 | Backend hosted `web_search` | Search is a router capability; keep the need in the skill instructions and report how it was wired |
-| Backend MCP tools | `mcp_servers:` / `connectors:` in `agent.yaml` |
+| Backend MCP tools | A catalog `connectors:` entry, or for a server given by URL a custom connector plus a binding (see "MCP servers by URL" in `SKILL.md`) |
 | Delegation mode settings, `tool_choice` | No equivalent keys; `tool_choice` is dropped and reported |
 
 ## Knowledge base

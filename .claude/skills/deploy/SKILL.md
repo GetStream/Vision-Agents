@@ -86,6 +86,77 @@ builds this checkout and swaps it in, in 11-20 s warm.
   every call held, nothing answered 5xx, and devrun logged `pid N (sha) drained in ...,
   exit 0` for each old router once its last call ended.
 
+## Sandbox proxy
+
+Staging and every prod shard run the router with `broker: proxy`: code in a sandbox reaches a
+connector's API through the router's egress proxy (`acceleration/internal/sandbox/egress/AGENTS.md`),
+not through Daytona Secrets.
+
+| Where | On since | GetStream/chat PR |
+|---|---|---|
+| staging | AI-2035 | |
+| prod us-east4 | AI-2461 | #20044 |
+| prod us-west1, europe-west4 | AI-2464 | #20103 |
+
+AI-2462 proved it live on prod us-east4: `run_code` `GET api.github.com/user` through the proxy
+answered 200, and the token never reached the sandbox.
+
+- The values are in GetStream/chat on branch `thierry/accelerate-gke`, not master. Staging's file
+  is `infra/shards/us-east1-acceleration/accelerate-staging.yaml`. Each prod shard has its own
+  file, `infra/shards/<region>-acceleration/accelerate-prod.yaml`.
+- `router.sandboxProxy` holds `enabled`, `broker: proxy`, the public URL (it holds the proxy port)
+  and the LoadBalancer's reserved address. The accelerate chart (`infra/charts/accelerate`, same
+  branch) renders the Service from them.
+- `router.overlapDeploy.holdSandboxProxy: true` makes devrun hold the proxy port :8091.
+  `router.overlapDeploy.devrunImage` pins the devrun that can hold it (chat #19840).
+- The CA certificate and key are two secrets, `ROUTER_CODE_SANDBOX_PROXY_CA_CERT` and
+  `ROUTER_CODE_SANDBOX_PROXY_CA_KEY`. They reach the pods through `accelerate-secrets`, which is
+  synced from Secret Manager. Staging has its own CA. Each prod shard has its own P-256 CA
+  (AI-2460). The comment above `sandboxProxy` in each values file names the CA's expiry.
+- Rotate each CA before it expires. Staging: the steps are in Linear AI-2069. Prod: AI-2663
+  (us-east4), AI-2664 (us-west1) and AI-2665 (europe-west4), each due 2027-10-02.
+- This repo is public. Read addresses and secret paths in the values file, and do not copy them here.
+
+Verify after an apply, on each shard (AI-2461, AI-2464):
+
+1. The rollout finishes, and each router logs `serving the sandbox egress proxy` with `tls=true`.
+2. TLS verifies against that shard's CA: `openssl s_client -connect <address>:8091 -CAfile
+   <shard CA cert> -verify_ip <address> -verify_return_error` prints `Verification: OK`.
+3. A CONNECT without a credential gets `407 Proxy Authentication Required`.
+4. One `run_code` `GET api.github.com/user` through a binding with `sandbox: true` answers 200.
+
+Only us-east4 has a public hostname: it is the only region behind the global load balancer
+(`accelerate_prod_regions` in `infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`). To
+test us-west1 or europe-west4, run `kubectl --context <shard context> -n accelerate-prod
+port-forward deploy/chat-accelerate-prod <port>:8080` and call the router as the app. Prod runs
+`authMode: proxy` with
+`proxyDeclaresKind: true`, so send `X-Stream-App-Id: <app>` and `Stream-Auth-Type: server`
+(`acceleration/internal/auth/auth.go`, `proxied.Authenticate`). Also send
+`X-Stream-Api-Key-Id: <the app's public key>` (`APIKeyIDHeader`, `auth.go:112-118`) and
+`X-Stream-Actor-Name: <your name>`. Without the key header, the router records the run's usage
+with no API key and raises the `unattributed` usage alert. This happened on prod us-west1 and
+europe-west4 on 2026-11-03 21:28Z (AI-2464 E2E). The sandbox still reaches the shard's proxy on
+its public address.
+
+Datadog (AI-2463, chat #20097, `infra/shards/us-east4-acceleration/datadog/sandbox_egress.tf`):
+
+- The dashboard "Accelerate sandbox egress proxy" shows the proxy's requests per cluster, decision
+  and host.
+- The monitor `sandbox_egress_5xx` fires on 3 or more 5xx in 30 minutes in `accelerate-prod`, all
+  clusters together. A refused Upgrade (`denied_request`, 501) does not count. It notifies
+  `@oncall-agents` and pages nobody.
+- Datadog scrapes the router in us-west1 and europe-west4 since #20103 (`monitoring.datadog.enabled`).
+
+To turn the proxy off on one shard:
+
+1. In that shard's values file, set `router.overlapDeploy.holdSandboxProxy: false` and
+   `router.sandboxProxy.enabled: false`.
+2. Run `rocky accelerate up --region <region>-acceleration --env prod`.
+3. Wait for the rollout to finish. An edit alone changes nothing.
+
+With the proxy off, prod refuses a session that binds a sandbox again. The steps come from the
+AI-2461 and AI-2464 apply plan. The chart renders the hold only while `sandboxProxy.enabled` is on.
+
 ## Production
 
 Production is three shards, us-east4, us-west1 and europe-west4. Each region has its own
@@ -126,12 +197,15 @@ and check that the pods start and open an existing connection. To roll back, res
 - Never roll back below `accelerate-v0.6.135`, the first tag with f38926d2 (#1182): an older
   router ignores `require_approval` on connector bindings, so their write tools run without
   the person's approval. This floor holds in every environment.
-- Staging has a second, higher floor: never roll back below `accelerate-v0.6.191` (#1433). Since 2026-10-29
-  staging devrun holds the sandbox proxy port :8091 and passes it to the router as fd 4
-  (`router.overlapDeploy.holdSandboxProxy`, GetStream/chat #19810, #19840). A router older than v0.6.191 ignores that socket and retries :8091
-  until it exits: the API serves, the sandbox proxy does not. To go below it, in this order:
-  1. Set `router.overlapDeploy.holdSandboxProxy: false`.
-  2. Run `rocky accelerate up --region us-east1-acceleration --env staging`.
+- Staging and every prod shard have a second, higher floor: never roll back below
+  `accelerate-v0.6.191` (#1433). Since 2026-10-29 staging devrun holds the sandbox proxy port
+  :8091 and passes it to the router as fd 4 (`router.overlapDeploy.holdSandboxProxy`, GetStream/chat
+  #19810, #19840). Prod devrun does the same since AI-2461 (us-east4) and AI-2464 (us-west1,
+  europe-west4). A router older than v0.6.191 ignores that socket and retries :8091 until it
+  exits: the API serves, the sandbox proxy does not. To go below it on one shard, in this order:
+  1. Set `router.overlapDeploy.holdSandboxProxy: false` in that shard's values file.
+  2. Run `rocky accelerate up --region us-east1-acceleration --env staging`, or on prod
+     `rocky accelerate up --region <region>-acceleration --env prod`.
   3. Wait for the rollout.
   4. Roll back.
 

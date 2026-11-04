@@ -1,4 +1,5 @@
-# HubSpot's hosted MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# HubSpot's hosted MCP server, moved from the plugin catalog (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
 # entry hubspot, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
 # connectors/planning). Vendor page, opened October 7, 2026:
 #   [setup] https://developers.hubspot.com/docs/apps/developer-platform/build-apps/integrate-with-the-remote-hubspot-mcp-server
@@ -49,8 +50,7 @@ client:
 # [plugin] asks for none.
 # No identity, capture or refresh policy: «OAuth access tokens expire after a set period»
 # ([setup]) and nothing more. # unverified
-# So refresh.rotating is left unset, which is unknown: router plugins migrate moves a grant
-# with a refresh token here only with --include-rotating (internal/pluginmigrate).
+# So refresh.rotating is left unset, which is unknown.
 sources:
   - kind: mcp
     endpoint: mcp

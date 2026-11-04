@@ -112,6 +112,24 @@ func (g *Gate) admit(ctx context.Context, customerID string) (routing.Admission,
 	return admission, stack.Wrap(fmt.Errorf("%w: %w", ErrUnpaid, err))
 }
 
+// Book sets micros of the owner's credit aside for a purchase before its vendor is asked, when
+// the money Charging set books (routing.Booker), refusing with ErrUnpaid what the credit does
+// not cover, in every limits mode. With no such money it books nothing.
+func (g *Gate) Book(ctx context.Context, owner routing.Owner, micros int64) (routing.Booked, error) {
+	if g == nil {
+		return routing.NoBooking, nil
+	}
+	booker, ok := g.money.(routing.Booker)
+	if !ok {
+		return routing.NoBooking, nil
+	}
+	booked, err := booker.Book(ctx, owner, micros)
+	if err != nil {
+		return routing.NoBooking, stack.Wrap(fmt.Errorf("%w: %w", ErrUnpaid, err))
+	}
+	return booked, nil
+}
+
 // NewGate returns a Gate. redis may be nil, which leaves the daily limits uncounted.
 func NewGate(store *store.Store, redis rueidis.Client, sandbox Sandbox, logger *slog.Logger) *Gate {
 	if logger == nil {
@@ -160,7 +178,7 @@ func (g *Gate) allow(ctx context.Context, customerID, channel, to string, into C
 		return err
 	}
 	if optedOut {
-		return stack.Wrap(fmt.Errorf("%w: %s opted out of %s", ErrRefused, to, channel))
+		return refused(codeOptedOut, stack.Wrap(fmt.Errorf("%w: %s opted out of %s", ErrRefused, to, channel)))
 	}
 	if err := g.inSandbox(ctx, customerID, channel, to); err != nil {
 		return err
@@ -179,7 +197,7 @@ func (g *Gate) inSandbox(ctx context.Context, customerID, channel, to string) er
 		return err
 	}
 	if !slices.Contains(recipients, to) {
-		return stack.Wrap(fmt.Errorf("%w: until a use case is approved, only sandbox recipients can be reached, and %s is not one", ErrRefused, to))
+		return refused(codeSandboxRecipient, stack.Wrap(fmt.Errorf("%w: until a use case is approved, only sandbox recipients can be reached, and %s is not one", ErrRefused, to)))
 	}
 	spent, err := g.spent(ctx, customerID)
 	if err != nil {
@@ -187,12 +205,12 @@ func (g *Gate) inSandbox(ctx context.Context, customerID, channel, to string) er
 	}
 	if channel == Voice {
 		if limit := g.sandbox.AudioMinutesPerDay; limit > 0 && spent.AudioSeconds >= limit*60 {
-			return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d minutes of calls a day", ErrRefused, limit))
+			return refused(codeSandboxMinutes, stack.Wrap(fmt.Errorf("%w: the sandbox allows %d minutes of calls a day", ErrRefused, limit)))
 		}
 		return nil
 	}
 	if limit := g.sandbox.MessagesPerDay; limit > 0 && spent.Messages >= limit {
-		return stack.Wrap(fmt.Errorf("%w: the sandbox allows %d messages a day", ErrRefused, limit))
+		return refused(codeSandboxMessages, stack.Wrap(fmt.Errorf("%w: the sandbox allows %d messages a day", ErrRefused, limit)))
 	}
 	return nil
 }

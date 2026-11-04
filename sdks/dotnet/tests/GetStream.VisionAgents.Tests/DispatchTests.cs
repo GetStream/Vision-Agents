@@ -127,6 +127,109 @@ public sealed class DispatchTests
     }
 
     [Fact]
+    public void AMessageFrameCarriesItsPhotosInOrder()
+    {
+        var frame = JsonNode.Parse("""
+            {"type": "message", "text": "what is this?", "images": [
+                {"url": "https://example.com/a.png", "mime_type": "image/png"},
+                "https://example.com/skipped.png",
+                {"url": "https://example.com/b.jpg"},
+                {"url": "https://example.com/c.webp", "mime_type": 5}
+            ]}
+            """)!.AsObject();
+
+        var images = Dispatch.MessageOf(new Frame(frame)).Images;
+
+        Assert.Equal(
+            [
+                new InboundImage("https://example.com/a.png", "image/png"),
+                new InboundImage("https://example.com/b.jpg"),
+                new InboundImage("https://example.com/c.webp"),
+            ],
+            images);
+    }
+
+    [Theory]
+    [InlineData("""{"type": "message", "text": "hi"}""")]
+    [InlineData("""{"type": "message", "images": null}""")]
+    [InlineData("""{"type": "message", "images": []}""")]
+    [InlineData("""{"type": "message", "images": {}}""")]
+    [InlineData("""{"type": "message", "images": {"url": "https://example.com/a.png"}}""")]
+    [InlineData("""{"type": "message", "images": "https://example.com/a.png"}""")]
+    [InlineData("""{"type": "message", "images": [null, 3, "https://example.com/a.png", [], {}]}""")]
+    [InlineData("""{"type": "message", "images": [{"url": ""}, {"url": 7}, {"url": null}, {"mime_type": "image/png"}]}""")]
+    public void AMessageFrameWithNoPhotoToFetchCarriesNone(string sent)
+    {
+        var message = Dispatch.MessageOf(new Frame(JsonNode.Parse(sent)!.AsObject()));
+
+        Assert.Empty(message.Images);
+    }
+
+    [Fact]
+    public async Task AnsweringAMessageWithPhotosShowsThemToTheModelOnItsRequestId()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
+        using var client = Fixtures.Client(router);
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+
+        await dispatch.AnswerAsync(
+            new InboundMessage
+            {
+                ChannelId = "",
+                SessionId = "s1",
+                RequestId = "req-1",
+                UserId = "ada",
+                Text = "what is this?",
+                Images = [new InboundImage("https://example.com/a.png", "image/png"), new InboundImage("https://example.com/b.jpg")],
+            },
+            TestContext.Current.CancellationToken);
+
+        var sent = router.Only("POST", "/v1/agents/sessions/s1/responses").Body;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""
+            {"images": [{"url": "https://example.com/a.png"}, {"url": "https://example.com/b.jpg"}],
+             "request_id": "req-1", "text": "what is this?"}
+            """), sent), sent!.ToJsonString());
+    }
+
+    [Fact]
+    public async Task AnsweringAMessageWithPhotosAndNoRequestIdSendsNone()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
+        using var client = Fixtures.Client(router);
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+
+        await dispatch.AnswerAsync(
+            new InboundMessage { ChannelId = "", SessionId = "s1", UserId = "ada", Text = "", Images = [new InboundImage("https://example.com/a.png")] },
+            TestContext.Current.CancellationToken);
+
+        var sent = router.Only("POST", "/v1/agents/sessions/s1/responses").Body;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""
+            {"images": [{"url": "https://example.com/a.png"}], "text": ""}
+            """), sent), sent!.ToJsonString());
+    }
+
+    [Fact]
+    public async Task AnsweringAMessageOfTextAloneSendsWhatItDidBefore()
+    {
+        await using var router = await TestRouter.StartAsync();
+        router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
+        using var client = Fixtures.Client(router);
+        var dispatch = new Dispatch(new DispatchOptions { Client = client });
+
+        await dispatch.AnswerAsync(
+            Dispatch.MessageOf(new Frame(JsonNode.Parse("""
+                {"type": "message", "session_id": "s1", "request_id": "req-1", "user_id": "ada", "text": "hi"}
+                """)!.AsObject())),
+            TestContext.Current.CancellationToken);
+
+        // The body the base sent for this message, before photos were passed on.
+        var sent = router.Only("POST", "/v1/agents/sessions/s1/responses").Body;
+        Assert.True(JsonNode.DeepEquals(JsonNode.Parse("""{"request_id": "req-1", "text": "hi"}"""), sent), sent!.ToJsonString());
+    }
+
+    [Fact]
     public async Task AnsweringBehindTheProxyKeepsTheServerToken()
     {
         await using var router = await TestRouter.StartAsync();
@@ -192,7 +295,7 @@ public sealed class DispatchTests
             return release.Task;
         });
 
-        await dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(10), TestContext.Current.CancellationToken);
+        await dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Equal(["0", "1"], router.To("GET", "/v1/dispatch").Select(seen => seen.Query["active"]));
         Assert.Equal("w1", done.Text("work_id"));
@@ -238,7 +341,7 @@ public sealed class DispatchTests
         });
 
         await dispatch.RunAsync(TestContext.Current.CancellationToken);
-        await closed.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await closed.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Equal(1, built);
         Assert.Single(agents.Distinct());
@@ -291,9 +394,9 @@ public sealed class DispatchTests
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
 
         var running = dispatch.RunAsync(stop.Token);
-        await started.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await started.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
         await stop.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await running.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.True(finished);
         Assert.Equal(0, dispatch.Active);
@@ -307,7 +410,7 @@ public sealed class DispatchTests
         var dispatch = new Dispatch(new DispatchOptions { Client = client });
         dispatch.WaitForCall(_ => Task.CompletedTask);
 
-        await dispatch.RunAsync(new CancellationToken(canceled: true)).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await dispatch.RunAsync(new CancellationToken(canceled: true)).WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Empty(router.Requests);
     }
@@ -383,9 +486,9 @@ public sealed class DispatchTests
         using var stop = CancellationTokenSource.CreateLinkedTokenSource(TestContext.Current.CancellationToken);
 
         var running = dispatch.RunAsync(stop.Token);
-        await third.Task.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await third.Task.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
         await stop.CancelAsync();
-        await running.WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken);
+        await running.WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken);
 
         Assert.Equal("worker-3", dispatch.WorkerId);
         Assert.Equal(["stream-support", "stream-support", "stream-support"], hosted.Select(frame => frame.Text("agent_id")));
@@ -407,7 +510,7 @@ public sealed class DispatchTests
         var dispatch = new Dispatch(new DispatchOptions { Client = client }).Host(client.Agent("stream-support"));
 
         var refused = await Assert.ThrowsAsync<InvalidOperationException>(
-            () => dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TimeSpan.FromSeconds(5), TestContext.Current.CancellationToken));
+            () => dispatch.RunAsync(TestContext.Current.CancellationToken).WaitAsync(TestRouter.Patience, TestContext.Current.CancellationToken));
 
         Assert.Contains("stream-support", refused.Message);
         Assert.Contains("hosting no tools is not hosting", refused.Message);

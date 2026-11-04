@@ -29,7 +29,7 @@ const BuiltinCustomer = ""
 // the one the architecture's plan reserves for custom definitions
 // (acceleration/docs/connectors/subtasks.md, T6 acceptance, on connectors/planning), which the
 // core's custom_crm and custom_mtls_service fixtures already use. The migration checks it too.
-const CustomPrefix = "custom_"
+const CustomPrefix = core.CustomPrefix
 
 // ConnectorLabel is a connector id as a metric label: a built-in's own id, one of the
 // catalog the router ships, or "custom" for every custom definition, whose id its customer
@@ -133,19 +133,9 @@ func (s *Store) LatestConnectorDefinition(ctx context.Context, customerID, id st
 	return latestVisibleDefinition(ctx, s.db, customerID, id)
 }
 
-// Definitions reads the connector definitions a customer can see: a Store, on its pool, or
-// the one a config write hands its check, on the write's transaction.
+// Definitions reads the connector definitions a customer can see: a Store, on its pool.
 type Definitions interface {
 	LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error)
-}
-
-// txDefinitions reads definitions on a transaction. A check that runs under a write's row
-// lock reads on it, as a read on the pool waits for a second connection while the write
-// holds one, and with every connection held by such a write none comes.
-type txDefinitions struct{ tx bun.Tx }
-
-func (d txDefinitions) LatestConnectorDefinition(ctx context.Context, customerID, id string) (ConnectorDefinition, error) {
-	return latestVisibleDefinition(ctx, d.tx, customerID, id)
 }
 
 // latestVisibleDefinition is LatestConnectorDefinition read on db.

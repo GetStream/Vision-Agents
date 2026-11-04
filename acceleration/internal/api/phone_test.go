@@ -6,12 +6,18 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
@@ -311,11 +317,18 @@ func (s *PhoneSuite) TestAnotherCustomersNumberCannotBeDetached() {
 // reaches no vendor.
 type CallStatusSuite struct {
 	RouterSuite
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestCallStatusSuite(t *testing.T) {
 	runSuite(t, new(CallStatusSuite))
 }
+
+// unreachableVendor is where the suite's vendors are pointed: port 1 on this host refuses
+// at once, so a dial that gets past the router's own checks fails here and never reaches a
+// real vendor with the suite's nonsense credentials.
+const unreachableVendor = "http://127.0.0.1:1"
 
 func (s *CallStatusSuite) SetupSuite() {
 	config, err := phone.DefaultConfig()
@@ -329,13 +342,16 @@ func (s *CallStatusSuite) SetupSuite() {
 	}
 	registry := vendors.Registry(config)
 	registry.Register("twilio", func() (phone.Provider, error) {
-		return twilio.New(twilio.Options{AccountSID: "AC1", AuthToken: "t"})
+		return twilio.New(twilio.Options{AccountSID: "AC1", AuthToken: "t", BaseURL: unreachableVendor})
 	})
 	registry.Register("telnyx", func() (phone.Provider, error) {
-		return telnyx.New(telnyx.Options{APIKey: "k"})
+		return telnyx.New(telnyx.Options{APIKey: "k", BaseURL: unreachableVendor})
 	})
 	s.phoneVendors = registry
+	s.phoneOnChat = true
 	s.sessionTelephony = true
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.RouterSuite.SetupSuite()
 }
 
@@ -383,6 +399,32 @@ func (s *CallStatusSuite) read(callID string) outcome.Call {
 	return call
 }
 
+func (s *CallStatusSuite) TestACallIntoASessionWhoseCallCarriesOtherCustomIsAnInvalidRequest() {
+	// The session's call keeps the custom it was made with, so the client is told what to
+	// change rather than that something went wrong.
+	s.useApp(s.data.createApp())
+	ctx := context.Background()
+	e164, session := s.utils.number(), s.utils.uuid()
+	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
+		E164: e164, Vendor: "twilio", Country: "US", CustomerID: s.customerID(), PurchasedAt: time.Now().UTC(),
+	}))
+	creator := "agent-1"
+	_, err := s.chat.Client.Video().GetOrCreateCall(ctx, "agent", session, &getstream.GetOrCreateCallRequest{
+		Data: &getstream.CallRequest{CreatedByID: &creator, Custom: map[string]any{"k": "first"}},
+	})
+	s.Require().NoError(err)
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: e164, To: "+15550001111", SessionId: &session, Custom: &map[string]string{"k": "second"},
+	})
+
+	s.Require().Equal(http.StatusBadRequest, status, "%s", payload)
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered))
+	s.Equal("invalid_request", answered.Error.Code)
+	s.Contains(answered.Error.Message, "already carries other custom data")
+}
+
 func (s *CallStatusSuite) TestATwilioStatusIsReachedWithoutACustomer() {
 	busy, busyCall := s.placed("twilio")
 	noAnswer, noAnswerCall := s.placed("twilio")
@@ -408,6 +450,109 @@ func (s *CallStatusSuite) TestATelnyxStatusIsRecorded() {
 	call := s.read(callID)
 	s.Equal(outcome.Busy, call.Outcome)
 	s.Equal("busy", call.VendorStatus)
+}
+
+// postMachine posts form as a vendor's machine report.
+func (s *CallStatusSuite) postMachine(token string, form url.Values) (int, string) {
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+"/v1/phone/machine/"+token, strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answered, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, string(answered)
+}
+
+func (s *CallStatusSuite) TestATelnyxMachineReportReachesTheMachineHookWithoutACustomer() {
+	token, callID := s.placed("telnyx")
+	var told []string
+	s.router.phone.OnMachine(func(_ context.Context, customerID, sessionID string, machine phone.Machine) {
+		told = append(told, customerID+" "+sessionID+" "+string(machine))
+	})
+	s.T().Cleanup(func() { s.router.phone.OnMachine(s.router.tellMachine) })
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.Equal([]string{s.customerID() + " " + callID + " greeting_ended"}, told)
+}
+
+func (s *CallStatusSuite) TestAMachineReportForAnUnknownTokenIs404() {
+	status, failure := s.postMachine(s.utils.uuid(), url.Values{"AnsweredBy": {"human"}})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, "that call is not waiting for its status")
+}
+
+func (s *CallStatusSuite) TestAMachineReportThatCannotBeReadIs400() {
+	token, _ := s.placed("telnyx")
+
+	status, failure := s.postMachine(token, url.Values{"CallSid": {"CA1"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "AnsweredBy")
+}
+
+// hangsUpOnMachines opens on sessions a placed call's session whose plan is to hang up on an
+// answering machine, with a call kept for it, and returns its id and the call's token.
+func (s *CallStatusSuite) hangsUpOnMachines(sessions *session.Manager) (string, string) {
+	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Voicemail: &session.VoicemailPlan{},
+		Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	token, _ := s.placedFor(opened.ID())
+	return opened.ID(), token
+}
+
+// endsForVoicemail waits for sessions to stop holding id.
+func (s *CallStatusSuite) endsForVoicemail(sessions *session.Manager, id string) {
+	s.Require().Eventually(func() bool { return !sessions.Running(id) }, 10*time.Second, 20*time.Millisecond,
+		"the session was kept on the answering machine")
+}
+
+func (s *CallStatusSuite) TestAMachineReportHangsUpTheSessionHere() {
+	id, token := s.hangsUpOnMachines(s.manager)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.endsForVoicemail(s.manager, id)
+}
+
+func (s *CallStatusSuite) TestAMachineReportHangsUpTheSessionOnTheNodeHoldingIt() {
+	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.DiscardHandler))
+	s.Require().NotEqual(other.Listener.Addr().String(), s.router.directory.Address())
+	id, token := s.hangsUpOnMachines(sessions)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.endsForVoicemail(sessions, id)
+}
+
+func (s *CallStatusSuite) TestAMachineReportForASessionThatEndedIsTakenAndChangesNothing() {
+	id, token := s.hangsUpOnMachines(s.manager)
+	s.Require().Equal(http.StatusNoContent, func() int {
+		status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+		return status
+	}())
+	s.endsForVoicemail(s.manager, id)
+
+	again, failure := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, again, "body: %s", failure)
+}
+
+func (s *CallStatusSuite) TestAPersonPickingUpKeepsTheSession() {
+	id, token := s.hangsUpOnMachines(s.manager)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"human"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.Never(func() bool { return !s.manager.Running(id) }, time.Second, 50*time.Millisecond,
+		"the session was ended for a person")
 }
 
 func (s *CallStatusSuite) TestAnUnknownStatusTokenIs404() {
@@ -514,6 +659,268 @@ func (s *CallStatusSuite) TestABusyStatusEndsItsSessionBeforeTheStartTimeout() {
 		"the session waits for its start timeout")
 }
 
+// openedHere is a session on the suite's node opened as the phone service opens one for a
+// placed call. The suite's vendors have no credentials to place a call with.
+func (s *CallStatusSuite) openedHere() string {
+	opened, err := s.manager.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	return opened.ID()
+}
+
+// keptBy checks that the node logging to logged decided to keep the session id, which sessions
+// still runs.
+func (s *CallStatusSuite) keptBy(logged *lockedLog, sessions *session.Manager, id string) {
+	s.Require().Eventually(func() bool {
+		for line := range strings.Lines(logged.String()) {
+			if strings.Contains(line, "kept the session of an unanswered call") && strings.Contains(line, "session="+id) {
+				return true
+			}
+		}
+		return false
+	}, 10*time.Second, 20*time.Millisecond, "the node did not say it kept the session")
+	s.True(sessions.Running(id), "the session was ended")
+}
+
+// A session can have two calls placed into it. A report that the older went unanswered does
+// not end the session while the newer still rings.
+func (s *CallStatusSuite) TestABusyOlderCallKeepsASessionANewerCallStillRingsInto() {
+	id := s.openedHere()
+	older, _ := s.placedFor(id)
+	s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(older, url.Values{"CallStatus": {"busy"}}))
+
+	s.keptBy(s.logged, s.manager, id)
+}
+
+func (s *CallStatusSuite) TestABusyNewerCallEndsASessionAnOlderCallStillRingsInto() {
+	id := s.openedHere()
+	s.placedFor(id)
+	newer, _ := s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(newer, url.Values{"CallStatus": {"busy"}}))
+
+	s.Require().Eventually(func() bool { return !s.manager.Running(id) }, 10*time.Second, 20*time.Millisecond,
+		"the session waits for its start timeout")
+}
+
+// The nodes a test makes share the suite's phone service; the vendor's status still reaches
+// the suite's node, as in a deployment where each node has its own.
+func (s *CallStatusSuite) TestAnotherNodeDoesNotTakeTheSuitesUnansweredCalls() {
+	logged := &lockedLog{}
+	s.peerHolding(logged)
+	id := s.openedHere()
+	older, _ := s.placedFor(id)
+	s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(older, url.Values{"CallStatus": {"busy"}}))
+
+	s.keptBy(s.logged, s.manager, id)
+	s.NotContains(logged.String(), id)
+}
+
+// peerHolding is a second node of the deployment, logging to logged, holding a session opened
+// as the phone service opens one for a placed call. Each of adjust changes the node's options.
+func (s *CallStatusSuite) peerHolding(logged *lockedLog, adjust ...func(*Options)) (*httptest.Server, *session.Manager, string) {
+	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)), adjust...)
+	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	return other, sessions, opened.ID()
+}
+
+// askPeerToEnd asks other to end the session of an unanswered call the way a peer does.
+func (s *CallStatusSuite) askPeerToEnd(other *httptest.Server, asked string) *node.ForwardResponse {
+	request, err := http.NewRequest(http.MethodPost, unansweredPeerPath, strings.NewReader(asked))
+	s.Require().NoError(err)
+	credential, _ := s.sealer.Derive(node.CredentialPurpose)
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	answer, err := node.NewForwarder(nil, credential).Ask(ctx, other.Listener.Addr().String(), request, []byte(asked))
+	s.Require().NoError(err)
+	return answer
+}
+
+// askedFor is the ask a peer makes for customerID's session id.
+func (s *CallStatusSuite) askedFor(customerID, id string) string {
+	asked, err := json.Marshal(unansweredPeerRequest{CustomerID: customerID, SessionID: id})
+	s.Require().NoError(err)
+	return string(asked)
+}
+
+// refusesToEnd checks that other answered an ask as no such call, said why, and still holds id.
+func (s *CallStatusSuite) refusesToEnd(answer *node.ForwardResponse, logged *lockedLog, sessions *session.Manager, id string) {
+	s.Equal(int32(http.StatusNotFound), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.Contains(string(answer.GetBody()), `"code":"`+codeCallNotFound+`"`)
+	s.Contains(logged.String(), "refused a peer's ask to end a session")
+	s.Never(func() bool { return !sessions.Running(id) }, time.Second, 50*time.Millisecond,
+		"the session was ended")
+}
+
+func (s *CallStatusSuite) TestABusyStatusEndsItsSessionOnTheNodeHoldingIt() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.Require().NotEqual(other.Listener.Addr().String(), s.router.directory.Address())
+	token, _ := s.placedFor(id)
+
+	s.Require().Equal(http.StatusNoContent, s.postForm(token, url.Values{"CallStatus": {"busy"}}))
+
+	s.Require().Eventually(func() bool { return !sessions.Running(id) }, 10*time.Second, 20*time.Millisecond,
+		"the node holding the session kept it")
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallStoredAsUnansweredEndsItsSession() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.busy(id)
+
+	answer := s.askPeerToEnd(other, s.askedFor(s.customerID(), id))
+
+	s.Equal(int32(http.StatusNoContent), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.False(sessions.Running(id), "the session waits for its start timeout")
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallThatStillRingsIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.placedFor(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+// A session can have two calls placed into it; the stored call is the newest, and the asking
+// node decided on the one its vendor reported. An ask is refused unless the newest says
+// nobody answered, since ending the session would strand a call that still rings.
+func (s *CallStatusSuite) TestAPeersAskWhileANewerCallInTheSessionStillRingsIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+	s.placedFor(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskWhileAnOlderCallInTheSessionStillRingsEndsItsSession() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.placedFor(id)
+	s.busy(id)
+
+	answer := s.askPeerToEnd(other, s.askedFor(s.customerID(), id))
+
+	s.Equal(int32(http.StatusNoContent), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.False(sessions.Running(id), "the session waits for its start timeout")
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallSomebodyAnsweredIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	token, key := s.placedFor(id)
+	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, time.Now()))
+	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Busy, "busy")
+	s.Require().NoError(err)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskForACallThatIsNotKeptIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeerWithoutAPhoneServiceRefusesAnAsk() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged, func(options *Options) { options.Phone = nil })
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeerWhosePhoneServiceHasNoStoreRefusesAnAsk() {
+	storeless, err := phone.NewService(phone.ServiceOptions{Registry: s.phoneVendors})
+	s.Require().NoError(err)
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged, func(options *Options) { options.Phone = storeless })
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)
+}
+
+// phoneOnAClosedStore is a phone service whose database is down.
+func (s *CallStatusSuite) phoneOnAClosedStore() *phone.Service {
+	closed, err := store.Open(testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN")))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	service, err := phone.NewService(phone.ServiceOptions{Registry: s.phoneVendors, Store: closed})
+	s.Require().NoError(err)
+	return service
+}
+
+func (s *CallStatusSuite) TestAPeerThatCannotReadTheStoredCallKeepsTheSession() {
+	closed := s.phoneOnAClosedStore()
+	other, sessions, id := s.peerHolding(&lockedLog{}, func(options *Options) { options.Phone = closed })
+	s.busy(id)
+
+	answer := s.askPeerToEnd(other, s.askedFor(s.customerID(), id))
+
+	s.Equal(int32(http.StatusInternalServerError), answer.GetStatus(), "body: %s", answer.GetBody())
+	s.True(sessions.Running(id), "the session was ended")
+}
+
+// The phone service hands a node an unanswered call once its row is written, so only a
+// database that goes down in between keeps the node from reading it back.
+func (s *CallStatusSuite) TestANodeThatCannotReadTheStoredCallKeepsTheSession() {
+	logged := &lockedLog{}
+	closed := s.phoneOnAClosedStore()
+	_, server, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.NewTextHandler(logged, nil)),
+		func(options *Options) { options.Phone = closed })
+	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	s.busy(opened.ID())
+
+	server.endUnansweredNow(context.Background(), s.customerID(), opened.ID())
+
+	s.Contains(logged.String(), "could not read an unanswered call")
+	s.True(sessions.Running(opened.ID()), "the session was ended")
+}
+
+func (s *CallStatusSuite) TestAPeersAskNamingAnotherCustomerIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor("another-"+s.utils.uuid(), id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeersAskNamingNoCustomerIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor("", id)), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAnEmptyPeerAskIsRefused() {
+	logged := &lockedLog{}
+	other, sessions, id := s.peerHolding(logged)
+	s.busy(id)
+
+	s.refusesToEnd(s.askPeerToEnd(other, `{}`), logged, sessions, id)
+	s.refusesToEnd(s.askPeerToEnd(other, `null`), logged, sessions, id)
+}
+
+func (s *CallStatusSuite) TestAPeerAskOfTheWrongShapeIsRefused() {
+	other, sessions, id := s.peerHolding(&lockedLog{})
+	s.busy(id)
+
+	for _, asked := range []string{`{"customer_id":1,"session_id":"` + id + `"}`, `[]`, `not json`} {
+		answer := s.askPeerToEnd(other, asked)
+		s.Equal(int32(http.StatusBadRequest), answer.GetStatus(), "%s: %s", asked, answer.GetBody())
+	}
+	s.True(sessions.Running(id), "the session was ended")
+}
+
 // openPhoneSession opens the session id for a placed call as an SDK does, after placing it.
 func (s *CallStatusSuite) openPhoneSession(id string) (int, ErrorResponse) {
 	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
@@ -524,6 +931,101 @@ func (s *CallStatusSuite) openPhoneSession(id string) (int, ErrorResponse) {
 		s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
 	}
 	return status, answered
+}
+
+// openWithVoicemail opens the session id for a placed call with plan, as an SDK does.
+func (s *CallStatusSuite) openWithVoicemail(id string, plan SessionVoicemail) (int, string) {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
+		Id: &id, StartVoice: pointerTo(true), Phone: &SessionPhone{Number: s.utils.number(), Voicemail: &plan},
+	})
+	return status, string(payload)
+}
+
+// endedForVoicemail waits for the session id to show it ended for an answering machine.
+func (s *CallStatusSuite) endedForVoicemail(id string) {
+	s.Require().Eventually(func() bool {
+		shown := s.serverClient.getSession(id)
+		return shown.EndReason != nil && *shown.EndReason == "voicemail"
+	}, 10*time.Second, 50*time.Millisecond, "the session never showed it ended for voicemail")
+}
+
+func (s *CallStatusSuite) TestASessionAskedToHangUpOnAMachineDoesWhenOneAnswers() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{Action: VoicemailActionHangUp})
+	s.Require().Equal(http.StatusCreated, status, payload)
+
+	answered, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_silence"}})
+
+	s.Equal(http.StatusNoContent, answered)
+	s.endedForVoicemail(id)
+}
+
+func (s *CallStatusSuite) TestASessionAskedToLeaveAMessageLeavesItWhenAMachineAnswers() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo("Hi Ali, this is Northwind Dental."),
+	})
+	s.Require().Equal(http.StatusCreated, status, payload)
+
+	answered, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, answered)
+	s.endedForVoicemail(id)
+}
+
+func (s *CallStatusSuite) TestAVoicemailPlanWithAnUnknownActionIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{Action: "call_back"})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "action")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageWithNoMessageIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{Action: VoicemailActionLeaveMessage})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageOfOnlySpacesIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo("  \n\t "),
+	})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageOnASpeechToSpeechAgentIsRefused() {
+	plan := SessionVoicemail{Action: VoicemailActionLeaveMessage, Message: pointerTo("Hi Ali, this is Northwind Dental.")}
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
+		Id: pointerTo(s.utils.uuid()), StartVoice: pointerTo(true), Sts: pointerTo("openai/gpt-realtime-2"),
+		Phone: &SessionPhone{Number: s.utils.number(), Voicemail: &plan},
+	})
+
+	s.Equal(http.StatusBadRequest, status, "%s", payload)
+	s.Contains(string(payload), "cannot say a fixed voicemail message")
+}
+
+func (s *CallStatusSuite) TestAVoicemailMessageOver1000CharactersIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo(strings.Repeat("é", 1001)),
+	})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestAVoicemailMessageOf1000CharactersIsTaken() {
+	id := s.utils.uuid()
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo(strings.Repeat("é", 1000)),
+	})
+	defer s.serverClient.stopSession(id)
+
+	s.Equal(http.StatusCreated, status, payload)
 }
 
 func (s *CallStatusSuite) TestOpeningASessionAfterItsCallWasBusyIsRefused() {

@@ -198,6 +198,21 @@ func (s *LLMRouterSuite) TestLLMThinkingResolvesToAQualityModel() {
 	}
 }
 
+func (s *LLMRouterSuite) TestLLMModeratorPrefersGemmaAndFallsBackToSol() {
+	// The agent moderator reviews on our own Gemma deployment, and GPT-6.1 Sol catches it
+	// being down or unconfigured.
+	router := s.newRouter()
+
+	candidates, err := router.Resolve(s.ctx, "llm-moderator", nil)
+	s.Require().NoError(err)
+
+	names := make([]string, 0, len(candidates))
+	for _, candidate := range candidates {
+		names = append(names, candidate.Config.Name())
+	}
+	s.Equal([]string{"gemma/gemma-4-26B-A4B-it", "openai/gpt-6.1-sol"}, names)
+}
+
 func (s *LLMRouterSuite) TestAnUnknownTargetIsRejected() {
 	_, err := s.newRouter().Resolve(s.ctx, "no-such-model", nil)
 
@@ -374,6 +389,22 @@ func (s *LLMRouterSuite) TestErrorCodeExplainsTheFailure() {
 	s.Empty(errorCode(llm.Response{Status: llm.StatusCompleted}))
 	s.Equal(routing.ErrorCancelled, errorCode(llm.Response{Status: llm.StatusCancelled}),
 		"a response the caller abandoned is recorded as that, not as a provider failure")
+	s.Equal(routing.ErrorRefused, errorCode(llm.Response{Status: llm.StatusFailed, Refused: true}),
+		"a response the screen refused is no provider failure")
+	s.Equal(routing.ErrorRefused, errorCode(llm.Response{Status: llm.StatusFailed, Refused: true, TimedOut: true}),
+		"the refusal is what ended it, whatever deadline it also ran past")
+}
+
+func (s *LLMRouterSuite) TestARefusalWithoutUsageIsEstimatedAsAFailureAfterOutputIs() {
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true}),
+		"the screen cut it off before the vendor said what it used, as a cancel does")
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, OutputText: "Sure"}))
+	s.False(unreported(llm.Response{Status: llm.StatusFailed, Refused: true, UsageReported: true}),
+		"a vendor that said what it used is taken at its word")
+	s.True(unreported(llm.Response{Status: llm.StatusFailed, OutputText: "Sure"}),
+		"what streamed before the failure was generated, and the vendor bills it")
+	s.False(unreported(llm.Response{Status: llm.StatusFailed}),
+		"a failure before any output took nothing")
 }
 
 func (s *LLMRouterSuite) TestAnAbandonedResponseIsStillBilled() {

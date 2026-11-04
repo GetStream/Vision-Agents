@@ -264,7 +264,7 @@ func (s *StoredSuite) TestAUserTokenForAForwardedAppIsSignedAtTheGateway() {
 	bound, err := clients.For(s.ctx, s.customer)
 	s.Require().NoError(err)
 
-	token, err := clients.MintUserToken(s.ctx, bound, "agent-1", time.Hour)
+	token, key, err := clients.MintUserToken(s.ctx, bound, "", "agent-1", time.Hour)
 
 	s.Require().NoError(err)
 	claims := jwt.MapClaims{}
@@ -273,6 +273,25 @@ func (s *StoredSuite) TestAUserTokenForAForwardedAppIsSignedAtTheGateway() {
 	s.Require().NoError(err)
 	s.Equal("agent-1", claims["user_id"])
 	s.Equal("/internal/v1/apps/"+s.customer+"/user-token", mint.requests()[0]["path"])
+	s.Equal(forwardedKey, mint.requests()[0]["api_key"], "work no request asked for mints for the key held")
+	s.Equal(forwardedKey, key)
+}
+
+func (s *StoredSuite) TestAUserTokenIsMintedForTheKeyOfTheRequestBeingServed() {
+	// The app is called with two keys and the token held is the other key's.
+	mint := s.gateway()
+	forwarded := s.forwarded(mint)
+	_, err := forwarded.Keep(s.ctx, s.customer, forwardedKey, s.serverToken(24*time.Hour))
+	s.Require().NoError(err)
+	clients := NewClients(s.forwardedSource(forwarded), ClientsOptions{Now: s.clock.Now})
+	bound, err := clients.For(s.ctx, s.customer)
+	s.Require().NoError(err)
+
+	_, key, err := clients.MintUserToken(s.ctx, bound, "the-callers-key", "guest-1", time.Hour)
+
+	s.Require().NoError(err)
+	s.Equal("the-callers-key", mint.requests()[0]["api_key"])
+	s.Equal("the-callers-key", key)
 }
 
 func (s *StoredSuite) TestAKeptTokenIsUsedForACustomerThatHadNoneAMomentAgo() {

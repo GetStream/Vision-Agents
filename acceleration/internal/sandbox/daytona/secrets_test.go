@@ -1,12 +1,14 @@
 package daytona
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
 	"maps"
+	"net"
 	"net/http"
 	"regexp"
 	"slices"
@@ -72,6 +74,8 @@ type SecretsSuite struct {
 	token    sandbox.Token
 	tokenErr error
 	box      *Sandbox
+	// logs are what the brokers granted made logged.
+	logs *bytes.Buffer
 }
 
 func TestSecretsSuite(t *testing.T) {
@@ -83,6 +87,7 @@ func (s *SecretsSuite) SetupTest() {
 	s.platform = newPlatform()
 	s.T().Cleanup(s.platform.server.Close)
 	s.token, s.tokenErr = sandbox.Token{Value: "gho_first", Revision: 1}, nil
+	s.logs = &bytes.Buffer{}
 	s.box = s.granted("stg", sandbox.Config{}, github)
 }
 
@@ -95,7 +100,7 @@ func (s *SecretsSuite) granted(prefix string, config sandbox.Config, grants ...s
 	key, url := "key-1", s.platform.server.URL+"/api"
 	broker, err := NewSecrets(SecretsOptions{APIKey: key, APIURL: url, Prefix: prefix, Session: "session-1",
 		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) { return s.token, s.tokenErr },
-		Logger: slog.New(slog.DiscardHandler)})
+		Logger: slog.New(slog.NewTextHandler(s.logs, nil))})
 	s.Require().NoError(err)
 	box, err := New(Options{APIKey: key, APIURL: url, Config: config, Grants: grants, Broker: broker})
 	s.Require().NoError(err)
@@ -570,6 +575,21 @@ func (s *SecretsSuite) TestRunCodeTellsTheModelWhatARevokedGrantLooksLike() {
 	s.NotContains(sandbox.Tool(s.granted("stg", sandbox.Config{})).Description, "revoked", "no grant, no line")
 }
 
+// TestRunCodeTellsTheModelARequiredGrantIsNotLate: a required grant is connected when the sandbox
+// starts (Prepare refuses one that is also Late), so a 401 for it means revoked, never "not
+// connected yet".
+func (s *SecretsSuite) TestRunCodeTellsTheModelARequiredGrantIsNotLate() {
+	required := githubGit
+	required.Required = true
+
+	description := sandbox.Tool(s.granted("stg", sandbox.Config{}, required)).Description
+
+	s.Contains(description, " A 401 from api.github.com, github.com, or a 403 from the proxy, means the "+
+		"github connection was revoked or removed: tell the user to connect github again; running the code again in this session will not help.")
+	s.NotContains(description, "not connected")
+	s.NotContains(description, "wait 20 seconds")
+}
+
 // githubGit is a GitHub grant that reaches github.com too, as the connector's manifest does.
 var githubGit = sandbox.Grant{Connection: core.ConnectionRef{CustomerID: "app", ConnectionID: "connection-1"},
 	Binding: "github", Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "github.com"}}
@@ -680,4 +700,165 @@ func (s *SecretsSuite) TestAGrantedSandboxIsCreatedAsOnBase() {
 		s.Equal([]string{"POST /api/secret", "POST /api/sandbox"}, s.platform.history())
 		s.Empty(s.platform.uploads)
 	}
+}
+
+// TestARequiredGrantsRefusalSaysWhyTheCredentialCannotBeHad: the error carries the class of the
+// credential's error, never its text.
+func (s *SecretsSuite) TestARequiredGrantsRefusalSaysWhyTheCredentialCannotBeHad() {
+	required := github
+	required.Required = true
+	box := s.granted("stg", sandbox.Config{}, required)
+	s.tokenErr = fmt.Errorf("refreshing: %w", context.DeadlineExceeded)
+
+	_, err := box.Run(s.ctx, "print(1)", nil)
+
+	s.ErrorContains(err, `required connector "github" gives the sandbox no credential: the credential cannot be had just now (deadline)`)
+}
+
+// TestAGrantLeftOutLogsWhyItsCredentialCannotBeHad: the warning names the class of the
+// credential's error.
+func (s *SecretsSuite) TestAGrantLeftOutLogsWhyItsCredentialCannotBeHad() {
+	s.tokenErr = &net.OpError{Op: "dial", Net: "tcp", Err: errors.New("connection refused")}
+
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+
+	s.Require().NoError(err)
+	s.Contains(s.logs.String(), `msg="the sandbox is created without a connector's credential" connector=github connection=connection-1 class=network`)
+}
+
+// TestACredentialKeptOnARefusedRefreshLogsWhy: the warning names the class of the refresh's
+// error.
+func (s *SecretsSuite) TestACredentialKeptOnARefusedRefreshLogsWhy() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.tokenErr = fmt.Errorf("refreshing: %w", context.Canceled)
+
+	_, err = s.box.Run(s.ctx, "print(2)", nil)
+
+	s.Require().NoError(err)
+	s.Regexp(`msg="a connector's credential could not be refreshed for the sandbox; it keeps the one it has" `+
+		`connector=github secret=va_stg_session-1_github_[0-9a-f]{8} class=canceled`, s.logs.String())
+}
+
+// TestAWithdrawnCredentialLogsWhy: the warning names the class of the error that withdrew it.
+func (s *SecretsSuite) TestAWithdrawnCredentialLogsWhy() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.tokenErr = fmt.Errorf("%w: the connection is not connected", sandbox.ErrNoCredential)
+
+	_, err = s.box.Run(s.ctx, "print(2)", nil)
+
+	s.Require().NoError(err)
+	s.Regexp(`msg="a connector's credential is withdrawn from the sandbox" connector=github `+
+		`secret=va_stg_session-1_github_[0-9a-f]{8} class=no_credential`, s.logs.String())
+}
+
+// built is a sandbox of a built config with github granted: its timeout is the 20 minutes a
+// build may take, and its check 2 s, as defaultTimeout is shorter in tests.
+func (s *SecretsSuite) built() *Sandbox {
+	box := s.granted("stg", sandbox.Config{CPU: 1}, github)
+	s.Require().Equal(buildTimeout, box.timeout, "a built sandbox")
+	s.Equal(defaultTimeout, box.check)
+	box.check = 2 * time.Second
+	return box
+}
+
+// slowSecrets has every request of method about a secret wait slow, or until its caller gives up.
+func (s *SecretsSuite) slowSecrets(method string, slow time.Duration) {
+	s.platform.mu.Lock()
+	defer s.platform.mu.Unlock()
+	s.platform.slowSecret = map[string]time.Duration{method: slow}
+}
+
+// cutRun runs code in box for a caller that waits 30 s, and checks the run ended at the check's
+// 2 s bound, well before them.
+func (s *SecretsSuite) cutRun(box *Sandbox) error {
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	defer cancel()
+	started := time.Now()
+	_, err := box.Run(ctx, "print(1)", nil)
+	s.Less(time.Since(started), 20*time.Second, "cut at the check's bound, not the caller's 30 s")
+	return err
+}
+
+// TestAHungRefreshBeforeARunIsCutAtTheChecksTimeout: the refresh holds the gate, so a secret
+// update Daytona never answers is cut at defaultTimeout, and the next run gets in.
+func (s *SecretsSuite) TestAHungRefreshBeforeARunIsCutAtTheChecksTimeout() {
+	box := s.built()
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.token = sandbox.Token{Value: "gho_second", Revision: 2}
+	s.slowSecrets(http.MethodPatch, time.Minute)
+
+	s.ErrorContains(s.cutRun(box), "context deadline exceeded")
+
+	s.slowSecrets(http.MethodPatch, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+	s.Equal(map[string]string{"github": "gho_second"}, s.platform.values([]string{"github"}))
+}
+
+// TestAHungSecretCreationIsCutAtTheChecksTimeout: only the sandbox may take a build's 20
+// minutes; the secrets it is made with are bounded as a check is.
+func (s *SecretsSuite) TestAHungSecretCreationIsCutAtTheChecksTimeout() {
+	box := s.built()
+	s.slowSecrets(http.MethodPost, time.Minute)
+
+	s.ErrorContains(s.cutRun(box), "context deadline exceeded")
+
+	s.slowSecrets(http.MethodPost, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+}
+
+// TestAHungSecretDeleteBeforeASandboxIsMadeAgainIsCutAtTheChecksTimeout: a sandbox Daytona
+// deleted is made again with its secrets afresh, and deleting the last ones is bounded too.
+func (s *SecretsSuite) TestAHungSecretDeleteBeforeASandboxIsMadeAgainIsCutAtTheChecksTimeout() {
+	box := s.built()
+	_, err := box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	box.lost()
+	s.slowSecrets(http.MethodDelete, time.Minute)
+
+	s.ErrorContains(s.cutRun(box), "context deadline exceeded")
+
+	s.slowSecrets(http.MethodDelete, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+	s.Equal([]string{"sandbox-2", "sandbox-4"}, s.platform.sandboxes(), "made again")
+}
+
+// TestAHungSecretDeleteAfterARefusedSandboxIsCutAtTheChecksTimeout: a sandbox Daytona would
+// not make leaves its secrets to be deleted, which is bounded as a check is, and the next run
+// gets in.
+func (s *SecretsSuite) TestAHungSecretDeleteAfterARefusedSandboxIsCutAtTheChecksTimeout() {
+	box := s.built()
+	s.platform.mu.Lock()
+	s.platform.createStatus = http.StatusServiceUnavailable
+	s.platform.mu.Unlock()
+	s.slowSecrets(http.MethodDelete, time.Minute)
+
+	err := s.cutRun(box)
+
+	s.ErrorContains(err, "no capacity")
+	s.ErrorContains(err, "context deadline exceeded")
+	s.platform.mu.Lock()
+	s.platform.createStatus = 0
+	s.platform.mu.Unlock()
+	s.slowSecrets(http.MethodDelete, 0)
+	s.Require().NoError(s.cutRun(box), "the next run gets in")
+}
+
+// TestASandboxCreationThatRanOutStillDeletesItsSecrets: the creation outlasting the sandbox's
+// timeout ends the context it ran on, so the secrets made for it are deleted on the caller's.
+func (s *SecretsSuite) TestASandboxCreationThatRanOutStillDeletesItsSecrets() {
+	box := s.built()
+	box.timeout = 2 * time.Second // buildTimeout, shorter in tests
+	s.platform.mu.Lock()
+	s.platform.slowCreate = time.Minute
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 30*time.Second)
+	s.T().Cleanup(cancel)
+
+	_, err := box.Run(ctx, "print(1)", nil)
+
+	s.ErrorContains(err, "context deadline exceeded")
+	s.Empty(s.platform.values([]string{"github"}), "no secret is left at Daytona")
 }

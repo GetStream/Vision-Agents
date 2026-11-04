@@ -10,6 +10,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
@@ -126,14 +128,36 @@ func (s *ConcurrencySuite) TestACallInterruptedWhileWaitingIsNotSent() {
 	first := s.callAtOnce(d, "crm__whoami", 1)
 	s.Require().Eventually(func() bool { return s.provider.inFlight("primary") == 1 }, 5*time.Second, 10*time.Millisecond)
 
-	turn, interrupt := context.WithTimeout(s.ctx, 100*time.Millisecond)
-	defer interrupt()
-	_, err := d.Run(turn, llm.ToolCall{ID: uuid.NewString(), Name: "crm__whoami", Arguments: "{}"})
+	err := s.interruptWhileWaiting(d, primary, "crm__whoami")
 	release()
 
-	s.ErrorIs(err, context.DeadlineExceeded)
+	s.ErrorIs(err, context.Canceled)
+	s.ErrorContains(err, "crm__whoami was not sent")
 	s.Equal([]string{"primary"}, first())
 	s.Equal(1, s.provider.calls("primary"))
+}
+
+// TestATurnDeadlineEndingTheWaitIsNotSent: a turn deadline that ends the wait is the client's
+// timeout, not a busy connector. The deadline is armed at the wait itself (admit called
+// directly), so no earlier step of the call can run it out first.
+func (s *ConcurrencySuite) TestATurnDeadlineEndingTheWaitIsNotSent() {
+	s.capAt(1)
+	primary := s.connection("", "primary")
+	d := s.attachAll(s.fixed("crm", primary, "whoami"))
+	r := d.routes["crm__whoami"]
+	held, err := d.slots.take(s.ctx, r.connection.ID, r.maxInFlight)
+	s.Require().NoError(err)
+	defer held()
+	turn, stop := context.WithTimeout(s.ctx, 100*time.Millisecond)
+	defer stop()
+
+	release, parts, how, err := d.admit(turn, time.Now().Add(time.Minute), r, llm.ToolCall{ID: uuid.NewString(), Name: "crm__whoami", Arguments: "{}"})
+
+	s.Nil(release)
+	s.Nil(parts)
+	s.Equal(store.InvocationClientTimeout, how.kind)
+	s.ErrorIs(err, context.DeadlineExceeded)
+	s.ErrorContains(err, "crm__whoami was not sent")
 }
 
 // TestANonCancellableCallInterruptedWhileWaitingIsNotSent: cancellable: false leaves a call
@@ -152,12 +176,10 @@ func (s *ConcurrencySuite) TestANonCancellableCallInterruptedWhileWaitingIsNotSe
 	first := s.callAtOnce(d, "crm__whoami", 1)
 	s.Require().Eventually(func() bool { return s.provider.inFlight("primary") == 1 }, 5*time.Second, 10*time.Millisecond)
 
-	turn, interrupt := context.WithTimeout(s.ctx, 100*time.Millisecond)
-	defer interrupt()
-	_, err := d.Run(turn, llm.ToolCall{ID: uuid.NewString(), Name: "held__whoami", Arguments: "{}"})
+	err := s.interruptWhileWaiting(d, primary, "held__whoami")
 	release()
 
-	s.ErrorIs(err, context.DeadlineExceeded)
+	s.ErrorIs(err, context.Canceled)
 	s.ErrorContains(err, "held__whoami was not sent")
 	s.Equal([]string{"primary"}, first())
 	s.Never(func() bool { return s.provider.calls("primary") > 1 }, 500*time.Millisecond, 10*time.Millisecond,
@@ -252,6 +274,38 @@ func (s *ConcurrencySuite) TestTwoSessionsOfOneRouterShareTheCapOfAConnection() 
 	s.Equal(1, s.provider.calls("primary"))
 }
 
+// interruptWhileWaiting ends the turn of a call of name once it waits for a slot on connection
+// behind the one call in flight, and returns what the call answered. The turn is ended by what
+// the call waits on, not by a timer: a timer can run out before the call has read its binding
+// and connection (dispatcher.recheck), which refuses it for another reason.
+func (s *ConcurrencySuite) interruptWhileWaiting(d *dispatcher, connection, name string) error {
+	turn, interrupt := context.WithCancel(s.ctx)
+	defer interrupt()
+	answered := make(chan error, 1)
+	go func() {
+		_, err := d.Run(turn, llm.ToolCall{ID: uuid.NewString(), Name: name, Arguments: "{}"})
+		answered <- err
+	}()
+	// The call in flight is one user of the connection, the waiting call the second.
+	// A call refused before it waits answers at once: fail with that answer, not a timeout.
+	for until := time.Now().Add(5 * time.Second); d.slots.users(connection) != 2; time.Sleep(5 * time.Millisecond) {
+		select {
+		case err := <-answered:
+			s.FailNowf("the call was answered before it waited", "%v", err)
+		default:
+		}
+		s.Require().True(time.Now().Before(until), "the call never waited for a slot")
+	}
+	interrupt()
+	select {
+	case err := <-answered:
+		return err
+	case <-time.After(30 * time.Second):
+		s.FailNow("the interrupted call did not return")
+		return nil
+	}
+}
+
 // capAt stores a revision of the test's connector capped at limit calls in flight, which the
 // connections the test makes after it pin.
 func (s *ConcurrencySuite) capAt(limit int) {
@@ -292,16 +346,17 @@ func (s *ConcurrencySuite) callAtOnce(d *dispatcher, name string, count int) fun
 // rowOf is the one invocation row binding's calls on connection left, once written.
 func (s *ConcurrencySuite) rowOf(connection, binding string) store.ConnectorInvocation {
 	var found []store.ConnectorInvocation
-	s.Require().Eventually(func() bool {
+	// Eventually runs its condition off the test goroutine, where a failed Require cannot stop the test.
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
 		rows, err := s.store.ConnectorInvocations(s.ctx, s.customerID, connection, 0, nil)
-		s.Require().NoError(err)
+		require.NoError(c, err)
 		found = found[:0]
 		for _, row := range rows {
 			if row.Binding == binding {
 				found = append(found, row)
 			}
 		}
-		return len(found) == 1
+		require.Len(c, found, 1)
 	}, 5*time.Second, 20*time.Millisecond)
 	return found[0]
 }

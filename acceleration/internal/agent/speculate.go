@@ -83,21 +83,26 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		if note != "" {
 			parts = append(parts, note)
 		}
+		// The reminder to rule first goes with this reply alone, after the caller's words,
+		// which are kept as they were said.
+		parts = append(parts, harness.UnifiedReminder)
 		note = strings.Join(parts, "\n\n")
 	}
 	stale := a.takeSpeculationsLocked()
-	said := a.userTurnLocked(ready.Participant, unifiedText(ready.Said(), unified))
+	said := a.userTurnLocked(ready.Participant, ready.Said())
 	people := len(a.speakers)
 	if said.Speaker != "" && people == 1 {
 		// The second person's first turn: the reply is written as the turn will be answered,
 		// told about them, without counting them before the ruling says it is answered.
 		people = 2
 	}
-	instructions := a.instructionsFor(people)
+	instructions := a.prompted()
+	tell := a.tellLocked(ready.ID, people)
 	ctx, cancel := context.WithCancel(a.ctx)
 	if a.speculating == "" {
 		a.speculating = uuid.NewString()
 	}
+	a.speculated++
 	spec := &speculation{
 		id:      a.speculating,
 		ready:   ready,
@@ -106,8 +111,10 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		turn: harness.Turn{
 			ID:           ready.ID,
 			Instructions: instructions,
+			Tell:         tell,
 			History:      append(a.replayLocked(), named(said)),
 			Note:         note,
+			Generation:   a.speculated,
 		},
 		startedAt: time.Now(),
 		ctx:       ctx,
@@ -150,7 +157,7 @@ func (a *Agent) runSpeculation(spec *speculation) {
 			for stream.Next() {
 			}
 		}
-		spec.harness.Forget()
+		spec.harness.Forget(spec.turn.ID, spec.turn.Generation)
 		return
 	}
 
@@ -205,7 +212,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, sp
 		spec.drop()
 		return false, spec.id
 	}
-	a.keepTurnLocked(ready.Participant, ready.Said(), nil)
+	a.keepTurnLocked(ready.Participant, ready.Said(), 0, nil)
 	a.speakingTurn = ready.ID
 	a.generating = true
 	a.toolRounds = 0
@@ -214,6 +221,7 @@ func (a *Agent) adoptSpeculation(ready candidate, note string) (adopted bool, sp
 	a.sender = routing.Caller{}
 	a.scheduled = false
 	a.lastParticipant = ready.Participant
+	a.heardCaller = true
 	a.generatingCancel[ready.ID] = spec.cancel
 	a.mu.Unlock()
 
@@ -298,8 +306,10 @@ func (s *speculation) drop() {
 func (a *Agent) ruleFromLead(spec *speculation, stream *llm.Stream, err error) {
 	if err != nil {
 		if spec.ctx.Err() == nil {
-			spec.harness.Rule(harness.Decided{CandidateID: spec.ready.ID, Err: err,
-				TookMs: float64(time.Since(spec.startedAt).Microseconds()) / 1000})
+			spec.harness.Rule(harness.Decided{
+				CandidateID: spec.ready.ID, Err: err,
+				TookMs: float64(time.Since(spec.startedAt).Microseconds()) / 1000,
+			})
 		}
 		return
 	}
@@ -318,13 +328,4 @@ func (a *Agent) ruleFromLead(spec *speculation, stream *llm.Stream, err error) {
 		Floor:       harness.Continue,
 		TookMs:      took,
 	})
-}
-
-// unifiedText is the caller's words as a unified reply is asked about them, with the reminder
-// to rule on them first.
-func unifiedText(text string, unified bool) string {
-	if !unified {
-		return text
-	}
-	return text + "\n\n" + harness.UnifiedReminder
 }

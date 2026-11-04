@@ -9,6 +9,7 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/GetStream/getstream-go/v5"
@@ -104,6 +105,73 @@ func (s *SessionConnectorsSuite) TestAToolCallAnswered400KeepsAStaticTokenConnec
 	connection, err := s.store.ConnectorConnection(context.Background(), s.customerID(), mine)
 	s.Require().NoError(err)
 	s.Equal(store.ConnectionConnected, connection.Status)
+}
+
+// TestACustomConnectorsServerInstructionsFollowTheAgentsOwn: what a custom connector's server
+// says about its tools when the session opens it is what the call records the agent was told,
+// after the config's own instructions.
+func (s *SessionConnectorsSuite) TestACustomConnectorsServerInstructionsFollowTheAgentsOwn() {
+	s.Equal("Be brief.\n\nThe crm tools (crm__*) come with these instructions from their server:\n\nQuote ticket ids whole.",
+		s.recordedInstructions(s.connector(), "Quote ticket ids whole."))
+}
+
+// TestABuiltInConnectorsServerInstructionsAreLeftOut is a control: the call records the
+// config's instructions alone, as on base (probe on c4d53f3e9: "Be brief.").
+func (s *SessionConnectorsSuite) TestABuiltInConnectorsServerInstructionsAreLeftOut() {
+	builtin := "fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{builtin + ".yaml": {
+		Data: []byte(strings.Replace(s.manifest(), "custom_crm", builtin, 1))}}))
+
+	s.Equal("Be brief.", s.recordedInstructions(builtin, "Quote ticket ids whole."))
+}
+
+// TestARowStillNamingPluginsRunsItsBuiltInAndCustomBindingsAsOnBase is the control: a config
+// whose row still names a plugin, a plugin event and an MCP server, as one saved before they
+// were refused does, runs the tool of a custom and of a built-in connector's binding as the base
+// did (probe on c467ee4d6: crm__echo ran with the echo's text and no error, for each).
+func (s *SessionConnectorsSuite) TestARowStillNamingPluginsRunsItsBuiltInAndCustomBindingsAsOnBase() {
+	builtin := "fake" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	s.Require().NoError(s.store.SeedConnectorDefinitions(context.Background(), fstest.MapFS{builtin + ".yaml": {
+		Data: []byte(strings.Replace(s.manifest(), "custom_crm", builtin, 1))}}))
+	for kind, connector := range map[string]string{"custom": s.connector(), "built-in": builtin} {
+		s.Run(kind, func() {
+			mine, echo := s.connection(s.client, connector)
+			config := s.config(s.binding("crm", connector, "session", "", echo))
+			stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config)
+			s.Require().NoError(err)
+			stored.Plugins = []store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}}
+			stored.PluginEvents = []store.PluginEvent{{Plugin: "linear", Event: "issue.created"}}
+			stored.MCPServers = []store.MCPServer{{Name: "wwsd", URL: "https://mcp.wwsd.invalid/mcp"}}
+			s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &stored))
+
+			opened := s.client.createSession(s.session(config, map[string]string{"crm": mine}))
+			ran := s.toolRanOn(s.serverClient.actingFor(s.client), s.client.opens("/v1/agents/sessions/"+opened.Id+"/events"), opened.Id)
+
+			s.Equal(connectorEcho, ran["tool"])
+			s.Equal(connectorEchoText, ran["result"])
+			s.Empty(ran["error"])
+		})
+	}
+}
+
+// recordedInstructions is what the call of a session of a config told "Be brief." records the
+// agent was told, the config binding connector as crm and its server saying instructions.
+func (s *SessionConnectorsSuite) recordedInstructions(connector, instructions string) string {
+	s.provider.InstructMCP(instructions)
+	s.T().Cleanup(func() { s.provider.InstructMCP("") })
+	mine, echo := s.connection(s.client, connector)
+	var config AgentConfig
+	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "instructed-" + s.utils.uuid(), "llm": "connecting/connector-model", "instructions": "Be brief.",
+		"connectors": []map[string]any{s.binding("crm", connector, "session", "", echo)},
+	}, &config))
+
+	opened := s.client.createSession(s.session(config.Id, map[string]string{"crm": mine}))
+	s.recorded(opened.Id)
+	var call Call
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/calls/"+opened.Id, nil, &call))
+	s.client.stopSession(opened.Id)
+	return value(call.Instructions)
 }
 
 // toolStartedOn is the tool_started frame of a session of a config binding crm with policy,
@@ -599,8 +667,17 @@ func (s *SessionConnectorsSuite) threadChannel(channel, connector, connection, c
 // connector stores a connector of the suite's app at the fake, taking a bearer token.
 func (s *SessionConnectorsSuite) connector() string {
 	id := "custom_crm" + strings.ReplaceAll(s.utils.uuid(), "-", "")
-	manifest, err := core.ParseManifest([]byte(`
-id: ` + id + `
+	manifest, err := core.ParseManifest([]byte(strings.Replace(s.manifest(), "custom_crm", id, 1)))
+	s.Require().NoError(err)
+	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
+	s.Require().NoError(err)
+	return id
+}
+
+// manifest is the YAML of a connector custom_crm at the fake, taking a bearer token.
+func (s *SessionConnectorsSuite) manifest() string {
+	return `
+id: custom_crm
 revision: 1
 name: CRM
 endpoints:
@@ -609,11 +686,7 @@ schemes: [bearer]
 sources:
   - kind: mcp
     endpoint: mcp
-`))
-	s.Require().NoError(err)
-	_, err = s.store.CreateConnectorDefinition(context.Background(), s.customerID(), manifest)
-	s.Require().NoError(err)
-	return id
+`
 }
 
 // connection is a validated connection to connector holding the fake's token, the app's

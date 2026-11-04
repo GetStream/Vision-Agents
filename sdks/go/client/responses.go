@@ -175,8 +175,9 @@ type Responses struct {
 	pipeline *stream.Pipeline
 }
 
-// Input is something sent along with what is asked: an Image or a Clip to show the agent, the
-// RequestID it answers, or a MaxOutputTokens or ReasoningEffort for this answer alone.
+// Input is something sent along with what is asked: an Image or a Clip to show the agent, a
+// VoiceNote to answer, the RequestID it answers, or a MaxOutputTokens or ReasoningEffort for
+// this answer alone.
 type Input interface {
 	attachTo(request *acceleration.CreateResponseRequest)
 }
@@ -196,8 +197,8 @@ func (i Image) attachTo(request *acceleration.CreateResponseRequest) {
 	request.Images = appended(request.Images, source)
 }
 
-// Clip is a recorded video to show the agent, by public HTTPS URL or as a base64 data URI,
-// at most 50 MB either way.
+// Clip is a recorded video to show the agent, an MP4, MOV, 3GP, MKV or WebM file, by public
+// HTTPS URL or as a base64 data URI, at most 50 MB either way.
 //
 // No model takes a video whole, so the router samples it into frames spread evenly across
 // the clip and shows the agent those, each with the moment it was taken.
@@ -213,6 +214,18 @@ func (v Clip) attachTo(request *acceleration.CreateResponseRequest) {
 		source.MaxFrames = &v.MaxFrames
 	}
 	request.Videos = appended(request.Videos, source)
+}
+
+// VoiceNote is a recording of what the person asked, by HTTP(S) URL or as a base64 data URI,
+// at most 8 MiB. The router transcribes it before the agent answers, and the agent answers
+// what was said, after the text it was sent with, which may then be empty. A conversation
+// kept in Stream Chat shows it on the person's message.
+type VoiceNote struct {
+	URL string
+}
+
+func (n VoiceNote) attachTo(request *acceleration.CreateResponseRequest) {
+	request.Audio = &acceleration.AudioSource{Url: n.URL}
 }
 
 // RequestID is the request a dispatch worker was handed, passed back with the text it was
@@ -291,9 +304,10 @@ func (r *Responses) Create(ctx context.Context, text string, inputs ...Input) (*
 	for _, input := range inputs {
 		input.attachTo(&request)
 	}
-	// A request id is what makes a retried question answered once. It carries text only, so a
-	// question showing the agent something goes without one.
-	if request.RequestId == nil && request.Images == nil && request.Videos == nil {
+	// A request id is what makes a retried question answered once, and a personal conversation
+	// takes a question by one alone. Photos sent with one must be data URIs, so a question with
+	// photos goes without one.
+	if request.RequestId == nil && request.Images == nil {
 		id := make([]byte, 16)
 		if _, err := rand.Read(id); err != nil {
 			return nil, err

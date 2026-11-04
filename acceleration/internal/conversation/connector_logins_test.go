@@ -41,7 +41,7 @@ func (s *DisplaySuite) TestALoginAConnectorAsksForIsAttachedToTheReplyAndRestore
 	asked := login("slack", "attempt-1")
 	asked.Type = ConnectorAuthorizationType
 	s.Equal([]ConnectorAuthorization{asked}, page.Messages[1].ConnectorAuthorizations)
-	// A session's client reads it where it reads a plugin's: among the attachments.
+	// A session's client reads it where a Chat client does: among the attachments.
 	encoded, err := json.Marshal(page.Messages[1])
 	s.Require().NoError(err)
 	var wire struct {

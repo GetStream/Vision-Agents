@@ -23,6 +23,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
@@ -43,6 +44,10 @@ import (
 // streamKey is the deployment app's key in these tests, which every Stream request is made
 // with.
 const streamKey = "deploy-key"
+
+// suiteDeploymentApp is the id the suite's deployment app is configured with: the app a
+// deployment hook names, and so the one its Stream users' cards are keyed by.
+const suiteDeploymentApp = 4
 
 // cardsNote starts the system message the cards are handed behind.
 const cardsNote = "The person's earlier episodes with this agent on other channels follow"
@@ -87,7 +92,7 @@ func (s *EpisodeReadingSuite) SetupSuite() {
 func (s *EpisodeReadingSuite) SetupTest() {
 	s.chat = chattest.NewServer(s.T())
 	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
-		APIKey: streamKey, Secret: "deploy-secret", BaseURL: s.chat.URL,
+		APIKey: streamKey, Secret: "deploy-secret", BaseURL: s.chat.URL, App: suiteDeploymentApp,
 	}), streamapp.ClientsOptions{})
 	var err error
 	s.cards, err = omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.apps})
@@ -191,7 +196,9 @@ func (s *EpisodeReadingSuite) replyTo(text string) llm.ResponseParams {
 		s.model.mu.Lock()
 		defer s.model.mu.Unlock()
 		for _, params := range s.model.asked {
-			if n := len(params.Input); n > 0 && params.Input[n-1].Role == llm.User && params.Input[n-1].Content == text {
+			// What the caller said is the last of the conversation; the harness's notes follow it.
+			said := harness.WithoutNotes(params.Input)
+			if n := len(said); n > 0 && said[n-1].Role == llm.User && said[n-1].Content == text {
 				found = params
 				return true
 			}
@@ -728,10 +735,12 @@ func (s *EpisodeReadingSuite) TestANativeSessionReadsNoCards() {
 
 	native := spec
 	native.STSTarget = "sts-native"
-	s.Nil(s.manager.cards.read(s.ctx, native, bound))
+	cards, _ := s.manager.cards.read(s.ctx, native, bound)
+	s.Nil(cards)
 	s.Empty(namingAny(s.requests()[asked:], "/video/call/agent/"+call), "the call is not even read")
 
-	s.NotEmpty(s.manager.cards.read(s.ctx, spec, bound), "the same call cascaded reads the SMS card")
+	cards, _ = s.manager.cards.read(s.ctx, spec, bound)
+	s.NotEmpty(cards, "the same call cascaded reads the SMS card")
 }
 
 // With the cards on, a call whose Stream does not answer who is on it joins within the read's
@@ -988,4 +997,25 @@ func (s *EpisodeReadingSuite) TestAFollowUpWhoseTurnCouldNotStartLeavesOneCancel
 	custom, _ := stored[0]["custom"].(map[string]any)
 	message, _ := custom["support_message"].(map[string]any)
 	s.Equal("cancelled", message["state"], "%v", stored[0])
+}
+
+// A call that starts on a speech-to-speech model and moves onto the cascade keeps the flow
+// controller SetSettings picked for it: a later voice restart builds its agent from the spec.
+func (s *EpisodeReadingSuite) TestACallMovedOffASpeechToSpeechModelKeepsTheFlowController() {
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-+15550100177")
+	created, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", CallID: call,
+		STSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	s.Require().True(created.Spec().Native(), "the call starts native")
+	s.Empty(created.Spec().ControllerTarget)
+
+	none, cascade := "", "en-low-latency"
+	s.Require().NoError(created.SetSettings(s.ctx, Settings{STS: &none, LLM: &cascade, STT: &cascade, TTS: &cascade}))
+
+	s.False(created.Spec().Native())
+	s.Equal("llm-flow", created.Spec().ControllerTarget)
 }

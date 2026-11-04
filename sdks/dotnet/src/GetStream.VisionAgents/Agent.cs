@@ -1,4 +1,3 @@
-using System.Diagnostics;
 using GetStream.VisionAgents.Models;
 
 namespace GetStream.VisionAgents;
@@ -269,6 +268,12 @@ public sealed record InboundMessage
     /// <summary>What was written.</summary>
     public string Text { get; init; } = "";
 
+    /// <summary>
+    /// The photos sent with it, as URLs to fetch, empty when none was sent.
+    /// <see cref="Dispatch.AnswerAsync"/> shows them to the model.
+    /// </summary>
+    public IReadOnlyList<InboundImage> Images { get; init; } = [];
+
     /// <summary>The message's id.</summary>
     public string MessageId { get; init; } = "";
 
@@ -284,6 +289,11 @@ public sealed record InboundMessage
     /// <summary>When it arrived.</summary>
     public DateTimeOffset? At { get; init; }
 }
+
+/// <summary>A photo sent with an <see cref="InboundMessage"/>.</summary>
+/// <param name="Url">Where to fetch it.</param>
+/// <param name="MimeType">Its MIME type, empty when the router does not know it.</param>
+public sealed record InboundImage(string Url, string MimeType = "");
 
 /// <summary>
 /// An agent's knowledge base, as somewhere to put more of it.
@@ -462,10 +472,6 @@ public sealed class Agent : IAsyncDisposable
     /// </remarks>
     public async Task<AgentConfig> SyncAsync(CancellationToken cancellationToken = default)
     {
-        if (Folder?.Declaration.Plugins.Count > 0)
-        {
-            Trace.TraceWarning("agent.yaml plugins are deprecated: rename plugins to connectors");
-        }
         var skills = _options.Harness?.Skills ?? [];
         var harness = _options.Harness?.Name ?? "";
         var subagent = _options.Harness?.Subagent ?? "";
@@ -819,10 +825,6 @@ public sealed class Agent : IAsyncDisposable
                 NetworkAllowList = options.NetworkAllowList is { } cidrs ? [.. cidrs] : null,
             }
             : null;
-        // Deprecated for connectors, but still what the router reads until plugins are removed.
-#pragma warning disable CS0612
-        request.Plugins = declared.Plugins.Count > 0 ? [.. declared.Plugins] : null;
-#pragma warning restore CS0612
         request.Keyterms = declared.Keyterms.Count > 0 ? [.. declared.Keyterms] : null;
         request.Tags = declared.Tags.Count > 0 ? new Dictionary<string, string>(declared.Tags) : null;
         request.Video = declared.Video is { } video

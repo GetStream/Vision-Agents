@@ -212,6 +212,74 @@ func (s *STSRouterSuite) TestOpenAIServesLiveAndRealtimeModelsFromOneName() {
 	s.True(realtime.Capabilities().Accepts("image"), "a Realtime model keeps its eyes")
 }
 
+// TestABackendModelWithNoPriceIsRefusedBeforeTheVendorIsCalled: the caller names the text
+// model a Live voice hands its reasoning to, and the price list has no entry for it, so its
+// work would be recorded at nothing. The session is refused as the caller's to change.
+func (s *STSRouterSuite) TestABackendModelWithNoPriceIsRefusedBeforeTheVendorIsCalled() {
+	s.T().Setenv("OPENAI_API_KEY", "sk-test")
+	router := s.newRouter()
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "openai/gpt-live-1",
+		Options: options.STS{Overwrites: map[string]json.RawMessage{
+			"openai": json.RawMessage(`{"backend_model":"gpt-9-unpriced"}`),
+		}},
+	})
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, "backend model gpt-9-unpriced has no price")
+}
+
+// TestATranscriberWithNoPriceIsRefusedBeforeTheVendorIsCalled: OpenAI bills writing down the
+// caller's turns to the transcriber the caller named, as a row of its own.
+func (s *STSRouterSuite) TestATranscriberWithNoPriceIsRefusedBeforeTheVendorIsCalled() {
+	s.T().Setenv("OPENAI_API_KEY", "sk-test")
+	router := s.newRouter()
+	transcribed := true
+
+	_, err := router.Start(s.ctx, Request{
+		CustomerID: "acme",
+		Target:     "openai/gpt-realtime-2.1",
+		Options: options.STS{InputTranscript: &transcribed, Overwrites: map[string]json.RawMessage{
+			"openai": json.RawMessage(`{"transcription_model":"gpt-9-transcribe"}`),
+		}},
+	})
+	s.Require().ErrorIs(err, routing.ErrRequest)
+	s.ErrorContains(err, "transcription model gpt-9-transcribe has no price")
+}
+
+// TestEveryModelASessionBillsBesideItsOwnIsPriced: the default backend, the default
+// transcriber and the transcribers OpenAI documents are each priced in the built-in list.
+func (s *STSRouterSuite) TestEveryModelASessionBillsBesideItsOwnIsPriced() {
+	s.T().Setenv("OPENAI_API_KEY", "sk-test")
+	router := s.newRouter()
+	registry := DefaultRegistry()
+	transcribed := true
+	config := func(model string) routing.ProviderConfig {
+		for _, provider := range router.Config().Providers {
+			if provider.Provider == "openai" && provider.Model == model {
+				return provider
+			}
+		}
+		s.FailNow("the built-in config has no openai/" + model)
+		return routing.ProviderConfig{}
+	}
+
+	live, err := registry.Build("openai", routing.Spec{Model: "gpt-live-1"})
+	s.Require().NoError(err)
+	s.NoError(router.delegatedPriced(live, config("gpt-live-1")), "the default backend")
+
+	for _, transcriber := range []string{"", "gpt-4o-mini-transcribe", "gpt-4o-transcribe", "whisper-1"} {
+		spec := routing.Spec{Model: "gpt-realtime-2.1", STS: options.STS{InputTranscript: &transcribed}}
+		if transcriber != "" {
+			spec.Overwrites = json.RawMessage(`{"transcription_model":"` + transcriber + `"}`)
+		}
+		realtime, err := registry.Build("openai", spec)
+		s.Require().NoError(err)
+		s.NoErrorf(router.delegatedPriced(realtime, config("gpt-realtime-2.1")), "transcriber %q", transcriber)
+	}
+}
+
 func (s *STSRouterSuite) TestFullDuplexShortcutResolvesToOpenAILive() {
 	var built []routing.Spec
 	router := s.newStubbedRouter(&built)

@@ -142,7 +142,7 @@ var answerHeaders = map[string]*huma.Header{
 	headerCostMicros: {
 		Description: "What the request cost, in millionths of a dollar: the sum of the usage it recorded. " +
 			"Sent on a success to a server-side caller when the request recorded any, and never to an end user's " +
-			"device. An operation that answers before its work runs, such as createResponse, sends none.",
+			"device. An operation that answers before its work runs, such as createResponse or respondSession, sends none.",
 		Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"},
 	},
 	headerCostEstimated: {
@@ -365,6 +365,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerSessionVoice(api)
 	s.registerSessionDelete(api)
 	s.registerMemories(api)
+	s.registerUserPhones(api)
 	s.registerSessionTools(api)
 	s.registerConfigs(api)
 	s.registerServer(api)
@@ -392,7 +393,6 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerImages(api)
 	s.registerDetection(api)
 	documentHandWritten(api)
-	s.registerPlugins(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)
 	s.registerAudit(api)

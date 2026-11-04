@@ -102,7 +102,7 @@ func (s *SessionEventsSuite) TestATurnLeftWaitingOnAToolIsHandedToTheNextSocketT
 	// is only left waiting where the person is still on the line.
 	opened := s.serverClient.createSession(s.callWithATool())
 	first := s.watch(opened.Id)
-	s.respond(opened.Id)
+	s.callerSays("where is my order")
 	asked := s.await(first, "tool_call")
 	s.Require().NoError(first.Close())
 

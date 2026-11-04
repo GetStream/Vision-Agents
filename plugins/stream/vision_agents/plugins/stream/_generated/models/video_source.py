@@ -16,8 +16,9 @@ T = TypeVar("T", bound="VideoSource")
 class VideoSource:
     """
     Attributes:
-        url (str): Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either
-            way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        url (str): Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV
+            or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a
+            private or loopback address.
         max_frames (int | Unset): How many frames to sample, evenly spaced across the clip. Default 8.
     """
 

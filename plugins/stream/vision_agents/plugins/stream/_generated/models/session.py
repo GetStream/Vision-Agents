@@ -8,6 +8,7 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.session_end_reason import SessionEndReason
 from ..models.session_modality import SessionModality
 from ..models.session_mode import SessionMode
 from ..models.session_state import SessionState
@@ -48,6 +49,10 @@ class Session:
             an incognito session.
         custom (SessionCustom | Unset):
         description (str | Unset):
+        end_reason (SessionEndReason | Unset): Why the session ended: agent_hangup, the agent hung up; transferred, the
+            agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered,
+            the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent
+            left its message or hung up.
         forked_from (str | Unset): The session this one continued from, empty for one opened fresh.
         incognito (bool | Unset): Nothing about this session was recorded. It is reported so a caller can see that what
             they asked for is what they got, but it is never read back from storage: an incognito session has no row to read
@@ -102,6 +107,7 @@ class Session:
     conversation_id: str | Unset = UNSET
     custom: SessionCustom | Unset = UNSET
     description: str | Unset = UNSET
+    end_reason: SessionEndReason | Unset = UNSET
     forked_from: str | Unset = UNSET
     incognito: bool | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -162,6 +168,10 @@ class Session:
             custom = self.custom.to_dict()
 
         description = self.description
+
+        end_reason: str | Unset = UNSET
+        if not isinstance(self.end_reason, Unset):
+            end_reason = self.end_reason.value
 
         forked_from = self.forked_from
 
@@ -243,6 +253,8 @@ class Session:
             field_dict["custom"] = custom
         if description is not UNSET:
             field_dict["description"] = description
+        if end_reason is not UNSET:
+            field_dict["end_reason"] = end_reason
         if forked_from is not UNSET:
             field_dict["forked_from"] = forked_from
         if incognito is not UNSET:
@@ -342,6 +354,13 @@ class Session:
 
         description = d.pop("description", UNSET)
 
+        _end_reason = d.pop("end_reason", UNSET)
+        end_reason: SessionEndReason | Unset
+        if isinstance(_end_reason, Unset):
+            end_reason = UNSET
+        else:
+            end_reason = SessionEndReason(_end_reason)
+
         forked_from = d.pop("forked_from", UNSET)
 
         incognito = d.pop("incognito", UNSET)
@@ -424,6 +443,7 @@ class Session:
             conversation_id=conversation_id,
             custom=custom,
             description=description,
+            end_reason=end_reason,
             forked_from=forked_from,
             incognito=incognito,
             instructions=instructions,

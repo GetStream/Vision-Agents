@@ -37,7 +37,6 @@ from ._generated.models import (
     Harness,
     KnowledgeDocument,
     KnowledgeUrlDeclaration,
-    McpServer,
     SandboxOptions,
     SimulationDeclaration,
     SimulationDeclarationMode,
@@ -55,7 +54,6 @@ from .folder import (
     AGENT_STAMP,
     ConnectorSettings,
     Folder,
-    MCPServerSettings,
     Settings,
     Simulation,
     find,
@@ -383,8 +381,6 @@ async def _declare_settings(
         body.connectors = [
             await _connector_binding(client, entry) for entry in settings.connectors
         ]
-    if settings.mcp_servers:
-        body.mcp_servers = [_mcp_server(server) for server in settings.mcp_servers]
     if settings.tools is not None:
         body.tools = AgentTools()
         if settings.tools.progressive is not None:
@@ -508,15 +504,6 @@ async def _fixed_connection_id(
         f'agents: connector "{entry.name}": "{entry.connection}" matches'
         f" {len(label_ids)} app connections"
     )
-
-
-def _mcp_server(server: MCPServerSettings) -> McpServer:
-    declared = McpServer(name=server.name, url=server.url, tools=server.tools)
-    if server.scopes:
-        declared.scopes = server.scopes
-    if server.user:
-        declared.user = True
-    return declared
 
 
 def _simulation(simulation: Simulation) -> SimulationDeclaration:

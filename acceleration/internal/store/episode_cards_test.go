@@ -87,6 +87,7 @@ func (s *StoreSuite) TestEveryRowPointingAtTheOmniChannelIsThePerson() {
 	s.Equal([]string{thread.ID, sms.ID}, ids(cards))
 	s.Equal([2]string{ContactSlack, "T1:U1"}, [2]string{cards[0].ContactKind, cards[0].ContactAddress}, "each card says whose row it is")
 	s.Equal([2]string{ContactPhone, "+15550100"}, [2]string{cards[1].ContactKind, cards[1].ContactAddress})
+	s.Equal("agent-one", cards[0].AgentConfigID, "the agent config an app chat's channel is checked against")
 }
 
 // A session reads its own thread word for word, and its own call is going on, so neither is
@@ -120,7 +121,7 @@ func (s *StoreSuite) TestACardsLinesEndAtTheFirstThingThatEndsIt() {
 	s.called(bob, "agent:phone-1", "session-bob", 30)
 	closed := s.called(ann, "agent:phone-2", "session-closed", 40)
 	s.Require().NoError(s.store.SaveSession(s.ctx, &AgentSession{ID: "session-closed", CustomerID: "acme-app", CallID: "call-session-closed"}))
-	s.Require().NoError(s.store.CloseSession(s.ctx, "session-closed", s.base.Add(45*time.Minute)))
+	s.Require().NoError(s.store.CloseSession(s.ctx, "session-closed", s.base.Add(45*time.Minute), ""))
 	ended := s.episodeIn(ann, "agent:thread-ended", 50)
 	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE episodes SET status = 'ended', ended_at = ? WHERE id = ?", s.base.Add(55*time.Minute), ended.ID)
 	s.Require().NoError(err)

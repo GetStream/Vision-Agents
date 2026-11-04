@@ -18,7 +18,7 @@ final readonly class InputParts
     public function __construct(
         // Pictures, attached or returned by a tool.
         public int $images,
-        // The system prompt: the agent's instructions, skills and plugin guidance.
+        // The system prompt: the agent's instructions, skills and connector guidance.
         public int $instructions,
         // The conversation's words, from either side.
         public int $messages,

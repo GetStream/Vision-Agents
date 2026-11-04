@@ -73,7 +73,7 @@ func (s *Store) CreateAgentConfig(ctx context.Context, config *AgentConfig) erro
 var configColumns = []string{
 	"name", "role", "mode", "region", "stt", "tts", "sts", "voice", "llm", "subagent",
 	"video_source", "video_max_frames", "search", "instructions", "greeting", "greeting_mode", "guardrail", "review_instructions",
-	"skills", "plugins", "connectors", "left_out_connectors", "plugin_events", "mcp_servers", "channels", "scheduling", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
+	"skills", "plugins", "connectors", "left_out_connectors", "plugin_events", "mcp_servers", "channels", "scheduling", "calls", "keyterms", "visible_tools", "knowledge_namespace", "sandbox", "sandbox_options", "harness", "tags",
 	"dispatch_incoming_call", "dispatch_text", "episode_cards", "progressive_tools", "tool_output_retention", "resume_history", "sync_hash", "updated_at",
 }
 
@@ -84,24 +84,10 @@ var configColumns = []string{
 // that keeps it is not a new bind. A new bind of a channel connection another live config
 // binds is refused as CreateAgentConfig refuses it.
 func (s *Store) UpdateAgentConfig(ctx context.Context, config *AgentConfig) error {
-	return s.updateAgentConfig(ctx, config, false, nil)
+	return s.updateAgentConfig(ctx, config)
 }
 
-// UpdateAgentConfigButPlugins is UpdateAgentConfig for a writer that does not change the
-// plugins: they are written as they are stored when the write lands, read with the row locked
-// FOR UPDATE, so a plugin a login named since the config was read is kept. allow is asked
-// about the config as it is about to be written, as AddConfigPlugin asks it, since the
-// plugins it holds may not be the ones checked before; nothing is written when it fails, and
-// its error is returned as is. config is left holding the plugins written.
-func (s *Store) UpdateAgentConfigButPlugins(ctx context.Context, config *AgentConfig, allow ConfigCheck) error {
-	return s.updateAgentConfig(ctx, config, true, allow)
-}
-
-// ConfigCheck is asked about a config as a write is about to store it, with the config's row
-// locked. It reads definitions on the write's transaction.
-type ConfigCheck func(ctx context.Context, config AgentConfig, definitions Definitions) error
-
-func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig, keepPlugins bool, allow ConfigCheck) error {
+func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig) error {
 	if config.CustomerID == "" || config.ID == "" {
 		return stack.Wrap(errors.New("store: a customer and a config id are required"))
 	}
@@ -141,26 +127,6 @@ func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig, keep
 		if err := refuseSecondChannelAgent(ctx, tx, config, stored.Connectors, stored.TestCopy()); err != nil {
 			return err
 		}
-		// The row's lock after the channel owner's, the order AddConnectorBinding takes them in.
-		if keepPlugins {
-			var locked AgentConfig
-			err := tx.NewSelect().Model(&locked).Column("plugins").
-				Where("id = ?", config.ID).
-				Where("customer_id = ?", config.CustomerID).
-				Where("deleted_at IS NULL").
-				For("UPDATE").
-				Scan(ctx)
-			if errors.Is(err, sql.ErrNoRows) {
-				return unknownAgentConfig(config.ID)
-			}
-			if err != nil {
-				return fmt.Errorf("store: update agent config: %w", err)
-			}
-			config.Plugins = locked.Plugins
-			if err := allow(ctx, *config, txDefinitions{tx}); err != nil {
-				return err
-			}
-		}
 		result, err := tx.NewUpdate().Model(config).
 			Column(configColumns...).
 			Where("id = ?", config.ID).
@@ -185,87 +151,6 @@ func (s *Store) updateAgentConfig(ctx context.Context, config *AgentConfig, keep
 		}
 		return nil
 	}))
-}
-
-// AddConnectorBinding appends binding to a live config's connectors and writes that column
-// alone, with updated_at, so an edit of any other column that lands meanwhile is kept. The
-// config row is locked FOR UPDATE for the read and the write, so two writers of connectors
-// take turns. A fixed binding's connection is locked as UpdateAgentConfig locks it and must
-// be live. added is false, and nothing is written, when the config already has a binding of
-// that name. The config is returned as it is after, for a caller that forgets a cached copy.
-// allow, when not nil, is asked about the config as it is about to be written, under the
-// row lock, as AddConfigPlugin asks it; nothing is written when it fails, and its error is
-// returned. For router plugins migrate (T61 in acceleration/docs/connectors/subtasks.md on
-// connectors/planning).
-func (s *Store) AddConnectorBinding(ctx context.Context, customerID, configID string, binding ConnectorBinding, allow ConfigCheck) (config AgentConfig, added bool, err error) {
-	if customerID == "" || configID == "" || binding.Name == "" {
-		return AgentConfig{}, false, stack.Wrap(errors.New("store: a customer, a config and a binding name are required"))
-	}
-	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
-		missing, err := lockBoundConnections(ctx, tx, &AgentConfig{CustomerID: customerID, Connectors: []ConnectorBinding{binding}})
-		if err != nil {
-			return err
-		}
-		if err := refuseUnbindable(missing, nil); err != nil {
-			return err
-		}
-		undefined, err := lockCustomDefinitions(ctx, tx, customerID, []string{binding.ConnectorID})
-		if err != nil {
-			return err
-		}
-		if err := refuseUndefined(undefined, nil); err != nil {
-			return err
-		}
-		// The channel owner's lock before the row's, the order UpdateAgentConfig takes them in.
-		// refuseSecondChannelAgent takes it again below, which a transaction that holds it is
-		// granted at once (https://www.postgresql.org/docs/current/explicit-locking.html#ADVISORY-LOCKS).
-		if binding.Connection.Type == "fixed" {
-			if _, _, err := lockChannelOwner(ctx, tx, customerID, binding.Connection.ConnectionID); err != nil {
-				return err
-			}
-		}
-		err = tx.NewSelect().Model(&config).
-			Where("id = ?", configID).
-			Where("customer_id = ?", customerID).
-			Where("deleted_at IS NULL").
-			For("UPDATE").
-			Scan(ctx)
-		if errors.Is(err, sql.ErrNoRows) {
-			return unknownAgentConfig(configID)
-		}
-		if err != nil {
-			return fmt.Errorf("store: add connector binding: %w", err)
-		}
-		if slices.ContainsFunc(config.Connectors, func(b ConnectorBinding) bool { return b.Name == binding.Name }) {
-			return nil
-		}
-		adding := config
-		adding.Connectors = []ConnectorBinding{binding}
-		if err := refuseSecondChannelAgent(ctx, tx, &adding, config.Connectors, false); err != nil {
-			return err
-		}
-		config.Connectors = append(config.Connectors, binding)
-		if allow != nil {
-			if err := allow(ctx, config, txDefinitions{tx}); err != nil {
-				return err
-			}
-		}
-		config.UpdatedAt = time.Now().UTC()
-		_, err = tx.NewUpdate().Model(&config).
-			Column("connectors", "updated_at").
-			Where("id = ?", configID).
-			Where("customer_id = ?", customerID).
-			Exec(ctx)
-		if err != nil {
-			return fmt.Errorf("store: add connector binding: %w", err)
-		}
-		added = true
-		return nil
-	})
-	if err != nil {
-		return AgentConfig{}, false, stack.Wrap(err)
-	}
-	return config, added, nil
 }
 
 // lockBoundConnections locks each live connection of the config's customer that the config

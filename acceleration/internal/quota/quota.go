@@ -10,7 +10,7 @@
 // The deployment's default is counted in two buckets rather than one: a user id, which is the
 // honest answer to "who is this", and an address, which is the answer that still holds when a
 // backend mints a fresh user id per request. A customer's quota is counted per user, in a
-// bucket of its own, and against the address too for a device caller.
+// bucket of its own, and never against the address, which many of its users can share.
 //
 // A day is a UTC calendar day, so a new day is a new key and nothing has to be reset.
 package quota
@@ -21,6 +21,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"sync"
 	"time"
 
 	"github.com/redis/rueidis"
@@ -37,8 +38,9 @@ var tracer = tracing.Tracer("quota")
 // be confused with the same date a year later.
 const retention = 48 * time.Hour
 
-// writeTimeout bounds a debit, because it is taken on the goroutine draining a response and
-// a slow Redis should cost that goroutine a moment rather than the rest of the answer.
+// writeTimeout bounds how long a debit holds its caller, because it is taken on the goroutine
+// draining a response and a slow Redis should cost that goroutine a moment rather than the
+// rest of the answer. It bounds the wait, not the write: see Debit.
 const writeTimeout = 2 * time.Second
 
 const (
@@ -110,6 +112,10 @@ type Limit struct {
 type Quota struct {
 	Messages Limit
 	Tokens   Limit
+	// Unread is set when the user's own quota could not be read, so a limit it sets is not in
+	// Messages and Tokens. A debit counts what the user spent all the same, which that limit
+	// reads once it can be read again.
+	Unread bool
 }
 
 // Default is the deployment's limits, which a customer that decided nothing is held to.
@@ -172,6 +178,8 @@ type Limiter struct {
 	defaults Limits
 	source   Source
 	logger   *slog.Logger
+	// unreadLogs throttles the warning a debit logs for a user whose own quota could not be read.
+	unreadLogs Throttle
 }
 
 // New returns a Limiter counting against the quota source gives each user, or against
@@ -229,9 +237,13 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 		if key := userKey(customerID, caller.UserID, now); key != "" && len(limits) > 0 {
 			buckets = append(buckets, bucket{key: key, limits: limits})
 		}
-		// An address answers for every limit, whoever set it, as it did before customers set any.
+		// An address answers for the deployment's limits only, the guard against a backend
+		// minting a fresh user id per request. Many people share one address (an office, a
+		// carrier's NAT), so a customer's quota on one user is counted for that user alone.
 		if key := addressKey(customerID, caller.IP, now); key != "" {
-			buckets = append(buckets, bucket{key: key, limits: every})
+			if limits := held.enforced(false); len(limits) > 0 {
+				buckets = append(buckets, bucket{key: key, limits: limits})
+			}
 		}
 	}
 	if len(buckets) == 0 {
@@ -266,7 +278,15 @@ func (l *Limiter) Allow(ctx context.Context, customerID string, caller routing.C
 //
 // It reports nothing, because it is called once a response has already been generated and
 // there is no longer a decision left for the answer to inform. A debit that does not land
-// is logged and the caller keeps the tokens.
+// is logged and the caller keeps the tokens. A user whose own quota could not be read is
+// counted as one held to a limit of the customer's, since that is where the limit would count.
+//
+// It waits for the write at most writeTimeout, counted from the call, and leaves a write
+// still going then to finish on its own. A write held to that deadline would never be sent
+// once the limits took the whole of it to read, or once this process stalled past it, and
+// the response would go uncounted. The write is bounded by the Redis client's own
+// ConnWriteTimeout instead (rueidis gives up on a connection that answers nothing for that
+// long, 10 s unless set), and ends with the client.
 func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.Caller, tokens int64) {
 	if l == nil || !countable(customerID, caller) {
 		return
@@ -275,12 +295,19 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 	defer cancel()
 	now := time.Now()
 	held := l.quota(ctx, customerID, named(caller))
-	if !held.Enforced() {
+	if !held.Enforced() && !held.Unread {
 		return
 	}
 	var keys []string
-	if key := customerKey(customerID, named(caller), now); key != "" && len(held.enforced(true)) > 0 {
+	customer := len(held.enforced(true)) > 0
+	if key := customerKey(customerID, named(caller), now); key != "" && (customer || held.Unread) {
 		keys = append(keys, key)
+	}
+	if held.Unread && !customer {
+		if l.unreadLogs.Due(customerID, time.Minute) {
+			l.logger.Warn("could not read a user's own quota, counting what they spent anyway",
+				"customer", customerID)
+		}
 	}
 	if !caller.ServerSide {
 		keys = append(keys, deviceKeys(customerID, caller, now)...)
@@ -299,11 +326,19 @@ func (l *Limiter) Debit(ctx context.Context, customerID string, caller routing.C
 		)
 	}
 
-	for _, response := range l.redis.DoMulti(ctx, commands...) {
-		if err := response.Error(); err != nil {
-			l.logger.Error("could not record what a caller spent", "error", err)
-			return
+	written := make(chan struct{})
+	go func() {
+		defer close(written)
+		for _, response := range l.redis.DoMulti(context.WithoutCancel(ctx), commands...) {
+			if err := response.Error(); err != nil {
+				l.logger.Error("could not record what a caller spent", "error", err)
+				return
+			}
 		}
+	}()
+	select {
+	case <-written:
+	case <-ctx.Done():
 	}
 }
 
@@ -462,4 +497,25 @@ func parseInt(value string) int64 {
 		return 0
 	}
 	return parsed
+}
+
+// Throttle says whether a line keyed by key is due, at most once every every.
+type Throttle struct {
+	mu   sync.Mutex
+	last map[string]time.Time
+}
+
+// Due reports whether the line keyed by key may be logged now, and counts it as logged if so.
+func (t *Throttle) Due(key string, every time.Duration) bool {
+	now := time.Now()
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if last, ok := t.last[key]; ok && now.Sub(last) < every {
+		return false
+	}
+	if t.last == nil {
+		t.last = map[string]time.Time{}
+	}
+	t.last[key] = now
+	return true
 }

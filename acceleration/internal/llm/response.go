@@ -59,6 +59,9 @@ type Response struct {
 	// limit, before the model finished. It failed for whoever was waiting, so its status is
 	// StatusFailed, but the provider did nothing wrong and billed what it had read and written.
 	TimedOut bool
+	// Refused is a response a screen refused (Stream.Screen). It failed, so its status is
+	// StatusFailed, but the provider answered as asked.
+	Refused bool
 	// ServiceTier is the tier the provider says it served the response at, such as
 	// OpenAI's default, flex or fast, which it bills at different rates. Empty for a
 	// provider that does not say.
@@ -83,6 +86,10 @@ type Usage struct {
 	// TotalTokens is the provider's own total where it sends one, else input and output
 	// added up. A total the two do not add up to is a part of the bill the adapter missed.
 	TotalTokens int64
+	// OutputUnfinished is an OutputTokens counted before the response ended, by a provider
+	// that reports its output only once it is done: Anthropic's message_start. A response cut
+	// short with it is billed at least the output it streamed.
+	OutputUnfinished bool
 	// VendorCostMicros is what the provider said the response cost it, in millionths of a
 	// dollar, for a provider that says. It never prices the response: the price list does,
 	// and this is what it is checked against.

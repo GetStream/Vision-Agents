@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -23,7 +24,73 @@ const (
 	toolPress    = "press"
 	toolLookup   = "lookup"
 	toolSearch   = "search"
+	toolEndCall  = "end_call"
 )
+
+// defaultEndCallWhen is when the agent is told to hang up if the config does not say.
+const defaultEndCallWhen = "the conversation is finished and the caller needs nothing else."
+
+// endCallStillOpen is the end of what the model is told when the caller spoke before the
+// call ended: it stays open, and only another end_call ends it.
+const endCallStillOpen = "If the caller speaks before the call has ended, it stays open: " +
+	"answer them, and call end_call again once they are done."
+
+// endCallCancelled is what a cascade model is told when the caller spoke over its goodbye.
+const endCallCancelled = "The caller spoke before the call ended, so it is still open. " +
+	"Call end_call again once they are done."
+
+// endCallNative is what a native model is told end_call did. Its goodbye may not have
+// started yet, and the call ends only once it has been heard. A native model is told the
+// rule for a caller who speaks up front: nothing reaches it mid-session without making it
+// reply, and that reply would talk over the caller.
+const endCallNative = "The call ends as soon as you finish speaking. Say a short goodbye now " +
+	"if you have not already; otherwise say nothing more. " + endCallStillOpen
+
+// goodbyeWait bounds how long a native model has to start its goodbye after end_call. A
+// model that takes the result and says nothing would otherwise hold the call open, and
+// billing, until the caller hangs up.
+const goodbyeWait = 10 * time.Second
+
+// goodbyeLength bounds how long a native goodbye that has started may take to finish. A
+// reply whose end never arrives, a provider that drops it, would otherwise hold the call
+// open, and billing, as an outbound call left in a voicemail box does.
+const goodbyeLength = time.Minute
+
+// endCallPending is what a native model is told when it calls end_call again while the
+// call is already ending, so only one hang-up waits on the goodbye.
+const endCallPending = "The call is already ending: it ends as soon as you finish speaking. " + endCallStillOpen
+
+// endCallTimeout bounds the hang-up request once the goodbye has been heard. It no longer
+// follows the tool's context, which a caller's "bye" landing just then would cancel mid-request.
+const endCallTimeout = 5 * time.Second
+
+// goodbye is the reply a native model gives once told end_call ran.
+type goodbye struct {
+	// call is the end_call that asked for it.
+	call string
+	// ctx is the hang-up's own, and cancel keeps the call: the caller spoke before it ended.
+	ctx    context.Context
+	cancel context.CancelFunc
+	// reply is the goodbye, once it has begun.
+	reply   string
+	started chan struct{}
+	done    chan struct{}
+	// finished is whether done is closed.
+	finished bool
+}
+
+// finishLocked closes the goodbye's wait, as though it had been heard. The caller holds the
+// lock.
+func (bye *goodbye) finishLocked() {
+	if bye.finished {
+		return
+	}
+	bye.finished = true
+	if bye.reply == "" {
+		close(bye.started)
+	}
+	close(bye.done)
+}
 
 // arrivalTimeout bounds how long a warm transfer waits for the human to pick up. Past it
 // the summary is worth nothing: either nobody answered, or they have been listening to the
@@ -64,6 +131,77 @@ type Telephony interface {
 	// SendDigits presses digits on the keypad of the call the agent placed, which is how
 	// it gets past a menu.
 	SendDigits(ctx context.Context, digits string) error
+	// Placed reports whether the call was placed from here, which is what gives it a leg
+	// to press digits on.
+	Placed() bool
+}
+
+// Ender ends the call for everyone on it, which is how the agent hangs up rather than only
+// leaving.
+type Ender interface {
+	// EndCall ends the call the agent is on, once the agent has finished speaking.
+	EndCall(ctx context.Context) error
+}
+
+// EndDeferred is an Ender putting the hang-up off: the call ends later by itself, and the
+// model is told Reason rather than that hanging up failed.
+type EndDeferred struct{ Reason string }
+
+func (e *EndDeferred) Error() string { return "agent: hanging up is put off: " + e.Reason }
+
+// Destination is a number the agent may hand the caller to, which the model asks for by
+// Name and never sees the Number of.
+type Destination struct {
+	Name   string
+	Number string
+	// When tells the model what to transfer to this destination for.
+	When string
+	// Warm has the agent introduce the caller to whoever answers. Otherwise it just leaves.
+	Warm bool
+}
+
+// DestinationTransfer is the transfer tool for an agent that may only hand callers to the
+// destinations named. The number is the router's to supply: a model that could write one
+// could be talked into dialling any.
+func DestinationTransfer(destinations []Destination) harness.Tool {
+	names := make([]string, 0, len(destinations))
+	var description strings.Builder
+	description.WriteString("Hand the caller to a human and leave the call. Use it when they ask for a " +
+		"person, or when what they need is beyond you. You stop being on the call once the human " +
+		"answers, so say goodbye in the same reply. Choose who to hand them to:")
+	warm := false
+	for _, destination := range destinations {
+		names = append(names, destination.Name)
+		fmt.Fprintf(&description, "\n- %s", destination.Name)
+		if destination.When != "" {
+			fmt.Fprintf(&description, ": %s", destination.When)
+		}
+		warm = warm || destination.Warm
+	}
+	properties := map[string]any{
+		"destination": map[string]any{
+			"type":        "string",
+			"enum":        names,
+			"description": "who to hand the caller to",
+		},
+	}
+	if warm {
+		properties["summary"] = map[string]any{
+			"type": "string",
+			"description": "One or two sentences telling the human who is calling and what they want. " +
+				"It is spoken aloud on the call, and the caller hears it too, so say it as you would " +
+				"with them listening.",
+		}
+	}
+	return harness.Tool{
+		Name:        toolTransfer,
+		Description: description.String(),
+		Parameters: map[string]any{
+			"type":       "object",
+			"properties": properties,
+			"required":   []string{"destination"},
+		},
+	}
 }
 
 // ToolRunner carries out the tools this package does not know about, which is every tool
@@ -131,10 +269,10 @@ func spokenResults(history []llm.Message) []llm.Message {
 	return history
 }
 
-// maxToolRounds is the reply to a tool result, counted since the caller last spoke, that a
-// voice call makes answer rather than reach for another tool. Progressive tools spend a
-// round describing each tool before running it, so it leaves room for three of them and a
-// query corrected once.
+// maxToolRounds is the reply to a tool result, counted since the caller last spoke, that is
+// made to answer rather than reach for another tool, on a call or in text. Progressive tools
+// spend a round describing each tool before running it, so it leaves room for three of them
+// and a query corrected once. It is the default Options.MaxToolRounds overrides.
 const maxToolRounds = 8
 
 // lateResult introduces the result of a call answered with stillRunning. It comes after
@@ -151,8 +289,9 @@ func telephonyTool(name string) bool {
 // a warm transfer and its absence makes it a cold one, because the difference between the
 // two is only whether the human is told anything before the agent goes.
 type transferArguments struct {
-	To      string `json:"to"`
-	Summary string `json:"summary"`
+	To          string `json:"to"`
+	Destination string `json:"destination"`
+	Summary     string `json:"summary"`
 }
 
 // pressArguments is what the model fills in to press a menu option.
@@ -218,14 +357,14 @@ func answeredSinceCaller(history []llm.Message, call llm.ToolCall, connected []s
 }
 
 // routerStatuses are the statuses only the router answers a connector call it held back with
-// (internal/session: connector_login.go, step_up.go, connector_tools.go; internal/plugins:
-// user.go) until the person signs in or grants a scope. A tool does not use them for its own
-// results, so they count on the status alone.
+// (internal/session: connector_login.go, step_up.go, connector_tools.go) until the person signs
+// in or grants a scope. A tool does not use them for its own results, so they count on the
+// status alone.
 var routerStatuses = []string{"authorization_required", "scope_required", "credential_rejected"}
 
 // sharedStatuses are statuses the router also answers with when a sign-in or an approval ended
 // without the person acting (internal/session: connector_login.go, connector_approval.go;
-// internal/plugins/user.go; internal/conversation/parts.go) but a third-party tool uses too:
+// internal/conversation/parts.go) but a third-party tool uses too:
 // {"status":"stopped","recording_id":"r1"} is a write that was done. They count only in the
 // router's own shape, exactly {status, message}.
 var sharedStatuses = []string{"declined", "expired", "failed", "stopped", "unavailable"}
@@ -292,8 +431,10 @@ func changedState(history []llm.Message, i int) bool {
 
 // transientWords are what a tool's error says when it failed for a reason of the moment
 // rather than because of the values it was sent.
-var transientWords = []string{"timeout", "timed out", "rate limit", "too many requests",
-	"service unavailable", "temporarily unavailable"}
+var transientWords = []string{
+	"timeout", "timed out", "rate limit", "too many requests",
+	"service unavailable", "temporarily unavailable",
+}
 
 // transientResult reports whether a failed tool result says the same call may succeed if made
 // again: an HTTP status that says so (llm.TransientStatus) under "status", "status_code" or
@@ -410,7 +551,7 @@ func blankRequired(tool harness.Tool, arguments string) []string {
 
 // prepareTool registers cancellation before native execution starts in a goroutine.
 func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, context.CancelFunc) {
-	cancels := telephonyTool(requested.Call.Name) ||
+	cancels := telephonyTool(requested.Call.Name) || requested.Call.Name == toolEndCall ||
 		a.options.ToolPolicy != nil && a.options.ToolPolicy(a.approvedName(requested.Call)).Cancels
 	a.mu.Lock()
 	parent := a.ctx
@@ -433,6 +574,15 @@ func (a *Agent) prepareTool(requested harness.ToolRequested) (context.Context, c
 		a.toolTurns = map[string]string{}
 	}
 	a.toolTurns[requested.Call.ID] = requested.TurnID
+	if a.toolScheduled == nil {
+		a.toolScheduled = map[string]bool{}
+	}
+	// A call is the scheduled task's when its reply is known to be (scheduledReply), or when
+	// the last thing is a scheduled turn and the call's reply is not known to be the one that
+	// answered the caller (answerReply).
+	known := requested.TurnID != ""
+	a.toolScheduled[requested.Call.ID] = a.scheduled && !(known && requested.TurnID == a.answerReply) ||
+		known && requested.TurnID == a.scheduledReply
 	if a.toolsRunning == nil {
 		a.toolsRunning = map[string]string{}
 	}
@@ -459,6 +609,7 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		delete(a.toolCancels, requested.Call.ID)
 		delete(a.toolContexts, requested.Call.ID)
 		delete(a.toolTurns, requested.Call.ID)
+		delete(a.toolScheduled, requested.Call.ID)
 		delete(a.toolHolds, requested.Call.ID)
 		a.mu.Unlock()
 	}()
@@ -488,14 +639,16 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	if requested.Call.Name == confirmTool && a.offersConfirm() {
 		ran = true
 		parts, err = a.confirm(ctx, requested.Call)
-	} else if earlier, repeated := answeredSinceCaller(a.History(), requested.Call, a.connected()); repeated {
+	} else if earlier, repeated := answeredSinceCaller(harness.WithoutNotes(a.History()), requested.Call, a.connected()); repeated {
 		parts = llm.TextParts(alreadyCalled + earlier)
-	} else if refused, again := refusedBefore(a.History(), requested.Call); again {
+	} else if refused, again := refusedBefore(harness.WithoutNotes(a.History()), requested.Call); again {
 		parts = llm.TextParts(alreadyRefused + refused + tryOtherValues)
 	} else if key, value, known, unfound := unfoundID(record, requested.Call, toolNames(a.availableTools()), told); unfound {
 		parts = llm.TextParts(unfoundIDResult(key, value, known))
 	} else if blank := blankRequired(tool, requested.Call.Arguments); len(blank) > 0 && !telephonyTool(tool.Name) {
 		parts = llm.TextParts(fmt.Sprintf(leftBlank, requested.Call.Name, strings.Join(blank, ", ")))
+	} else if to, unsourced := unsourcedTransfer(record, requested.Call, told); unsourced && len(a.options.Destinations) == 0 {
+		parts = llm.TextParts(unsourcedTransferResult(to))
 	} else if key, value, heard, unheard := unheardNumber(record, requested.Call, told); unheard {
 		parts = llm.TextParts(unheardResult(key, value, heard))
 	} else if name, spelled, misspelled := misspelledName(record, requested.Call); misspelled {
@@ -516,13 +669,13 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 	a.mu.Lock()
 	delete(a.toolsRunning, requested.Call.ID)
 	delete(a.toolUpdates, requested.Call.ID)
-	charged := a.chargedLocked(ctx)
+	charged := a.chargedLocked(ctx, a.toolScheduled[requested.Call.ID])
 	a.mu.Unlock()
 	// Visual tool results go to the vision worker in both native and cascade calls. The
 	// call is still open in the history it is handed, which a provider refuses to replay.
 	// With no worker, as in a chat, a model that sees images is shown them itself.
 	if err == nil && a.harness != nil && llm.HasImage([]llm.Message{{Parts: parts}}) && !a.looksItself() {
-		_, err = a.harness.Delegate(charged, visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(a.History()))
+		_, err = a.harness.Delegate(charged, visionSkill, "Analyze this tool result for the caller's current question.", requested.TurnID, parts, withOpenCallsAnswered(harness.WithoutNotes(a.History())))
 		if err == nil {
 			parts = llm.TextParts(llm.TextOf(parts) + "\nVisual analysis requested; wait for the vision findings before interpreting the images.")
 		}
@@ -566,7 +719,11 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 			err := model.Answer(requested.Call.ID, result, nil)
 			if err == nil {
 				a.askedApproval(requested.Call.ID)
+				if bye := a.goodbyeOf(requested.Call.ID, false); bye != nil {
+					go a.hangUpAfter(bye)
+				}
 			} else {
+				a.goodbyeOf(requested.Call.ID, true)
 				a.mu.Lock()
 				a.nativeAwaiting = false
 				a.mu.Unlock()
@@ -579,6 +736,8 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 					a.fail(err, "sts")
 				}
 			}
+		} else {
+			a.goodbyeOf(requested.Call.ID, true)
 		}
 		if left {
 			go func() {
@@ -590,7 +749,9 @@ func (a *Agent) executeTool(ctx context.Context, cancel context.CancelFunc, requ
 		return
 	}
 	a.noteToolDone(hold)
-	if ctx.Err() != nil {
+	// A tool that left the call did so before the caller's speech cancelled ctx, so the
+	// agent still goes.
+	if ctx.Err() != nil && !left {
 		return
 	}
 	if !left {
@@ -633,8 +794,8 @@ func toolOutcome(cancelled, failed, refused, answered bool) string {
 // what answers next, so talking over it would be talking to nobody. A transfer asked for
 // in a reply to a tool does not either, so a broken one cannot keep the line open by
 // retrying itself. Other tools chain, a lookup leading to the lookup it needed, and are
-// always followed: a result nobody speaks is the answer lost. A voice call that has
-// chained maxToolRounds times is made to answer instead (respondAfterTool).
+// always followed: a result nobody speaks is the answer lost. A reply that has chained
+// maxToolRounds times is made to answer instead (respondAfterTool).
 func (a *Agent) followsTool(requested harness.ToolRequested) bool {
 	switch {
 	case requested.Call.Name == toolPress:
@@ -669,6 +830,28 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 		} else {
 			result, left, err = a.press(ctx, call)
 		}
+		return llm.TextParts(result), left, err
+	}
+
+	if call.Name == toolEndCall {
+		if a.options.Ender == nil || a.options.Text {
+			return nil, false, errors.New("agent: this call cannot be ended")
+		}
+		// A native model says its goodbye after the result, so the call ends after that
+		// (hangUpAfter) rather than here. The goodbye is set before the answer goes, so the
+		// reply the answer brings cannot start unseen.
+		if a.native() {
+			a.mu.Lock()
+			defer a.mu.Unlock()
+			if a.goodbye != nil {
+				return llm.TextParts(endCallPending), false, nil
+			}
+			bye := &goodbye{call: call.ID, started: make(chan struct{}), done: make(chan struct{})}
+			bye.ctx, bye.cancel = context.WithCancel(a.ctx)
+			a.goodbye = bye
+			return llm.TextParts(endCallNative), false, nil
+		}
+		result, left, err := a.endCall(ctx)
 		return llm.TextParts(result), left, err
 	}
 
@@ -708,10 +891,21 @@ func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentP
 func (a *Agent) availableTools() harness.Tools {
 	var available harness.Tools
 	for _, tool := range a.options.Tools.Tools {
+		if tool.Name == toolTransfer && len(a.options.Destinations) > 0 {
+			tool = DestinationTransfer(a.options.Destinations)
+		}
 		runnable := a.options.ToolRunner != nil
 		switch {
+		case tool.Name == toolPress:
+			runnable = a.options.Telephony != nil && a.options.Telephony.Placed()
 		case telephonyTool(tool.Name):
 			runnable = a.options.Telephony != nil
+		case tool.Name == toolEndCall:
+			runnable = a.options.Ender != nil && !a.options.Text
+			// The config's condition is written as a condition, which on its own reads as a
+			// statement of fact.
+			tool.Description = strings.TrimSpace(tool.Description) + " Call it when: " +
+				cmp.Or(strings.TrimSpace(a.options.EndCallWhen), defaultEndCallWhen)
 		case tool.Name == toolLookup:
 			runnable = a.knowledge != nil
 		case tool.Name == toolSearch:
@@ -893,12 +1087,29 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 	if err := json.Unmarshal([]byte(call.Arguments), &arguments); err != nil {
 		return "", false, fmt.Errorf("agent: could not read the transfer arguments: %w", err)
 	}
+	if len(a.options.Destinations) > 0 {
+		// Whatever number the model wrote is ignored: with destinations it names one.
+		chosen, found := a.destination(arguments.Destination)
+		if !found {
+			return fmt.Sprintf(didNotWork+"%q is not somewhere you can transfer to. Choose one of: %s.",
+				arguments.Destination, strings.Join(a.destinationNames(), ", ")), false, nil
+		}
+		arguments.To = chosen.Number
+		if !chosen.Warm {
+			arguments.Summary = ""
+		}
+	}
 	if strings.TrimSpace(arguments.To) == "" {
 		return "", false, errors.New("agent: a transfer needs a number to transfer to")
 	}
 
 	known := a.heardSoFar()
 	if err := a.options.Telephony.Transfer(ctx, arguments.To); err != nil {
+		if len(a.options.Destinations) > 0 {
+			// The model is told the failure, and the error may quote the number it must not see.
+			a.logger.Error("transfer failed", "to", arguments.To, "error", err)
+			return "", false, fmt.Errorf("agent: the transfer to %s did not go through", arguments.Destination)
+		}
 		return "", false, fmt.Errorf("agent: transfer to %s: %w", arguments.To, err)
 	}
 	a.emitter.Send(Transferred{
@@ -936,6 +1147,99 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 		return "", false, fmt.Errorf("agent: finish the handover summary: %w", err)
 	}
 	return "The caller has been introduced and transferred, and you have left the call.", true, nil
+}
+
+// endCall hangs up once the goodbye the model said with the call has been heard. The
+// caller speaking before then cancels ctx, which keeps the call; after, the call ends.
+func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
+	if a.Finish(ctx) != nil {
+		return endCallCancelled, false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endCallTimeout)
+	defer cancel()
+	if err := a.options.Ender.EndCall(ctx); err != nil {
+		if deferred, ok := errors.AsType[*EndDeferred](err); ok {
+			return deferred.Reason, false, nil
+		}
+		return "", false, fmt.Errorf("agent: end the call: %w", err)
+	}
+	return "You have ended the call.", true, nil
+}
+
+// goodbyeOf returns the goodbye the end_call call set, if it is still the pending one.
+// With drop, it is cancelled and forgotten instead: its answer never reached the model.
+func (a *Agent) goodbyeOf(call string, drop bool) *goodbye {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	bye := a.goodbye
+	if bye == nil || bye.call != call {
+		return nil
+	}
+	if drop {
+		bye.cancel()
+		a.goodbye = nil
+		return nil
+	}
+	return bye
+}
+
+// hangUpAfter ends the call once a native model's goodbye has been heard, or once it has
+// gone goodbyeWait without starting one or goodbyeLength without finishing it. The caller
+// speaking before the call ends cancels its context, which keeps the call.
+func (a *Agent) hangUpAfter(bye *goodbye) {
+	ctx := bye.ctx
+	defer func() {
+		a.mu.Lock()
+		if a.goodbye == bye {
+			a.goodbye = nil
+		}
+		a.mu.Unlock()
+		bye.cancel()
+	}()
+	start := time.NewTimer(goodbyeWait)
+	defer start.Stop()
+	select {
+	case <-bye.started:
+		finish := time.NewTimer(goodbyeLength)
+		defer finish.Stop()
+		select {
+		case <-bye.done:
+		case <-finish.C:
+		case <-ctx.Done():
+			return
+		}
+	case <-start.C:
+	case <-ctx.Done():
+		return
+	}
+	_, left, err := a.endCall(ctx)
+	if err != nil {
+		a.logger.Error("could not end the call", "error", err)
+	}
+	if !left {
+		return
+	}
+	if err := a.Close(); err != nil {
+		a.logger.Error("could not leave after ending the call", "error", err)
+	}
+}
+
+func (a *Agent) destination(name string) (Destination, bool) {
+	name = strings.TrimSpace(name)
+	for _, destination := range a.options.Destinations {
+		if strings.EqualFold(destination.Name, name) {
+			return destination, true
+		}
+	}
+	return Destination{}, false
+}
+
+func (a *Agent) destinationNames() []string {
+	names := make([]string, 0, len(a.options.Destinations))
+	for _, destination := range a.options.Destinations {
+		names = append(names, destination.Name)
+	}
+	return names
 }
 
 // press presses digits at a menu.

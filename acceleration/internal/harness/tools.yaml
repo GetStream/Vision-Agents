@@ -76,3 +76,11 @@ tools:
             The digits to press, such as 1 or 4123. Only 0-9, * and # can be pressed, and w
             waits half a second between two of them.
       required: [digits]
+
+  - name: end_call
+    description: >
+      Hang up, ending the call for everyone on it. Say goodbye in the same reply: the call
+      ends once you have finished speaking, and nothing after that is heard.
+    parameters:
+      type: object
+      properties: {}

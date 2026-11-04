@@ -2,18 +2,20 @@ package session
 
 import (
 	"context"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	getstream "github.com/GetStream/getstream-go/v5"
 )
 
@@ -241,6 +243,7 @@ func (s *SessionSuite) TestAToolCalledOnASpokenTurnIsAskedOfThePhone() {
 	events, detach := running.Watch()
 	defer detach()
 
+	s.hears(running)
 	s.says(running, "what is on record")
 
 	asked := awaitToolCall(events)
@@ -309,66 +312,363 @@ func (s *SessionSuite) TestACommandsPhotoIsShownToTheModelAndOnThePersonsMessage
 	s.Len(chat.Uploads(), 1, "a retry uploads its photo no second time")
 }
 
-func (s *SessionSuite) TestAFinishedLoginCarriesOnWithWhatItWasAskedFor() {
-	s.persists()
+// A command's video frames are shown to the model with its photo, but only the photo is on the
+// person's message, and a retry sent without the frames (its videos not sampled again) is the
+// same command.
+func (s *SessionSuite) TestACommandsVideoFramesAreShownToTheModelAloneAndARetryWithoutThemIsTheSameCommand() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	s.model.sees = true
 	running := s.commands()
-	running.persisted.AcceptLogins([]string{"slack"})
-	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", nil, options.LLM{})
-	s.Require().NoError(err)
-	s.Equal("Tell Nash a joke on Slack", s.asked())
-	slack, ok := plugins.Lookup("slack")
-	s.Require().True(ok)
-	running.persisted.Observe(agent.ToolStarted{ID: "list", Tool: "slack__list_tools", StartedAt: time.Now().UTC()})
-	running.persisted.Observe(agent.ToolRan{ID: "list", Tool: "slack__list_tools",
-		Result: plugins.AuthorizationResult(slack, "https://slack.com/oauth/v2_user/authorize?state=s1", "")})
-	s.gated.answers(1)
-	s.eventually(func() bool {
-		receipt, err := running.Command("command-a")
-		return err == nil && receipt.State == "completed"
-	}, "the reply asking for the login should finish")
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+	frame := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x02}, Caption: "video 1, 0.5s of 1.0s", Video: true}
 
-	s.manager.LoginFinished("s1")
-	s.Equal("Slack is connected now. Carry on with what I asked for before you needed it.", s.asked())
-	s.gated.answers(1)
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "What is this?", "", []llm.ImagePart{photo, frame}, options.LLM{})
+	s.Require().NoError(err)
+
+	var shown [][]byte
 	s.eventually(func() bool {
-		saved := s.stored(running)
-		return len(saved) == 3 && saved[2].State == "completed"
-	}, "the conversation should carry on with a reply of its own")
-	saved := s.stored(running)
-	s.Equal([]string{"user", "assistant", "assistant"}, []string{saved[0].Role, saved[1].Role, saved[2].Role},
-		"nobody is shown having asked again")
-	s.Equal(plugins.AuthorizationConnected, saved[1].Authorizations[0].Status)
+		shown = nil
+		for _, request := range s.model.requests() {
+			for _, message := range request.Input {
+				for _, part := range message.Parts {
+					if part.Image != nil {
+						shown = append(shown, part.Image.Data)
+					}
+				}
+			}
+		}
+		return len(shown) > 0
+	}, "the model was never shown the command's images")
+	s.Equal([][]byte{photo.Data, frame.Data}, shown, "the model sees the photo and the video's frame")
+	s.eventually(func() bool {
+		for _, message := range s.stored(running) {
+			if message.ID == "command-a" && len(message.Files) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the person's message never showed the photo")
+	uploads := chat.Uploads()
+	s.Require().Len(uploads, 1, "the photo alone is uploaded, no frame of the video")
+	s.Equal(photo.Data, uploads[0].Data)
+
+	retry, _, err := running.RespondCommand(s.ctx, "command-a", "What is this?", "", []llm.ImagePart{photo}, options.LLM{})
+	s.Require().NoError(err, "the frames are not part of what a retry is matched on")
+	s.True(retry.Duplicate)
+	s.Len(s.model.requests(), 1, "the model is asked once")
 }
 
-func (s *SessionSuite) TestALoginFinishedAfterTheWatcherLeftStillCarriesOn() {
+// Videos are sampled only for a question its session would take: a personal conversation's
+// without a command is refused first, as is one from a caller the conversation is not theirs,
+// and a retry of a command already taken samples nothing, unless a dispatch worker's server
+// is answering it now.
+func (s *SessionSuite) TestVideosAreSampledOnlyForAQuestionTheSessionWouldAnswer() {
 	s.persists()
 	running := s.commands()
-	_, detach := running.Watch()
-	running.persisted.AcceptLogins([]string{"slack"})
-	_, _, err := running.RespondCommand(s.ctx, "command-a", "Tell Nash a joke on Slack", "", nil, options.LLM{})
+
+	_, err := running.SampleVideos(s.ctx, "")
+	s.ErrorIs(err, errPersonalNeedsCommand, "a personal conversation takes questions by command alone")
+	_, err = running.Respond(s.ctx, "What is in this clip?", nil, options.LLM{})
+	s.ErrorIs(err, errPersonalNeedsCommand, "which is what Respond refuses it for")
+
+	sample, err := running.SampleVideos(s.ctx, "command-a")
 	s.Require().NoError(err)
-	s.Equal("Tell Nash a joke on Slack", s.asked())
-	slack, ok := plugins.Lookup("slack")
-	s.Require().True(ok)
-	running.persisted.Observe(agent.ToolStarted{ID: "list", Tool: "slack__list_tools", StartedAt: time.Now().UTC()})
-	running.persisted.Observe(agent.ToolRan{ID: "list", Tool: "slack__list_tools",
-		Result: plugins.AuthorizationResult(slack, "https://slack.com/oauth/v2_user/authorize?state=s1", "")})
+	s.True(sample, "a command not taken yet")
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	sample, err = running.SampleVideos(s.ctx, "command-a")
+	s.Require().NoError(err)
+	s.False(sample, "a retry of a command already taken")
 	s.gated.answers(1)
 	s.eventually(func() bool {
 		receipt, err := running.Command("command-a")
 		return err == nil && receipt.State == "completed"
-	}, "the reply asking for the login should finish")
+	}, "the first command should finish")
 
-	// The page is left while the login is made in another tab.
-	detach()
-	s.manager.LoginFinished("s1")
-	s.Equal("Slack is connected now. Carry on with what I asked for before you needed it.", s.asked())
+	_, err = running.AwaitCommand(s.ctx, "command-w", "Handed to a worker", "")
+	s.Require().NoError(err)
+	sample, err = running.SampleVideos(s.ctx, "command-w")
+	s.Require().NoError(err)
+	s.True(sample, "a command a dispatch worker's server answers now reaches the model")
+
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+	sample, err = shared.SampleVideos(s.ctx, "")
+	s.Require().NoError(err)
+	s.True(sample, "a conversation with no user takes a question without a command")
+
+	unkept, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, LLMTarget: "en-low-latency", Caller: routing.Caller{UserID: "employee-1"}})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = unkept.Close() })
+	sample, err = unkept.SampleVideos(s.ctx, "command-a")
+	s.Require().NoError(err)
+	s.True(sample, "a session kept nowhere answers every question, its request id ignored")
+
+	s.Require().NoError(running.StartVoice(s.ctx, Call{}))
+	sample, err = running.SampleVideos(s.ctx, "")
+	s.Require().NoError(err)
+	s.True(sample, "a question typed into a call is heard there, without a command")
+}
+
+// A question of photos alone needs no command to be shown on the person's message (AI-2550);
+// the frames of a video sent with it are the model's alone, and a personal conversation still
+// takes questions by command only, uploading nothing.
+func (s *SessionSuite) TestPhotosWithoutTextAreShownOnTheMessageOfAQuestionWithoutACommand() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	s.model.sees = true
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+	frame := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x02}, Caption: "video 1, 0.0s of 1.0s"}
+
+	_, err = s.commands().Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+	s.ErrorIs(err, errPersonalNeedsCommand)
+	s.Empty(chat.Uploads(), "a question its conversation refuses uploads nothing")
+
+	_, err = shared.Respond(s.ctx, "", []llm.ImagePart{frame}, options.LLM{})
+	s.Error(err, "a video's frames alone leave the person's message nothing to show")
+	s.Empty(chat.Uploads(), "a video's frames are not uploaded")
+
+	_, err = shared.Respond(s.ctx, "", []llm.ImagePart{photo, frame}, options.LLM{}, photo)
+	s.Require().NoError(err)
+	s.eventually(func() bool {
+		for _, request := range s.model.requests() {
+			if request.HasImage() {
+				return true
+			}
+		}
+		return false
+	}, "the model was never shown the photo")
+	s.eventually(func() bool {
+		for _, message := range s.stored(shared) {
+			if message.Role == "user" && message.Text == "" && len(message.Files) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the person's message never showed the photo")
+	uploads := chat.Uploads()
+	s.Require().Len(uploads, 1, "the photo alone is uploaded, not the video's frame")
+	s.Equal(photo.Data, uploads[0].Data)
+}
+
+// Voice starts while the photos of a question with no text upload: the upload holds no lock a
+// voice start needs, so it does not wait on the network, and the question still returns (AI-2550).
+func (s *SessionSuite) TestVoiceStartsWhilePhotosWithoutTextUpload() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	s.model.sees = true
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+	uploading, release := chat.Hold("/image")
+
+	asked := make(chan error, 1)
+	go func() {
+		_, err := shared.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+		asked <- err
+	}()
+	select {
+	case <-uploading:
+	case <-time.After(settleFor):
+		s.FailNow("the photo was never uploaded")
+	}
+	voiced := make(chan error, 1)
+	go func() { voiced <- shared.StartVoice(s.ctx, Call{}) }()
+	select {
+	case err := <-voiced:
+		s.Require().NoError(err)
+	case <-time.After(settleFor):
+		s.FailNow("voice start waited for the photo upload")
+	}
+	s.True(shared.Voicing())
+	release()
+
+	s.Require().NoError(<-asked)
+	s.Len(chat.Uploads(), 1)
+}
+
+// Controls, as on base: a worker's session answers what is already in its channel, a call is
+// written by its transcript, and an incognito chat keeps nothing, so none uploads the photos
+// of a question with no text.
+func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessageIsWritten() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: chat.URL,
+	}), streamapp.ClientsOptions{})
+	s.manages()
+	s.model.sees = true
+	creator := "worker-agent"
+	_, err := chat.Client.Chat().GetOrCreateChannel(s.ctx, "agent", "worker-agent", &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
+	})
+	s.Require().NoError(err)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true, "")
+	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
+		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = worker.Close() })
+	s.Require().True(worker.Spec().Dispatched, "the session a worker opens in the channel handed out")
+	call := s.joins(Spec{CallID: "call-photos", PersistConversation: true})
+	s.T().Cleanup(func() { _ = call.Close() })
+	s.Require().True(call.Durable(), "a call kept in Stream Chat")
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff, 0x01}}
+
+	_, err = worker.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+	s.Require().NoError(err)
+	_, _ = call.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+	incognito, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, Incognito: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = incognito.Close() })
+	_, _ = incognito.Respond(s.ctx, "", []llm.ImagePart{photo}, options.LLM{}, photo)
+
+	s.Empty(chat.Uploads())
+}
+
+func (s *SessionSuite) TestACommandsVoiceNoteIsShownOnThePersonsMessageOnce() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	running := s.commands()
+	note := persistent.VoiceNote{MIME: "audio/mp4", Audio: []byte("a voice note")}
+
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "The fryer is leaking", "", nil, options.LLM{}, note)
+	s.Require().NoError(err)
+
+	var shown []persistent.Message
+	s.eventually(func() bool {
+		shown = s.stored(running)
+		for _, message := range shown {
+			if message.ID == "command-a" && len(message.Files) == 1 {
+				return true
+			}
+		}
+		return false
+	}, "the person's message never showed the voice note")
+	for _, message := range shown {
+		if message.ID == "command-a" {
+			s.Equal("The fryer is leaking", message.Text)
+			s.Equal("voice-note.mp4", message.Files[0].Name)
+			s.Equal("audio/mp4", message.Files[0].MIME)
+		}
+	}
+	uploads := chat.Uploads()
+	s.Require().Len(uploads, 1)
+	s.Equal(note.Audio, uploads[0].Data)
+	s.JSONEq(`{"id":"employee-1"}`, uploads[0].User, "the voice note is uploaded as the person who sent it")
+
+	retry, _, err := running.RespondCommand(s.ctx, "command-a", "The fryer is leaking", "", nil, options.LLM{}, note)
+	s.Require().NoError(err)
+	s.True(retry.Duplicate)
+	s.Len(chat.Uploads(), 1, "a retry uploads its voice note no second time")
+
+	other := persistent.VoiceNote{MIME: "audio/mp4", Audio: []byte("another voice note")}
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "The fryer is leaking", "", nil, options.LLM{}, other)
+	s.ErrorIs(err, persistent.ErrCommandConflict, "a retry is matched on the voice note as well as the text")
+}
+
+func (s *SessionSuite) TestAVoiceNoteIsRefusedBeforeItIsHeardForWhatItsCommandWouldBe() {
+	s.persists()
+	running := s.commands()
+
+	_, err := running.CheckRespond(s.ctx, "", "", false, options.LLM{})
+	s.ErrorIs(err, errPersonalNeedsCommand, "a personal conversation takes questions by command alone")
+
+	_, _, err = running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	_, err = running.CheckRespond(s.ctx, "command-b", "", false, options.LLM{})
+	s.ErrorIs(err, persistent.ErrResponseRunning, "a question waits for the answer running")
+	_, err = running.CheckRespond(s.ctx, "command-a", "", false, options.LLM{})
+	s.ErrorIs(err, persistent.ErrCommandConflict, "a question sent without a voice note is another than one with")
+
 	s.gated.answers(1)
 	s.eventually(func() bool {
-		saved := s.stored(running)
-		return len(saved) == 3 && saved[2].State == "completed"
-	}, "the conversation should carry on with nobody watching")
-	s.Equal(Live, running.State())
+		receipt, err := running.Command("command-a")
+		return err == nil && receipt.State == "completed"
+	}, "the first command should finish")
+	heard, err := running.CheckRespond(s.ctx, "command-v", "", false, options.LLM{})
+	s.Require().NoError(err)
+	s.Empty(heard, "a command not begun was heard by nobody")
+	note := persistent.VoiceNote{MIME: "audio/mp4", Audio: []byte("a voice note"), Heard: "the fryer leaks"}
+	_, _, err = running.RespondCommand(s.ctx, "command-v", "the fryer leaks", "", nil, options.LLM{}, note)
+	s.Require().NoError(err)
+
+	heard, err = running.CheckRespond(s.ctx, "command-v", "", false, options.LLM{})
+	s.Require().NoError(err)
+	s.Equal("the fryer leaks", heard, "a retry carries what the first hearing heard")
+	s.gated.answers(1)
+}
+
+// A question's text longer than a command carries is refused where BeginCommand refuses it,
+// before its voice note is heard: with a command id, and as a question to a shared chat.
+func (s *SessionSuite) TestAVoiceNoteWithTextTooLongIsRefusedBeforeItIsHeard() {
+	s.persists()
+	long := strings.Repeat("a", 1024*1024+1)
+	personal := s.commands()
+	shared, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", Text: true, PersistConversation: true, LLMTarget: "en-low-latency"})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = shared.Close() })
+
+	_, err = personal.CheckRespond(s.ctx, "command-long", long, false, options.LLM{})
+	s.Error(err, "a command id with text too long")
+	_, err = shared.CheckRespond(s.ctx, "", long, false, options.LLM{})
+	s.Error(err, "a question to a shared chat with text too long")
+	_, err = shared.Respond(s.ctx, long, nil, options.LLM{})
+	s.Error(err, "Respond refuses it as well: the check says what the question would be refused for")
+	_, err = shared.CheckRespond(s.ctx, "", strings.Repeat("a", 1024*1024), false, options.LLM{})
+	s.NoError(err, "text of exactly the most a command carries")
+}
+
+func (s *SessionSuite) TestAVoiceNoteToAConversationNoLongerTheCallersIsRefusedBeforeItIsHeard() {
+	client := chattest.Client(s.T())
+	service := persistent.NewForChat(client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.manages()
+	const channelID = "support-12345678-1234-1234-1234-123456789abd"
+	const agentID = "test-agent"
+	creator := agentID
+	_, err := client.Chat().GetOrCreateChannel(s.ctx, "agent", channelID, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Members: []getstream.ChannelMemberRequest{{UserID: agentID}, {UserID: "alice"}, {UserID: "bob"}},
+			Custom: map[string]any{
+				"support_customer_id": "acme", "support_agent_id": agentID,
+				"support_owner_id": "alice", "support_access": "members",
+				persistent.TriggerField: persistent.SessionCommandTrigger,
+			}},
+	})
+	s.Require().NoError(err)
+	spec := Spec{CustomerID: "acme", Text: true, PersistConversation: true,
+		AgentID: agentID, ConversationID: "agent:" + channelID,
+		LLMTarget: "en-low-latency", Caller: routing.Caller{UserID: "alice"}}
+	alice, err := s.manager.Create(s.ctx, spec)
+	s.Require().NoError(err)
+	spec.Caller.UserID = "bob"
+	bob, err := s.manager.Create(s.ctx, spec)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = bob.Close() })
+
+	_, err = alice.CheckRespond(s.ctx, "stale-session-command", "", false, options.LLM{})
+
+	s.ErrorIs(err, persistent.ErrCommandNotFound, "an old session must not act as bob")
 }
 
 func (s *SessionSuite) TestAWatcherComingBackKeepsTheConversationOpen() {
@@ -412,6 +712,61 @@ func (s *SessionSuite) TestReopeningAConversationNobodyWatchesDoesNotWaitForItsG
 	s.T().Cleanup(func() { _ = reopened.Close() })
 	s.Equal(Ended, running.State(), "the session nobody watched should hand the conversation over")
 	s.Equal(running.Spec().ConversationID, reopened.Spec().ConversationID)
+}
+
+// Defect (AI-2632 R2.1): a session opened on the conversation of one retiring, closing once
+// it has written the replies it owes (Retire), is refused the conversation as open, or takes
+// it over, while that one's close still lets its reply finish. It waits for it to end
+// instead, its close included: Close takes it off the map at once.
+func (s *SessionSuite) TestASessionOpenedOnARetiringOnesConversationWaitsForItToEnd() {
+	s.persists()
+	running := s.commands()
+	_, _, err := running.RespondCommand(s.ctx, "command-a", "First question", "", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.Equal("First question", s.asked())
+	s.Require().True(s.manager.Retire(running))
+	s.False(s.manager.Retire(running), "a session retiring already is retired again")
+
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_, _ = s.manager.Close(running.ID(), OwnerOf(running.Spec()))
+	}()
+	s.eventually(func() bool {
+		_, held := s.manager.Get(running.ID(), OwnerOf(running.Spec()))
+		return !held
+	}, "the retiring session was never closed")
+	s.Require().NotEqual(Ended, running.State(), "its close no longer waits for the reply it is writing")
+
+	reopened, err := s.manager.Create(s.ctx, Spec{
+		CustomerID:          "acme",
+		Text:                true,
+		PersistConversation: true,
+		ConversationID:      running.Spec().ConversationID,
+		LLMTarget:           "en-low-latency",
+		Caller:              routing.Caller{UserID: "employee-1"},
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = reopened.Close() })
+	s.Equal(Ended, running.State(), "the session was opened before the retiring one ended")
+	<-closed
+}
+
+// Defect (AI-2632 R3.2): a retired session, once closed, stays referenced by the manager
+// until the next session opened on some persistent conversation of the router looks at it.
+func (s *SessionSuite) TestARetiredSessionIsForgottenOnceClosed() {
+	s.persists()
+	running := s.commands()
+	s.Require().True(s.manager.Retire(running))
+
+	closed, err := s.manager.CloseRetired(running)
+
+	s.Require().NoError(err)
+	s.True(closed)
+	s.Equal(Ended, running.State())
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	s.NotContains(s.manager.retiring, running, "the closed session is still held as retiring")
 }
 
 func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestion() {
@@ -688,9 +1043,15 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	s.Require().NoError(err)
 	_, _, err = bob.RespondCommand(s.ctx, "bob-command", "What is our codeword?", "", nil, options.LLM{})
 	s.Require().NoError(err)
-	setMembers("alice")
+	// Chat ignores the data of a query for a channel that exists, so a member leaves by
+	// an update.
+	_, err = client.Chat().UpdateChannel(s.ctx, "agent", channelID,
+		&getstream.UpdateChannelRequest{RemoveMembers: []string{"bob"}})
+	s.Require().NoError(err)
 	_, _, err = bob.RespondCommand(s.ctx, "removed-command", "This must not run", "", nil, options.LLM{})
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
+	_, err = bob.SampleVideos(s.ctx, "removed-command")
+	s.ErrorIs(err, persistent.ErrCommandNotFound, "a removed member's videos are not sampled")
 	_, err = bob.Command("bob-command")
 	s.ErrorIs(err, persistent.ErrCommandNotFound)
 	_, err = bob.InterruptCommand("bob-command")
@@ -700,6 +1061,9 @@ func (s *SessionSuite) TestSharedConversationHandsOffAfterWatcherDetachAndReject
 	detachBob()
 	_, err = s.manager.Create(s.ctx, spec)
 	s.Require().Error(err, "a removed member cannot reopen the shared channel")
+	spec.Caller.UserID = "alice"
+	_, err = s.manager.Create(s.ctx, spec)
+	s.NoError(err, "the member left in the channel still opens it")
 }
 
 func (s *SessionSuite) TestAVoiceSessionRestoresChatHistoryWithoutPersisting() {

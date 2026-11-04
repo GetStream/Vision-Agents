@@ -21,7 +21,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -80,14 +79,13 @@ type Message struct {
 	UI map[string]any `json:"ui,omitempty"`
 	// UIAction is what a person did in a reply's UI, on their message (custom.ai_ui_action).
 	UIAction map[string]any `json:"ui_action,omitempty"`
-	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
-	// They are written among the attachments, by MarshalJSON.
-	Authorizations []plugins.Authorization `json:"-"`
 	// ConnectorAuthorizations ask the end user to connect a connector binding the reply
 	// needed (connector_logins.go). They are written among the attachments, by MarshalJSON.
 	ConnectorAuthorizations []ConnectorAuthorization `json:"-"`
 	Saved                   bool                     `json:"saved"`
 	Error                   string                   `json:"persistence_error,omitempty"`
+	// Refused is a reply the prompt injection screen refused (RefusedField).
+	Refused bool `json:"refused,omitempty"`
 
 	// Read from Stream user metadata, never from message custom fields.
 	authorID, authorName string
@@ -101,11 +99,15 @@ type Page struct {
 	shared      bool
 	// thread is a page of a thread channel, whose people's messages are read back as user
 	// turns (messageFromThread).
-	thread    bool
-	empty     bool
-	Messages  []Message `json:"messages"`
-	Before    string    `json:"before,omitempty"`
-	Truncated bool      `json:"context_truncated"`
+	thread bool
+	// dispatched is a page of the channel a message the Router handed to a worker was written
+	// in, opened on its word (opensDispatched): the router never stamped it, so it holds no
+	// memory scope to keep, and its people's messages are read back as user turns.
+	dispatched bool
+	empty      bool
+	Messages   []Message `json:"messages"`
+	Before     string    `json:"before,omitempty"`
+	Truncated  bool      `json:"context_truncated"`
 }
 type Updated struct {
 	CID     string  `json:"conversation_id"`
@@ -132,6 +134,9 @@ type commandRecord struct {
 	Reply string `json:",omitempty"`
 	// Files are that reply's files, which a reply carried again carries too (FollowUpFinished).
 	Files []sandbox.Attachment `json:",omitempty"`
+	// Heard is what the voice note sent with the command said, for a retry to carry rather
+	// than hear it again (CheckBegin).
+	Heard string `json:",omitempty"`
 }
 
 var ErrCommandNotFound = errors.New("command not found")
@@ -151,7 +156,14 @@ const ReadBackPrefix = "st_"
 func readBack(id string) bool { return strings.HasPrefix(id, ReadBackPrefix) }
 
 var validAuthorID = regexp.MustCompile(`^[A-Za-z0-9_.-]{1,128}$`)
+
+// maxCommandText is the most text one command carries, in bytes.
+const maxCommandText = 1024 * 1024
+
+var errInvalidCommand = errors.New("invalid command ID or text")
+
 var validCommandID = regexp.MustCompile(`^[A-Za-z0-9_-]{1,128}$`)
+
 var validClientID = regexp.MustCompile(`^[A-Za-z0-9_.:-]{1,128}$`)
 
 // ledger is what a conversation holds in memory. Stream Chat is its durable copy: a
@@ -170,9 +182,6 @@ type ledger struct {
 	// StreamApp is the app the conversation is kept in, its pin: zero for the deployment's
 	// own. Every write and read for it is made there.
 	StreamApp int64 `json:",omitempty"`
-	// Logins are the servers the session reaches that log in, the only ones whose tool
-	// results may ask for a login.
-	Logins []string `json:",omitempty"`
 }
 type operation struct {
 	Message Message
@@ -345,6 +354,36 @@ func opensThread(ctx context.Context, cid string) bool {
 	return vouched != "" && vouched == cid
 }
 
+// dispatchedOpen is the context key RouterOpensDispatched keeps its channel under.
+type dispatchedOpen struct{}
+
+// RouterOpensDispatched is ctx carrying the Router's word that cid is the channel a message it
+// handed to the customer's worker was written in, whose customer it worked out then
+// (internal/api routeArrivingMessage), and which that worker's session answers in
+// (internal/session Manager.handedOut). Such a channel is the customer's own and carries none
+// of the router's stamps, so ownedBy, which reads them, cannot place it: only a ctx from here
+// opens one, only the one channel it names, and only while it still has none of them.
+func RouterOpensDispatched(ctx context.Context, cid string) context.Context {
+	return context.WithValue(ctx, dispatchedOpen{}, cid)
+}
+
+// opensDispatched is whether ctx carries the Router's word for the channel cid
+// (RouterOpensDispatched), and the channel is one somebody wrote in that the router never
+// stamped: custom is the channel's, empty is a channel nothing was written in, which is not the
+// one the message came from.
+func opensDispatched(ctx context.Context, cid string, custom map[string]any, empty bool) bool {
+	vouched, _ := ctx.Value(dispatchedOpen{}).(string)
+	if vouched == "" || vouched != cid || empty {
+		return false
+	}
+	for _, stamp := range []string{CustomerField, "support_agent_id", "support_owner_id", "support_access", TriggerField} {
+		if _, stamped := custom[stamp]; stamped {
+			return false
+		}
+	}
+	return true
+}
+
 // FinishedReply is an agent's reply in a thread channel, once its final text is stored in
 // Stream Chat: what the channel bridge sends on to the external thread.
 type FinishedReply struct {
@@ -387,6 +426,11 @@ func SessionCommandChannel(channelType, id string, custom map[string]any) bool {
 
 const TriggerField = "support_trigger"
 const SessionCommandTrigger = "session_commands"
+
+// RefusedField marks a reply the prompt injection screen refused. It is a field of its own
+// rather than a state, because a client waiting for a reply to settle knows the states it
+// settles in, and a refused reply has failed as far as it is concerned.
+const RefusedField = "refused"
 
 // CustomerField names the customer a channel the router created belongs to.
 const CustomerField = "support_customer_id"
@@ -561,7 +605,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 		if err != nil {
 			return nil, nil, false, stack.Wrap(err)
 		}
-		if !sameMemoryScope(page.memoryScope, scope) {
+		if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 			return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 		}
 
@@ -608,7 +652,7 @@ func (s *Service) open(ctx context.Context, app int64, customer, agentID, cid st
 	if err != nil {
 		return nil, nil, false, stack.Wrap(err)
 	}
-	if !sameMemoryScope(page.memoryScope, scope) {
+	if !page.dispatched && !sameMemoryScope(page.memoryScope, scope) {
 		return nil, nil, false, stack.Wrap(errors.New("conversation belongs to another memory scope; reopen with its original organization"))
 	}
 	if agentID == "" {
@@ -950,8 +994,11 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		return Page{}, stack.Wrap(err)
 	}
 	stored, _ := r.Data.Channel.Custom["support_agent_id"].(string)
+	dispatched := false
 	if err := ownedBy(r.Data.Channel.Custom, customer, agentID, caller); err != nil {
-		return Page{}, stack.Wrap(err)
+		if dispatched = opensDispatched(ctx, cid, r.Data.Channel.Custom, len(r.Data.Messages) == 0); !dispatched {
+			return Page{}, stack.Wrap(err)
+		}
 	}
 	// A thread channel is read only for the Router's word that it opens it: a conversation id
 	// a request names reads nothing there.
@@ -974,7 +1021,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -999,7 +1046,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			// A message written before schema v1 carries the whole message as support_message.
 			raw, ok := m.Custom["support_message"]
 			if !ok {
-				if written, ok := messageFromThread(m, p.thread); ok {
+				if written, ok := messageFromThread(m, p.thread || p.dispatched); ok {
 					p.Messages = append(p.Messages, written)
 				}
 				continue
@@ -1011,9 +1058,9 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		if err == nil {
 			msg.Artifacts = artifactsFromAttachments(m.Attachments)
 			msg.Files = filesFromAttachments(m.Attachments)
-			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
 			msg.ConnectorAuthorizations = connectorAuthorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
+			msg.Refused = m.Custom[RefusedField] == true
 			msg.authorID = m.User.ID
 			if m.User.Name != nil {
 				msg.authorName = *m.User.Name
@@ -1085,10 +1132,20 @@ func entries(p Page) []entry {
 	// (Session.FollowUp), so they are not history yet: read here too, the model would see
 	// each one twice.
 	replied := false
+	// withheld is whether the message being read was judged with a reply the prompt
+	// injection screen refused: every turn since the last reply a model is handed back, as
+	// agent.Withheld does in the live agent's history.
+	withheld := false
 	for i := len(p.Messages) - 1; i >= 0; i-- {
 		m := p.Messages[i]
 		if m.Role == "assistant" {
 			replied = true
+			switch {
+			case m.Refused:
+				withheld = true
+			case m.State == "completed":
+				withheld = false
+			}
 		}
 		if m.written && !replied {
 			continue
@@ -1100,6 +1157,9 @@ func entries(p Page) []entry {
 			continue
 		}
 		e := entryOf(p, m)
+		if withheld {
+			e.message.Content = agent.WithheldInput
+		}
 		if e.message.Content == "" && e.turn == "" {
 			continue
 		}
@@ -1117,14 +1177,10 @@ func entryOf(p Page, m Message) entry {
 	if note := DescribeUIAction(m.UIAction, uiWords(p.Messages, m.UIAction)); note != "" && m.Role == "user" {
 		said += "\n\n" + note
 	}
-	if m.Role == "user" && len(m.Files) > 0 {
+	if photos := photosOn(m); m.Role == "user" && photos > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
-		// A message of photos alone is the note alone.
-		if said != "" {
-			said += "\n\n"
-		}
-		said += photoNote(len(m.Files))
+		said = agent.PhotoNote(said, photos)
 	}
 	content := said
 	var artifacts []ArtifactAttachment
@@ -1179,12 +1235,17 @@ func entryOf(p Page, m Message) entry {
 	return entry{message: message, turn: turn}
 }
 
-// photoNote follows a person's words in history when they sent photos with them.
-func photoNote(count int) string {
-	if count == 1 {
-		return "[sent with a photo, not shown again]"
+// photosOn counts the photos on m. A voice note sent with it is not one: its text already
+// holds what was said. A thread channel's photos are read without a type, so a file is a
+// photo unless it is audio.
+func photosOn(m Message) int {
+	var photos int
+	for _, file := range m.Files {
+		if !strings.HasPrefix(file.MIME, "audio/") {
+			photos++
+		}
 	}
-	return fmt.Sprintf("[sent with %d photos, not shown again]", count)
+	return photos
 }
 
 // HistoryLine is one message of a conversation the caller kept itself, such as a thread in
@@ -1264,13 +1325,6 @@ func (c *Conversation) ShowTools(patterns []string) {
 	c.data.VisibleTools = append([]string(nil), patterns...)
 }
 
-// AcceptLogins sets the servers whose tool results may ask somebody to log in.
-func (c *Conversation) AcceptLogins(servers []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.data.Logins = append([]string(nil), servers...)
-}
-
 func (c *Conversation) Agent() string             { return c.data.Agent }
 func (c *Conversation) Attach(emit func(Updated)) { c.mu.Lock(); defer c.mu.Unlock(); c.emit = emit }
 func (c *Conversation) Release() {
@@ -1281,8 +1335,8 @@ func (c *Conversation) Release() {
 	c.released = time.Now()
 	c.emit = nil
 }
-func (c *Conversation) Begin(text string) error {
-	_, err := c.BeginCommand(uuid.NewString(), text, "")
+func (c *Conversation) Begin(text string, photos ...Photo) error {
+	_, err := c.BeginCommand(uuid.NewString(), text, "", photos...)
 	return err
 }
 
@@ -1302,10 +1356,40 @@ func (c *Conversation) Command(id string) (CommandReceipt, error) {
 	return record.CommandReceipt, nil
 }
 
+// CheckBegin refuses what BeginCommand would refuse id with a voice note for now, for a
+// caller to learn it before work it pays for: hearing the voice note. heard is what the voice
+// note of id said when it was begun, for a retry to carry rather than hear it again, and empty
+// for an id not begun. A command begun without a voice note is another question. text is
+// what was typed with it.
+func (c *Conversation) CheckBegin(id, text string) (heard string, err error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if !c.active {
+		return "", stack.Wrap(errors.New("conversation is not open"))
+	}
+	if len(text) > maxCommandText {
+		return "", stack.Wrap(errInvalidCommand)
+	}
+	if previous, ok := c.data.Commands[id]; ok {
+		if previous.Initiator != c.data.Owner {
+			return "", stack.Wrap(ErrCommandNotFound)
+		}
+		if previous.Heard == "" {
+			return "", stack.Wrap(ErrCommandConflict)
+		}
+		return previous.Heard, nil
+	}
+	if c.data.Current != nil && c.data.Current.FinishedAt == nil {
+		return "", stack.Wrap(ErrResponseRunning)
+	}
+	return "", nil
+}
+
 // BeginCommand atomically records command ownership and both initial Chat writes.
 // A command Stream holds is never automatically executed again, including after a restart.
 // clientID names the install the command came from; an invalid one is ignored. photos are
-// what the person sent with it (PublishPhotos), which their message shows.
+// what the person sent with it (PublishPhotos), which their message shows; text may be empty
+// when there are some.
 func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) (CommandReceipt, error) {
 	return c.BeginCommandWithAction(id, text, clientID, nil, photos...)
 }
@@ -1318,8 +1402,8 @@ func (c *Conversation) BeginCommandWithAction(id, text, clientID string, action 
 	if !c.active {
 		return CommandReceipt{}, stack.Wrap(errors.New("conversation is not open"))
 	}
-	if !validCommandID.MatchString(id) || text == "" || len(text) > 1024*1024 {
-		return CommandReceipt{}, stack.Wrap(errors.New("invalid command ID or text"))
+	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > maxCommandText {
+		return CommandReceipt{}, stack.Wrap(errInvalidCommand)
 	}
 	if !ValidUIAction(action) {
 		return CommandReceipt{}, stack.Wrap(errors.New("invalid UI action"))
@@ -1355,7 +1439,13 @@ func (c *Conversation) BeginCommandWithAction(id, text, clientID string, action 
 	if c.data.Commands == nil {
 		c.data.Commands = map[string]commandRecord{}
 	}
-	c.data.Commands[id] = commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	record := commandRecord{CommandReceipt: receipt, Digest: digest, Initiator: c.data.Owner, ClientID: clientID}
+	for _, photo := range photos {
+		if photo.Heard != "" {
+			record.Heard = photo.Heard
+		}
+	}
+	c.data.Commands[id] = record
 	c.data.Current = &a
 	c.reasoning = liveReasoning{}
 	c.data.Pending = append(c.data.Pending,
@@ -1591,11 +1681,6 @@ func (c *Conversation) Observe(event agent.Event) {
 				m.Sources = mergeSources(m.Sources, sourcesOf(e.Result))
 				m.Artifacts = mergeArtifacts(m.Artifacts, StoredArtifacts(e.Result))
 			}
-			// Asked of whoever is in the conversation, whether or not the tool's steps are
-			// shown: a login nobody sees is one nobody can finish.
-			if found, ok := plugins.RequestedAuthorization(t.Name, e.Result, c.data.Logins); ok && e.Err == nil {
-				m.Authorizations = mergeAuthorizations(m.Authorizations, found)
-			}
 			failure := ""
 			if e.Err != nil {
 				failure = e.Err.Error()
@@ -1669,6 +1754,10 @@ func (c *Conversation) Observe(event agent.Event) {
 		c.afterTools()
 		unsaved = true
 	case agent.Error:
+		// Only the screen's refusal names a turn, and only this reply's is about it.
+		if e.TurnID != "" && c.acceptTurn(e.TurnID, false) {
+			refuse(m)
+		}
 		c.finish("failed")
 		return
 	case agent.Interrupted:
@@ -1686,6 +1775,15 @@ func (c *Conversation) Observe(event agent.Event) {
 		m.Saved = false
 	}
 	c.publish(*m)
+}
+
+// refuse marks a reply the prompt injection screen refused. What streamed of the refused
+// round before the verdict is no answer the agent gave, so only the rounds before it stay.
+func refuse(m *Message) {
+	runes := []rune(m.Text)
+	m.Text = strings.TrimSuffix(string(runes[:min(m.AnswerStart, len(runes))]), "\n\n")
+	m.AnswerStart = min(m.AnswerStart, utf8.RuneCountInString(m.Text))
+	m.Refused = true
 }
 
 // acceptTurn retains the original response binding across internal model/tool rounds.
@@ -1825,7 +1923,6 @@ func (c *Conversation) publish(m Message) {
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		m.Files = append([]sandbox.Attachment{}, m.Files...)
-		m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 		m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
@@ -1843,7 +1940,6 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
-	m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 	m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
@@ -1908,13 +2004,15 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	if ui != nil {
 		fields["ai_ui"] = ui
 	}
+	if m.Refused {
+		fields[RefusedField] = true
+	}
 	parts := m.Parts
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)
 	}
-	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
-	extra = append(extra, connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
-	extra = append(extra, fileAttachments(m.Files)...)
+	extra := append(partialAttachments(m.Artifacts), connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
+	extra = append(extra, fileAttachments(m.Files, m.Role == "user")...)
 	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
 	}
@@ -1937,7 +2035,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		}
 		fitUI(custom)
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: chatFileAttachments(m.Files),
+			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
@@ -2134,7 +2232,6 @@ func (c *Conversation) run() {
 				copy.Sources = append([]Source{}, m.Sources...)
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 				copy.Files = append([]sandbox.Attachment{}, m.Files...)
-				copy.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 				copy.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 				m = &copy
 			}

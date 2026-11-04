@@ -9,7 +9,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -35,7 +34,8 @@ func edgeFor(clients *streamapp.Clients) session.EdgeFactory {
 		if identity.Secret.Empty() && userToken == "" {
 			// An app acted in with a forwarded token: the agent joins with a user token
 			// the gateway signs, since the router holds no secret to sign one with.
-			minted, err := clients.MintUserToken(ctx, stream, spec.UserID, agentTokenValidity)
+			// The agent joins with the identity's own key, so its token is minted for that key.
+			minted, _, err := clients.MintUserToken(ctx, stream, "", spec.UserID, agentTokenValidity)
 			if err != nil {
 				return nil, err
 			}
@@ -76,34 +76,4 @@ func transcriptFor(timings bool) session.TranscriptFactory {
 			Logger:       logger,
 		})
 	}
-}
-
-// phoneApps makes a customer's phone lines in the Stream app it acts in, and finishes the
-// lines already made in the app they were made in.
-type phoneApps struct {
-	clients *streamapp.Clients
-}
-
-func (a phoneApps) For(ctx context.Context, customer string) (*phone.Stream, int64, error) {
-	bound, err := a.clients.For(ctx, customer)
-	if err != nil {
-		return nil, 0, err
-	}
-	return phone.NewStreamFromClient(bound.Client), bound.Identity.StreamApp, nil
-}
-
-func (a phoneApps) ForApp(ctx context.Context, customer string, app int64) (*phone.Stream, error) {
-	bound, err := a.clients.ForApp(ctx, customer, app)
-	if err != nil {
-		return nil, err
-	}
-	return phone.NewStreamFromClient(bound.Client), nil
-}
-
-func (a phoneApps) ForAppRemoving(ctx context.Context, customer string, app int64) (*phone.Stream, error) {
-	bound, err := a.clients.ForAppReading(ctx, customer, app)
-	if err != nil {
-		return nil, err
-	}
-	return phone.NewStreamFromClient(bound.Client), nil
 }

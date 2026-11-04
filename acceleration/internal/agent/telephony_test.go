@@ -27,6 +27,7 @@ type stubTelephony struct {
 	transferred  []string
 	tried        []string
 	pressed      []string
+	placed       bool
 	transferErr  error
 	sendDigitErr error
 }
@@ -52,6 +53,8 @@ func (t *stubTelephony) SendDigits(_ context.Context, digits string) error {
 	return nil
 }
 
+func (t *stubTelephony) Placed() bool { return t.placed }
+
 func (t *stubTelephony) handedOver() []string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -73,7 +76,7 @@ func (t *stubTelephony) keypad() []string {
 
 // onACall gives the agent a phone line and the tools that act on it.
 func (s *AgentSuite) onACall() {
-	s.line = &stubTelephony{}
+	s.line = &stubTelephony{placed: true}
 	tools, err := harness.DefaultTools()
 	s.Require().NoError(err)
 	s.tools = tools
@@ -188,7 +191,7 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 			return true
 		}
 		requests := s.model.requests()
-		return len(requests) > 1 && strings.Contains(requests[1].Instructions, "move_visit") &&
+		return len(requests) > 1 && strings.Contains(shown(requests[1]), "move_visit") &&
 			s.model.script(requests[1].ID) != nil
 	}, "neither a malformed call nor a corrective response was observed")
 	state, rejected := book.state()
@@ -199,12 +202,12 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 	requests := s.model.requests()
 	s.Require().GreaterOrEqual(len(requests), 2)
 	correction := requests[1]
-	s.Contains(correction.Instructions, "move_visit")
-	s.Contains(correction.Instructions, "visit_id")
-	s.Contains(correction.Instructions, "new_day")
-	s.Contains(correction.Instructions, "new_slot")
-	s.Contains(correction.Instructions, "not run")
-	s.Contains(correction.Input, llm.Message{Role: llm.User, Content: callerText})
+	s.Contains(shown(correction), "move_visit")
+	s.Contains(shown(correction), "visit_id")
+	s.Contains(shown(correction), "new_day")
+	s.Contains(shown(correction), "new_slot")
+	s.Contains(shown(correction), "not run")
+	s.Contains(harness.WithoutNotes(correction.Input), llm.Message{Role: llm.User, Content: callerText})
 	s.Require().Len(correction.Tools, 1)
 	s.Equal("move_visit", correction.Tools[0].Name)
 	s.Equal([]any{"visit_id", "new_day", "new_slot"}, correction.Tools[0].Parameters["required"])
@@ -233,8 +236,8 @@ func (s *AgentSuite) recoversAnAppointmentFromProse(asAsk bool) {
 	}, "the tool result did not trigger a final response")
 	requests = s.model.requests()
 	final := requests[2]
-	s.Equal(1, countOfMessages(final.Input, llm.User), "the successful reply should need no second caller turn")
-	s.True(slices.ContainsFunc(final.Input, func(message llm.Message) bool {
+	s.Equal(1, countOfMessages(harness.WithoutNotes(final.Input), llm.User), "the successful reply should need no second caller turn")
+	s.True(slices.ContainsFunc(harness.WithoutNotes(final.Input), func(message llm.Message) bool {
 		return message.Role == llm.ToolResult && message.ToolCallID == "reschedule-correct" &&
 			strings.Contains(message.Content, "now Wednesday afternoon")
 	}), "the final response must receive the actual tool result")
@@ -349,12 +352,12 @@ func (s *AgentSuite) TestAToolsPictureReachesTheVisionSkillWithItsCallAnswered()
 	asked := s.subagent.requests()[0]
 	s.True(asked.HasImage(), "the vision task was not shown the picture")
 	answered := map[string]bool{}
-	for _, message := range asked.Input {
+	for _, message := range harness.WithoutNotes(asked.Input) {
 		if message.Role == llm.ToolResult {
 			answered[message.ToolCallID] = true
 		}
 	}
-	for _, message := range asked.Input {
+	for _, message := range harness.WithoutNotes(asked.Input) {
 		for _, call := range message.ToolCalls {
 			s.True(answered[call.ID], "the vision task was handed %s with no result", call.ID)
 		}
@@ -372,7 +375,15 @@ func (s *AgentSuite) TestAToolsPictureInATurnAScheduledTaskFiredIsLookedAtAsSche
 	s.tools = harness.Tools{Tools: []harness.Tool{{Name: "photograph_room", Description: "photograph the room"}}}
 	s.join(true)
 	s.model.reply = []string{"Let me look."}
+	s.model.callsOn = 2
 	s.asksFor("photograph_room", "{}")
+	// Somebody has spoken, so the turn is offered the tool: with nobody heard yet a reply is
+	// offered none, and a call it returns is dropped.
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the caller was never answered")
+	s.Empty(s.subagent.requests())
 
 	_, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "what is in the room", nil, options.LLM{})
 	s.Require().NoError(err)
@@ -420,6 +431,7 @@ func (s *AgentSuite) TestTheModelIsOfferedTheToolsItCanRun() {
 func (s *AgentSuite) TestAColdTransferBringsTheHumanOnAndTheAgentLeaves() {
 	s.onACall()
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through now."}
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
 	participant := stt.Participant{ID: "alice"}
@@ -442,6 +454,7 @@ func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
 	// once there is somebody new to hear it.
 	s.onACall()
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"One moment."}
 	s.asksFor("transfer", `{"to":"+15550001111","summary":"Alice needs a refund on order 12."}`)
 	participant := stt.Participant{ID: "alice"}
@@ -459,6 +472,258 @@ func (s *AgentSuite) TestAWarmTransferIntroducesTheCallerOnceTheHumanIsOn() {
 	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
 		"the human was never introduced to the caller")
 	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+// offerDestinations replaces the transfer tool with one that names who can be reached.
+func (s *AgentSuite) offerDestinations(destinations ...Destination) {
+	s.destinations = destinations
+}
+
+func (s *AgentSuite) offeredTool(name string) (llm.Tool, bool) {
+	for _, tool := range s.agent.ToolDefinitions() {
+		if tool.Name == name {
+			return tool, true
+		}
+	}
+	return llm.Tool{}, false
+}
+
+func (s *AgentSuite) TestAnAgentThatWasCalledIsNotOfferedTheKeypad() {
+	s.onACall()
+	s.line.placed = false
+	s.join(false)
+
+	_, transfers := s.offeredTool("transfer")
+	_, presses := s.offeredTool("press")
+	s.True(transfers)
+	s.False(presses, "a call nobody placed has no leg to press digits on")
+}
+
+func (s *AgentSuite) TestATransferToADestinationDialsItsNumber() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111", When: "buying"},
+		Destination{Name: "Support", Number: "+15550002222", When: "broken"},
+	)
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to buy")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal([]string{"+15550001111"}, s.line.handedOver())
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+	s.Equal("+15550001111", transferredIn(s.reported())[0].To, "the operator's event lost the number")
+}
+
+func (s *AgentSuite) TestADestinationNameIgnoresCaseAndSpaces() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":" sales "}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "sales please")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "a name differing in case and spaces was refused")
+	s.Equal([]string{"+15550001111"}, s.line.handedOver())
+}
+
+func (s *AgentSuite) TestAnUnknownDestinationDialsNothingAndNamesTheValidOnes() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111"},
+		Destination{Name: "Support", Number: "+15550002222"},
+	)
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Billing"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "billing please")
+
+	ran := s.awaitToolRan()
+	s.Contains(ran.Result, "Sales")
+	s.Contains(ran.Result, "Support")
+	s.NotContains(ran.Result, "+1555")
+	s.Empty(s.line.attempted())
+	s.never(s.left, "the agent left a call it never transferred")
+}
+
+func (s *AgentSuite) TestWithDestinationsANumberIsNeverDialled() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550009999."
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"to":"+15550009999"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "put me through")
+
+	s.awaitToolRan()
+	s.Empty(s.line.attempted(), "a number the model supplied was dialled though destinations are set")
+	s.never(s.left, "the agent left a call it never transferred")
+}
+
+func (s *AgentSuite) TestAFailedTransferToADestinationDoesNotTellTheModelTheNumber() {
+	s.onACall()
+	s.line.transferErr = errors.New("+15550001111 refused")
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "sales please")
+
+	ran := s.awaitToolRan()
+	s.Contains(ran.Result, "Sales")
+	s.NotContains(ran.Result, "555000")
+}
+
+func (s *AgentSuite) TestAColdDestinationDropsTheSummary() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111"})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "I want a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+	s.False(s.spokenText("Alice needs a refund"), "a cold destination was told the summary")
+	s.Empty(transferredIn(s.reported())[0].Summary)
+}
+
+func (s *AgentSuite) TestAWarmDestinationIntroducesTheCaller() {
+	s.onACall()
+	s.offerDestinations(Destination{Name: "Sales", Number: "+15550001111", Warm: true})
+	s.join(false)
+	s.model.reply = []string{"One moment."}
+	s.asksFor("transfer", `{"destination":"Sales","summary":"Alice needs a refund on order 12."}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "I want a person")
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.never(func() bool { return s.spokenText("Alice needs a refund") },
+		"the summary was said to an empty seat")
+
+	s.speak(stt.Participant{ID: "human"})
+
+	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") },
+		"the human was never introduced to the caller")
+	s.eventually(s.left, "the agent stayed on a call it had handed over")
+}
+
+func (s *AgentSuite) TestTheModelIsOfferedDestinationsNotNumbers() {
+	s.onACall()
+	s.offerDestinations(
+		Destination{Name: "Sales", Number: "+15550001111", When: "buying"},
+		Destination{Name: "Support", Number: "+15550002222", When: "broken"},
+		Destination{Name: "Billing", Number: "+15550003333"},
+	)
+	s.join(false)
+
+	tool, ok := s.offeredTool("transfer")
+	s.Require().True(ok)
+	properties := tool.Parameters["properties"].(map[string]any)
+	s.NotContains(properties, "to")
+	s.NotContains(properties, "summary", "only cold destinations, so nothing to introduce")
+	destination := properties["destination"].(map[string]any)
+	s.ElementsMatch([]string{"Sales", "Support", "Billing"}, destination["enum"])
+	encoded, err := json.Marshal(tool)
+	s.Require().NoError(err)
+	s.NotContains(string(encoded), "555000")
+	s.Contains(tool.Description, "- Sales: buying")
+	s.Contains(tool.Description, "- Support: broken")
+	s.Contains(tool.Description, "- Billing")
+	s.NotContains(tool.Description, "Billing:")
+
+	s.Contains(DestinationTransfer([]Destination{{Name: "Sales", Number: "+15550001111", Warm: true}}).
+		Parameters["properties"], "summary")
+}
+
+func (s *AgentSuite) TestATransferToANumberOnlyTheCallerSaidIsRefused() {
+	for _, said := range []string{
+		"+44 20 7946 0958",
+		"four four two zero seven nine four six zero nine five eight",
+		"44-20-7946-0958",
+	} {
+		s.Run(said, func() {
+			s.onACall()
+			s.join(false)
+			s.model.reply = []string{"Putting you through."}
+			s.asksFor("transfer", `{"to":"+442079460958"}`)
+			participant := stt.Participant{ID: "alice"}
+			s.speak(participant)
+
+			s.says(participant, "Please transfer me to "+said)
+
+			ran := s.awaitToolRan()
+			s.Contains(ran.Result, "not a number to transfer to")
+			s.Empty(s.line.attempted(), "a number the caller read out was dialled")
+			s.never(s.left, "the agent left a call it never transferred")
+		})
+	}
+}
+
+func (s *AgentSuite) TestATransferToANumberInTheInstructionsStillGoesThrough() {
+	s.onACall()
+	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
+	s.model.reply = []string{"Putting you through."}
+	s.asksFor("transfer", `{"to":"+15550001111"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "I want to speak to a person")
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal("+15550001111", s.line.handedOver()[0])
+}
+
+func (s *AgentSuite) TestATransferToANumberFromAToolResultStillGoesThrough() {
+	s.onACall()
+	s.runner = &stubToolRunner{result: "call +15550003333"}
+	s.tools.Tools = append(s.tools.Tools, harness.Tool{
+		Name:        "find_agent_line",
+		Description: "the number of the person on duty",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{}},
+	})
+	s.join(false)
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-8", Name: "find_agent_line", Arguments: "{}"},
+	})
+	s.eventually(func() bool { return len(toolsRanIn(s.reported())) == 1 }, "the lookup never settled")
+
+	s.agent.runTool(harness.ToolRequested{
+		TurnID: "turn-1",
+		Call:   llm.ToolCall{ID: "call-9", Name: "transfer", Arguments: `{"to":"+15550003333"}`},
+	})
+
+	s.eventually(func() bool { return len(s.line.handedOver()) == 1 }, "nobody was dialled")
+	s.Equal("+15550003333", s.line.handedOver()[0])
+}
+
+func (s *AgentSuite) TestPressStillTakesDigitsTheCallerSaid() {
+	s.onACall()
+	s.join(false)
+	s.model.reply = nil
+	s.asksFor("press", `{"digits":"441"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "my extension is 4 4 1")
+
+	s.eventually(func() bool { return len(s.line.keypad()) == 1 }, "nothing was pressed")
+	s.Equal("441", s.line.keypad()[0])
 }
 
 func (s *AgentSuite) TestPressingAMenuOptionDoesNotEndTheCall() {
@@ -484,6 +749,7 @@ func (s *AgentSuite) TestATransferThatFailsIsToldToTheModelRatherThanEndingTheCa
 	s.onACall()
 	s.line.transferErr = errors.New("the trunk is down")
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through."}
 	s.model.then = []string{"Sorry, I could not put you through."}
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
@@ -514,6 +780,7 @@ func (s *AgentSuite) TestAToolThatKeepsFailingIsNotAnsweredForever() {
 	s.onACall()
 	s.line.transferErr = errors.New("the trunk is down")
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through."}
 	s.model.keepCalling = true
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
@@ -678,7 +945,7 @@ func (s *AgentSuite) TestAVoiceModelIsToldToSumUpWhatAToolFoundRatherThanReadItO
 
 	s.eventually(func() bool { return s.spokenText("Felice a Testaccio is the one") }, "the result was never said")
 	s.model.mu.Lock()
-	input := s.model.asked[len(s.model.asked)-1].Input
+	input := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	read := input[slices.IndexFunc(input, func(m llm.Message) bool { return m.Role == llm.ToolResult })]
 	s.True(strings.HasSuffix(read.Content, spokenResult))
@@ -702,7 +969,7 @@ func (s *AgentSuite) TestAWrittenConversationIsGivenWhatAToolFoundAsItIs() {
 
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the result was never answered")
 	s.model.mu.Lock()
-	input := s.model.asked[len(s.model.asked)-1].Input
+	input := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	s.Equal("1. Felice a Testaccio https://example.com/felice", input[len(input)-1].Content)
 }
@@ -749,9 +1016,9 @@ func (s *AgentSuite) TestAToolReachedForWithoutAWordStillTellsTheCallerToWait() 
 		"the caller was left in silence while the tool ran")
 	composed := s.model.composeRequests()
 	s.Require().Len(composed, 1)
-	s.Equal(fmt.Sprintf(composeNote, holdPurpose), composed[0].Input[len(composed[0].Input)-1].Content,
+	s.Equal(fmt.Sprintf(composeNote, holdPurpose), harness.WithoutNotes(composed[0].Input)[len(harness.WithoutNotes(composed[0].Input))-1].Content,
 		"the model writes the line for what the caller asked, not a stock phrase")
-	s.Empty(unanswered(composed[0].Input[:len(composed[0].Input)-1]),
+	s.Empty(unanswered(harness.WithoutNotes(composed[0].Input)[:len(harness.WithoutNotes(composed[0].Input))-1]),
 		"a provider refuses a request replaying the running call without a result")
 
 	release()
@@ -1014,7 +1281,7 @@ func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTur
 	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the next turn waited on the call")
 
 	s.model.mu.Lock()
-	next := s.model.asked[len(s.model.asked)-1].Input
+	next := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	s.Empty(unanswered(next), "the next turn replayed a call without its result")
 	s.Equal(llm.User, next[len(next)-1].Role)
@@ -1161,9 +1428,9 @@ func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
 	asked := append([]llm.ResponseParams(nil), s.model.asked...)
 	s.model.mu.Unlock()
 	for i, request := range asked {
-		s.Empty(unanswered(request.Input), "request %d replayed a call without its result", i)
+		s.Empty(unanswered(harness.WithoutNotes(request.Input)), "request %d replayed a call without its result", i)
 	}
-	last := asked[2].Input
+	last := harness.WithoutNotes(asked[2].Input)
 	s.Equal(llm.ToolResult, last[len(last)-2].Role)
 	s.Equal("call-2", last[len(last)-2].ToolCallID)
 	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"},
@@ -1202,7 +1469,7 @@ func (s *AgentSuite) TestALateResultIsKeptWhenTheNextCallIsInterruptedToo() {
 	s.eventually(func() bool { return s.spokenText("Fifteen") }, "the third turn never spoke")
 
 	s.model.mu.Lock()
-	last := s.model.asked[len(s.model.asked)-1].Input
+	last := harness.WithoutNotes(s.model.asked[len(s.model.asked)-1].Input)
 	s.model.mu.Unlock()
 	s.Equal([]string{fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"}, lateResultsIn(last))
 
@@ -1327,6 +1594,7 @@ func (s *AgentSuite) TestATelephonyToolIsNotHandedToTheCallersRunner() {
 	s.onACall()
 	s.runner = &stubToolRunner{result: "not mine to answer"}
 	s.join(false)
+	s.agent.prompt = "Hand callers who want a person to +15550001111."
 	s.model.reply = []string{"Putting you through."}
 	s.asksFor("transfer", `{"to":"+15550001111"}`)
 	participant := stt.Participant{ID: "alice"}
@@ -1438,6 +1706,7 @@ func (r *cancellationTool) Run(ctx context.Context, _ llm.ToolCall) ([]llm.Conte
 	close(r.stopped)
 	return nil, ctx.Err()
 }
+
 func (s *AgentSuite) TestInterruptCancelsActiveTextToolWithoutFollowingUp() {
 	s.ownsTools("")
 	runner := &cancellationTool{began: make(chan struct{}), stopped: make(chan struct{})}
@@ -1634,8 +1903,8 @@ func (s *AgentSuite) TestAVoiceCallThatKeepsChainingToolsIsMadeToAnswer() {
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the result at the cap was never spoken")
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
-	s.Empty(capped.Tools, "the capped reply has nothing to reach for")
-	s.Contains(capped.Instructions, "answer the caller now")
+	s.Equal("none", capped.ToolChoice, "the capped reply has nothing to reach for")
+	s.Contains(shown(capped), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
@@ -1663,8 +1932,8 @@ func (s *AgentSuite) TestADeferredToolReplyStillLimitsTheChain() {
 	s.eventually(func() bool { return s.spokenText("ships tomorrow") }, "the deferred result was never spoken")
 	s.Require().Len(s.model.requests(), 1)
 	capped := s.model.requests()[0]
-	s.Empty(capped.Tools, "deferring a reply must not bypass the tool limit")
-	s.Contains(capped.Instructions, "answer the caller now")
+	s.Equal("none", capped.ToolChoice, "deferring a reply must not bypass the tool limit")
+	s.Contains(shown(capped), "No more tools this turn")
 }
 
 func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt() {
@@ -1684,7 +1953,7 @@ func (s *AgentSuite) TestANewQuestionIncludesTheDeferredResultWithoutRepeatingIt
 	s.Require().NoError(s.agent.SimpleResponse(context.Background(), "What time tomorrow?"))
 
 	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the new question was never answered")
-	input := s.model.requests()[0].Input
+	input := harness.WithoutNotes(s.model.requests()[0].Input)
 	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
 	s.Equal("What time tomorrow?", input[len(input)-1].Content)
 	model := s.model
@@ -1710,9 +1979,145 @@ func (s *AgentSuite) TestAnEarlyReplyIncludesTheDeferredResultWithoutRepeatingIt
 	s.Require().True(s.agent.adoptSpeculation(ready, ""))
 
 	s.eventually(func() bool { return s.spokenText("tomorrow morning") }, "the early reply was never spoken")
-	input := s.model.requests()[0].Input
+	input := harness.WithoutNotes(s.model.requests()[0].Input)
 	s.Contains(input[len(input)-2].Content, "order 12 ships tomorrow")
 	s.Equal("What time tomorrow?", input[len(input)-1].Content)
 	model := s.model
 	s.never(func() bool { return len(model.requests()) > 1 }, "adopting the early reply repeated its tool result")
+}
+
+// stubEnder is the call's hang-up with no call behind it: it counts the times it was asked.
+// during runs while the request is in flight; a request whose context is cancelled by then
+// fails, as an aborted HTTP request does.
+type stubEnder struct {
+	mu     sync.Mutex
+	ended  int
+	during func()
+}
+
+func (e *stubEnder) EndCall(ctx context.Context) error {
+	if e.during != nil {
+		e.during()
+	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.ended++
+	return nil
+}
+
+func (e *stubEnder) ends() int {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.ended
+}
+
+func (s *AgentSuite) TestEndCallIsNotOfferedWithoutAnEnder() {
+	// A model told it may hang up, on a call nothing can hang up, says goodbye and stays.
+	s.onACall()
+	s.join(false)
+
+	_, offered := s.offeredTool("end_call")
+	s.False(offered)
+}
+
+func (s *AgentSuite) TestAWrittenConversationIsNeverOfferedEndCall() {
+	// A chat has no call to end, whatever it was handed.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.joinText()
+
+	_, offered := s.offeredTool("end_call")
+	s.False(offered)
+}
+
+func (s *AgentSuite) TestEndCallDescriptionCarriesTheCondition() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.endCallWhen = "The caller said bye."
+	s.join(false)
+
+	tool, offered := s.offeredTool("end_call")
+	s.Require().True(offered)
+	s.Contains(tool.Description, "Call it when: The caller said bye.")
+	s.NotContains(tool.Description, defaultEndCallWhen, "the config's condition replaces the default")
+}
+
+func (s *AgentSuite) TestEndCallWithoutAConditionIsGivenTheDefault() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(false)
+
+	tool, offered := s.offeredTool("end_call")
+	s.Require().True(offered)
+	s.Contains(tool.Description, "Call it when: "+defaultEndCallWhen)
+}
+
+func (s *AgentSuite) TestTheAgentHangsUpOnlyAfterItsGoodbye() {
+	// Hanging up the moment the model asks drops the goodbye still on its way out, and the
+	// caller hears the line go dead mid-sentence.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(false)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "that's all, thanks")
+	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended while the goodbye was going out")
+
+	s.edge.holdSpeech(false)
+	s.eventually(func() bool { return s.ender.ends() == 1 }, "the call was never ended")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+	s.Equal(1, s.ender.ends())
+}
+
+func (s *AgentSuite) TestACallerSpeakingOnceTheGoodbyeWasHeardStillEndsTheCall() {
+	// A "bye" landing while the hang-up request is in flight would abort it: the call either
+	// stays up, or ends at Stream while the session never learns the agent hung up.
+	s.onACall()
+	s.ender = &stubEnder{during: func() { s.agent.stopTools() }}
+	s.join(false)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "that's all, thanks")
+
+	s.eventually(func() bool { return s.ender.ends() == 1 }, "the hang-up was aborted by the caller's bye")
+	s.eventually(s.left, "the agent stayed on a call it ended")
+}
+
+func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsTold() {
+	// The model is told plainly that the call is still open, rather than that hanging up
+	// failed, so it answers the caller and can end the call again later.
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = []string{"Thanks, goodbye!"}
+	s.asksFor("end_call", `{}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "that's all, thanks")
+	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
+	s.replyWentOut()
+
+	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
+	s.mutters(participant, "oh wait, one more thing")
+
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.history(), func(m llm.Message) bool {
+			return m.Role == llm.ToolResult && m.Content == endCallCancelled
+		})
+	}, "the model was never told the call is still open")
+	s.edge.holdSpeech(false)
+	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended on a caller still talking")
+	s.False(s.left(), "the agent left a caller still talking")
 }

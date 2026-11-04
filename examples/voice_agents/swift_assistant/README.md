@@ -3,7 +3,9 @@
 Juno, a personal assistant in the shape of the Grok and Meta AI apps: conversations kept in a
 sidebar, a chat that shows its thinking and its steps, a voice mode you switch into and back
 out of, tools that run on the phone for the things only the phone knows, and the person's own
-Gmail and Linear, connected in the chat the first time the agent needs them.
+Gmail and Linear, connected in the chat the first time the agent needs them. The same agent is
+talked to from Android in [android_assistant](../android_assistant) and from a browser in
+[react_assistant](../react_assistant).
 
 ```
 agent.yaml           what runs the agent: models, voice, search, greeting
@@ -52,9 +54,9 @@ It listens on `:8098`, beside the Swift demo's on `:8099`.
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
 run it on a simulator. The app
-takes `stream-chat-swift` from its `add/openui-module` branch, because the generative UI it shows
-is not released yet: `StreamChatAI`'s, and its renderers of A2UI and OpenUI, `StreamChatA2UI` and
-`StreamChatOpenUI`.
+takes `stream-chat-swift` from its `add/ai-chat` branch, because what it shows is not released
+yet: `StreamChatAI`'s `AIConversation` and generative UI, and its renderers of A2UI and OpenUI,
+`StreamChatA2UI` and `StreamChatOpenUI`.
 Close `SwiftDemo.xcodeproj` first: it opens the same local package, the repository's root, and Xcode
 gives a local package to one window at a time, so the other reports "Missing package product".
 
@@ -118,8 +120,13 @@ a change), and `go run ./configure` again, which binds both:
   finds them by title, and the router titles each one as it goes. A new chat has no session
   until its first message. One that ended carries on when it is next asked something.
 - **Chat** is Stream's AI components over the session's channel: the reply streaming in, its
-  reasoning, each tool call and the approval a tool asks for. The composer's options sheet has
-  Think harder, which asks with a higher `reasoning_effort`.
+  reasoning, each tool call and the approval a tool asks for. StreamChatAI's `AIConversation`
+  holds it, over `AgentChat`, a transport that asks through the session and follows the channel:
+  what the person asks shows at once, Stop interrupts the reply, a question that failed can be
+  tried again, and replies are rated on the phone, since the router takes no ratings yet. A reply
+  is not written again and a message is not edited: the router cannot rewind a conversation kept
+  in Chat. The composer's options sheet has Think harder, which asks with a higher
+  `reasoning_effort`.
 - **Photos** from the composer go with the question, shrunk and inline as data URIs. The
   router uploads them to the conversation's channel and writes them on the person's message,
   where the chat shows them; the model sees them with that question's reply.

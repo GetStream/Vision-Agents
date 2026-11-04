@@ -5,13 +5,21 @@ import (
 	"log/slog"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
+	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/google/uuid"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -63,6 +71,84 @@ func (s *TitleSuite) TestAModelThatThinksBeforeItNamesStillWritesTheWholeTitle()
 
 	s.Require().NoError(err)
 	s.Equal("Add push to an Android app", named.Title)
+}
+
+func (s *TitleSuite) TestAConversationWithARefusedTurnIsNamedWithItWithheld() {
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Order 3825 delivery","description":"They asked when it ships."}`})}
+	// A forked conversation is named on its parent's turns as well as its own.
+	earlier := spokenOf(HistoryOf([]store.Exchange{{ResponseID: "first", Said: injected, Refused: true}}))
+
+	_, err := titles.ask(context.Background(), Spec{CustomerID: "customer-named"}, "title-refused", []spoken{{text: injected}})
+	s.Require().ErrorIs(err, policy.ErrPromptInjection, "the refused line quoted as it was said is refused again")
+
+	named, err := titles.ask(context.Background(), Spec{CustomerID: "customer-named"}, "title-refused", append(earlier, refusedCall()...))
+
+	s.Require().NoError(err)
+	s.Equal("Order 3825 delivery", named.Title)
+}
+
+// A conversation resumed from its Chat channel past a refused reply is named with what that
+// reply was asked withheld, as the resume handed it back.
+func (s *TitleSuite) TestAConversationResumedPastARefusedReplyIsNamedWithItWithheld() {
+	ctx := context.Background()
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Order 3825 delivery","description":"They asked when it ships."}`})}
+	chat := chattest.NewServer(s.T())
+	conversations := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(conversations.Close)
+	opened, _, _, err := conversations.Open(ctx, "customer-named", "agent", "")
+	s.Require().NoError(err)
+	s.Require().NoError(opened.Begin(injected))
+	opened.Observe(agent.Responding{TurnID: "turn-1"})
+	opened.Observe(agent.ResponseDelta{TurnID: "turn-1", Text: "I"})
+	opened.Observe(agent.Error{Err: screenRefusal, Context: "llm", TurnID: "turn-1"})
+	channel := strings.TrimPrefix(opened.CID(), "agent:")
+	s.Require().Eventually(func() bool {
+		stored := chat.Stored(channel)
+		return len(stored) == 2 && stored[1]["custom"].(map[string]any)[persistent.RefusedField] == true
+	}, settleFor, 10*time.Millisecond, "the refused reply was never stored")
+	opened.Release()
+	_, previous, _, err := conversations.Open(ctx, "customer-named", "agent", opened.CID())
+	s.Require().NoError(err)
+
+	named, err := titles.ask(ctx, Spec{CustomerID: "customer-named"}, "title-resumed",
+		append(spokenOf(previous), spoken{text: "Where is order 3825?"}))
+
+	s.Require().NoError(err)
+	s.Equal("Order 3825 delivery", named.Title)
+	s.Equal([]spoken{{text: agent.WithheldInput}}, spokenOf(previous))
+}
+
+// The channel a worker's session answers a dispatched message in is the customer's: the
+// session is named, the channel is left as the customer made it. Any other session names its
+// channel.
+func (s *TitleSuite) TestADispatchedSessionLeavesTheCustomersChannelItsName() {
+	ctx := context.Background()
+	config := stubConfig()
+	config.Aliases["llm-fast"] = routing.Alias{Languages: []string{"en"}, RequireRealtime: true}
+	titles := &titler{llm: screenedBy(&s.Suite, config, &llmtest.Thinker{Answer: `{"title":"Rain in Rome","description":"They asked about rain."}`})}
+	chat := chattest.NewServer(s.T())
+	conversations := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(conversations.Close)
+	for dispatched, want := range map[bool]any{true: nil, false: "Rain in Rome"} {
+		channel := "chat-" + uuid.NewString()
+		creator := "sam"
+		_, err := chat.Client.Chat().GetOrCreateChannel(ctx, "agent", channel, &getstream.GetOrCreateChannelRequest{
+			Data: &getstream.ChannelInput{CreatedByID: &creator},
+		})
+		s.Require().NoError(err)
+		session := &Session{id: "session-" + channel, spec: Spec{CustomerID: "customer-named", ConversationID: "agent:" + channel, Dispatched: dispatched},
+			naming: &naming{titles: titles, service: conversations}}
+
+		s.Require().NoError(session.retitle(ctx, []spoken{{text: "is it raining in Rome?"}}))
+
+		s.Equal("Rain in Rome", session.Spec().Title, "dispatched %v", dispatched)
+		stored, _ := chat.Channel(channel)
+		s.Equal(want, stored["name"], "dispatched %v", dispatched)
+	}
 }
 
 func (s *TitleSuite) TestNoTitleIsNotOne() {

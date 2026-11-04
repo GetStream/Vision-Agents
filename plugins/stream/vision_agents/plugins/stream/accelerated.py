@@ -61,11 +61,6 @@ logger = logging.getLogger(__name__)
 # the filter narrows recall; this one is what recall is keyed by.
 USER_KEY = "user_id"
 
-# AUTHORIZATION_REQUIRED is what a user plugin's tool answers while the end user has not
-# connected their account; its attachment is the button a chat client shows.
-AUTHORIZATION_REQUIRED = "authorization_required"
-
-
 # MAX_RING_SECONDS is the longest an outbound call can ring and still be inside the
 # router's start timeout for a phone session.
 MAX_RING_SECONDS = 60
@@ -266,7 +261,8 @@ class Accelerated(OmniLLM):
         if images:
             command["images"] = [image.as_image_dict() for image in images]
         else:
-            # Each message is taken once, by its id; the router refuses one alongside images.
+            # Each message is taken once, by its id. Images go without one here: sending an id
+            # beside them would change what the socket does with the images.
             command["request_id"] = uuid4().hex
         await self._command(command)
 
@@ -735,8 +731,6 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
             user_id=participant.get("user_id", ""),
             participant_id=participant.get("id", ""),
         )
-    if kind == "tool_ran":
-        return _authorization_of(frame.get("result", ""))
     if kind == "error":
         return RemoteEvent(type="error", error=frame.get("error", ""))
     if kind == "left":
@@ -744,30 +738,6 @@ def _event_of(frame: dict[str, Any]) -> Optional[RemoteEvent]:
 
     logger.debug("no agent event for a %s frame", kind)
     return None
-
-
-def _authorization_of(result: object) -> Optional[RemoteEvent]:
-    """The login a user plugin's tool asked the end user to make, if it asked for one."""
-    if not isinstance(result, str):
-        return None
-    try:
-        answered = json.loads(result)
-    except json.JSONDecodeError:
-        return None
-    if (
-        not isinstance(answered, dict)
-        or answered.get("status") != AUTHORIZATION_REQUIRED
-    ):
-        return None
-    attachment = answered.get("attachment")
-    if not isinstance(attachment, dict) or not attachment.get("authorize_url"):
-        return None
-    return RemoteEvent(
-        type="authorization_required",
-        text=str(attachment.get("title", "")),
-        url=str(attachment["authorize_url"]),
-        image_url=str(attachment.get("thumb_url", "")),
-    )
 
 
 def _rendered(output: Any) -> str:

@@ -1,4 +1,5 @@
-# Sentry's hosted MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# Sentry's hosted MCP server, moved from the plugin catalog (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
 # entry sentry, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
 # connectors/planning). Vendor page, opened October 7, 2026:
 #   [mcp] https://mcp.sentry.dev/ (where https://docs.sentry.io/product/sentry-mcp/ redirects)
@@ -30,15 +31,15 @@ endpoints:
 schemes: [oauth2_code]
 client:
   # Dynamic registration, as the plugin registers its client ([plugin]; register in
-  # internal/plugins/oauth.go). [as] also says client_id_metadata_document_supported; cimd is
+  # https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/oauth.go).
+  # [as] also says client_id_metadata_document_supported; cimd is
   # left out so a new consent registers the same kind of client a moved grant holds.
   registration: [dcr]
 # No scopes: [plugin] asks for none (scopes_supported only), and [mcp] names none. A moved
 # grant keeps what it was granted, and a new consent asks for what the plugin asked for.
 # No identity, capture or refresh policy: neither [mcp] nor [as] documents a token response,
 # token lifetimes or rotation. # unverified
-# So refresh.rotating is left unset, which is unknown: router plugins migrate moves a grant
-# with a refresh token here only with --include-rotating (internal/pluginmigrate).
+# So refresh.rotating is left unset, which is unknown.
 sources:
   - kind: mcp
     endpoint: mcp

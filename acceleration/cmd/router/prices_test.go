@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/billable"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
@@ -315,6 +316,63 @@ func (s *PriceFileSuite) TestWithNoFileOfItsOwnTheRouterPricesFromTheVendorFile(
 		pricing.Quantities{pricing.InputTokens: 1_000_000})
 	s.Equal("embedded:dev", quote.Version)
 	s.Empty(list.Unpriced(routing.Items(routingConfig)))
+}
+
+func (s *PriceFileSuite) TestARouterNamesTheBYOKTwinItsListHasNoPriceFor() {
+	openai := pricing.Entry{Modality: "llm", Provider: "openai", Model: "gpt", Region: pricing.RegionUS,
+		Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: {USD: 1, Per: 1_000_000}}}
+	openai.Prices = openai.Rates
+	list, err := pricing.NewList("test", []pricing.Entry{openai}, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	routingConfig := routing.Config{routing.LLM: {Providers: []routing.ProviderConfig{{Provider: "openai", Model: "gpt"}}}}
+	var logs bytes.Buffer
+
+	logUnpriced(list, billable.Items(billableOf(config.Defaults(), routingConfig, phone.Config{})), slog.New(slog.NewTextHandler(&logs, nil)))
+
+	s.Contains(logs.String(), `msg="billable work has no price" modality=llm provider=openai model=gpt region=us byok=true`)
+	s.NotContains(logs.String(), "provider=openai model=gpt region=us byok=false", "openai's own work is priced")
+	s.Contains(logs.String(), "modality=runtime provider=stream model=voice", "and so is all the rest the list leaves out")
+}
+
+// TestEveryPieceOfWorkTheBuiltInDeploymentBillsIsPriced: with every phone vendor, texts and
+// knowledge on, each item the routers can bill, BYOK twins included, is priced by the price
+// files, free or local, but the gaps below that still wait on a vendor's rate. Runtime is
+// priced by the chart's prices file, which a deployment reads beside these.
+func (s *PriceFileSuite) TestEveryPieceOfWorkTheBuiltInDeploymentBillsIsPriced() {
+	settings := config.Defaults()
+	files, err := loadPriceFiles(settings, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	routingConfig, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	list, err := newPrices(routingConfig, files, pricesVersion(settings), slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	deployment := billableOf(settings, routingConfig, phone.Config{})
+	deployment.Knowledge, deployment.KnowledgeRegions = "turbopuffer", []string{pricing.DefaultRegion}
+	deployment.Runtime = false
+	vendorConfig, err := phone.DefaultConfig()
+	s.Require().NoError(err)
+	deployment.PhoneVendors = nil
+	var waiting []string
+	for _, vendor := range vendorConfig.Vendors {
+		if !vendor.Implemented {
+			continue
+		}
+		deployment.PhoneVendors = append(deployment.PhoneVendors, vendor.Vendor)
+		// Only Telnyx's call minutes have a published rate in vendor.json so far.
+		if vendor.Vendor != "telnyx" {
+			waiting = append(waiting, "phone/"+vendor.Vendor+"/"+phone.ModelCallMinutes)
+		}
+	}
+	deployment.SMS = true
+
+	var unpriced []string
+	for _, item := range list.Unpriced(billable.Items(deployment)) {
+		s.Equal(pricing.DefaultRegion, item.Region)
+		s.False(item.BYOK, "%s/%s/%s", item.Modality, item.Provider, item.Model)
+		unpriced = append(unpriced, item.Modality+"/"+item.Provider+"/"+item.Model)
+	}
+
+	s.ElementsMatch(waiting, unpriced)
 }
 
 func (s *PriceFileSuite) TestAMissingPricesFileStopsStartup() {

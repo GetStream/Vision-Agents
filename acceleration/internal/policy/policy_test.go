@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
@@ -24,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/usagetest"
 )
@@ -84,6 +86,9 @@ func (s *PolicySuite) SetupSuite() {
 // 200 ms, and whatever goes unacked dropped well inside a test. What goes unused is kept for a
 // minute: a test that waits without an admission, or on another router, keeps what it read
 // however long a loaded machine pauses it. A test of Idle sets its own (idle).
+// MaxStale is below the default FirstRead (250 ms): an admission of an unread account that
+// waits FirstRead finds it unread for longer than MaxStale and is refused as unreadable by a
+// closed tier. A test that admits one before its first read sets MaxStale past FirstRead.
 var quick = Settings{
 	Fresh: 50 * time.Millisecond, SpendEvery: 20 * time.Millisecond, SumEvery: 50 * time.Millisecond,
 	MaxStale: 200 * time.Millisecond, Idle: time.Minute, PendingTTL: 300 * time.Millisecond,
@@ -884,18 +889,20 @@ func (s *PolicySuite) TestDeletingAUsersQuotaFallsBackToTheirApps() {
 	s.False(again, "there was none left to delete")
 }
 
-func (s *PolicySuite) TestAnAppWithNoUserPoliciesLooksNoUserUp() {
-	s.limits("someone")
-	decided, ok := s.enforcer.decided(s.app)
-	s.Require().True(ok)
-	s.False(decided.users, "the app's decision answers its users with no lookup of their own")
+func (s *PolicySuite) TestAUserQuotaSavedOnAnotherRouterHoldsTheNextRequest() {
+	s.save(store.ScopeApp, s.app, store.PolicyDocument{Quota: quotaOf(new(int64(20)), nil)})
+	s.Require().EqualValues(20, s.limits("vip").MessagesPerDay)
+	configs, err := appconfig.New(appconfig.Options{Store: s.store})
+	s.Require().NoError(err)
+	other := s.newEnforcer(configs, nil)
 
-	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(2)), nil)})
-	s.limits("someone")
+	s.Require().NoError(other.Save(s.ctx, store.ScopeUser, store.UserScopeID(s.app, "vip"),
+		store.PolicyDocument{Quota: quotaOf(new(int64(2)), nil)}))
 
-	decided, ok = s.enforcer.decided(s.app)
-	s.Require().True(ok)
-	s.True(decided.users, "saving a user's policy drops the app's decision, which reads it again")
+	_, ok := s.enforcer.decided(s.app)
+	s.Require().True(ok, "this router still holds the app's decision from before the save")
+	s.EqualValues(2, s.limits("vip").MessagesPerDay)
+	s.EqualValues(20, s.limits("someone").MessagesPerDay, "another user keeps the app's")
 }
 
 func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
@@ -909,6 +916,57 @@ func (s *PolicySuite) TestADailyLimitThatCannotBeReadIsTheDeployments() {
 	s.Equal(deployment, limitsOf(enforcer.Quota(s.ctx, s.app, "someone", deployment)))
 }
 
+func (s *PolicySuite) TestAUsersOwnQuotaThatCannotBeReadIsMarkedUnread() {
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
+
+	s.True(enforcer.Quota(s.ctx, s.app, "someone", deployment).Unread, "a user whose policy failed to read")
+	s.False(enforcer.Quota(s.ctx, s.app, "", deployment).Unread, "nobody named has a policy to read")
+	s.False(s.enforcer.Quota(s.ctx, s.app, "someone", deployment).Unread, "a policy that was read")
+	s.save(store.ScopeUser, store.UserScopeID(s.app, "vip"), store.PolicyDocument{Quota: quotaOf(new(int64(3)), nil)})
+	s.False(s.enforcer.Quota(s.ctx, s.app, "vip", deployment).Unread, "a user's own policy that was read")
+}
+
+func (s *PolicySuite) TestADebitIsCountedForAUserWhoseOwnQuotaCannotBeRead() {
+	// Only the user's own policy sets a limit, and the store that holds it is down. The debit
+	// still lands in the customer's bucket, where that limit counts it once it is readable.
+	address := os.Getenv("ROUTER_REDIS_ADDR")
+	if address == "" {
+		s.T().Skip("ROUTER_REDIS_ADDR is not set")
+	}
+	client, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{address}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	closed, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
+	s.Require().NoError(err)
+	s.Require().NoError(closed.Close())
+	configs, err := appconfig.New(appconfig.Options{Store: closed})
+	s.Require().NoError(err)
+	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))
+	limiter, err := quota.New(client, quota.Limits{}, enforcer, slog.New(slog.DiscardHandler))
+	s.Require().NoError(err)
+	caller := routing.Caller{UserID: "vip", Verified: true}
+
+	limiter.Debit(s.ctx, s.app, caller, 10)
+
+	// The limiter stops waiting for a debit after two seconds, so when this process stalls the
+	// debit goes on after Debit has returned.
+	var messages, tokens int64
+	s.eventually(func() bool {
+		var err error
+		messages, tokens, _, err = limiter.Today(s.ctx, s.app, "vip")
+		return err == nil && messages > 0 && tokens > 0
+	}, 10*time.Second, 10*time.Millisecond, "the debit was never counted")
+	s.EqualValues(1, messages)
+	s.EqualValues(10, tokens)
+	_, err = limiter.Allow(s.ctx, s.app, caller)
+	s.NoError(err, "a request is still admitted when the policy cannot be read")
+}
+
 func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	// The policies are cached in Redis and the limits and spend are not, so closing Postgres
 	// once the cache is warm fails their reads alone, which the limits loop makes, never Admit.
@@ -918,7 +976,9 @@ func (s *PolicySuite) TestADailyLimitHoldsWhenOnlyTheSpendCannotBeRead() {
 	}
 	db, err := store.Open(os.Getenv("ROUTER_POSTGRES_DSN"))
 	s.Require().NoError(err)
-	configs, err := appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	configs, err := redisready.Retry(address, func() (*appconfig.Store, error) {
+		return appconfig.New(appconfig.Options{Store: db, Address: address, Logger: slog.New(slog.DiscardHandler)})
+	})
 	s.Require().NoError(err)
 	s.T().Cleanup(configs.Close)
 	enforcer := s.newEnforcer(configs, slog.New(slog.DiscardHandler))

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"slices"
 	"strings"
@@ -49,8 +50,10 @@ type Service struct {
 	// unanswered ends the session of a placed call nobody will answer. Nil leaves it to the
 	// session's start timeout.
 	unanswered func(ctx context.Context, customerID, sessionID string)
-	clock      func() time.Time
-	logger     *slog.Logger
+	// machine is told who picked up a placed call.
+	machine func(ctx context.Context, customerID, sessionID string, machine Machine)
+	clock   func() time.Time
+	logger  *slog.Logger
 	// heard is the calls whose participant events this process recorded lately (Heard), and
 	// unhooked the apps it lately logged as not delivering them.
 	heard, unhooked recently
@@ -381,6 +384,21 @@ type Purchase struct {
 	Owner   routing.Owner
 }
 
+// ErrCallHook says the app's call hook could not be pointed at this router.
+var ErrCallHook = errors.New("phone: call hook")
+
+// pointCallHook makes the app deliver its call events to this router, when the router knows
+// where it is reachable from.
+func (s *Service) pointCallHook(ctx context.Context, stream *Stream, app int64) error {
+	if s.publicURL == "" {
+		return nil
+	}
+	if _, err := stream.EnsureCallHook(ctx, s.publicURL, app); err != nil {
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrCallHook, err))
+	}
+	return nil
+}
+
 // Buy buys a number and records that the customer now holds it.
 //
 // The vendor is the side that costs money, so it goes first: a row without a number is a
@@ -398,9 +416,14 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return store.PhoneNumber{}, err
 	}
 	// An app Stream blocked could not use a number, so it does not get to pay for one.
-	if s.apps != nil {
-		if _, _, err := s.apps.For(ctx, purchase.Owner.CustomerID); errors.Is(err, streamapp.ErrStreamAppDisconnected) {
-			return store.PhoneNumber{}, stack.Wrap(err)
+	stream, app, err := s.streamFor(ctx, purchase.Owner.CustomerID)
+	if errors.Is(err, streamapp.ErrStreamAppDisconnected) {
+		return store.PhoneNumber{}, stack.Wrap(err)
+	}
+	// An app whose calls could not reach the router would hold a number nobody can call.
+	if err == nil {
+		if err := s.pointCallHook(ctx, stream, app); err != nil {
+			return store.PhoneNumber{}, err
 		}
 	}
 	// Refused before the vendor is paid, since a number in another form would not be recorded.
@@ -415,6 +438,12 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	// Some vendors say what a number costs when it is offered and not when it is bought, so
 	// the offer is read first, while the number is still for sale.
 	quoted := s.quote(ctx, provider, purchase)
+	// The first month is paid out of credit booked now, so a number is never bought on credit
+	// that does not cover it.
+	booked, err := s.bookFirstMonth(ctx, purchase, quoted)
+	if err != nil {
+		return store.PhoneNumber{}, err
+	}
 	// A failed purchase is a row of its own; a bought number is billed by its months, the
 	// first of them below.
 	buying := routing.Meter{
@@ -428,6 +457,7 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 		return provider.BuyNumber(ctx, Order{E164: purchase.E164, Country: purchase.Country})
 	})
 	if err != nil {
+		booked.Release()
 		return store.PhoneNumber{}, err
 	}
 	if bought.MonthlyCostMicros == 0 {
@@ -449,6 +479,7 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	}
 	// The month it was bought in is charged at once, whether or not the row below is kept.
 	s.billMonth(held, purchase.Owner, held.PurchasedAt)
+	booked.Charged()
 	if s.store == nil {
 		return held, nil
 	}
@@ -484,6 +515,9 @@ func (s *Service) Release(ctx context.Context, customerID, e164 string) error {
 	// give it back to.
 	if seller != nil {
 		if err := seller.ReleaseNumber(ctx, e164); err != nil {
+			if age := s.now().Sub(held.PurchasedAt); age < NumberSettles && errors.As(err, new(*VendorError)) {
+				return stack.Wrap(fmt.Errorf("%w: %s was bought %s ago: %w", ErrNumberSettling, e164, age.Round(time.Second), err))
+			}
 			return err
 		}
 	}
@@ -704,10 +738,19 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(fmt.Errorf("phone: %s numbers are answered with their stored trunk: %w",
 			held.Vendor, ErrNoSealer))
 	}
+	attachedHere := held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin
+	if err := s.pointCallHook(ctx, stream, pin); err != nil {
+		if !attachedHere {
+			return Attached{}, err
+		}
+		// A running line is not taken down over a repair that failed: its program is asking
+		// again on every start.
+		s.logger.Error("could not point the call hook of a Stream app", "customer", attachment.CustomerID, "stream_app", pin, "error", err)
+	}
 
 	// The same request is sent on every run of a program waiting for calls, so a number
 	// already attached in this app is answered with what it has.
-	if held.AttachedAt != nil && held.StreamTrunkID != "" && held.StreamAppPK == pin {
+	if attachedHere {
 		return Attached{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID,
 			Bridge: Bridge{URI: held.BridgeURI}}, nil
 	}
@@ -881,7 +924,14 @@ type CallRequest struct {
 	// Custom is put on the Stream call, where the agent in it can read it. It is set at
 	// Stream rather than at the vendor, so every vendor can carry it.
 	Custom map[string]string
+	// DetectMachine asks the vendor to tell an answering machine from a person, when it
+	// can. The answer reaches the hook set with OnMachine.
+	DetectMachine bool
 }
+
+// errCustomKept is a call into a session whose call is already there with other custom data:
+// the call keeps the custom it was created with, so the agent in it would not read this one.
+var errCustomKept = errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session")
 
 // Placed is a call that is on its way, and where to meet it.
 type Placed struct {
@@ -912,6 +962,17 @@ type Placed struct {
 // names the call on its leg goes out on the number's shared line instead, since Stream lets a
 // number be on one trunk only.
 func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error) {
+	sent := false
+	placed, err := s.call(ctx, request, &sent)
+	if err != nil && !sent && ctx.Err() != nil {
+		return Placed{}, fmt.Errorf("%w: %w", ErrNotPlaced, err)
+	}
+	return placed, err
+}
+
+// call is Call. It sets sent once the vendor is asked to dial: from then on the phone may ring
+// whatever the call returns.
+func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Placed, error) {
 	if err := s.Suspended(ctx, request.Owner.CustomerID); err != nil {
 		return Placed{}, err
 	}
@@ -980,16 +1041,33 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	if err != nil {
 		return Placed{}, stack.Wrap(err)
 	}
+	// The number's rule carries only the number, so on its line a call with custom of its own
+	// is created with it here, before the leg arrives; otherwise the leg creates the call. A
+	// session the caller named may hold its call already, which a get-or-create only loads, so
+	// that call is asked for here too, before anything is made for the leg.
+	if len(request.Custom) > 0 && (shared || request.SessionID != "") {
+		kept, err := stream.CreateCall(ctx, callType, callID, request.Custom)
+		if err != nil {
+			return Placed{}, err
+		}
+		// The number is the router's, put there by a leg's rule, and no caller can send it.
+		delete(kept, NumberKey)
+		switch {
+		case maps.EqualFunc(kept, request.Custom, func(stored any, sent string) bool { return stored == sent }):
+		case len(kept) == 0:
+			// A call made without custom, as an agent makes its own call, takes this one. A dial
+			// that fails after this keeps it on the call: Stream's update-call sets a key to null
+			// but cannot remove it, so there is no putting it back.
+			if err := stream.PutCustom(ctx, callType, callID, request.Custom); err != nil {
+				return Placed{}, err
+			}
+		default:
+			return Placed{}, stack.Wrap(errCustomKept)
+		}
+	}
 	var trunkID, routeID string
 	committed := false
 	if shared {
-		// The number's rule carries no custom data, so a call that has some is created with
-		// it here, before the leg arrives; otherwise the leg creates the call.
-		if len(request.Custom) > 0 {
-			if err := stream.CreateCall(ctx, callType, callID, request.Custom); err != nil {
-				return Placed{}, err
-			}
-		}
 		trunkID, routeID = line.TrunkID, line.RouteID
 		outbound.Bridge, outbound.CallID = line.Bridge, callID
 	} else {
@@ -1060,6 +1138,9 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	if reports {
 		outbound.StatusURL = s.publicURL + "/v1/phone/status/" + token
 	}
+	if _, detects := provider.(MachineDetector); detects && request.DetectMachine && s.publicURL != "" {
+		outbound.MachineURL = s.publicURL + "/v1/phone/machine/" + token
+	}
 
 	if trunk != nil {
 		customerID := request.Owner.CustomerID
@@ -1096,6 +1177,7 @@ func (s *Service) Call(ctx context.Context, request CallRequest) (Placed, error)
 	}
 
 	dialed, err := routing.Call(ctx, s.dialMeter(held.Vendor, request.Owner), func(ctx context.Context) (Dialed, error) {
+		*sent = true
 		return provider.Dial(ctx, outbound)
 	})
 	if err != nil {
@@ -1308,6 +1390,10 @@ func (s *Service) Answer(ctx context.Context, token string) (Plan, error) {
 	}, bridge.InitialDigits)
 }
 
+// ErrNotPlaced is a call whose context ended before the vendor was asked to dial it: nobody
+// was rung.
+var ErrNotPlaced = errors.New("phone: the call was cancelled before it was placed")
+
 // ErrUnknownStatus is a status post for no call waiting for one: its token is unknown or swept,
 // or its vendor reports no status.
 var ErrUnknownStatus = errors.New("phone: that call is not waiting for its status")
@@ -1317,18 +1403,7 @@ var ErrUnreadableStatus = errors.New("phone: that status could not be read")
 
 // ReportStatus takes what a vendor posted to the status URL of the call token was made for.
 func (s *Service) ReportStatus(ctx context.Context, token, contentType string, body []byte) error {
-	if s.outcomes == nil {
-		return stack.Wrap(ErrUnknownStatus)
-	}
-	// The endpoint is public: a token not shaped like the ones made in Place never reaches the
-	// database.
-	if id, err := uuid.Parse(token); err != nil || id.String() != token {
-		return stack.Wrap(ErrUnknownStatus)
-	}
-	call, err := s.outcomes.ByToken(ctx, token)
-	if errors.Is(err, outcome.ErrUnknownCall) {
-		return stack.Wrap(ErrUnknownStatus)
-	}
+	call, err := s.callOfToken(ctx, token)
 	if err != nil {
 		return err
 	}
@@ -1346,6 +1421,56 @@ func (s *Service) ReportStatus(ctx context.Context, token, contentType string, b
 	}
 	_, err = s.report(ctx, token, status)
 	return err
+}
+
+// callOfToken is the call a vendor's post to one of its URLs is for.
+func (s *Service) callOfToken(ctx context.Context, token string) (outcome.Call, error) {
+	if s.outcomes == nil {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	// The endpoint is public: a token not shaped like the ones made in Place never reaches the
+	// database.
+	if id, err := uuid.Parse(token); err != nil || id.String() != token {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	call, err := s.outcomes.ByToken(ctx, token)
+	if errors.Is(err, outcome.ErrUnknownCall) {
+		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
+	}
+	return call, err
+}
+
+// Machine takes what a vendor posted to the machine URL of the call token was made for, and
+// tells the hook set with OnMachine.
+func (s *Service) Machine(ctx context.Context, token, contentType string, body []byte) error {
+	call, err := s.callOfToken(ctx, token)
+	if err != nil {
+		return err
+	}
+	provider, err := s.registry.Open(call.Vendor)
+	if err != nil {
+		return err
+	}
+	detector, ok := provider.(MachineDetector)
+	if !ok {
+		return stack.Wrap(fmt.Errorf("%w: %s detects no answering machines", ErrUnknownStatus, call.Vendor))
+	}
+	report, err := detector.ReadMachine(contentType, body)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("%w: %w", ErrUnreadableStatus, err))
+	}
+	s.logger.Info("a vendor reported who answered", "vendor", call.Vendor, "answered_by", report.Word,
+		"machine", report.Machine, "customer", call.CustomerID, "session", call.CallID)
+	if s.machine != nil {
+		s.machine(ctx, call.CustomerID, call.CallID, report.Machine)
+	}
+	return nil
+}
+
+// OnMachine sets what is told who picked up a placed call. Called before the service is used.
+// hook is called on the vendor's request, so it must not hold up the answer.
+func (s *Service) OnMachine(hook func(ctx context.Context, customerID, sessionID string, machine Machine)) {
+	s.machine = hook
 }
 
 // report hands a vendor's status for the call token was made for to the keeper, which decides

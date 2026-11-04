@@ -227,7 +227,7 @@ func (s *HarnessSuite) TestAnAnswerAfterCodeThatFailedIsNotPassedOffAsSuccess() 
 	s.Equal(Done, settled.State)
 	s.ErrorContains(settled.Err, errNoSandbox.Error())
 	s.respond("turn-2", "")
-	s.Contains(s.fast.requests()[1].Instructions, "do not claim anything that code was meant to produce")
+	s.Contains(shown(s.fast.requests()[1]), "do not claim anything that code was meant to produce")
 }
 
 func (s *HarnessSuite) TestCodeThatWorksOnASecondTryIsAnAnswer() {
@@ -366,7 +366,8 @@ func (s *HarnessSuite) TestAFileTheCodeDidNotWriteIsNamed() {
 // call github__list_tools, so the line also says to tell the user.
 func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHaveThemConnect() {
 	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Unconnected: []sandbox.Grant{
-		{Binding: "github", Hosts: []string{"api.github.com"}}}}}
+		{Binding: "github", Hosts: []string{"api.github.com"}},
+	}}}
 	s.build(true)
 	s.slow.calls = runCode("call-1", "print(issues())")
 	s.slow.automatic = "Connect GitHub first."
@@ -379,6 +380,26 @@ func (s *HarnessSuite) TestCodeRunWithoutTheUsersConnectionTellsTheSubagentToHav
 	s.Equal("status: 401\n\nIf this code needed github (a 401 from api.github.com), the user has not connected it: call "+
 		"github__list_tools so they can, then run the code again; if you cannot call it, tell the user they must connect "+
 		"github.", told)
+}
+
+// TestCodeRunOnAnOlderRevisionTellsTheSubagentToHaveThemReconnect: the user connected github,
+// on a connection whose connector revision cannot bind the grant.
+func (s *HarnessSuite) TestCodeRunOnAnOlderRevisionTellsTheSubagentToHaveThemReconnect() {
+	s.box = &stubSandbox{result: sandbox.Result{Output: "status: 401", Reconnect: []sandbox.Grant{
+		{Binding: "github", Hosts: []string{"api.github.com", "uploads.github.com"}},
+	}}}
+	s.build(true)
+	s.slow.calls = runCode("call-1", "print(issues())")
+	s.slow.automatic = "Reconnect GitHub first."
+	s.respond("turn-1", "list my issues")
+
+	s.reply("turn-1", `<ask skill="think">list my issues</ask>`)
+
+	s.awaitSettled(1)
+	told := s.slow.requests()[1].Input[len(s.slow.requests()[1].Input)-1].Content
+	s.Equal("status: 401\n\nIf this code got 401 from api.github.com, uploads.github.com, the user's github connection is on an "+
+		"older version of its connector, which gives code no access: ask the user to reconnect github. The reconnect takes effect only from their next session, "+
+		"so running the code again in this session will not help, even after they reconnect.", told)
 }
 
 // TestCodeRunJustAfterTheConnectionTellsTheSubagentToWaitFor401: a token on its way to the
@@ -475,8 +496,10 @@ func (s *HarnessSuite) TestASearchThatFailedIsToldToTheSubagent() {
 // pdfSkills is a stored skill that came as a folder, with a reference and a script.
 func pdfSkills() Skills {
 	return Skills{
-		Skills: []Skill{{Name: "pdf", Description: "fill PDF forms", Deadline: time.Minute,
-			Files: []string{"reference/forms.md", "scripts/fill.py"}}},
+		Skills: []Skill{{
+			Name: "pdf", Description: "fill PDF forms", Deadline: time.Minute,
+			Files: []string{"reference/forms.md", "scripts/fill.py"},
+		}},
 		Load: func(context.Context, string) (Loaded, error) {
 			return Loaded{Instructions: "Fill the form.", Files: map[string]string{
 				"reference/forms.md": "# Forms\nUse field names as printed.",
@@ -540,7 +563,9 @@ func (s *HarnessSuite) TestASandboxMadeAgainGetsTheSkillsFilesAgain() {
 	s.reply("turn-1", `<ask skill="pdf">fill in my form</ask>`)
 
 	s.Equal(Done, s.awaitSettled(1)[0].State)
-	s.Equal([]string{"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
-		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py"}, s.box.writes(),
+	s.Equal([]string{
+		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
+		"skills/pdf/reference/forms.md", "skills/pdf/scripts/fill.py",
+	}, s.box.writes(),
 		"the new sandbox holds nothing written into the last")
 }

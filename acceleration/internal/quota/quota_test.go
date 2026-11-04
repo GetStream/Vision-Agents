@@ -3,19 +3,27 @@
 package quota
 
 import (
+	"bytes"
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
+	"net"
 	"os"
+	"strings"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/redis/rueidis"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // AddressEnvVar is where the tests look for a Redis to run against.
@@ -41,7 +49,7 @@ func (s *QuotaSuite) SetupSuite() {
 		s.T().Skipf("%s not set", AddressEnvVar)
 	}
 
-	client, err := rueidis.NewClient(rueidis.ClientOption{
+	client, err := redisready.NewClient(rueidis.ClientOption{
 		InitAddress:  []string{address},
 		DisableCache: true,
 	})
@@ -363,6 +371,128 @@ func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimits() {
 	s.Less(time.Since(started), writeTimeout+time.Second)
 }
 
+func (s *QuotaSuite) TestADebitWhoseLimitsWereSlowToReadIsStillCounted() {
+	// Reading the limits used up the whole wait, and the response they count was answered
+	// all the same: what it cost is counted once it reaches Redis.
+	limiter := s.limiterWith(Limits{}, stalledSource{})
+
+	limiter.Debit(context.Background(), s.customer, s.caller, 10)
+
+	s.EventuallyWithT(func(c *assert.CollectT) {
+		spent, err := limiter.spent(s.ctx, deviceKeys(s.customer, s.caller, time.Now())...)
+		require.NoError(c, err)
+		assert.Equal(c, []spend{{messages: 1, tokens: 10}, {messages: 1, tokens: 10}}, spent)
+	}, writeTimeout, 10*time.Millisecond)
+}
+
+func (s *QuotaSuite) TestADebitWaitsNoLongerThanItsTimeoutForTheLimitsAndRedisTogether() {
+	// A Redis too busy to answer, after limits that took the whole wait to read, must not
+	// hold the goroutine draining a finished response past the debit's own timeout either.
+	slow := newSlowRedis(s.T(), os.Getenv(AddressEnvVar))
+	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{slow.address()}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	limiter, err := New(client, Limits{}, stalledSource{}, slog.Default())
+	s.Require().NoError(err)
+	slow.hold()
+	started := time.Now()
+
+	limiter.Debit(context.Background(), s.customer, s.caller, 10)
+
+	s.Less(time.Since(started), writeTimeout+time.Second)
+	slow.release()
+}
+
+// slowRedis passes a test's commands to the suite's Redis on connections of its own, and
+// holds the replies back while it is held: a Redis too busy to answer, that no other suite
+// sharing the server feels.
+type slowRedis struct {
+	listener net.Listener
+	mu       sync.Mutex
+	// open is closed while replies pass.
+	open  chan struct{}
+	conns []net.Conn
+}
+
+func newSlowRedis(t *testing.T, target string) *slowRedis {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	open := make(chan struct{})
+	close(open)
+	redis := &slowRedis{listener: listener, open: open}
+	t.Cleanup(redis.close)
+	go func() {
+		for {
+			client, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			server, err := net.Dial("tcp", target)
+			if err != nil {
+				_ = client.Close()
+				continue
+			}
+			redis.mu.Lock()
+			redis.conns = append(redis.conns, client, server)
+			redis.mu.Unlock()
+			go func() { _, _ = io.Copy(server, client) }()
+			go redis.reply(client, server)
+		}
+	}()
+	return redis
+}
+
+func (r *slowRedis) address() string { return r.listener.Addr().String() }
+
+// hold keeps every reply back until release.
+func (r *slowRedis) hold() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.open = make(chan struct{})
+}
+
+func (r *slowRedis) release() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	select {
+	case <-r.open:
+	default:
+		close(r.open)
+	}
+}
+
+func (r *slowRedis) gate() chan struct{} {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.open
+}
+
+func (r *slowRedis) reply(client, server net.Conn) {
+	buffer := make([]byte, 32<<10)
+	for {
+		n, err := server.Read(buffer)
+		if n > 0 {
+			<-r.gate()
+			if _, err := client.Write(buffer[:n]); err != nil {
+				return
+			}
+		}
+		if err != nil {
+			return
+		}
+	}
+}
+
+func (r *slowRedis) close() {
+	r.release()
+	_ = r.listener.Close()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, conn := range r.conns {
+		_ = conn.Close()
+	}
+}
+
 // backend is the app's own process acting for the suite's user.
 func (s *QuotaSuite) backend() routing.Caller {
 	return routing.Caller{UserID: s.caller.UserID, IP: s.caller.IP, ServerSide: true}
@@ -426,11 +556,28 @@ func (s *QuotaSuite) TestTheDeploymentsTokensStillSkipABackendUnderACustomersMes
 	s.Contains(err.Error(), "3 messages a day")
 }
 
-func (s *QuotaSuite) TestAnAddressStillAnswersForACustomersQuota() {
+func (s *QuotaSuite) TestUsersBehindOneAddressEachHaveTheCustomersQuota() {
+	// An office, or a carrier's NAT: the customer's quota is each user's, not the address's.
 	limiter := s.limiterWith(Limits{}, s.appQuota(Limits{MessagesPerDay: 1}))
-	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP}, 10)
+	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP, Verified: true}, 10)
 
-	s.ErrorIs(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP}), ErrExhausted)
+	s.NoError(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP, Verified: true}))
+	err := s.allow(limiter, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP, Verified: true})
+	s.Require().ErrorIs(err, ErrExhausted, "the user who spent it is held to it")
+	s.Contains(err.Error(), "for every user of app "+s.customer)
+}
+
+func (s *QuotaSuite) TestAnAddressStillAnswersForTheDeploymentsLimit() {
+	// The app set the messages, so the tokens are the deployment's, and the address answers
+	// for those.
+	limiter := s.limiterWith(Limits{}, sourceFunc(func(context.Context, string, string, Limits) Quota {
+		return Quota{Messages: Limit{PerDay: 5, By: Setter{Level: LevelApp, ID: s.customer}}, Tokens: Limit{PerDay: 100}}
+	}))
+	limiter.Debit(s.ctx, s.customer, routing.Caller{UserID: "first", IP: s.caller.IP}, 100)
+
+	err := s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP})
+	s.Require().ErrorIs(err, ErrExhausted, "a fresh user id behind a spent address")
+	s.Contains(err.Error(), "100 tokens a day, for the router's default")
 	s.NoError(s.allow(limiter, s.customer, routing.Caller{UserID: "second", IP: s.caller.IP, ServerSide: true}),
 		"a backend has no address of its user's to answer for")
 }
@@ -449,7 +596,10 @@ func (s *QuotaSuite) TestTodayIsWhatTheCustomersQuotaCounted() {
 }
 
 func (s *QuotaSuite) TestUserKeysAreEveryBucketAUserIsCountedIn() {
-	limiter := s.limiterWith(Limits{MessagesPerDay: 1}, s.appQuota(Limits{MessagesPerDay: 1}))
+	// The app's messages count the user, and the deployment's tokens count the address too.
+	limiter := s.limiterWith(Limits{}, sourceFunc(func(context.Context, string, string, Limits) Quota {
+		return Quota{Messages: Limit{PerDay: 1, By: Setter{Level: LevelApp, ID: s.customer}}, Tokens: Limit{PerDay: 10}}
+	}))
 	limiter.Debit(s.ctx, s.customer, s.caller, 10)
 	s.Require().ErrorIs(s.allow(limiter, s.customer, s.caller), ErrExhausted)
 
@@ -499,4 +649,100 @@ type sourceFunc func(ctx context.Context, customerID, userID string, defaults Li
 
 func (f sourceFunc) Quota(ctx context.Context, customerID, userID string, defaults Limits) Quota {
 	return f(ctx, customerID, userID, defaults)
+}
+
+// unreadSource is a Source whose user's own quota could not be read: it knows the limits it
+// is given and marks the answer Unread.
+func unreadSource(known Quota) sourceFunc {
+	return func(_ context.Context, _, _ string, _ Limits) Quota {
+		known.Unread = true
+		return known
+	}
+}
+
+func (s *QuotaSuite) TestADebitIsCountedInTheCustomersBucketWhenTheUsersOwnQuotaCouldNotBeRead() {
+	// Only the user's own policy sets a limit, and reading it failed: the app's quota is all
+	// that is known, and it is none. What the user spent still reaches the customer's bucket.
+	appLimit := Quota{Messages: Limit{PerDay: 2, By: Setter{Level: LevelApp, ID: s.customer}}}
+	cases := []struct {
+		name       string
+		known      Quota
+		caller     routing.Caller
+		wantWarned int
+	}{
+		{name: "a device caller, nothing else known", caller: s.caller, wantWarned: 1},
+		{name: "a customer's backend, nothing else known", caller: routing.Caller{UserID: s.caller.UserID, ServerSide: true}, wantWarned: 1},
+		{name: "the deployment's limit alone is known", known: Quota{Tokens: Limit{PerDay: 100}}, caller: s.caller, wantWarned: 1},
+		{name: "the app's limit is known, so no bucket was skipped", known: appLimit, caller: s.caller},
+	}
+	for _, tc := range cases {
+		s.Run(tc.name, func() {
+			customer := s.customer + "-" + strings.ReplaceAll(tc.name, " ", "-")
+			var logs bytes.Buffer
+			limiter, err := New(s.redis, Limits{}, unreadSource(tc.known), slog.New(slog.NewTextHandler(&logs, nil)))
+			s.Require().NoError(err)
+
+			limiter.Debit(s.ctx, customer, tc.caller, 10)
+
+			spent, err := limiter.spent(s.ctx, customerKey(customer, tc.caller.UserID, time.Now()))
+			s.Require().NoError(err)
+			s.Equal(spend{messages: 1, tokens: 10}, spent[0])
+			s.Equal(tc.wantWarned, strings.Count(logs.String(), "level=WARN"), logs.String())
+		})
+	}
+}
+
+func (s *QuotaSuite) TestTheWarningForAnUnreadUsersQuotaIsLoggedOncePerCustomerAWindow() {
+	var logs bytes.Buffer
+	limiter, err := New(s.redis, Limits{}, unreadSource(Quota{}), slog.New(slog.NewTextHandler(&logs, nil)))
+	s.Require().NoError(err)
+	other := s.customer + "-other"
+
+	for range 20 {
+		limiter.Debit(s.ctx, s.customer, s.caller, 10)
+	}
+	s.Equal(1, strings.Count(logs.String(), "level=WARN"), "twenty debits of one customer log once")
+
+	limiter.Debit(s.ctx, other, s.caller, 10)
+	s.Equal(2, strings.Count(logs.String(), "level=WARN"), "another customer still logs")
+
+	spent, err := limiter.spent(s.ctx, customerKey(s.customer, s.caller.UserID, time.Now()))
+	s.Require().NoError(err)
+	s.Equal(spend{messages: 20, tokens: 200}, spent[0], "every debit is counted, though the log is throttled")
+}
+
+func (s *QuotaSuite) TestADebitStillCountsADeviceCallersAddressWhenTheUsersOwnQuotaCouldNotBeRead() {
+	limiter := s.limiterWith(Limits{}, unreadSource(Quota{}))
+
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	spent, err := limiter.spent(s.ctx, deviceKeys(s.customer, s.caller, time.Now())...)
+	s.Require().NoError(err)
+	s.Equal([]spend{{messages: 1, tokens: 10}, {messages: 1, tokens: 10}}, spent)
+}
+
+func (s *QuotaSuite) TestADebitCountsNothingForAUserHeldToNoLimitWhoseQuotaWasRead() {
+	// The control: a quota that was read and sets nothing is not counted, as before.
+	var logs bytes.Buffer
+	limiter, err := New(s.redis, Limits{}, sourceFunc(func(context.Context, string, string, Limits) Quota { return Quota{} }),
+		slog.New(slog.NewTextHandler(&logs, nil)))
+	s.Require().NoError(err)
+
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	keys := append(deviceKeys(s.customer, s.caller, time.Now()), customerKey(s.customer, s.caller.UserID, time.Now()))
+	for _, key := range keys {
+		exists, err := s.redis.Do(s.ctx, s.redis.B().Exists().Key(key).Build()).AsInt64()
+		s.Require().NoError(err)
+		s.Zero(exists, key)
+	}
+	s.Empty(logs.String())
+}
+
+func (s *QuotaSuite) TestARequestWhoseUsersOwnQuotaCouldNotBeReadIsStillAllowed() {
+	// Admission stays open on an unread policy; only the debit changed.
+	limiter := s.limiterWith(Limits{}, unreadSource(Quota{}))
+	limiter.Debit(s.ctx, s.customer, s.caller, 10)
+
+	s.NoError(s.allow(limiter, s.customer, s.caller))
 }

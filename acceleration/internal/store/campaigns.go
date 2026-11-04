@@ -87,7 +87,8 @@ func (s *Store) CustomerCampaigns(ctx context.Context, customerID string) ([]Cam
 
 // SetCampaignState records what a campaign is now doing. Starting one stamps when it
 // first started, and finishing one stamps when it stopped having anybody left to ring. Either
-// clears why the router last paused it.
+// clears why the router last paused it, and that a data move did (ResumeMovedRows): the
+// customer has decided what it does here.
 func (s *Store) SetCampaignState(ctx context.Context, customerID, id, state string) error {
 	return s.setCampaignState(ctx, customerID, id, state, "")
 }
@@ -107,6 +108,7 @@ func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, rea
 	query := s.db.NewUpdate().Model((*Campaign)(nil)).
 		Set("state = ?", state).
 		Set("paused_reason = NULLIF(?, '')", reason).
+		Set("move_paused = false").
 		Where("id = ?", id).
 		Where("customer_id = ?", customerID)
 	switch state {
@@ -114,7 +116,9 @@ func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, rea
 		query = query.Set("started_at = COALESCE(started_at, ?)", now).
 			Set("finished_at = NULL")
 	case Finished:
-		query = query.Set("finished_at = ?", now)
+		// Only a running campaign finishes: a pause that landed meanwhile, on any router, stays.
+		query = query.Set("finished_at = ?", now).
+			Where("state = ?", Running)
 	}
 
 	result, err := query.Exec(ctx)
@@ -125,7 +129,7 @@ func (s *Store) setCampaignState(ctx context.Context, customerID, id, state, rea
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: set campaign state: %w", err))
 	}
-	if affected == 0 {
+	if affected == 0 && state != Finished {
 		return unknownCampaign(id)
 	}
 	return nil
@@ -181,6 +185,10 @@ func (s *Store) CampaignContacts(ctx context.Context, campaignID string) ([]Cont
 // The claim is the update rather than the select: two runners over one campaign is not
 // something this process arranges, but a restart mid-call is, and a contact left as
 // calling forever is worse than one rung twice.
+//
+// Only a running campaign's contacts are claimed, since a pause on another router reaches
+// the runner here only through the campaign's row. The row is locked FOR SHARE, so a pause
+// either lands before the claim, which then finds nobody, or waits for it.
 func (s *Store) ClaimContact(ctx context.Context, campaignID string) (Contact, bool, error) {
 	if campaignID == "" {
 		return Contact{}, false, errors.New("store: a campaign id is required")
@@ -195,6 +203,11 @@ func (s *Store) ClaimContact(ctx context.Context, campaignID string) (Contact, b
 				Column("id").
 				Where("campaign_id = ?", campaignID).
 				Where("state = ?", Pending).
+				Where("EXISTS (?)", s.db.NewSelect().Model((*Campaign)(nil)).
+					ColumnExpr("1").
+					Where("cp.id = ?", campaignID).
+					Where("cp.state = ?", Running).
+					For("SHARE")).
 				Order("seq ASC").
 				Limit(1).
 				For("UPDATE SKIP LOCKED")).

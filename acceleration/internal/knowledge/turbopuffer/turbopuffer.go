@@ -9,6 +9,7 @@ package turbopuffer
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -124,6 +125,10 @@ type Store struct {
 	logger  *slog.Logger
 }
 
+// Region is the turbopuffer region a Store given region reaches: region, else
+// TURBOPUFFER_REGION, else gcp-us-central1.
+func Region(region string) string { return cmp.Or(region, os.Getenv(regionEnvVar), defaultRegion) }
+
 // New validates the options and returns a Store.
 func New(options Options) (*Store, error) {
 	keys := keypool.FromEnv(options.APIKey, apiKeyEnvVar)
@@ -132,14 +137,7 @@ func New(options Options) (*Store, error) {
 	}
 	options.APIKey = keys.Peek()
 	if options.BaseURL == "" {
-		region := options.Region
-		if region == "" {
-			region = os.Getenv(regionEnvVar)
-		}
-		if region == "" {
-			region = defaultRegion
-		}
-		options.BaseURL = "https://" + region + ".turbopuffer.com"
+		options.BaseURL = "https://" + Region(options.Region) + ".turbopuffer.com"
 	}
 	if options.Timeout <= 0 {
 		options.Timeout = defaultTimeout
@@ -289,6 +287,21 @@ func (s *Store) Delete(ctx context.Context, namespace string, ids []string) (kno
 		s.logger.Debug("removed passages", "namespace", namespace, "rows", response.RowsDeleted)
 	}
 	return billed, nil
+}
+
+// Drop deletes a namespace and everything in it, which turbopuffer cannot bring back. Its
+// answer carries no billing, so it is one request.
+func (s *Store) Drop(ctx context.Context, namespace string) (knowledge.Dropped, error) {
+	if strings.TrimSpace(namespace) == "" {
+		return knowledge.Dropped{}, stack.Wrap(errors.New("turbopuffer: a namespace is required"))
+	}
+
+	var response map[string]any
+	found, err := s.call(ctx, http.MethodDelete, "/v2/namespaces/"+url.PathEscape(namespace), nil, &response)
+	if err != nil {
+		return knowledge.Dropped{}, stack.Wrap(err)
+	}
+	return knowledge.Dropped{Existed: found, Billed: knowledge.Billed{Requests: 1}}, nil
 }
 
 // Fetch reads passages back by id, which is how somebody sees what a document became, and

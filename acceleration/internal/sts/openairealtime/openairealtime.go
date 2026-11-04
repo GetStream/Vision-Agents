@@ -14,15 +14,18 @@
 package openairealtime
 
 import (
+	"cmp"
 	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
+	"maps"
 	"math"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -438,9 +441,20 @@ type STS struct {
 	// commit after that stop is not taken for another.
 	heardAt    time.Time
 	stoppedFor *sts.Turn
-	// turn is the reply in flight, and generation counts them.
+	// turn is the reply in flight, and generation counts them. named is whether the turn
+	// carries the vendor's response id, which its response.done can be matched by.
 	turn       *sts.Turn
 	generation int
+	named      bool
+	// superseded is the replies a newer one opened over before their response.done came, by
+	// response id. Each is settled by its own done, or estimated once none can come.
+	superseded map[string]*sts.Turn
+	// estimator fills in the usage of a reply settled with none reported.
+	estimator *sts.Estimator
+	// ended is closed when the read loop returns, and quiet, while Close waits, once no reply
+	// is left open.
+	ended chan struct{}
+	quiet chan struct{}
 	// itemID is the assistant item being spoken, which is what a truncate names.
 	itemID string
 	// speaking is whether the model's detector currently hears the caller, and heardSoFar
@@ -507,15 +521,38 @@ func New(settings Options) (*STS, error) {
 		logger = slog.Default()
 	}
 
+	dialect := dialectOf(settings.Vendor, settings.Model)
 	return &STS{
 		options:      settings,
 		keys:         keys,
-		dialect:      dialectOf(settings.Vendor, settings.Model),
+		dialect:      dialect,
 		capabilities: capabilities,
 		logger:       logger.With("provider", settings.Vendor.Provider, "model", settings.Model),
 		emitter:      sts.NewEmitter(sts.EmitterBuffer),
+		superseded:   map[string]*sts.Turn{},
+		estimator:    estimatorFor(dialect),
+		ended:        make(chan struct{}),
 	}, nil
 }
+
+// estimatorFor estimates a dialect's replies cut off before their response.done. Until the
+// session's replies say otherwise, a second of audio is OpenAI's documented 20 output tokens
+// (one per 50 ms), xAI's recorded 50 (112 for 2.24 s, testdata/xai_response_done.json), and
+// for Qwen, which publishes no figure, OpenAI's. OpenAI and xAI split the output by modality.
+func estimatorFor(dialect Dialect) *sts.Estimator {
+	switch dialect {
+	case DialectOpenAI:
+		return sts.NewEstimator(20, true)
+	case DialectXAI:
+		return sts.NewEstimator(50, true)
+	default:
+		return sts.NewEstimator(20, false)
+	}
+}
+
+// closeGrace is how long Close waits for the response.done of a reply it cancelled, which
+// bills it with the vendor's own count.
+var closeGrace = time.Second
 
 // CapabilitiesFor is what a model at a vendor can be asked for. It is a table rather than
 // something learned from the session, because routing checks it before a session exists.
@@ -810,8 +847,9 @@ func (s *STS) Interrupt(playedMs int) error {
 // Events returns what the model heard, said and asked for.
 func (s *STS) Events() <-chan sts.Event { return s.emitter.Events() }
 
-// Close ends the session. A reply still in flight is settled as interrupted, so it is
-// billed once like every other.
+// Close ends the session. A reply still in flight is cancelled and given closeGrace for the
+// response.done that bills it; whatever is still open after that is settled as interrupted
+// on an estimate, so every reply is billed once.
 func (s *STS) Close() error {
 	s.mu.Lock()
 	if s.closed {
@@ -819,10 +857,29 @@ func (s *STS) Close() error {
 		return nil
 	}
 	s.closed = true
-	conn := s.conn
+	s.owed = nil
+	conn, open, cancel := s.conn, s.turn != nil || len(s.superseded) > 0, s.turn != nil
+	if open && conn != nil {
+		s.quiet = make(chan struct{})
+	}
+	quiet := s.quiet
 	s.mu.Unlock()
 
-	s.settleTurn(true, sts.Usage{})
+	if quiet != nil {
+		if cancel {
+			if err := s.send(clientEvent{Type: eventResponseCancel}); err != nil {
+				s.logger.Debug("could not cancel the reply in flight", "error", err)
+			}
+		}
+		grace := time.NewTimer(closeGrace)
+		select {
+		case <-quiet:
+		case <-s.ended:
+		case <-grace.C:
+		}
+		grace.Stop()
+	}
+	s.settleAll()
 	if conn != nil {
 		conn.Close()
 	}
@@ -844,6 +901,19 @@ func (s *STS) SampleRate() int { return s.options.Vendor.OutputSampleRate }
 
 // Capabilities implements sts.STS.
 func (s *STS) Capabilities() sts.Capabilities { return s.capabilities }
+
+// TranscriptionModel is the transcriber OpenAI bills writing down the caller's turns to, apart
+// from the conversation, and empty where nothing is billed so: no transcript was asked for, or
+// the vendor is not OpenAI.
+func (s *STS) TranscriptionModel() string {
+	if s.dialect != DialectOpenAI {
+		return ""
+	}
+	if configured := s.transcription(); configured != nil {
+		return configured.Model
+	}
+	return ""
+}
 
 // Client exposes the underlying WebSocket so callers can use the protocol directly.
 func (s *STS) Client() *websocket.Conn { return s.conn }
@@ -1074,6 +1144,7 @@ func (s *STS) send(event clientEvent) error {
 
 // readLoop translates server frames into events until the connection ends.
 func (s *STS) readLoop() {
+	defer close(s.ended)
 	for {
 		_, raw, err := s.conn.ReadMessage()
 		if err != nil {
@@ -1100,7 +1171,7 @@ func (s *STS) handleReadError(err error) {
 		return
 	}
 
-	s.settleTurn(true, sts.Usage{})
+	s.settleAll()
 	if websocket.IsCloseError(err, websocket.CloseNormalClosure, websocket.CloseGoingAway) {
 		s.emitter.Send(sts.Disconnected{
 			Provider: s.options.Vendor.Provider,
@@ -1167,6 +1238,9 @@ func (s *STS) handleMessage(event serverEvent) {
 		s.speak(event)
 
 	case eventTranscriptDelta, eventTranscriptDeltaV1:
+		if turn := s.turnNamed(event.ResponseID); turn != nil {
+			turn.Said(event.Delta)
+		}
 		if event.Delta != "" {
 			s.emitter.Send(sts.OutputTranscript{ResponseID: s.responseID(event.ResponseID), Mode: stt.ModeDelta, Text: event.Delta})
 		}
@@ -1244,10 +1318,7 @@ func (s *STS) transcribed(event serverEvent) {
 	if s.dialect != DialectOpenAI || used == nil || event.ItemID == "" {
 		return
 	}
-	model := openaiTranscriber
-	if configured := s.transcription(); configured != nil && configured.Model != "" {
-		model = configured.Model
-	}
+	model := cmp.Or(s.TranscriptionModel(), openaiTranscriber)
 	if used.Type == "duration" {
 		if used.Seconds > 0 {
 			s.emitter.Send(sts.TranscriptionUsage{ItemID: event.ItemID, Model: model, AudioMs: int64(math.Round(used.Seconds * 1000))})
@@ -1281,23 +1352,30 @@ func (s *STS) settleHeard() {
 }
 
 // startTurn opens the bookkeeping for a reply. A reply that arrives while another is still
-// open settles the earlier one first, so nothing is billed twice or not at all.
+// open supersedes it: the earlier one waits for its own response.done, which carries what it
+// cost, and one with no vendor id for a done to name is settled now, on an estimate.
 func (s *STS) startTurn(event serverEvent) {
 	id := ""
 	if event.Response != nil {
 		id = event.Response.ID
 	}
 
-	s.settleTurn(true, sts.Usage{})
-
 	s.mu.Lock()
+	earlier := s.turn
+	if earlier != nil && s.named {
+		s.superseded[earlier.ID] = earlier
+		earlier = nil
+	}
 	s.generation++
 	turn := sts.NewTurn(id, s.generation, s.heardAt)
 	s.heardAt = time.Time{}
 	s.itemID = ""
-	s.turn = turn
+	s.turn, s.named = turn, id != ""
 	s.mu.Unlock()
 
+	if earlier != nil {
+		s.complete(earlier, true, sts.Usage{})
+	}
 	s.emitter.Send(sts.ResponseStarted{ResponseID: turn.ID, Generation: turn.Generation, At: time.Now()})
 }
 
@@ -1320,7 +1398,7 @@ func (s *STS) speak(event serverEvent) {
 		s.generation++
 		turn = sts.NewTurn(event.ResponseID, s.generation, s.heardAt)
 		s.heardAt = time.Time{}
-		s.turn = turn
+		s.turn, s.named = turn, event.ResponseID != ""
 		s.mu.Unlock()
 		s.emitter.Send(sts.ResponseStarted{ResponseID: turn.ID, Generation: turn.Generation, At: time.Now()})
 	} else {
@@ -1351,9 +1429,15 @@ func (s *STS) finishTurn(event serverEvent) {
 	}
 	cost = usageOf(reported)
 	s.mu.Lock()
-	// A done for a reply already settled, one a newer reply superseded, settles nothing: the
-	// reply open now is not the one it is about.
-	late := s.turn != nil && event.Response != nil && event.Response.ID != "" && event.Response.ID != s.turn.ID
+	// A done for a reply a newer one superseded settles that reply. One for a reply this
+	// session does not know, or has settled, settles nothing: the reply open now is not the
+	// one it is about.
+	var earlier *sts.Turn
+	if event.Response != nil && event.Response.ID != "" {
+		earlier = s.superseded[event.Response.ID]
+		delete(s.superseded, event.Response.ID)
+	}
+	late := earlier != nil || s.turn != nil && event.Response != nil && event.Response.ID != "" && event.Response.ID != s.turn.ID
 	// The growth is billed by the reply it settles, so with none in flight, or for a reply
 	// settled already, it is left for the next one, which the vendor's next total includes.
 	if reported != nil && reported.BillableAudioSeconds != nil && s.turn != nil && !late {
@@ -1378,15 +1462,20 @@ func (s *STS) finishTurn(event serverEvent) {
 	}
 
 	interrupted := status == "cancelled" || reason == "turn_detected" || reason == "client_cancelled"
-	if !late {
+	switch {
+	case earlier != nil:
+		// It was cut off by the reply that took its place, however its done describes it.
+		s.complete(earlier, true, cost)
+		s.calm()
+	case !late:
 		s.settleTurn(interrupted, cost)
 	}
 
 	s.mu.Lock()
-	owed := s.owed
+	owed, closed := s.owed, s.closed
 	s.owed = nil
 	s.mu.Unlock()
-	if owed != nil {
+	if owed != nil && !closed {
 		s.answer(*owed)
 	}
 }
@@ -1398,10 +1487,60 @@ func (s *STS) settleTurn(interrupted bool, cost sts.Usage) {
 	s.turn = nil
 	s.itemID = ""
 	s.mu.Unlock()
-	if turn == nil {
-		return
+	if turn != nil {
+		s.complete(turn, interrupted, cost)
+	}
+	s.calm()
+}
+
+// settleAll settles every reply still open, those superseded and then the one in flight, for
+// which no response.done is coming any more.
+func (s *STS) settleAll() {
+	s.mu.Lock()
+	earlier := slices.SortedFunc(maps.Values(s.superseded), func(a, b *sts.Turn) int {
+		return a.Generation - b.Generation
+	})
+	clear(s.superseded)
+	s.mu.Unlock()
+	for _, turn := range earlier {
+		s.complete(turn, true, sts.Usage{})
+	}
+	s.settleTurn(true, sts.Usage{})
+}
+
+// complete reports a reply settled. A vendor that counts its replies but said nothing for
+// this one, cut off before its response.done, has it estimated from what it streamed.
+func (s *STS) complete(turn *sts.Turn, interrupted bool, cost sts.Usage) {
+	if s.capabilities.Usage {
+		if cost.Counted() {
+			s.estimator.Reported(turn, cost)
+		} else {
+			estimate := s.estimator.Estimate(turn)
+			estimate.BilledAudioMs, estimate.AudioBilled = cost.BilledAudioMs, cost.AudioBilled
+			cost = estimate
+		}
 	}
 	s.emitter.Send(turn.Complete(s.options.Vendor.Provider, s.options.Model, interrupted, cost))
+}
+
+// calm lets a Close waiting for the open replies go on once none is left.
+func (s *STS) calm() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.quiet != nil && s.turn == nil && len(s.superseded) == 0 {
+		close(s.quiet)
+		s.quiet = nil
+	}
+}
+
+// turnNamed is the open reply an event names, or the one in flight when it names none.
+func (s *STS) turnNamed(id string) *sts.Turn {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if earlier, ok := s.superseded[id]; ok {
+		return earlier
+	}
+	return s.turn
 }
 
 // fail reports a server error. A cancel that found no reply to cancel is not one.

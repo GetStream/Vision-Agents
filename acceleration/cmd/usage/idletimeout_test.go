@@ -22,7 +22,9 @@ func TestIdleTimeoutSuite(t *testing.T) {
 
 // TestEveryServerClosesIdleConnections: each http.Server the service builds sets IdleTimeout,
 // so one that is added, or loses it, fails here. Left unset, an idle keep-alive connection is
-// held until its client closes it. The servers are built inside run, so the source is read.
+// held until its client closes it. It reads the source, so it also sees a server added later
+// that no listener test starts; ServeSuite's TestEveryListenerClosesAnIdleConnection
+// (serve_test.go) watches the API and metrics listeners close a connection.
 func (s *IdleTimeoutSuite) TestEveryServerClosesIdleConnections() {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, "main.go", nil, 0)

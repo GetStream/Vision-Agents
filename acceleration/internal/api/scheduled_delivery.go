@@ -92,9 +92,9 @@ func scheduledPeerWindow() time.Duration {
 var errScheduledNotHere = errors.New("the session is not running on this node")
 
 // scheduledDelivery is one occurrence's follow-up as the node holding the
-// conversation needs it, which is also what a peer is handed: everything is
-// in it, because the peer is not asked to trust its own copy of the task,
-// which it reads only to check whose the task is.
+// conversation needs it, which is also what a peer is handed. The peer reads
+// only a scheduledHandOff from it and rebuilds the rest from the task's and
+// the run's rows (occurrenceDelivery).
 type scheduledDelivery struct {
 	CustomerID     string   `json:"customer_id"`
 	TaskID         string   `json:"task_id"`
@@ -125,6 +125,20 @@ func (d scheduledDelivery) owner() session.Owner {
 // that names none now is a gap the writer reports.
 func (d scheduledDelivery) attribution() routing.Attribution {
 	return routing.Attribution{APIKey: d.APIKey, UserID: d.UserID, CallerKind: routing.CallerServer, UsageCategories: d.UsageCategories}
+}
+
+// scheduledHandOff is what a peer reads of a scheduledDelivery it is handed: the ids that
+// name the task's occurrence and its owner, which it checks against the rows. Nothing else
+// the asker sends reaches the delivery, so a payload cannot name another conversation, zone,
+// key, prompt or due time. An asker sends the whole scheduledDelivery, so routers on either
+// side of this change still hand off to each other.
+type scheduledHandOff struct {
+	CustomerID string `json:"customer_id"`
+	TaskID     string `json:"task_id"`
+	RunID      string `json:"run_id"`
+	SessionID  string `json:"session_id"`
+	UserID     string `json:"user_id"`
+	CallerKind string `json:"caller_kind"`
 }
 
 // scheduledPeerAnswer is what the node holding a conversation answers a
@@ -169,28 +183,7 @@ func (a scheduledPeerAnswer) failure() error {
 // out in that thread (deliverOnThread), whatever its channels say.
 func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.ClaimedScheduledTask) (string, string, error) {
 	task := claimed.Task
-	// A hold ends after the occurrence came due: its lateness counts from then.
-	due := claimed.Run.ScheduledFor
-	if held := claimed.Run.PostponedUntil; held != nil {
-		due = *held
-	}
-	delivery := scheduledDelivery{
-		CustomerID:      task.CustomerID,
-		TaskID:          task.ID,
-		RunID:           claimed.Run.ID,
-		SessionID:       task.SessionID,
-		ConversationID:  task.ConversationID,
-		ConfigID:        task.ConfigID,
-		UserID:          task.UserID,
-		CallerKind:      task.CallerKind,
-		APIKey:          task.APIKey,
-		UsageCategories: task.UsageCategories,
-		Timezone:        task.Timezone,
-		CommandID:       conversation.ReadBackPrefix + claimed.Run.ID,
-		Text:            scheduledPrompt(s.withOccurrence(ctx, claimed), time.Now()),
-		Channels:        task.Channels,
-		Due:             due,
-	}
+	delivery := s.occurrenceDelivery(ctx, claimed)
 	ctx = routing.WithAttribution(routing.WithScheduledTurn(ctx), delivery.attribution())
 	if s.sessions == nil {
 		return "", "", errors.New("this router runs no sessions")
@@ -217,6 +210,40 @@ func (s *Server) DeliverScheduledTask(ctx context.Context, claimed store.Claimed
 		}
 	}
 	return s.deliverChainReopened(ctx, delivery)
+}
+
+// occurrenceDelivery is the delivery of a claimed occurrence, built from its task's and its
+// run's rows, with its prompt as of now.
+func (s *Server) occurrenceDelivery(ctx context.Context, claimed store.ClaimedScheduledTask) scheduledDelivery {
+	// A hold ends after the occurrence came due: its lateness counts from then.
+	due := claimed.Run.ScheduledFor
+	if held := claimed.Run.PostponedUntil; held != nil {
+		due = *held
+	}
+	return taskDelivery(claimed.Task, claimed.Run.ID, scheduledPrompt(s.withOccurrence(ctx, claimed), time.Now()), due)
+}
+
+// taskDelivery is the delivery of task's occurrence on run runID: what the
+// task's row holds, the prompt text the occurrence is sent as, and when it
+// came due.
+func taskDelivery(task store.ScheduledTask, runID, text string, due time.Time) scheduledDelivery {
+	return scheduledDelivery{
+		CustomerID:      task.CustomerID,
+		TaskID:          task.ID,
+		RunID:           runID,
+		SessionID:       task.SessionID,
+		ConversationID:  task.ConversationID,
+		ConfigID:        task.ConfigID,
+		UserID:          task.UserID,
+		CallerKind:      task.CallerKind,
+		APIKey:          task.APIKey,
+		UsageCategories: task.UsageCategories,
+		Timezone:        task.Timezone,
+		CommandID:       conversation.ReadBackPrefix + runID,
+		Text:            text,
+		Channels:        task.Channels,
+		Due:             due,
+	}
 }
 
 // quietHold is when a task's quiet hours end, when now is inside them. A
@@ -247,8 +274,10 @@ func (s *Server) deliverChainHere(ctx context.Context, delivery scheduledDeliver
 // deliverChain walks a task's channels in order against the session its
 // conversation is held in, and stops at the first that lands. A failure
 // names every channel tried, for the logs, and is recorded under the first
-// channel's reason. It is final when every channel's failure is, and missed
-// when every channel found the occurrence too late.
+// channel's reason, except a call placed already (rangAlready), which gives
+// already_called. It is final when every channel's failure is, and missed
+// when every channel found the occurrence too late. A call placed for the
+// occurrence whose end the run does not record ends the walk (rangAlready).
 func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, found *session.Session) (string, string, error) {
 	where := delivery.Channels
 	if len(where) == 0 {
@@ -275,12 +304,34 @@ func (s *Server) deliverChain(ctx context.Context, delivery scheduledDelivery, f
 		reason = cmp.Or(reason, deliveryReason(err))
 		final = final && errors.As(err, &failure) && failure.Final
 		missed = false
+		// A call taken with its end never written (a failed give-back or
+		// reason write) counts too: see rangAlready.
+		if rangAlready(err) {
+			// The call decides how the occurrence counts, not a channel before it.
+			reason = scheduling.ReasonRungAlready
+			break
+		}
 	}
 	err := fmt.Errorf("the task could not be delivered (%s)", strings.Join(tried, "; "))
 	if missed {
 		return "", "", &scheduling.Missed{Err: err}
 	}
 	return "", "", &scheduling.Failure{Reason: reason, Final: final, Err: err}
+}
+
+// rangAlready reports whether a channel failed because the occurrence's call was
+// placed already, by an earlier attempt or a worker that stopped, and the run
+// records no reason that call ended under (callEnded). That call may have
+// carried the task out, or been cut off with the user on it, so no later
+// channel says the task again (AI-2021). The same holds when the end could not
+// be written: a call that was not placed whose give-back failed, or any failed
+// reason write after the call was placed (callEnded: not_answered, failed or
+// held), leaves the call taken with no end.
+// A call whose end is recorded, such as not_answered, leaves the next channel
+// to carry the task.
+func rangAlready(err error) bool {
+	var failure *scheduling.Failure
+	return errors.As(err, &failure) && failure.Reason == scheduling.ReasonRungAlready
 }
 
 // deliveryReason is the code a failed attempt is recorded under. Refused for money, it is the
@@ -721,43 +772,43 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 // by a peer is answered as no such route, because the payload names its
 // customer and user outright, which is only a peer's to say. Even a peer's
 // word on the owner is checked against the task as stored: a task that is
-// gone, or that another user owns, is answered as no such task and nothing
-// is delivered.
+// gone, or that another user owns, or a run that is not the task's running
+// one, is answered as no such task and nothing is delivered.
 func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request) {
 	if !node.Forwarded(r.Context()) {
 		writeError(w, notFound("no such route"))
 		return
 	}
-	var delivery scheduledDelivery
-	if err := json.NewDecoder(r.Body).Decode(&delivery); err != nil {
+	var handOff scheduledHandOff
+	if err := json.NewDecoder(r.Body).Decode(&handOff); err != nil {
 		writeError(w, invalidRequest("the delivery could not be read"))
 		return
 	}
-	if s.sessions == nil || delivery.SessionID == "" {
+	if s.sessions == nil || handOff.SessionID == "" {
 		writeError(w, notFound("no such session"))
 		return
 	}
-	if s.store == nil || delivery.CustomerID == "" || delivery.TaskID == "" {
+	if s.store == nil || handOff.CustomerID == "" || handOff.TaskID == "" || handOff.RunID == "" {
 		writeError(w, errUnknownScheduledTask)
 		return
 	}
-	// The asker builds the delivery from the task's row, so a valid hand-off names its
-	// owner. A task deleted since is refused too; the asker's scheduler tries again later.
-	task, err := s.store.ScheduledTask(r.Context(), delivery.CustomerID, delivery.TaskID)
+	claimed, err := s.handedOccurrence(r.Context(), handOff)
 	switch {
-	case errors.Is(err, store.ErrNoScheduledTask), err == nil && !ownsTask(delivery, task):
+	case errors.Is(err, store.ErrNoScheduledTask), errors.Is(err, store.ErrNoScheduledTaskRun), errors.Is(err, errNotHandedOff):
 		s.logger.Warn("refused a peer's scheduled task that its stored task does not match",
-			"task", delivery.TaskID, "session", delivery.SessionID)
+			"task", handOff.TaskID, "session", handOff.SessionID)
 		writeError(w, errUnknownScheduledTask)
 		return
 	case err != nil:
-		s.logger.Error("could not read a peer's scheduled task", "task", delivery.TaskID, "error", err)
+		s.logger.Error("could not read a peer's scheduled task", "task", handOff.TaskID, "error", err)
 		writeError(w, internalError())
 		return
 	}
-	// What the task carries is the row's, whatever the payload says.
-	delivery.ConfigID, delivery.Channels = task.ConfigID, task.Channels
-	ctx := routing.WithScheduledTurn(r.Context())
+	// Everything the delivery holds is the rows', whatever the payload says: a payload naming
+	// another conversation, zone, key, prompt or due time would ring into that conversation,
+	// bill that key or say those words. Its work is the task's, as the asker attributes it.
+	delivery := s.occurrenceDelivery(r.Context(), claimed)
+	ctx := routing.WithAttribution(routing.WithScheduledTurn(r.Context()), delivery.attribution())
 	deliveredTo, sessionID, err := s.deliverChainHere(ctx, delivery)
 	switch {
 	case errors.Is(err, errScheduledNotHere):
@@ -781,10 +832,36 @@ func (s *Server) deliverScheduledForPeer(w http.ResponseWriter, r *http.Request)
 	}
 }
 
-// ownsTask reports whether a delivery names the owner and session its task is stored with.
-func ownsTask(delivery scheduledDelivery, task store.ScheduledTask) bool {
-	return task.UserID == delivery.UserID && task.CallerKind == delivery.CallerKind &&
-		task.SessionID == delivery.SessionID
+// errNotHandedOff says a hand-off names a task another owner or session holds, or a run of
+// the task that is not running.
+var errNotHandedOff = errors.New("the hand-off does not match the stored task and run")
+
+// handedOccurrence is the occurrence a hand-off names, read from the task's and the run's
+// rows. The asker builds the hand-off from those rows while the run is running, so a valid
+// one names the task's owner and session and a running run of that task. A task or run
+// gone since is refused too; the asker's scheduler tries again later.
+func (s *Server) handedOccurrence(ctx context.Context, handOff scheduledHandOff) (store.ClaimedScheduledTask, error) {
+	task, err := s.store.ScheduledTask(ctx, handOff.CustomerID, handOff.TaskID)
+	if err != nil {
+		return store.ClaimedScheduledTask{}, err
+	}
+	if !ownsTask(handOff, task) {
+		return store.ClaimedScheduledTask{}, errNotHandedOff
+	}
+	run, err := s.store.ScheduledTaskRun(ctx, handOff.CustomerID, handOff.TaskID, handOff.RunID)
+	if err != nil {
+		return store.ClaimedScheduledTask{}, err
+	}
+	if run.State != store.ScheduledTaskRunRunning {
+		return store.ClaimedScheduledTask{}, errNotHandedOff
+	}
+	return store.ClaimedScheduledTask{Task: task, Run: run}, nil
+}
+
+// ownsTask reports whether a hand-off names the owner and session its task is stored with.
+func ownsTask(handOff scheduledHandOff, task store.ScheduledTask) bool {
+	return task.UserID == handOff.UserID && task.CallerKind == handOff.CallerKind &&
+		task.SessionID == handOff.SessionID
 }
 
 // deliverChainReopened walks a delivery's channels in a conversation whose

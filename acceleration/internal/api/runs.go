@@ -14,9 +14,11 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/egress"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/moderator"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -57,6 +59,10 @@ var (
 	// same way every time, so it is no 503 a caller retries.
 	errRunCannotSee = APIError{Type: ErrorTypeInvalidRequest, Code: codeInvalidConfig, Message: "the run has images, and " +
 		"the agent config has no vision skill and a conversation model that takes text alone"}
+	// errRunRefused is a run whose input, or a tool result it read, the prompt injection screen
+	// refused. The input decides it, so it is no 503 a caller retries: the same input is refused again.
+	errRunRefused = APIError{Type: ErrorTypeInvalidRequest, Code: codePromptInjection,
+		Message: "what the run read, its input or a tool result, reads as a prompt injection, so the agent did not answer it"}
 )
 
 // createRun runs an agent config on one input as a headless text session and answers with what
@@ -221,12 +227,15 @@ func (r *runOutcome) see(event session.Event) bool {
 	return false
 }
 
-// runFailed is err as the caller is told it: a refusal about money and a run out of time say
-// so, and anything else is otherwise. A spent budget is a 402, not a 429: waiting does not
+// runFailed is err as the caller is told it: a refusal about money, a refused input and a run
+// out of time say so, and anything else is otherwise. A spent budget is a 402, not a 429: waiting does not
 // refill it before it resets, so a caller that retries 429s must not retry it.
 func runFailed(ctx context.Context, err error, otherwise APIError) APIError {
 	if answer, ok := moneyError(err); ok {
 		return answer
+	}
+	if errors.Is(err, policy.ErrPromptInjection) {
+		return errRunRefused
 	}
 	if ctx.Err() != nil {
 		return errRunTimedOut
@@ -272,24 +281,9 @@ func fetchImages(ctx context.Context, client *http.Client, images []llm.ImagePar
 
 // fetchImage is the image at source, and what kind of image its bytes say it is.
 func fetchImage(ctx context.Context, client *http.Client, source string) ([]byte, string, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	data, _, err := fetchAtMost(ctx, client, source, maxRunImageBytes)
 	if err != nil {
 		return nil, "", err
-	}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, "", err
-	}
-	defer response.Body.Close()
-	if response.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("fetching it answered %s", response.Status)
-	}
-	data, err := io.ReadAll(io.LimitReader(response.Body, maxRunImageBytes+1))
-	if err != nil {
-		return nil, "", err
-	}
-	if len(data) > maxRunImageBytes {
-		return nil, "", fmt.Errorf("it is over %d MB", maxRunImageBytes>>20)
 	}
 	// The bytes, not the Content-Type, since a CDN may label an error page or anything else.
 	switch mime := http.DetectContentType(data); mime {
@@ -298,6 +292,32 @@ func fetchImage(ctx context.Context, client *http.Client, source string) ([]byte
 	default:
 		return nil, "", fmt.Errorf("it is %s, not a JPEG, PNG, WebP or GIF", mime)
 	}
+}
+
+// fetchAtMost is the body at source and the type it was labelled with, refused past limit
+// bytes.
+func fetchAtMost(ctx context.Context, client *http.Client, source string, limit int) ([]byte, string, error) {
+	request, err := http.NewRequestWithContext(ctx, http.MethodGet, source, nil)
+	if err != nil {
+		return nil, "", err
+	}
+	request.Header.Set("User-Agent", egress.UserAgent)
+	response, err := client.Do(request)
+	if err != nil {
+		return nil, "", err
+	}
+	defer response.Body.Close()
+	if response.StatusCode != http.StatusOK {
+		return nil, "", fmt.Errorf("fetching it answered %s", response.Status)
+	}
+	data, err := io.ReadAll(io.LimitReader(response.Body, int64(limit)+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(data) > limit {
+		return nil, "", fmt.Errorf("it is over %d MB", limit>>20)
+	}
+	return data, response.Header.Get("Content-Type"), nil
 }
 
 // runInput is the input as the agent is told it. The input is whatever the caller is judging,
@@ -333,7 +353,8 @@ func (s *Server) registerRuns(api huma.API) {
 			"5 MB, or is not a JPEG, PNG, WebP or GIF is a 400 image_unavailable naming the image, " +
 			"which retrying the same image does not fix.\n" +
 			"A config that does not start a session, or that cannot see a run's images, is a 400 " +
-			"invalid_config, which retrying does not fix, a spent budget a 403 " +
+			"invalid_config, which retrying does not fix, an input or tool result the prompt injection " +
+			"screen refused a 400 prompt_injection, which retrying an unchanged input does not fix, a spent budget a 403 " +
 			"budget_exceeded, which waiting does not fix, an app with as many runs in flight as it may " +
 			"have (ROUTER_RUNS_CONCURRENT_PER_APP, 20 by default) a 429 concurrency_limited with " +
 			"Retry-After, a model that failed or said nothing a 503 model_failed, and a run that " +

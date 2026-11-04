@@ -31,7 +31,8 @@ type store struct {
 	trunks   map[string]map[string]any
 	// calls are the participant ids in each call's session, by "<type>:<id>".
 	calls map[string][]string
-	// made are the bodies calls were created with, by "<type>:<id>".
+	// made are the bodies calls were created with, by "<type>:<id>", with the custom an
+	// update merged in.
 	made     map[string]map[string]any
 	rules    map[string]map[string]any
 	order    []string
@@ -60,6 +61,8 @@ type store struct {
 	held   *held
 	// limited are the path suffixes RateLimit answers 429 to.
 	limited map[string]bool
+	// failing are the path suffixes Fail answers 500 to, by method.
+	failing map[string]map[string]bool
 	// uploads are the files stored on channels, in the order they came.
 	uploads []Upload
 	// events are the events sent to each channel, by channel id, in the order they came.
@@ -119,6 +122,9 @@ type Server struct {
 	Client *getstream.Stream
 	// URL is where it is served, for a client of one's own to be pointed at.
 	URL string
+	// Key is the API key Client calls with, one of its own per server: a reused port must not
+	// let a user cache (conversation.CreateMissingUsers) keyed by URL and key carry over.
+	Key string
 	db  *store
 	t   *testing.T
 }
@@ -135,11 +141,12 @@ func NewServer(t *testing.T) *Server {
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
 	t.Cleanup(server.Close)
-	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(server.URL))
+	key := rand.Text()
+	client, err := getstream.NewClient(key, "secret", getstream.WithBaseUrl(server.URL))
 	if err != nil {
 		t.Fatalf("chattest: %v", err)
 	}
-	return &Server{Client: client, URL: server.URL, db: db, t: t}
+	return &Server{Client: client, URL: server.URL, Key: key, db: db, t: t}
 }
 
 // Client serves Chat from memory for the life of the test.
@@ -359,6 +366,13 @@ func (s *Server) Call(callType, id string) map[string]any {
 	return s.db.made[callType+":"+id]
 }
 
+// Created are the cids of the calls a get-or-create made, sorted.
+func (s *Server) Created() []string {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	return slices.Sorted(maps.Keys(s.db.made))
+}
+
 // Rules are the ids of the SIP routing rules the app holds now.
 func (s *Server) Rules() []string {
 	s.db.mu.Lock()
@@ -404,6 +418,27 @@ func (s *Server) LiftRateLimit(suffix string) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	delete(s.db.limited, suffix)
+}
+
+// Fail answers every request of method whose path ends in suffix with a 500
+// for a call it could not update. Other methods on that path are served.
+func (s *Server) Fail(method, suffix string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	if s.db.failing == nil {
+		s.db.failing = map[string]map[string]bool{}
+	}
+	if s.db.failing[method] == nil {
+		s.db.failing[method] = map[string]bool{}
+	}
+	s.db.failing[method][suffix] = true
+}
+
+// Heal serves requests of method ending in suffix again.
+func (s *Server) Heal(method, suffix string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	delete(s.db.failing[method], suffix)
 }
 
 // wait keeps the request Hold asked for waiting until it is let go.
@@ -625,6 +660,13 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	for suffix := range db.failing[r.Method] {
+		if strings.HasSuffix(r.URL.Path, suffix) {
+			w.WriteHeader(http.StatusInternalServerError)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": http.StatusInternalServerError})
+			return
+		}
+	}
 	if r.Method == http.MethodPost && (strings.HasSuffix(r.URL.Path, "/image") || strings.HasSuffix(r.URL.Path, "/file")) {
 		db.upload(w, r)
 		return
@@ -723,9 +765,51 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
 		}
 		result["call"] = call
-	case r.Method == http.MethodPost && strings.Contains(r.URL.Path, "/video/call/"):
-		db.made[parts[len(parts)-2]+":"+parts[len(parts)-1]] = body
-		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1]}
+	case r.Method == http.MethodPost && len(parts) >= 4 && parts[len(parts)-3] == "call" && parts[len(parts)-4] == "video":
+		// A get-or-create loads a call that is already there and creates only a missing one
+		// (getstream.io/video/docs/react/guides/joining-and-creating-calls/), so the call
+		// keeps the body it was created with. A call put in session is already there. Only
+		// the get-or-create path is matched: a POST below it, mark_ended, creates nothing.
+		// It answers with the custom the call has.
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		_, inSession := db.calls[cid]
+		if _, exists := db.made[cid]; !exists && !inSession {
+			db.made[cid] = body
+		}
+		data, _ := db.made[cid]["data"].(map[string]any)
+		custom, ok := data["custom"].(map[string]any)
+		if !ok {
+			custom = map[string]any{}
+		}
+		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1], "custom": custom}
+	case r.Method == http.MethodPatch && len(parts) >= 4 && parts[len(parts)-3] == "call" && parts[len(parts)-4] == "video":
+		// An update merges the custom it sends into the call's own: a key it leaves out is
+		// kept (seen on Stream Video, 2026-11-02). A call that is not there is refused.
+		cid := parts[len(parts)-2] + ":" + parts[len(parts)-1]
+		_, inSession := db.calls[cid]
+		made, exists := db.made[cid]
+		if !exists && !inSession {
+			w.WriteHeader(http.StatusNotFound)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 16, "message": "call " + cid + " does not exist", "StatusCode": http.StatusNotFound})
+			return
+		}
+		if made == nil {
+			made = map[string]any{}
+			db.made[cid] = made
+		}
+		data, ok := made["data"].(map[string]any)
+		if !ok {
+			data = map[string]any{}
+			made["data"] = data
+		}
+		custom, ok := data["custom"].(map[string]any)
+		if !ok {
+			custom = map[string]any{}
+			data["custom"] = custom
+		}
+		sent, _ := body["custom"].(map[string]any)
+		maps.Copy(custom, sent)
+		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1], "custom": custom}
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		if db.trunkCap > 0 && len(db.trunks) >= db.trunkCap {
 			refuse(w, "your application reached the maximum number of SIP trunks (25)")
@@ -822,7 +906,7 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		result["channel"] = data
 	case r.Method == http.MethodPost && len(parts) >= 2 && parts[len(parts)-2] == "agent":
 		// An update adds the members it names to the channel, which is how a reader comes
-		// to be able to watch it.
+		// to be able to watch it, and removes the user ids it names.
 		id := parts[len(parts)-1]
 		data, exists := db.channels[id]
 		if !exists {
@@ -830,7 +914,12 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		added, _ := body["add_members"].([]any)
+		removed, _ := body["remove_members"].([]any)
 		members, _ := data["members"].([]any)
+		members = slices.DeleteFunc(slices.Clone(members), func(member any) bool {
+			named, _ := member.(map[string]any)
+			return slices.Contains(removed, named["user_id"])
+		})
 		data["members"] = append(members, added...)
 		result["channel"] = data
 	case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/chat/channels"):
@@ -856,9 +945,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			refuse(w, "either data.created_by or data.created_by_id must be provided when using server side auth")
 			return
 		}
-		// A query carrying data creates the channel; one without it must not overwrite
-		// the ownership already recorded on it.
-		if carries {
+		// A query carrying data creates the channel. Chat ignores the data of a query for a
+		// channel that is already there, so its creator, members and custom fields stay
+		// as they were.
+		if !exists {
 			db.channels[id] = data
 		}
 		result["channel"] = db.channels[id]

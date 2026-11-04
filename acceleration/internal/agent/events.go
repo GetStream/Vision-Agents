@@ -84,6 +84,14 @@ type Heard struct {
 
 func (Heard) isAgentEvent() {}
 
+// sendHeard tells onHeard of event, when set, then sends it (Options.OnHeard).
+func sendHeard(emitter *Emitter, onHeard func(Heard), event Heard) {
+	if onHeard != nil {
+		onHeard(event)
+	}
+	emitter.Send(event)
+}
+
 // Said is words the agent speaks as they are, without asking the model: a greeting, or
 // any other line it was told to say. A voice reports it in place of a Responded, which is
 // the model's answer to somebody, so nothing waiting on an answer takes the greeting for
@@ -336,7 +344,8 @@ type TaskSettled struct {
 func (TaskSettled) isAgentEvent() {}
 
 // TaskCancelled means delegated work was abandoned because its premise was gone: the
-// caller moved on, the model dropped it, it ran out of time, or the call ended.
+// caller moved on, the model dropped it, it ran out of time, the call ended, or the prompt
+// injection screen refused the turn that asked for it.
 type TaskCancelled struct {
 	TaskID string
 	Skill  string
@@ -498,6 +507,8 @@ type Error struct {
 	Err error
 	// Context says which part failed, e.g. "stt", "llm", "tts" or "edge".
 	Context string
+	// TurnID is the turn the prompt injection screen refused, empty for any other failure.
+	TurnID string
 }
 
 func (e Error) Error() string { return e.Err.Error() }

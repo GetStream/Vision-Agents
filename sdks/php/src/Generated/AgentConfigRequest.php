@@ -13,13 +13,15 @@ final readonly class AgentConfigRequest
     public function __construct(
         // What the config is called, which is unique among the customer's own.
         public string $name,
+        // The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and p...
+        public ?AgentCalls $calls = null,
         // Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Eac...
         public ?AgentChannels $channels = null,
-        // The connectors whose tools this agent may call, each under an alias unique within the config and different...
+        // The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or nu...
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
-        // Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent ch...
+        // Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent c...
         public ?bool $episodeCards = null,
         public ?Greeting $greeting = null,
         // A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the polic...
@@ -33,14 +35,14 @@ final readonly class AgentConfigRequest
         public ?string $knowledgeNamespace = null,
         // The model holding the conversation.
         public ?string $llm = null,
-        // MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name...
+        // No longer read: a server named by URL is now a custom connector, so create one for its URL and name it unde...
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
-        // Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the p...
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<PluginEvent>|null */
         public ?array $pluginEvents = null,
-        // Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from t...
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         // Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its...
@@ -68,7 +70,7 @@ final readonly class AgentConfigRequest
         // Cost labels, carried onto every request a session using it makes. A config tagged draft_of, naming the conf...
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        // How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored sett...
+        // How the agent is offered its connector tools. Left out on an update, the stored settings stay.
         public ?AgentTools $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,
@@ -87,6 +89,7 @@ final readonly class AgentConfigRequest
     {
         return new self(
             name: Json::string($data, 'name'),
+            calls: array_key_exists('calls', $data) && $data['calls'] !== null ? AgentCalls::fromArray(Json::object($data, 'calls')) : null,
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
@@ -132,6 +135,9 @@ final readonly class AgentConfigRequest
     {
         $out = [];
         $out['name'] = $this->name;
+        if ($this->calls !== null) {
+            $out['calls'] = $this->calls->toArray();
+        }
         if ($this->channels !== null) {
             $out['channels'] = $this->channels->toArray();
         }

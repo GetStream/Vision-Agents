@@ -4,11 +4,13 @@ package api
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -36,6 +38,9 @@ const (
 	regionsEUKey = "REGIONS_SUITE_ANTHROPIC_EU_KEY"
 )
 
+// regionWithoutSTT is a region the suite runs a model in and no batch transcriber.
+const regionWithoutSTT = "ap"
+
 // RegionsSuite runs the router with Claude Haiku declared once in the us and once in the eu,
 // each instance at an endpoint of its own on this machine with a key of its own, the scheduling
 // model in the eu as well, a turbopuffer in the eu beside the us knowledge base, and the eu's
@@ -54,6 +59,10 @@ func TestRegionsSuite(t *testing.T) {
 
 func (s *RegionsSuite) SetupSuite() {
 	s.us, s.eu = s.claudeAt("from the us"), s.claudeAt("from the eu")
+	// The batch model an English recording goes to in the eu, beside the us one every suite has.
+	s.sttInstances = []routing.ProviderConfig{{
+		Provider: "stub", Model: "stub-batch-eu", Languages: []string{"en"}, Terms: everyTerm, Region: pricing.RegionEU,
+	}}
 	// The suites share the process, so each variable is the suite's own.
 	s.Require().NoError(os.Setenv(regionsUSKey, "us-key"))
 	s.Require().NoError(os.Setenv(regionsEUKey, "eu-key"))
@@ -63,9 +72,12 @@ func (s *RegionsSuite) SetupSuite() {
 			Endpoint: s.us.URL, APIKeyEnv: regionsUSKey},
 		{Provider: anthropic.ProviderName, Model: model, Languages: []string{"la"}, Region: pricing.RegionEU,
 			Endpoint: s.eu.URL, APIKeyEnv: regionsEUKey},
-		{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}, Region: pricing.RegionEU},
+		// Run in process, so free work rather than unpriced, as a model a deployment runs itself.
+		{Provider: "scheduling", Model: "scheduling-model", Languages: []string{"la"}, Region: pricing.RegionEU, Local: true},
 		// What the flow controller and the title of an eu agent's session run on (llm-flow, llm-fast).
 		{Provider: "stub", Model: "stub-model", Languages: []string{"en"}, Realtime: true, Region: pricing.RegionEU},
+		// What an agent in a region with no batch transcriber runs on.
+		{Provider: "stub", Model: "stub-model", Languages: []string{"en"}, Realtime: true, Region: regionWithoutSTT, Local: true},
 	}
 	vendors := llmrouter.DefaultRegistry()
 	s.llmFactories = func(registry *llmrouter.Registry) {
@@ -222,6 +234,92 @@ func (s *RegionsSuite) TestAnAgentSyncedInTheEUIsServedOnlyByTheEUInstanceAndBil
 	s.Equal(s.pricedAt(pricingtest.LLM(pricing.RegionEU, false), row), row.CostMicros)
 }
 
+func (s *RegionsSuite) TestAVoiceNoteToAnEUAgentIsTranscribedByTheEUInstance() {
+	agent := s.syncedIn(pricing.RegionEU, haiku)
+	opened := s.serverClient.createSession(CreateSessionRequest{ConfigId: &agent.Id})
+	since := time.Now().UTC()
+	note := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf("region "+s.utils.uuid()))
+
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Audio: &AudioSource{Url: note}}, nil))
+
+	heard := s.meteredRows(routing.STT, since, 1)[0]
+	s.Equal("stub-batch-eu", heard.Model, "the note is heard where the agent is, not by the us batch model")
+}
+
+// A voice note to an agent in a region where nothing transcribes a recording is a feature the
+// deployment lacks there, a 400 not_configured on both operations that take one, which a
+// client does not retry: it was a 503 model_failed, which a client retries for ever. It is
+// refused before the note is heard and before any turn starts.
+func (s *RegionsSuite) TestAVoiceNoteToAnAgentInARegionWithNoBatchTranscriberIsNotConfigured() {
+	agent := s.syncedIn(regionWithoutSTT, "stub/stub-model")
+	for name, operation := range map[string]string{"createResponse": "responses", "respond": "respond"} {
+		s.Run(name, func() {
+			opened := s.serverClient.createSession(CreateSessionRequest{ConfigId: &agent.Id})
+			since := time.Now().UTC()
+			note := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf("region "+s.utils.uuid()))
+
+			status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/"+operation,
+				map[string]any{"text": "", "audio": map[string]string{"url": note}})
+
+			var refused ErrorResponse
+			s.Require().NoError(json.Unmarshal(payload, &refused), "%.300s", payload)
+			s.Equal(http.StatusBadRequest, status)
+			s.Equal(ErrorTypeInvalidRequest, refused.Error.Type)
+			s.Equal(codeNotConfigured, refused.Error.Code, "%.600s", payload)
+			s.Equal(errNoVoiceNotesInRegion.Message, refused.Error.Message)
+			s.noPersonMessageBut(opened)
+			s.Empty(s.rowsSince(routing.STT, since), "the note was never heard")
+		})
+	}
+}
+
+// A vendor that fails on a note in a region it serves is still the model failing, a 503.
+func (s *RegionsSuite) TestAVoiceNoteTheEUTranscriberFailsOnIsStillAModelFailure() {
+	agent := s.syncedIn(pricing.RegionEU, haiku)
+	opened := s.serverClient.createSession(CreateSessionRequest{ConfigId: &agent.Id})
+	note := "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf(failToTranscribe))
+
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Audio: &AudioSource{Url: note}})
+
+	var refused ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &refused), "%.300s", payload)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Equal(codeModelFailed, refused.Error.Code)
+}
+
+// noPersonMessageBut asks a question after a refused one, and checks that the person's message
+// of that question is the only one of theirs the conversation keeps.
+func (s *RegionsSuite) noPersonMessageBut(opened Session) {
+	next := "And the next question " + s.utils.uuid()
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Text: next}, nil))
+	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
+	var people []any
+	s.Require().Eventually(func() bool {
+		people = nil
+		for _, stored := range s.chat.Stored(channel) {
+			// A refused note kept would be a message showing the note, or with no text at all.
+			attachments, _ := stored["attachments"].([]any)
+			if stored["text"] == next || len(attachments) > 0 {
+				people = append(people, stored["text"])
+			}
+		}
+		return slices.Contains(people, any(next))
+	}, settleFor, 10*time.Millisecond, "the next question's message was never written")
+	s.Equal([]any{next}, people, "a message was kept for the refused note")
+}
+
+// rowsSince are the app's rows of modality since since.
+func (s *RegionsSuite) rowsSince(modality routing.Modality, since time.Time) []store.Request {
+	var rows []store.Request
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&rows).
+		Where("customer_id = ? AND modality = ? AND started_at >= ?", s.customerID(), string(modality), since).
+		Scan(context.Background()))
+	return rows
+}
+
 func (s *RegionsSuite) TestAnAgentThatNamesNoRegionIsInTheUS() {
 	status, agent, refusal := s.synced(map[string]any{"llm": haiku, "mode": "text"})
 	s.Require().Equal(http.StatusOK, status, refusal)
@@ -258,6 +356,28 @@ func (s *RegionsSuite) TestASyncNamingModelsWithNoInstanceInItsRegionIsRefusedNa
 	s.NotContains(refusal, haiku, "haiku has an eu instance")
 }
 
+func (s *RegionsSuite) TestAnAgentWhoseWorkInItsRegionHasNoPriceIsRefusedNamingEach() {
+	status, _, refusal := s.synced(map[string]any{"name": "unpriced-" + s.utils.uuid(), "region": pricing.RegionEU,
+		"llm": "stub/stub-model", "subagent": haiku})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(refusal, "llm: llm/stub/stub-model (eu) has no price")
+	s.NotContains(refusal, "claude-haiku", "haiku is priced in the eu")
+}
+
+func (s *RegionsSuite) TestAnAgentOnTheCustomersOwnKeyIsSavedWhenItsBYOKWorkIsPriced() {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/provider-keys",
+		map[string]any{"provider": "turbopuffer", "region": pricing.RegionEU, "api_key": "tpuf_own"}, nil))
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/provider-keys",
+		map[string]any{"provider": anthropic.ProviderName, "region": pricing.RegionEU, "api_key": "sk-own"}, nil))
+
+	status, agent, refusal := s.synced(map[string]any{"region": pricing.RegionEU, "llm": haiku, "mode": "text",
+		"knowledge": []map[string]string{{"source": "refunds.md", "text": "Refunds take thirty days."}}})
+
+	s.Require().Equal(http.StatusOK, status, refusal)
+	s.Equal(pricing.RegionEU, agent.Region)
+}
+
 func (s *RegionsSuite) TestARefusedSyncStoresNothing() {
 	name := "far-" + s.utils.uuid()
 
@@ -279,24 +399,27 @@ func (s *RegionsSuite) TestARegionOfAnotherFormIsRefused() {
 }
 
 func (s *RegionsSuite) TestAConfigNamingAModelWithNoInstanceInItsRegionIsRefusedOnACreateAPutAndAPatch() {
+	// The deployment runs it itself, in the default region only, so it is saved there on a
+	// list that prices nothing of the suite's.
+	const usOnly = "echo/local-model"
 	status, refusal := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
-		Name: "agent-" + s.utils.uuid(), Region: pointerTo(pricing.RegionEU), Llm: pointerTo("counted/counted-model"),
+		Name: "agent-" + s.utils.uuid(), Region: pointerTo(pricing.RegionEU), Llm: pointerTo(usOnly),
 	})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "llm: no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "llm: no instance of "+usOnly+" in region eu")
 
 	var stored AgentConfig
-	request := AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo("counted/counted-model")}
+	request := AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo(usOnly)}
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &stored))
 	s.Equal(pricing.RegionUS, stored.Region)
 	request.Region = pointerTo(pricing.RegionEU)
 	status, refusal = s.serverClient.failure(http.MethodPut, "/v1/agents/configs/"+stored.Id, request)
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "no instance of "+usOnly+" in region eu")
 	status, refusal = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+stored.Id,
 		AgentConfigPatch{Region: pointerTo(pricing.RegionEU)})
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(refusal, "no instance of counted/counted-model in region eu")
+	s.Contains(refusal, "no instance of "+usOnly+" in region eu")
 }
 
 func (s *RegionsSuite) TestAPutLeavingTheRegionOutKeepsTheStoredOne() {

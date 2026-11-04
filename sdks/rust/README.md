@@ -164,7 +164,7 @@ out and the router pushes the work down the connection, so nothing you run has t
 reachable.
 
 ```rust
-use vision_agents::{Agent, Client, Dispatch};
+use vision_agents::{Agent, Client, Dispatch, types};
 
 let dispatch = Dispatch::with_capacity(Client::from_env()?, 4);
 
@@ -185,7 +185,19 @@ dispatch.wait_for_message(move |message| {
         let session = worker
             .get_or_create_agent(&message, async || Ok(Agent::new("support")))
             .await?;
-        session.responses.create(&message.text).await?;
+        let images: Vec<_> = message
+            .images
+            .iter()
+            .map(|image| types::ImageSource { url: image.url.clone(), ..Default::default() })
+            .collect();
+        session
+            .responses
+            .create_with(&types::CreateResponseRequest {
+                text: message.text.clone(),
+                images: (!images.is_empty()).then_some(images),
+                ..Default::default()
+            })
+            .await?;
         Ok(())
     }
 });
@@ -200,8 +212,9 @@ if it failed. `get_or_create_agent` keeps one session per channel, because the s
 answered the last message is the one that knows what was said.
 
 An agent whose `agent.yaml` says `dispatch: {text: enabled}` hands what end users write to the
-worker with the running session's `session_id` and its `request_id`. `answer` has the model
-answer it on that session, with the worker's own credential acting for the user who wrote it.
+worker with the running session's `session_id`, its `request_id` and the photos sent with it
+in `images`. `answer` has the model answer it on that session, shown those photos, with the
+worker's own credential acting for the user who wrote it.
 `get_or_create_agent` refuses such a message.
 
 A worker can also host an agent's functions for every session opened under its name,
@@ -258,7 +271,7 @@ agent.knowledge()?.add_url("https://example.com/pricing", "Pricing", "", Some(24
 `sync` stores the directory as a config in one request, and `.agent_sync` records its
 fingerprint, so syncing on every startup sends nothing when nothing changed. A key
 `agent.yaml` does not know is refused; besides the models it takes `harness`, `subagent`,
-`greeting` (`{text, mode}`), `plugins` (deprecated), `connectors`, `sandbox` and `dispatch`. A
+`greeting` (`{text, mode}`), `connectors`, `sandbox` and `dispatch`. A
 connector is its alias (`- github`) or `{name, connector, tools, connection, required}`; `connection`
 is an app connection's id or its only label. Leaving `connectors` out keeps the stored bindings, and
 `connectors: []` removes them. With a `simulations/` directory the config's

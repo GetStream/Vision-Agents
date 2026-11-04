@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // stallHedge is how long a flow decision may say nothing before these tests ask it again.
@@ -44,7 +45,7 @@ func (s *StallSuite) SetupSuite() {
 		s.T().Skip("ROUTER_REDIS_ADDR not set")
 	}
 	s.ctx = context.Background()
-	client, err := live.New(live.Options{Address: address, Window: stallWindow})
+	client, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address, Window: stallWindow}) })
 	s.Require().NoError(err)
 	s.live = client
 }
@@ -180,6 +181,7 @@ func (s *StallSuite) TestAStalledProviderIsAskedFirstAgainOnceItsWindowPasses() 
 	s.available(s.stalling, false)
 
 	s.available(s.stalling, true)
+	s.Require().NoError(s.live.Refresh(s.ctx), "the router routes by its snapshot, which hears of the forgotten stall at its next refresh")
 	s.start(r, router)
 	s.Equal(s.stalling, r.session.Provider(), "the preferred provider is tried again once its stall is forgotten")
 }

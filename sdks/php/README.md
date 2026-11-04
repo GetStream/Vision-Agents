@@ -110,7 +110,7 @@ $client->memories->truncate('u1');          // everything remembered about one u
 
 ```
 support/
-  agent.yaml          name, models, mode, subagent, greeting {text, mode}, plugins, harness, dispatch, ...
+  agent.yaml          name, models, mode, subagent, greeting {text, mode}, connectors, harness, dispatch, ...
   instructions.md
   guardrail.md
   skills/refunds.md   frontmatter: description, deadline, capture_video
@@ -234,7 +234,7 @@ $dispatch->waitForCall(function (InboundCall $call): void {
 
 $dispatch->waitForMessage(function (InboundMessage $message) use ($dispatch): void {
     if ($message->sessionId !== '') {
-        $dispatch->answer($message); // text written to a running session
+        $dispatch->answer($message); // text and photos written to a running session
         return;
     }
     $dispatch->getOrCreateAgent($message, fn () => new Agent(config: 'support'));
@@ -247,8 +247,9 @@ Each call and message ends with a `done` frame to the router, carrying what the 
 if it threw. SIGINT and SIGTERM stop it where pcntl is loaded; work still running is waited for.
 
 An agent whose `agent.yaml` says `dispatch: {text: enabled}` leaves what end users write to
-the worker: the message arrives with `sessionId` and `requestId`, and `answer()` has the
-model reply on that session, using the worker's server credential acting for the writer.
+the worker: the message arrives with `sessionId`, `requestId` and the photos sent with it in
+`images`, and `answer()` has the model reply on that session, shown those photos, using the
+worker's server credential acting for the writer.
 
 ### Hosted tools
 

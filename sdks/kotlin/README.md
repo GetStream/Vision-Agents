@@ -37,6 +37,10 @@ chat.responses.create("What are your opening hours?")
 // The Stream Chat channel the conversation is kept in.
 val channel: ChannelClient = chat.chat(context)
 
+// Its messages, as Stream Chat's state keeps them, live and after a reconnect. Hold the flow
+// while the conversation is shown; ChatClient's loadOlderMessages(cid, 30) pages back into it.
+val state: StateFlow<ChannelState?> = chat.channelState(context, viewModelScope)
+
 // Out loud. The agent joins a call and so does this device.
 val voice = VoiceSession.start(context, agents, options = SessionOptions(agent = "docs"))
 voice.join()
@@ -249,7 +253,8 @@ agents.setUser(guest)
 ```
 
 The stored guest is reused on the next launch rather than minting a second one with an empty
-history. With no user set the guest is asked for anonymously; a router that admits no anonymous
+history. Once its token expires the refresh secret stored beside it brings back the same guest;
+it works once, so the store has to keep what each answer hands back. With no user set the guest is asked for anonymously; a router that admits no anonymous
 callers, Stream's hosted one for now, throws `AgentsException.Configuration`, and your backend
 mints the guest instead. Against a router with an api key, `setUser(user, TokenProvider)` is asked for a token
 when one is needed and again after a 401, never on every request.

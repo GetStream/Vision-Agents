@@ -8,6 +8,7 @@ from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
 from .add_trunk_number_request import AddTrunkNumberRequest
 from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
+from .agent_calls import AgentCalls
 from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
@@ -38,12 +39,15 @@ from .agent_role import AgentRole
 from .agent_scheduling import AgentScheduling
 from .agent_stats import AgentStats
 from .agent_tools import AgentTools
+from .agent_user import AgentUser
+from .agent_user_request import AgentUserRequest
 from .analyze_reviews_request import AnalyzeReviewsRequest
 from .app_settings import AppSettings
 from .approved_connection_tool import ApprovedConnectionTool
 from .approved_connection_tools import ApprovedConnectionTools
 from .attach_number_request import AttachNumberRequest
 from .attached_number import AttachedNumber
+from .audio_source import AudioSource
 from .audit_action import AuditAction
 from .audit_change import AuditChange
 from .audit_entry import AuditEntry
@@ -55,7 +59,6 @@ from .audit_source import AuditSource
 from .authorization import Authorization
 from .authorization_kind import AuthorizationKind
 from .authorization_request import AuthorizationRequest
-from .authorize_plugin_request import AuthorizePluginRequest
 from .available_number import AvailableNumber
 from .business_profile import BusinessProfile
 from .business_profile_legal_entity_type import BusinessProfileLegalEntityType
@@ -209,6 +212,7 @@ from .detection_result import DetectionResult
 from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
 from .effective_quota import EffectiveQuota
+from .end_call_settings import EndCallSettings
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
@@ -321,14 +325,8 @@ from .place_call_request_custom import PlaceCallRequestCustom
 from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
-from .plugin import Plugin
-from .plugin_authorization import PluginAuthorization
-from .plugin_client import PluginClient
-from .plugin_connection import PluginConnection
-from .plugin_connection_status import PluginConnectionStatus
 from .plugin_event import PluginEvent
 from .plugin_event_arguments import PluginEventArguments
-from .plugin_setup_step import PluginSetupStep
 from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
@@ -338,6 +336,7 @@ from .policy_tags import PolicyTags
 from .postal_address import PostalAddress
 from .prepare_voice_request import PrepareVoiceRequest
 from .press_digits_request import PressDigitsRequest
+from .press_settings import PressSettings
 from .price import Price
 from .price_change import PriceChange
 from .price_change_entry import PriceChangeEntry
@@ -429,6 +428,7 @@ from .session_call import SessionCall
 from .session_call_outcome import SessionCallOutcome
 from .session_connector_binding import SessionConnectorBinding
 from .session_custom import SessionCustom
+from .session_end_reason import SessionEndReason
 from .session_filter import SessionFilter
 from .session_filter_custom import SessionFilterCustom
 from .session_memory import SessionMemory
@@ -452,8 +452,8 @@ from .session_tool_approval import SessionToolApproval
 from .session_tool_executor import SessionToolExecutor
 from .session_tool_parameters import SessionToolParameters
 from .session_video import SessionVideo
+from .session_voicemail import SessionVoicemail
 from .set_number_agent_request import SetNumberAgentRequest
-from .set_plugin_client_request import SetPluginClientRequest
 from .set_sandbox_recipients_request import SetSandboxRecipientsRequest
 from .simulation import Simulation
 from .simulation_case import SimulationCase
@@ -529,6 +529,8 @@ from .transcription_request import TranscriptionRequest
 from .transcription_request_tags import TranscriptionRequestTags
 from .transfer_call_request import TransferCallRequest
 from .transfer_call_request_tags import TransferCallRequestTags
+from .transfer_destination import TransferDestination
+from .transfer_settings import TransferSettings
 from .tts_options import TtsOptions
 from .tts_options_overwrites import TtsOptionsOverwrites
 from .tts_options_pronunciations import TtsOptionsPronunciations
@@ -571,6 +573,7 @@ from .voice_providers import VoiceProviders
 from .voice_request import VoiceRequest
 from .voice_sample import VoiceSample
 from .voice_sample_request import VoiceSampleRequest
+from .voicemail_action import VoicemailAction
 from .whats_app_profile import WhatsAppProfile
 from .window_spend import WindowSpend
 
@@ -583,6 +586,7 @@ __all__ = (
     "ActivityGranularity",
     "AddTrunkNumberRequest",
     "AddTrunkNumberRequestTags",
+    "AgentCalls",
     "AgentChanges",
     "AgentChannels",
     "AgentConfig",
@@ -613,12 +617,15 @@ __all__ = (
     "AgentScheduling",
     "AgentStats",
     "AgentTools",
+    "AgentUser",
+    "AgentUserRequest",
     "AnalyzeReviewsRequest",
     "AppSettings",
     "ApprovedConnectionTool",
     "ApprovedConnectionTools",
     "AttachNumberRequest",
     "AttachedNumber",
+    "AudioSource",
     "AuditAction",
     "AuditChange",
     "AuditEntry",
@@ -630,7 +637,6 @@ __all__ = (
     "Authorization",
     "AuthorizationKind",
     "AuthorizationRequest",
-    "AuthorizePluginRequest",
     "AvailableNumber",
     "BusinessProfile",
     "BusinessProfileLegalEntityType",
@@ -780,6 +786,7 @@ __all__ = (
     "DetectionStatus",
     "DispatchSetting",
     "EffectiveQuota",
+    "EndCallSettings",
     "Endpointing",
     "EqualsType1",
     "ErrorDetail",
@@ -890,14 +897,8 @@ __all__ = (
     "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
-    "Plugin",
-    "PluginAuthorization",
-    "PluginClient",
-    "PluginConnection",
-    "PluginConnectionStatus",
     "PluginEvent",
     "PluginEventArguments",
-    "PluginSetupStep",
     "PluginWithOptions",
     "Policy",
     "PolicyBudget",
@@ -907,6 +908,7 @@ __all__ = (
     "PostalAddress",
     "PrepareVoiceRequest",
     "PressDigitsRequest",
+    "PressSettings",
     "Price",
     "PriceChange",
     "PriceChangeEntry",
@@ -998,6 +1000,7 @@ __all__ = (
     "SessionCallOutcome",
     "SessionConnectorBinding",
     "SessionCustom",
+    "SessionEndReason",
     "SessionFilter",
     "SessionFilterCustom",
     "SessionMemory",
@@ -1021,8 +1024,8 @@ __all__ = (
     "SessionToolExecutor",
     "SessionToolParameters",
     "SessionVideo",
+    "SessionVoicemail",
     "SetNumberAgentRequest",
-    "SetPluginClientRequest",
     "SetSandboxRecipientsRequest",
     "Simulation",
     "SimulationCase",
@@ -1098,6 +1101,8 @@ __all__ = (
     "TranscriptionRequestTags",
     "TransferCallRequest",
     "TransferCallRequestTags",
+    "TransferDestination",
+    "TransferSettings",
     "TtsOptions",
     "TtsOptionsOverwrites",
     "TtsOptionsPronunciations",
@@ -1140,6 +1145,7 @@ __all__ = (
     "VoiceRequest",
     "VoiceSample",
     "VoiceSampleRequest",
+    "VoicemailAction",
     "WhatsAppProfile",
     "WindowSpend",
 )
