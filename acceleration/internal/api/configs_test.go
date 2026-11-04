@@ -1962,6 +1962,67 @@ func (s *ConfigsSuite) TestNessyBesideAWriteToolOfDriveDocsOrBigQueryNamesEachBi
 		`connector binding "bq_execute", connector binding "bq_cancel" can send data out with no person's approval`)
 }
 
+// Every tool gmail.yaml, google_calendar.yaml, linear.yaml and slack.yaml list in
+// read_only_tools only reads, so a binding granting only those sits beside nessy (AI-2756).
+func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfGmailCalendarLinearAndSlackIsAccepted() {
+	s.useInternalApp()
+
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"),
+		sessionGranting("gmail", "mail", "list_drafts", "get_thread", "get_message", "search_threads", "list_labels"),
+		sessionGranting("google_calendar", "calendar", "list_events", "get_event", "list_calendars",
+			"suggest_time", "search_events"),
+		sessionGranting("linear", "tracker", "get_attachment", "list_agent_skills", "get_agent_skill",
+			"list_comments", "list_cycles", "list_custom_views", "get_document", "list_documents", "get_issue",
+			"list_issues", "list_issue_statuses", "get_issue_status", "list_issue_labels", "list_projects",
+			"get_project", "list_project_labels", "list_release_pipelines", "list_releases", "get_release",
+			"list_release_notes", "get_release_note", "list_milestones", "get_milestone", "get_notifications",
+			"list_teams", "get_team", "get_triage_responsibility", "list_templates", "get_template", "list_users",
+			"get_user", "get_workspace", "search_documentation", "get_diff", "list_diffs", "get_diff_threads",
+			"whoami", "list_customers", "list_customer_needs", "list_initiatives", "get_initiative",
+			"list_initiative_labels", "get_status_updates"),
+		sessionGranting("slack", "chat", "slack_search_public", "slack_search_public_and_private",
+			"slack_search_channels", "slack_search_users", "slack_read_channel", "slack_read_thread",
+			"slack_read_canvas", "slack_read_user_profile"),
+	}})
+
+	s.Len(value(created.Connectors), 5)
+}
+
+// A tool the four sources leave out of read_only_tools may send data out: one that writes, a
+// read no vendor page describes (gmail's get_draft, slack_read_file), and linear's
+// extract_images, which fetches URLs from markdown the model passes. A binding granting one
+// is refused and named; a binding granting only listed tools is not, and the same write tool
+// held by require_approval is accepted.
+func (s *ConfigsSuite) TestNessyBesideAToolGmailCalendarLinearOrSlackLeaveOutNamesEachBindingGrantingOne() {
+	s.useInternalApp()
+	trash := sessionGranting("gmail", "mail_trash", "search_threads", "trash_thread")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{
+			sessionNessy("customers"),
+			sessionGranting("gmail", "mail_read", "search_threads", "get_thread"),
+			trash,
+			sessionGranting("gmail", "mail_draft", "get_draft"),
+			sessionGranting("google_calendar", "calendar_create", "list_events", "create_event"),
+			sessionGranting("google_calendar", "calendar_respond", "respond_to_event"),
+			sessionGranting("linear", "linear_save", "get_issue", "save_issue"),
+			sessionGranting("linear", "linear_images", "extract_images"),
+			sessionGranting("slack", "slack_send", "slack_read_channel", "slack_send_message"),
+			sessionGranting("slack", "slack_file", "slack_read_file"),
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
+		`and connector binding "mail_trash", connector binding "mail_draft", connector binding "calendar_create", `+
+		`connector binding "calendar_respond", connector binding "linear_save", connector binding "linear_images", `+
+		`connector binding "slack_send", connector binding "slack_file" can send data out with no person's approval`)
+	trash["require_approval"] = []string{"trash_thread"}
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), trash}})
+	s.Len(value(created.Connectors), 2)
+}
+
 // nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
 func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
 	s.useInternalApp()
@@ -2039,6 +2100,20 @@ func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOf
 	}})
 
 	s.Len(value(created.Connectors), 3)
+}
+
+// TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfGmailCalendarLinearAndSlack is the
+// control: the base, 90167d722, answered 201 to the same request (AI-2756 author-2.md,
+// «Control probe»).
+func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfGmailCalendarLinearAndSlack() {
+	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
+		sessionGranting("gmail", "mail", "trash_thread", "create_draft", "get_draft"),
+		sessionGranting("google_calendar", "calendar", "create_event", "delete_event"),
+		sessionGranting("linear", "tracker", "save_issue", "extract_images"),
+		sessionGranting("slack", "chat", "slack_send_message", "slack_read_file"),
+	}})
+
+	s.Len(value(created.Connectors), 4)
 }
 
 // TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAccepted: a forced connector delete

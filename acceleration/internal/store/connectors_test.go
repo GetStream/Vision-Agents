@@ -172,6 +172,7 @@ func (s *StoreSuite) TestGoogleDriveRevisionSixSeedsOverTheRevisionFourTheBuildB
 // TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeStored: revision 6 says what 5
 // says and marks 1 to 4 broken, which is a change, so it is a new revision rather than an
 // edit the seeder refuses. The marks are stored with it, and every other built-in stays.
+// Revision 7 keeps the marks and lists the tools that only read (AI-2756).
 func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeStored() {
 	before := fstest.MapFS{}
 	files, err := fs.ReadDir(providers.FS, ".")
@@ -186,7 +187,7 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 	s.Require().True(found)
 	_, rest, found := strings.Cut(marks, "\n# [proto]:3-5\n")
 	s.Require().True(found)
-	five = strings.Replace(five, "\nrevision: 6\n", "\nrevision: 5\n", 1) + "\n# [proto]:3-5\n" + rest
+	five = strings.Replace(five, "\nrevision: 7\n", "\nrevision: 5\n", 1) + "\n# [proto]:3-5\n" + rest
 	before["slack.yaml"] = &fstest.MapFile{Data: []byte(five)}
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
 	latest := func() map[string]int {
@@ -207,11 +208,11 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS), "the marks are a new revision, not refused")
 
 	now := latest()
-	s.Equal(6, now["slack"])
+	s.Equal(7, now["slack"])
 	delete(was, "slack")
 	delete(now, "slack")
 	s.Equal(was, now)
-	for revision, want := range map[int]bool{1: true, 2: true, 3: true, 4: true, 5: false, 6: false} {
+	for revision, want := range map[int]bool{1: true, 2: true, 3: true, 4: true, 5: false, 7: false} {
 		reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "slack", revision)
 		s.Require().NoError(err)
 		s.Equal(want, broken, "revision %d", revision)
