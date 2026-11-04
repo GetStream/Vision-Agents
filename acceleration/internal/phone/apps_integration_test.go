@@ -1705,6 +1705,22 @@ func (s *AppsSuite) TestANumberJoiningAfterALostTrunkTakesAnotherTrunkWithRoom()
 	s.Len(s.deployment.TrunkNumbers(first.TrunkID), 3)
 }
 
+func (s *AppsSuite) TestAnAdoptedNumberWhoseTrunkNoLongerListsItIsNotMovedOffIt() {
+	s.sealed()
+	stream, attached, _ := s.onItsOwnTrunk()
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+	s.Require().NoError(stream.UpdateTrunk(s.ctx, attached.TrunkID, Trunk{Name: "theirs", Numbers: []string{aNumber()}}))
+
+	_, err := s.lineFor(s.customer, s.e164)
+
+	s.ErrorIs(err, errTrunkChanged)
+	s.Equal([]string{attached.TrunkID}, s.deployment.Trunks())
+	s.Empty(s.deployment.Rules())
+	held := s.number()
+	s.Equal(attached.TrunkID, held.StreamTrunkID, "the row is left as it was")
+	s.Equal(attached.RouteID, held.StreamRouteID)
+}
+
 func (s *AppsSuite) TestTwoNumbersJoiningAtOnceMakeOneTrunk() {
 	s.sealed()
 	second := s.anotherNumber(s.customer, s.vendor.vendor)

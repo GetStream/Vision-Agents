@@ -31,6 +31,10 @@ var errRoutedElsewhere = errors.New("its rule or trunk is gone at Stream, and St
 // errTrunkLost is adopt's error for a number whose own trunk Stream no longer has.
 var errTrunkLost = errors.New("its trunk is gone at Stream")
 
+// errTrunkChanged is adopt's error for a number whose rule Stream no longer has and whose own
+// trunk there no longer lists it. Whoever took it off may have put other numbers on it.
+var errTrunkChanged = errors.New("its rule is gone at Stream, and its trunk there no longer lists it")
+
 // TrunkLine is the trunk and rule a number's calls reach Stream through.
 type TrunkLine struct {
 	TrunkID string
@@ -256,7 +260,7 @@ func (s *Service) leave(ctx context.Context, stream *Stream, group store.TrunkGr
 // adopt takes a number attached on a trunk of its own, before trunks were shared, into the
 // group as it is: its trunk becomes one the customer's next numbers can join, and its rule
 // reads the call id header. A rule Stream no longer has is made again; a trunk it no longer
-// has is errTrunkLost.
+// has is errTrunkLost, and one that no longer lists the number errTrunkChanged.
 func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, joined *joining) (TrunkLine, error) {
 	if len(held.BridgePasswordSealed) == 0 {
 		return TrunkLine{}, stack.Wrap(fmt.Errorf("phone: adopt the trunk of %s: %w", held.E164, store.ErrNoStoredBridge))
@@ -304,17 +308,20 @@ func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGrou
 // routeAgain makes the rule of a number on a trunk of its own again, Stream having lost the
 // stored one, and records it in place of that one.
 func (s *Service) routeAgain(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, route Route, joined *joining) (string, error) {
-	rules, trunks, _, err := stream.answering(ctx, held.E164, held.StreamTrunkID)
+	rules, trunks, holds, err := stream.answering(ctx, held.E164, held.StreamTrunkID)
 	if err != nil {
 		return "", err
 	}
-	own := slices.Contains(trunks, held.StreamTrunkID)
+	listsIt := slices.Contains(trunks, held.StreamTrunkID)
 	others := slices.DeleteFunc(trunks, func(id string) bool { return id == held.StreamTrunkID })
 	if len(rules) > 0 || len(others) > 0 {
 		return "", s.routedElsewhere(held, rules, others)
 	}
-	if !own {
+	if !holds {
 		return "", stack.Wrap(fmt.Errorf("phone: line %s: %w", held.E164, errTrunkLost))
+	}
+	if !listsIt {
+		return "", stack.Wrap(fmt.Errorf("phone: line %s: %w", held.E164, errTrunkChanged))
 	}
 	routeID, err := stream.CreateRoute(ctx, route)
 	if err != nil {
