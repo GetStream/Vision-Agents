@@ -288,7 +288,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		}
 		// A thread is answered from what was written and the photos, as before voice recordings
 		// were heard in a plain channel: a recording alone has nothing in it to answer there.
-		if event.Message.Text == "" && len(event.photos()) == 0 {
+		if strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 {
 			return true
 		}
 		origin.answer(func() { s.answerThread(origin, thread, event) })
@@ -322,6 +322,10 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			// The session a worker opened to answer this channel answers in it, as a thread's
 			// does: the message is already there, so only the reply is written.
 			if found.Spec().Dispatched {
+				// Blanks alone have nothing to answer: the session refuses the turn.
+				if strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 && !recorded {
+					return true
+				}
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}
@@ -401,7 +405,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		return true
 	}
 
-	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID); elsewhere {
+	if elsewhere, taken := s.forwardedToWorkers(ctx, origin.handOver, customerID, dispatch.Messages); elsewhere {
 		return taken
 	}
 
@@ -778,14 +782,15 @@ func (s *Server) assignMessage(ctx context.Context, customerID string, message d
 
 // followUpMessage answers a message in the channel a running session answers for its worker
 // (session.Spec.Dispatched), once the reply it may still be writing is done, as a thread's
-// session answers one (answerClaimed).
+// session answers one (answerClaimed): with what its voice recording says and its photos, read
+// once for every try.
 func (s *Server) followUpMessage(origin hookOrigin, found *session.Session, event messageEvent) {
 	ctx, cancel := context.WithTimeout(context.Background(), askTimeout)
 	defer cancel()
 	followUpID := "message_" + store.NewID()
-	text := s.heardText(ctx, found.Spec(), origin, event)
+	text, images := s.messagePhotos(ctx, found.SeesImages(), s.heardText(ctx, found.Spec(), origin, event), event)
 	for {
-		err := found.FollowUp(ctx, followUpID, text, nil)
+		err := found.FollowUp(ctx, followUpID, text, images)
 		if errors.Is(err, conversation.ErrResponseRunning) && ctx.Err() == nil {
 			time.Sleep(threadTurnPoll)
 			continue
