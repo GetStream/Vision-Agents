@@ -34,9 +34,14 @@ session.Manager.Create, before the history is restored       callCards.read
     alone: every person's message in        (read only: never makes a row)
     the thread is by its creator
               \                        /
+               |   worker's text session on an app chat's agent channel (Spec.Dispatched)
+               |     chatContact: the one Stream user every person's message there is by
+               |     -> StreamUser -> store.Contact; a row of another Stream app: none
+               |  /
                Cards.Context
                  store.EpisodeCards   same customer, same agent, same omni-channel;
-                                      own thread and own call left out; newest 5
+                                      own thread, own chat channel and own call left out;
+                                      newest 5
                  for each card        summarized: the card's text (GetMessage)
                                       otherwise: last 20 lines of thread_channel,
                                       before Until, and for a call not before it started;
@@ -103,6 +108,8 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **An app chat's channel is the customer's by the config it names.** The customer's app makes it with `agent_config_id` and none of the router's stamps, so `linesOf` reads it for a chat card of that config (`theirs`); a stamped channel is read only for the customer it names.
 - **Reading cards is opt-in too.** Off, `callCards.read` returns before any read, and the session is handed what it was before. Example: an SMS thread session under a config without `episode_cards` reads its thread as before and nothing else.
 - **A person's cards are their omni-channel's.** `store.EpisodeCards` takes the contact rows of the same customer and agent that point at the omni-channel, so a linked Slack row and a phone row are one person, and the same number under another agent or customer is another. Example: `+15550100199`'s cards are never read for `+15550100100`.
+- **An app chat's session reads the cards of the one person who wrote there.** Only the text session a worker opens to answer a message the router handed out (`Spec.Dispatched`) reads them: the spec names no person (`UserID` is who the agent writes as, `Caller` is empty for the worker's server key), so the person is the Stream user every person's message in the channel's last 100 is by, as `api.chatEpisode` keyed the card. Its own channel's episodes are left out, as a thread's own thread is: the session reads it word for word. Example: Anya's second chat starts with the summary of her first; Bob writes in her chat, or sends a photo there, and the session reads none of her cards.
+- **A Stream user is a person of one Stream app.** A `stream_user` row read for a chat session must be pinned to the session's app (`samePin`: the deployment's own app is zero for a session and its id for a hook it signed). Example: `anya_123`'s card from app 7 is not read in the deployment's app.
 - **A shared thread reads no cards.** A thread's cards are of the one who started it. Example: Bob writes in Alice's Slack thread; the session reads none of Alice's cards.
 - **A call's lines are its own.** A call channel named after the number rung (`phone-{{called_number}}`) holds every caller's calls, so a card's lines end at `Until` (the episode's end, its session's close, or the next episode in the channel; index `episodes_thread`) and a call's start at its own start. A call card whose window still holds a person's line by anybody but `sip-<the card's number>` gives no lines at all. Example: Alice's and Bob's calls share a call id; neither is handed the other's words.
 - **A call's lines come only from its own channel.** Only a call card whose `thread_channel` is `agent:<call id>`, chatlog's default, gives lines. A channel the session named (`agent_id` or `conversation_id`) can hold another call at the same time, and an agent line names nobody it answers. Such a card waits for its summary (T55). Example: two calls with `agent_id: front-desk`; the agent's «Thanks Alice» is never handed to Bob. This is isolation by channel, not an «overlapped» flag from `episodes`: a call under a config without `episode_cards` writes no episode, so no flag could see it.
@@ -138,8 +145,8 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - The summary is not written to memory: it would change what `memory.Scope.UserID` means (`internal/memory/memory.go:31-32`).
 - A call whose `call.session_ended` arrives before its card's episode is opened (the card is written off the session's start) stays in progress: the sweeper closes thread episodes only.
 - The sweeper's gate is read once, at start: a config that turns `episode_cards` on later has its calls closed by the hook, and its expired summary leases taken from the next start.
-- A text session on a channel other than a thread channel reads no cards yet: the app chat writes its cards (`stream_user`), and reading them is the next change.
-- A Stream user is keyed by user id alone, under the customer and the agent config: a customer whose config answers in two Stream apps has one person for a user id in both.
+- A Stream user is keyed by user id alone when a card is written, under the customer and the agent config: a customer whose config answers in two Stream apps has one contact map row for a user id in both, pinned to the app of its first message. A chat session reads that row only in its pinned app.
+- A session a person's own device opens (`Caller`), or any other text session on an agent channel, reads no chat person's cards; cards are read once, when a session opens.
 - A session a caller opens on a thread channel through the API and keeps open is checked for a shared thread once, when it opens; the Router's own sessions open for each turn (`api.answerThread`).
 
 ## Tests
