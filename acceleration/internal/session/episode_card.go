@@ -97,7 +97,11 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 //     call's card left out;
 //   - any other text or voice session the person's own device opened (deviceCaller) reads the
 //     cards of that Stream user, the conversation it carries on left out, since it reads that
-//     word for word. person is that user too, once cards were read for them.
+//     word for word, while nobody else reads the answers: the conversation is not open to its
+//     members and its members are that user alone, or that user and the agent
+//     (omnichannel.Reading.OwnAgent), and a call's members and participants are that user
+//     alone, or that user and the agent (UserID). person is that user too, once cards were
+//     read for them.
 //
 // A Stream user is only who a token Stream checked says, so neither of the two cases keyed by
 // one reads anything in an app Stream says checks no tokens (Readiness.AuthChecksOff), or
@@ -126,14 +130,19 @@ func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound)
 	case spec.Text && spec.PersistConversation && spec.Dispatched:
 		reading.Chat, reading.ChatUser, reading.ChatAgent = spec.ConversationID, spec.HandedOutBy, spec.AgentID
 	case !spec.Text && spec.CallID != "" && stream.Client != nil:
-		number, err := calledParty(ctx, spec, stream)
+		number, people, err := calledParty(ctx, spec, stream)
 		if err != nil {
 			c.logger.Error("could not read who is on a call for its episode cards", "session", spec.ID, "call", spec.CallID, "error", err)
 			return nil, ""
 		}
-		// A call from the person's own device has no number on it: it is the device's.
+		// A call from the person's own device has no number on it: it is the device's, while
+		// its members and participants are that person alone, or that person and the agent
+		// (UserID, whom it joins as). Anybody else on it hears the answers.
 		if number == "" && deviceCaller(spec) {
-			reading.User, reading.Own = spec.Caller.UserID, spec.ConversationID
+			if !omnichannel.Between(people, spec.Caller.UserID, spec.UserID) {
+				return nil, ""
+			}
+			reading.User, reading.Own, reading.OwnAgent = spec.Caller.UserID, spec.ConversationID, spec.AgentID
 			break
 		}
 		person, err := omnichannel.Phone(number)
@@ -142,7 +151,7 @@ func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound)
 		}
 		reading.Person, reading.SessionID = person, spec.ID
 	case deviceCaller(spec):
-		reading.User, reading.Own = spec.Caller.UserID, spec.ConversationID
+		reading.User, reading.Own, reading.OwnAgent = spec.Caller.UserID, spec.ConversationID, spec.AgentID
 	default:
 		return nil, ""
 	}
@@ -190,7 +199,7 @@ func (c *callCards) Close() {
 }
 
 func (c *callCards) write(ctx context.Context, created *Session, spec Spec, stream streamapp.Bound) error {
-	number, err := calledParty(ctx, spec, stream)
+	number, _, err := calledParty(ctx, spec, stream)
 	if err != nil || number == "" {
 		return err
 	}
@@ -222,22 +231,27 @@ func (c *callCards) write(ctx context.Context, created *Session, spec Spec, stre
 
 // calledParty is the number of the person on the call with the agent: who the agent rang,
 // for a call it placed (PhoneSpec.To), otherwise the SIP caller the inbound routing rule named
-// (phone.CallerNumber), read off the call's session. Empty for a call no phone is on.
-func calledParty(ctx context.Context, spec Spec, stream streamapp.Bound) (string, error) {
+// (phone.CallerNumber), read off the call's session. Empty for a call no phone is on, and then
+// people are the user ids of the call's members and of its session's participants.
+func calledParty(ctx context.Context, spec Spec, stream streamapp.Bound) (number string, people []string, err error) {
 	if spec.Phone != nil && spec.Phone.To != "" {
-		return spec.Phone.To, nil
+		return spec.Phone.To, nil, nil
 	}
 	call, err := stream.Client.Video().GetCall(ctx, spec.CallType, spec.CallID, &getstream.GetCallRequest{})
 	if err != nil {
-		return "", err
+		return "", nil, err
+	}
+	for _, member := range call.Data.Members {
+		people = append(people, member.UserID)
 	}
 	if call.Data.Call.Session == nil {
-		return "", nil
+		return "", people, nil
 	}
 	for _, participant := range call.Data.Call.Session.Participants {
 		if number, ok := phone.CallerNumber(participant.User.ID); ok {
-			return number, nil
+			return number, nil, nil
 		}
+		people = append(people, participant.User.ID)
 	}
-	return "", nil
+	return "", people, nil
 }

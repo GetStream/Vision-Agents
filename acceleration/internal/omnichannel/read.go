@@ -75,10 +75,13 @@ type Reading struct {
 	Person    Person
 	SessionID string
 	// User is the Stream user whose own device opened the session, as its verified caller,
-	// and Own the conversation it carries on, if any, whose episodes are left out, as a
-	// thread's are. The person is User, in the session's app.
-	User string
-	Own  string
+	// Own the conversation it carries on, if any, whose episodes are left out, as a thread's
+	// are, and OwnAgent the Stream user the agent writes there as. The person is User, in the
+	// session's app, when Own is shared with nobody: not open to its members, and its members
+	// are User alone or User and OwnAgent.
+	User     string
+	Own      string
+	OwnAgent string
 }
 
 // told is one card as the model is handed it.
@@ -210,15 +213,7 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 	if err != nil {
 		return store.ContactMapEntry{}, err
 	}
-	members := make([]string, 0, len(window.Members))
-	for _, member := range window.Members {
-		id := ""
-		if member.UserID != nil {
-			id = *member.UserID
-		}
-		members = append(members, id)
-	}
-	if !Between(members, reading.ChatUser, reading.ChatAgent) {
+	if !Between(memberIDs(window.Members), reading.ChatUser, reading.ChatAgent) {
 		return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
 	}
 	for _, message := range window.Messages {
@@ -231,13 +226,39 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 }
 
 // deviceContact is the contact map row of the Stream user whose own device opened the session
-// (Reading.User), keyed as chatContact keys the app chat's person.
+// (Reading.User), keyed as chatContact keys the app chat's person. A conversation the session
+// carries on (Reading.Own) somebody else reads the answers in has no person: one open to its
+// members (conversation.Shared), or one whose members, as its state lists them, are not that
+// user alone or that user and the agent (Between). Example: Anya resumes a conversation Carl
+// is a member of; it reads none of her cards.
 func (c *Cards) deviceContact(ctx context.Context, reading Reading) (store.ContactMapEntry, error) {
 	person, err := c.streamUser(reading, reading.User)
 	if err != nil {
 		return store.ContactMapEntry{}, err
 	}
+	if reading.Own != "" {
+		window, err := c.window(ctx, reading, reading.Own)
+		if err != nil {
+			return store.ContactMapEntry{}, err
+		}
+		if window.Channel == nil || conversation.Shared(window.Channel.Custom) || !Between(memberIDs(window.Members), reading.User, reading.OwnAgent) {
+			return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
+		}
+	}
 	return c.pinnedContact(ctx, reading, person)
+}
+
+// memberIDs are the user ids of a channel's members, empty for a member with none.
+func memberIDs(members []getstream.ChannelMemberResponse) []string {
+	ids := make([]string, 0, len(members))
+	for _, member := range members {
+		id := ""
+		if member.UserID != nil {
+			id = *member.UserID
+		}
+		ids = append(ids, id)
+	}
+	return ids
 }
 
 // streamUser is a Stream user of the session's app as the contact map keys them (StreamUser),

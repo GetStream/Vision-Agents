@@ -3,9 +3,11 @@
 package session
 
 import (
+	"maps"
 	"strings"
 	"time"
 
+	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
@@ -67,6 +69,11 @@ func (s *EpisodeReadingSuite) deviceSession(by opener, conversation string, card
 func (s *EpisodeReadingSuite) deviceCall(by opener, text string, on ...string) (*Session, llm.ResponseParams) {
 	call := "call-" + uuid.NewString()
 	s.chat.PutCall("agent", call, append([]string{by.caller.UserID}, on...)...)
+	return s.deviceCallOn(by, call, text)
+}
+
+// deviceCallOn is deviceCall on a call the test put.
+func (s *EpisodeReadingSuite) deviceCallOn(by opener, call, text string) (*Session, llm.ResponseParams) {
 	created, err := s.manager.Create(s.ctx, Spec{
 		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call,
 		Caller: by.caller, CallerKind: by.kind,
@@ -221,6 +228,93 @@ func (s *EpisodeReadingSuite) TestAResumedDeviceSessionLeavesItsOwnConversations
 	handed = s.handed(s.replyTo(said))
 	s.Require().Len(handed, 1, "her call on the conversation: her other chat's card alone")
 	s.Equal("Her appointment is Friday at 3.", handed[0]["summary"])
+}
+
+// anyasConversation is a conversation Anya's device opened and closed, then opened to its
+// members when shared, with the members others added, and its agent's user id.
+func (s *EpisodeReadingSuite) anyasConversation(shared bool, others ...string) (string, string) {
+	first, _ := s.deviceSession(signedIn("anya_123"), "", false, "hello "+uuid.NewString())
+	kept, agent := first.Spec().ConversationID, first.Spec().AgentID
+	_, err := s.manager.Close(first.ID(), OwnerOf(first.Spec()))
+	s.Require().NoError(err)
+	id := strings.TrimPrefix(kept, "agent:")
+	s.Require().ElementsMatch([]string{agent, "anya_123"}, s.chat.Members(id))
+	if shared {
+		data, _ := s.chat.Channel(id)
+		custom := maps.Clone(data["custom"].(map[string]any))
+		custom["support_access"] = "members"
+		_, err := s.chat.Client.Chat().UpdateChannelPartial(s.ctx, "agent", id, &getstream.UpdateChannelPartialRequest{Set: map[string]any{"custom": custom}})
+		s.Require().NoError(err)
+	}
+	for _, other := range others {
+		_, err := s.chat.Client.Chat().UpdateChannel(s.ctx, "agent", id, &getstream.UpdateChannelRequest{AddMembers: []getstream.ChannelMemberRequest{{UserID: other}}})
+		s.Require().NoError(err)
+	}
+	return kept, agent
+}
+
+// Defect: Anya's device session on a conversation somebody else reads the answers in is handed
+// her cards, which its answers then carry to them. A conversation open to its members that
+// Carl is a member of, one Carl was added to, and one open to its members that only she and
+// the agent are in yet read none, by text or by a call on it; her own conversation does.
+func (s *EpisodeReadingSuite) TestADeviceSessionOnAConversationSomebodyElseReadsReadsNoCards() {
+	s.anyasCard()
+	for name, shape := range map[string]struct {
+		shared bool
+		others []string
+		reads  bool
+	}{
+		"shared, Carl a member":   {shared: true, others: []string{"carl_789"}},
+		"Carl a member":           {others: []string{"carl_789"}},
+		"shared, no other member": {shared: true},
+		"hers alone (control)":    {reads: true},
+	} {
+		kept, agent := s.anyasConversation(shape.shared, shape.others...)
+
+		text, params := s.deviceSession(signedIn("anya_123"), kept, true, "when is my appointment? "+uuid.NewString())
+		s.Equal(shape.reads, s.handed(params) != nil, name+", by text")
+		s.Equal(shape.reads, text.CardsFor() == "anya_123", name+", by text")
+		_, err := s.manager.Close(text.ID(), OwnerOf(text.Spec()))
+		s.Require().NoError(err)
+
+		call := "call-" + uuid.NewString()
+		s.chat.PutCall("agent", call, "anya_123")
+		onCall, err := s.manager.Create(s.ctx, Spec{
+			CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call, ConversationID: kept, AgentID: agent,
+			Caller: signedIn("anya_123").caller, CallerKind: auth.KindAuthenticated,
+			LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+		})
+		s.Require().NoError(err)
+		said := "and on a call? " + uuid.NewString()
+		_, err = onCall.Respond(s.ctx, said, nil, options.LLM{})
+		s.Require().NoError(err)
+		s.Equal(shape.reads, s.handed(s.replyTo(said)) != nil, name+", by a call on it")
+		_, err = s.manager.Close(onCall.ID(), OwnerOf(onCall.Spec()))
+		s.Require().NoError(err)
+	}
+}
+
+// Defect: Anya's call from her app is handed her cards while somebody else is on it to hear
+// the answers. Bob in the call's session, or a member of the call, reads none; the agent on
+// it, as the user it joins as, is no somebody else.
+func (s *EpisodeReadingSuite) TestADeviceCallSomebodyElseIsOnReadsNoCards() {
+	s.anyasCard()
+
+	_, params := s.deviceCall(signedIn("anya_123"), "when is it again? "+uuid.NewString(), "bob_456")
+	s.Nil(s.handed(params), "Bob in the call")
+
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "anya_123")
+	s.chat.PutCallMembers("agent", call, "anya_123", "bob_456")
+	_, params = s.deviceCallOn(signedIn("anya_123"), call, "when is it again? "+uuid.NewString())
+	s.Nil(s.handed(params), "Bob a member of the call")
+
+	call = "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "anya_123", defaultUserID)
+	s.chat.PutCallMembers("agent", call, "anya_123", defaultUserID)
+	created, params := s.deviceCallOn(signedIn("anya_123"), call, "when is it again? "+uuid.NewString())
+	s.Len(s.handed(params), 1, "the agent and her")
+	s.Equal("anya_123", created.CardsFor())
 }
 
 // Control, from base 3b7a53f97 (probe: this test on the base's code, base-probe.log): with
