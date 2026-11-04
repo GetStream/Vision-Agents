@@ -240,6 +240,32 @@ func (s *EpisodeCardsSuite) TestACallsCardIsSummarizedWhenTheCallEnds() {
 	s.Equal(store.EpisodeSummarized, custom["status"])
 }
 
+// Catches a call whose number is linked to a user while it goes on that closes with its
+// set-aside row's address, retired:<id>, as its caller: no line on the call is the caller's
+// (omnichannel.callerOf), so the summary has nothing to read and fails.
+func (s *EpisodeCardsSuite) TestACallsCardIsSummarizedWhenItsNumberIsLinkedDuringTheCall() {
+	s.config = s.agentConfigOn(true, "recites/recites-model")
+	call := s.called("sip-" + s.number)
+	omni := s.omniChannel(s.number)
+	s.cards(omni, 1)
+	episode := s.callEpisode(call)
+	s.say(call, "sip-"+s.number, "I need to move my appointment to Tuesday")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/users/user-"+s.utils.uuid(),
+		`{"phone": "`+s.number+`"}`, nil))
+	var aside int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM contact_map WHERE customer_id = ? AND address LIKE 'retired:%'", s.customerID()).Scan(&aside))
+	s.Require().Equal(1, aside, "the link set the call's row aside")
+	s.Equal(http.StatusOK, s.signedly(phone.CallHookPath, s.sessionEnded(call)))
+
+	s.Require().Eventually(func() bool { return s.episodeStatus(episode) == store.EpisodeSummarized }, settleFor, 10*time.Millisecond,
+		"the episode is %s", s.episodeStatus(episode))
+	stored := s.chat.Stored(omni)
+	s.Require().Len(stored, 1, "the card stays in the omni-channel it was written in")
+	s.Contains(stored[0]["text"], "I need to move my appointment to Tuesday")
+}
+
 // The summary is written off the hook: Stream has its 200 while the model is still writing,
 // and the episode is ended until the summary lands.
 func (s *EpisodeCardsSuite) TestTheCallHookAnswersBeforeTheSummaryIsWritten() {

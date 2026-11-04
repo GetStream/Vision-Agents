@@ -12,6 +12,7 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -330,6 +331,62 @@ func (s *UserPhonesSuite) TestAnEndUserCannotLinkAUser() {
 
 	s.Equal(http.StatusForbidden, status)
 	s.Empty(s.links())
+}
+
+// LinqSandboxSuite is the Linq line of a customer the sandbox holds, under an agent with
+// episode_cards on: before each reply, and each scheduled delivery, the bridge asks dlc.Gate
+// about the person a chat's replies reach, the contact map row of the chat's episode
+// (channelbridge.replyTo), and the sandbox lists only the test's person.
+type LinqSandboxSuite struct {
+	linqLine
+
+	person string
+}
+
+func TestLinqSandboxSuite(t *testing.T) {
+	runSuite(t, new(LinqSandboxSuite))
+}
+
+func (s *LinqSandboxSuite) SetupSuite() {
+	s.database = "linq_sandbox"
+	s.sandbox = dlc.Sandbox{Enabled: true, Recipients: 2}
+	s.linqLine.SetupSuite()
+}
+
+func (s *LinqSandboxSuite) SetupTest() {
+	s.linqLine.SetupTest()
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.person = s.utils.number()
+	s.Require().NoError(s.store.SetSandboxRecipients(context.Background(), s.customerID(), []string{s.person}))
+}
+
+// Catches a link that leaves a chat's replies to its set-aside row's address, retired:<id>,
+// which the sandbox does not list: the customer links the person's number to a user while
+// their iMessage chat is going on, and the chat's next reply, and a scheduled delivery into
+// it, are held back.
+func (s *LinqSandboxSuite) TestAChatWhoseNumberIsLinkedMidConversationIsStillAnswered() {
+	chat := s.utils.uuid()
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, s.person, "hi"), time.Now()))
+	s.took(1)
+	s.Require().Eventually(func() bool { return s.rows("SELECT count(*) FROM episodes WHERE customer_id = ?") == 1 },
+		settleFor, 10*time.Millisecond, "the chat's episode")
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/users/user-"+s.utils.uuid(),
+		`{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(1, s.rows("SELECT count(*) FROM contact_map WHERE customer_id = ? AND address LIKE 'retired:%'"),
+		"the link set the chat's row aside")
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, s.person, "still there?"), time.Now()))
+
+	s.Equal(chat, s.took(2)[1].chat, "the reply after the link")
+	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
+}
+
+// rows is the count a query of the test's customer answers.
+func (s *LinqSandboxSuite) rows(query string) int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(), query, s.customerID()).Scan(&count))
+	return count
 }
 
 // cardsBefore is what a turn's session was handed before the thread's history: the recited
