@@ -301,6 +301,27 @@ func detect(data []byte) (Format, error) {
 	return "", fail(Unsupported, "", errors.New("the file is not text, and not a format that can be read"))
 }
 
+// SniffBytes is how much of a file Sniff needs.
+const SniffBytes = 1024
+
+// Sniff refuses a file whose first bytes are no format Extract reads, so an upload of a
+// photo or a video is refused while its sender waits rather than after it was stored. A
+// zip or OLE container passes: what it holds is only known once the whole file is read.
+func Sniff(head []byte) error {
+	head = head[:min(len(head), SniffBytes)]
+	if bytes.Contains(head, pdfMagic) || bytes.HasPrefix(head, zipMagic) ||
+		bytes.HasPrefix(head, oleMagic) || bytes.HasPrefix(head, rtfMagic) {
+		return nil
+	}
+	// The head may stop part way through a character.
+	for cut := 0; cut < utf8.UTFMax && cut < len(head); cut++ {
+		if text := head[:len(head)-cut]; utf8.Valid(text) && !bytes.ContainsRune(text, 0) {
+			return nil
+		}
+	}
+	return fail(Unsupported, "", errors.New("the file is not text, and not a format that can be read"))
+}
+
 func detectZip(data []byte) (Format, error) {
 	archive, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {

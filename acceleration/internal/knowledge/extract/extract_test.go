@@ -334,3 +334,22 @@ func (s *ExtractSuite) TestAClosedExtractorRefusesAPDF() {
 	s.False(ok, "a closed extractor is not a fault of the file")
 	s.False(errors.Is(err, context.DeadlineExceeded))
 }
+
+func (s *ExtractSuite) TestEveryFormatThatCanBeReadPassesASniff() {
+	for _, name := range []string{"manual.pdf", "handbook.docx", "handbook.odt", "handbook.rtf", "menu.xlsx", "policies.doc"} {
+		s.NoError(Sniff(s.fixture(name)[:SniffBytes]), name)
+	}
+	s.NoError(Sniff([]byte("# Opening hours\n\nNine to five.")))
+}
+
+func (s *ExtractSuite) TestAPhotoIsRefusedFromItsFirstBytes() {
+	photo := append([]byte{0xFF, 0xD8, 0xFF, 0xE0, 0, 0x10}, []byte("JFIF\x00")...)
+
+	s.requireReason(Sniff(photo), Unsupported)
+}
+
+func (s *ExtractSuite) TestTextCutPartWayThroughACharacterPassesASniff() {
+	text := bytes.Repeat([]byte("é"), SniffBytes)
+
+	s.NoError(Sniff(text[:SniffBytes-1]))
+}
