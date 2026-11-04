@@ -3,7 +3,9 @@
 Juno, a personal assistant in the shape of the Grok and Meta AI apps: conversations kept in a
 sidebar, a chat that shows its thinking and its steps, a voice mode you switch into and back
 out of, tools that run on the phone for the things only the phone knows, and the person's own
-Gmail and Linear, connected in the chat the first time the agent needs them.
+Gmail and Linear, connected in the chat the first time the agent needs them. The same agent is
+talked to from Android in [android_assistant](../android_assistant) and from a browser in
+[react_assistant](../react_assistant).
 
 ```
 agent.yaml           what runs the agent: models, voice, search, greeting

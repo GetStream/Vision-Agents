@@ -1,0 +1,21 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2023", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "types": ["vite/client"],
+    // The SDK comes from this checkout with its own node_modules: its types name the app's copies.
+    "paths": {
+      "@stream-io/video-client": ["./node_modules/@stream-io/video-client"],
+      "stream-chat": ["./node_modules/stream-chat"]
+    }
+  },
+  "include": ["src", "tests", "vite.config.ts"]
+}
