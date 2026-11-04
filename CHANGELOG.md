@@ -361,6 +361,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A photo sent to a worker's running session reaches its model
+
+A message written in an agent channel whose worker's session is still open is answered by that session. Its photos were dropped: a photo sent alone became a turn with nothing in it, which Gemini refuses, and the person got an empty reply. The model now gets the photos with the text and with what a voice recording says. A model that cannot see is told of the photo, as a running session answering in writing is, and a photo that cannot be fetched is said so. A follow-up with no text and no photo, such as a message of blanks, is not answered (AI-2679).
+
 ### Pausing a campaign stops its calls on every router
 
 `POST /v1/agents/campaigns/{id}/pause` stopped the campaign only on the router that answered it. A router behind the same load balancer that was running the campaign went on ringing people, and finished the campaign over the pause when nobody was left. Now no router takes another contact from a campaign that is not running. A router whose loop outlived a pause made elsewhere exits that loop at its next claim and writes no state. A start on that router before then runs the campaign again (AI-2681).
