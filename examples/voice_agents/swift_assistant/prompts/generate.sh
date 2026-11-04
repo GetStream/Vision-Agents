@@ -14,7 +14,7 @@ assistant="$(dirname "$here")"
 sdk="$(cd "${1:-$assistant/../../../../stream-chat-swift}" && pwd)"
 for module in StreamChatA2UI StreamChatOpenUI; do
   if [[ ! -d "$sdk/Sources/$module" ]]; then
-    echo "$sdk has no Sources/$module: check out its add/openui-module branch, or a release with it." >&2
+    echo "$sdk has no Sources/$module: check out its develop branch, or a release with it." >&2
     exit 1
   fi
 done

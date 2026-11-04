@@ -6,8 +6,8 @@
       "kind" : "remoteSourceControl",
       "location" : "https://github.com/GetStream/stream-chat-swift",
       "state" : {
-        "branch" : "add/openui-module",
-        "revision" : "07a709e62dda96089585823b4f168121817f556a"
+        "branch" : "add/ai-chat",
+        "revision" : "42d7230741014869bf339a0f09df7a3533ac88cd"
       }
     },
     {
