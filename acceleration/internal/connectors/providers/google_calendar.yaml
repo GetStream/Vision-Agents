@@ -19,8 +19,9 @@
 #         S256], authorization_response_iss_parameter_supported true, no registration_endpoint.
 id: google_calendar
 # A new revision for any change to what this file says; see AGENTS.md. 2 stores rotating:
-# false, which revision 1 was stored without (refresh.rotating became a pointer).
-revision: 2
+# false, which revision 1 was stored without (refresh.rotating became a pointer). 3 lists the
+# tools that only read.
+revision: 3
 # [plugin]
 name: Google Calendar
 category: Scheduling
@@ -93,3 +94,14 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the tool list at
+    # https://developers.google.com/workspace/calendar/api/v3/reference/mcp (opened 2026-11-04,
+    # «Last updated 2026-07-17»): each tool's page under tools_list/ marks it «Read Only
+    # Hint». create_event, update_event, delete_event and respond_to_event change a calendar
+    # (each page: «Read Only Hint: ❌»), so they are left out, as is a tool added later.
+    read_only_tools:
+      - list_events
+      - get_event
+      - list_calendars
+      - suggest_time
+      - search_events
