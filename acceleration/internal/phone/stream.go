@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -291,8 +292,32 @@ func (s *Stream) DeleteRoute(ctx context.Context, id string) error {
 	return nil
 }
 
-// notFound is Stream saying what was to be deleted is not there, which is what deleting it
-// wanted: removed by hand at Stream, or by an earlier attempt that failed after Stream took it.
+// answering is what the app has at Stream for a number: the ids of the rules that answer
+// for it and of the trunks that list it. Stream lists both whole, with no page.
+func (s *Stream) answering(ctx context.Context, e164 string) (rules, trunks []string, err error) {
+	listedRules, err := s.client.Video().ListSIPInboundRoutingRule(ctx, &getstream.ListSIPInboundRoutingRuleRequest{})
+	if err != nil {
+		return nil, nil, stack.Wrap(fmt.Errorf("phone: list sip routing rules: %w", err))
+	}
+	for _, rule := range listedRules.Data.SipInboundRoutingRules {
+		if slices.Contains(rule.CalledNumbers, e164) {
+			rules = append(rules, rule.ID)
+		}
+	}
+	listedTrunks, err := s.client.Video().ListSIPTrunks(ctx, &getstream.ListSIPTrunksRequest{})
+	if err != nil {
+		return nil, nil, stack.Wrap(fmt.Errorf("phone: list sip trunks: %w", err))
+	}
+	for _, trunk := range listedTrunks.Data.SipTrunks {
+		if slices.Contains(trunk.Numbers, e164) {
+			trunks = append(trunks, trunk.ID)
+		}
+	}
+	return rules, trunks, nil
+}
+
+// notFound is Stream saying what was to be deleted or updated is not there: removed by hand
+// at Stream, or by an earlier attempt that failed after Stream took it. A delete wanted that.
 func notFound(err error) bool {
 	var refused *getstream.StreamError
 	return errors.As(err, &refused) && refused.StatusCode == http.StatusNotFound
