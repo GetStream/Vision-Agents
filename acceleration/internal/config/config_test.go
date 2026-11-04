@@ -966,7 +966,7 @@ func (s *ConfigSuite) TestALimitThatIsNotANumberIsRefused() {
 func (s *ConfigSuite) TestALateReplyIsAskedOfAnotherCandidateAfterTheHedgeUnlessTurnedOff() {
 	config, _, err := Load("")
 	s.Require().NoError(err)
-	s.Equal(1200*time.Millisecond, config.Agent.ReplyHedge)
+	s.Equal(1500*time.Millisecond, config.Agent.ReplyHedge)
 
 	s.T().Setenv("ROUTER_REPLY_HEDGE", "800ms")
 	config, _, err = Load("")
@@ -994,7 +994,7 @@ func (s *ConfigSuite) TestALateFlowDecisionIsAskedOfAnotherCandidateAfterItsOwnH
 	config, _, err = Load("")
 	s.Require().NoError(err)
 	s.Equal(250*time.Millisecond, config.Agent.FlowHedge)
-	s.Equal(1200*time.Millisecond, config.Agent.ReplyHedge, "the reply's hedge is its own")
+	s.Equal(1500*time.Millisecond, config.Agent.ReplyHedge, "the reply's hedge is its own")
 
 	s.T().Setenv("ROUTER_FLOW_HEDGE", "0")
 	config, _, err = Load("")

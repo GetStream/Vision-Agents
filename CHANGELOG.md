@@ -344,6 +344,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A reply is hedged after 1.5 s of silence, not 1.2 s
+
+`ROUTER_REPLY_HEDGE` (`agent.reply_hedge`, `cmd/agent -reply-hedge`) now defaults to `1500ms`. Gemini 3.8 Flash, which `llm-fast` prefers, cannot think less than `low`, and on a call it often said nothing for more than 1.2 s. So most replies were also sent to another model, and Gemini's attempt was recorded as a timeout. A reply that is really stuck now keeps the caller waiting 300 ms longer before another model is asked. Setting the variable still overrides the default, and `0` still turns hedging off (AI-2496).
+
 ### Pausing a campaign stops its calls on every router
 
 `POST /v1/agents/campaigns/{id}/pause` stopped the campaign only on the router that answered it. A router behind the same load balancer that was running the campaign went on ringing people, and finished the campaign over the pause when nobody was left. Now no router takes another contact from a campaign that is not running. A router whose loop outlived a pause made elsewhere exits that loop at its next claim and writes no state. A start on that router before then runs the campaign again (AI-2681).
