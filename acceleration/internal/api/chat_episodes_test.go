@@ -13,8 +13,10 @@ import (
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/golang-jwt/jwt/v5"
 	"github.com/uptrace/bun"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -647,6 +649,42 @@ func (s *ChatEpisodesSuite) TestAWorkersSessionOnAnotherNodeReadsThePersonsCards
 		CreateResponseRequest{Text: hello, RequestId: pointerTo(s.utils.uuid())}, nil))
 
 	s.True(carded(s.askedWith(hello)))
+}
+
+// Defect (AI-2709): a session the person's own app opens with their token reads none of their
+// app chat's cards, or one opened with somebody else's credential reads them. Through
+// createSession, which takes the caller from the credential: Anya's own token is handed her
+// card's line; Bob's token, a guest token naming her, an anonymous caller going by her name,
+// and the backend, alone or naming her, are handed none.
+func (s *ChatEpisodesSuite) TestTheUsersOwnTokenOpensASessionThatReadsTheirChatCard() {
+	worker := s.worker()
+	config := s.config(true, "noted/noted-model")
+	s.says(config.ID, "my appointment is Friday at 3", worker)
+	s.cards(s.omniChannel(), 1)
+	anya := s.data.signedInAs(s.user)
+	for _, c := range []struct {
+		name   string
+		client *testClient
+		reads  bool
+	}{
+		{"her own token", anya, true},
+		{"Bob's token", s.data.createUser(), false},
+		{"a guest token naming her", s.signedIn(jwt.MapClaims{"user_id": s.user, "role": "guest"}, auth.AuthTypeJWT, guest, s.user), false},
+		{"an anonymous caller as her", s.data.claiming(s.user), false},
+		{"the backend", s.serverClient, false},
+		{"the backend naming her", s.serverClient.actingFor(anya), false},
+	} {
+		opened := c.client.createSession(CreateSessionRequest{ConfigId: &config.ID})
+		text := "when is my appointment? " + s.utils.uuid()
+		s.Require().Equal(http.StatusAccepted, c.client.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+			CreateResponseRequest{Text: text, RequestId: pointerTo(s.utils.uuid())}, nil), c.name)
+
+		asked := s.askedWith(text)
+		s.Equal(c.reads, carded(asked), c.name)
+		s.Equal(c.reads, slices.ContainsFunc(asked.Input, func(m llm.Message) bool {
+			return strings.Contains(m.Content, "my appointment is Friday at 3")
+		}), c.name)
+	}
 }
 
 // slow has every reply of the "noted" models opened so far take d.
