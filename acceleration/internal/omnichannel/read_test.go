@@ -184,3 +184,19 @@ func (s *ReadSuite) TestALineIsFromThePersonOrTheAgentAsItsSourceSays() {
 		s.Equal(tc.from, from, name)
 	}
 }
+
+// Catches a summary read from a message that is not a card: one in a thread channel, another
+// channel type, or by anybody but the omni-channel's own agent, who writes every card (Write).
+// A card of any omni-channel is read, since a link leaves the older cards where they were.
+func (s *ReadSuite) TestOnlyAMessageAnOmniChannelsAgentWroteThereIsACard() {
+	card := func(cid, author string) getstream.MessageWithChannelResponse {
+		return getstream.MessageWithChannelResponse{Cid: cid, User: getstream.UserResponse{ID: author}}
+	}
+	s.True(writtenAsCard(card("agent:omni-1", "omni-1")))
+	s.True(writtenAsCard(card("agent:omni-2", "omni-2")), "another omni-channel of the person")
+	s.False(writtenAsCard(card("agent:omni-1", "anya")), "by a person")
+	s.False(writtenAsCard(card("agent:omni-1", "omni-2")), "by another omni-channel's agent")
+	s.False(writtenAsCard(card("agent:thread-1", "thread-1")), "a thread channel")
+	s.False(writtenAsCard(card("messaging:omni-1", "omni-1")), "another channel type")
+	s.False(writtenAsCard(card("", "")))
+}

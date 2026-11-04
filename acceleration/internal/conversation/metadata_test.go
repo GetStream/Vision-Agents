@@ -10,7 +10,6 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 )
 
 // DisplaySuite covers what a conversation's Chat messages show end users: the steps of the
@@ -380,116 +379,6 @@ func (s *DisplaySuite) TestAVisibleToolsStoredArtifactIsAttachedToTheReplyAndRes
 	s.Require().NoError(err)
 	s.Require().Len(page.Messages, 2)
 	s.Equal([]ArtifactAttachment{{Type: "canvas", ArtifactID: "canvas_01", Revision: 1, Title: "Analysis"}}, page.Messages[1].Artifacts)
-}
-
-func (s *DisplaySuite) TestALoginAPluginAsksForIsAttachedToTheReplyAndRestored() {
-	c := s.open("on_call")
-	c.AcceptLogins([]string{"google_calendar"})
-	receipt, err := c.BeginCommand("command-a", "When am I free?", "")
-	s.Require().NoError(err)
-	calendar, ok := plugins.Lookup("google_calendar")
-	s.Require().True(ok)
-	logo := (&plugins.Auth{PublicURL: "https://router.example"}).LogoURL(calendar.ID)
-	asking := plugins.AuthorizationResult(calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=s1", logo)
-
-	// Shown whether or not the tool's steps are: nobody can finish a login they never see.
-	c.Observe(agent.ToolStarted{ID: "list", Tool: "google_calendar__list_tools", StartedAt: time.Now().UTC()})
-	c.Observe(agent.ToolRan{ID: "list", Tool: "google_calendar__list_tools", Result: asking})
-	// A tool of somebody else's that answers the same is not a plugin asking for its login.
-	c.Observe(agent.ToolStarted{ID: "own", Tool: "weather", StartedAt: time.Now().UTC()})
-	c.Observe(agent.ToolRan{ID: "own", Tool: "weather", Result: strings.ReplaceAll(asking, "s1", "s2")})
-	// Nor is a server that has no login, whatever its tool is called.
-	notes := plugins.Plugin{ID: "notes", Name: "notes", ByURL: true}
-	c.Observe(agent.ToolStarted{ID: "notes", Tool: "notes__list_tools", StartedAt: time.Now().UTC()})
-	c.Observe(agent.ToolRan{ID: "notes", Tool: "notes__list_tools",
-		Result: plugins.AuthorizationResult(notes, "https://evil.example/authorize?state=s3", "")})
-	c.Observe(agent.Responded{})
-	saved(s.T(), c)
-
-	raw := s.raw(receipt.AssistantMessageID)
-	s.NotContains(raw, "state=s2")
-	s.NotContains(raw, "state=s3")
-	var reply struct {
-		Attachments []map[string]any `json:"attachments"`
-	}
-	s.Require().NoError(json.Unmarshal([]byte(raw), &reply))
-	s.Require().NotEmpty(reply.Attachments)
-	button := reply.Attachments[len(reply.Attachments)-1]
-	s.Equal(plugins.AuthorizationType, button["type"])
-	s.Equal("Connect Google Calendar", button["title"])
-	s.Equal(map[string]any{
-		"plugin_id":     "google_calendar",
-		"authorize_url": "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
-	}, button["custom"])
-	// Chat's own fields, so a client that has never heard of this type still shows a card
-	// with the plugin's logo, what it is for and a link somebody can press.
-	s.Equal(calendar.Description, button["text"])
-	s.Equal(logo, button["thumb_url"])
-	s.Equal("https://accounts.google.com/o/oauth2/v2/auth?state=s1", button["title_link"])
-	c.Release()
-	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
-	s.Require().NoError(err)
-	s.Require().Len(page.Messages, 2)
-	s.Equal([]plugins.Authorization{{
-		Type: plugins.AuthorizationType, PluginID: "google_calendar", Title: "Connect Google Calendar",
-		AuthorizeURL: "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
-		Text:         calendar.Description,
-		ThumbURL:     logo,
-		TitleLink:    "https://accounts.google.com/o/oauth2/v2/auth?state=s1",
-	}}, page.Messages[1].Authorizations)
-	// A session's client reads the login where a Chat client does: among the attachments.
-	encoded, err := json.Marshal(page.Messages[1])
-	s.Require().NoError(err)
-	var wire struct {
-		Attachments    []map[string]any `json:"attachments"`
-		Authorizations any              `json:"authorizations"`
-	}
-	s.Require().NoError(json.Unmarshal(encoded, &wire))
-	s.Nil(wire.Authorizations)
-	s.Require().NotEmpty(wire.Attachments)
-	login := wire.Attachments[len(wire.Attachments)-1]
-	s.Equal(plugins.AuthorizationType, login["type"])
-	s.Equal("google_calendar", login["plugin_id"])
-	s.Equal("https://accounts.google.com/o/oauth2/v2/auth?state=s1", login["authorize_url"])
-}
-
-func (s *DisplaySuite) TestAFinishedLoginMarksTheReplyThatAskedForIt() {
-	c := s.open("on_call")
-	c.AcceptLogins([]string{"google_calendar"})
-	asked, err := c.BeginCommand("command-a", "When am I free?", "")
-	s.Require().NoError(err)
-	calendar, ok := plugins.Lookup("google_calendar")
-	s.Require().True(ok)
-	c.Observe(agent.ToolStarted{ID: "list", Tool: "google_calendar__list_tools", StartedAt: time.Now().UTC()})
-	c.Observe(agent.ToolRan{ID: "list", Tool: "google_calendar__list_tools",
-		Result: plugins.AuthorizationResult(calendar, "https://accounts.google.com/o/oauth2/v2/auth?state=s1", "")})
-	c.Observe(agent.Responded{})
-	saved(s.T(), c)
-	// The caller has moved on by the time the provider hands them back.
-	_, err = c.BeginCommand("command-b", "And tomorrow?", "")
-	s.Require().NoError(err)
-
-	_, _, ok = s.service.Connected("someone-elses-state")
-	s.False(ok)
-	held, pluginID, ok := s.service.Connected("s1")
-	s.Require().True(ok)
-	s.Same(c, held)
-	s.Equal("google_calendar", pluginID)
-	// The outbox updates the earlier reply independently of saving the current one.
-	s.Require().Eventually(func() bool {
-		return strings.Contains(s.raw(asked.AssistantMessageID), `"status":"connected"`)
-	}, 8*time.Second, 20*time.Millisecond, "the reply that asked is marked connected")
-	c.Release()
-	page, err := s.service.HistoryForCaller(s.T().Context(), "customer", "on_call", c.CID(), "", "employee")
-	s.Require().NoError(err)
-	var reply Message
-	for _, m := range page.Messages {
-		if m.ID == asked.AssistantMessageID {
-			reply = m
-		}
-	}
-	s.Require().Len(reply.Authorizations, 1)
-	s.Equal(plugins.AuthorizationConnected, reply.Authorizations[0].Status)
 }
 
 func (s *DisplaySuite) TestAFollowUpShowsOnlyTheReply() {

@@ -328,7 +328,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+        /// Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
         public bool? EpisodeCards { get; set; } = default!;
@@ -363,28 +363,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("llm")]
         public string? Llm { get; set; } = default!;
 
-        [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
-
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string Mode { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
-        [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
-
-        /// <summary>
-        /// Deprecated: use connectors, a binding to a connector.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugins")]
-        [System.Obsolete]
-        public System.Collections.Generic.List<string>? Plugins { get; set; } = default!;
 
         /// <summary>
         /// Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
@@ -524,7 +507,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("llm")]
         public string? Llm { get; set; } = default!;
 
+        /// <summary>
+        /// No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+        /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
+        [System.Obsolete]
         public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
@@ -537,14 +524,14 @@ namespace GetStream.VisionAgents.Models
         public string? Name { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
         public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use connectors, a binding to a connector.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
@@ -635,7 +622,7 @@ namespace GetStream.VisionAgents.Models
         public AgentChannels? Channels { get; set; } = default!;
 
         /// <summary>
-        /// The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+        /// The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("connectors")]
         public System.Collections.Generic.List<AgentConnectorBinding>? Connectors { get; set; } = default!;
@@ -644,7 +631,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+        /// Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
         public bool? EpisodeCards { get; set; } = default!;
@@ -683,9 +670,10 @@ namespace GetStream.VisionAgents.Models
         public string? Llm { get; set; } = default!;
 
         /// <summary>
-        /// MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as &lt;name&gt;__&lt;tool&gt;.
+        /// No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
+        [System.Obsolete]
         public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
@@ -698,14 +686,14 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
         public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
@@ -781,7 +769,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
 
         /// <summary>
-        /// How the agent is offered its plugin, MCP server and connector tools. Left out on an update, the stored settings stay.
+        /// How the agent is offered its connector tools. Left out on an update, the stored settings stay.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tools")]
         public AgentTools? Tools { get; set; } = default!;
@@ -1322,6 +1310,57 @@ namespace GetStream.VisionAgents.Models
     }
 
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentUser
+    {
+
+        /// <summary>
+        /// The number linked to the user, in E.164; null when none is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone")]
+        public string? Phone { get; set; } = default!;
+
+        /// <summary>
+        /// The Stream user id, as the app's own token signs it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("user_id")]
+        public string UserId { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class AgentUserRequest
+    {
+
+        /// <summary>
+        /// The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone")]
+        public string? Phone { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class AnalyzeReviewsRequest
     {
 
@@ -1747,27 +1786,6 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("return_url")]
         public string? ReturnUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class AuthorizePluginRequest
-    {
-
-        /// <summary>
-        /// The shop hostname. Required for plugins that have no single global URL.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("instance_url")]
-        public string? InstanceUrl { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -4050,7 +4068,7 @@ namespace GetStream.VisionAgents.Models
         public string OwnerType { get; set; } = default!;
 
         /// <summary>
-        /// Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+        /// Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("reason")]
         public string? Reason { get; set; } = default!;
@@ -4819,7 +4837,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public AudioSource? Audio { get; set; } = default!;
@@ -4840,7 +4858,7 @@ namespace GetStream.VisionAgents.Models
         public string? ReasoningEffort { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
+        /// Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
@@ -6003,7 +6021,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+        /// What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and &lt;resource&gt;_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("code")]
         public string Code { get; set; } = default!;
@@ -6673,7 +6691,7 @@ namespace GetStream.VisionAgents.Models
         public long Images { get; set; } = default!;
 
         /// <summary>
-        /// The system prompt: the agent's instructions, skills and plugin guidance.
+        /// The system prompt: the agent's instructions, skills and connector guidance.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("instructions")]
         public long Instructions { get; set; } = default!;
@@ -8650,212 +8668,6 @@ namespace GetStream.VisionAgents.Models
 
     }
 
-    /// <summary>
-    /// One hosted MCP server from the built-in catalog.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class Plugin
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("category")]
-        public string Category { get; set; } = default!;
-
-        /// <summary>
-        /// True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_required")]
-        public bool? ClientRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string Description { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("id")]
-        public string Id { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_hint")]
-        public string? InstanceHint { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_required")]
-        public bool? InstanceRequired { get; set; } = default!;
-
-        /// <summary>
-        /// Where this deployment serves the plugin's logo, as an SVG needing no credential.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("logo_url")]
-        public string LogoUrl { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// True when the plugin has a read-only endpoint an agent may pick on its entry.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("readonly")]
-        public bool? Readonly { get; set; } = default!;
-
-        /// <summary>
-        /// The redirect URI that client has to list, which is this deployment's. Only with client_required.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("redirect_uri")]
-        public string? RedirectUri { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes_supported")]
-        public System.Collections.Generic.List<string>? ScopesSupported { get; set; } = default!;
-
-        /// <summary>
-        /// What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("setup_steps")]
-        public System.Collections.Generic.List<PluginSetupStep>? SetupSteps { get; set; } = default!;
-
-        /// <summary>
-        /// Where the app creates that client with the provider. Only with client_required.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("setup_url")]
-        public System.Uri? SetupUrl { get; set; } = default!;
-
-        /// <summary>
-        /// The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("toolsets")]
-        public System.Collections.Generic.List<string>? Toolsets { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginAuthorization
-    {
-
-        /// <summary>
-        /// The URL the browser should open to finish the login.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("authorize_url")]
-        public string AuthorizeUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginClient
-    {
-
-        /// <summary>
-        /// The client id the provider issued.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_id")]
-        public string ClientId { get; set; } = default!;
-
-        /// <summary>
-        /// Whether a client secret is stored. It is never returned.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("has_secret")]
-        public bool HasSecret { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginConnection
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("category")]
-        public string? Category { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth client the config set for the plugin. Absent when it set none.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client")]
-        public PluginClient? Client { get; set; } = default!;
-
-        /// <summary>
-        /// True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_required")]
-        public bool? ClientRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string? Description { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_hint")]
-        public string? InstanceHint { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_required")]
-        public bool? InstanceRequired { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("instance_url")]
-        public string? InstanceUrl { get; set; } = default!;
-
-        /// <summary>
-        /// Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("logo_url")]
-        public string LogoUrl { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("plugin_id")]
-        public string PluginId { get; set; } = default!;
-
-        /// <summary>
-        /// The app's login. Always not_connected for a plugin with user, which the app does not log into.
-        /// <br/>
-        /// <br/>One of `pending`, `connected`, `failed`, `not_connected`.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("status")]
-        public string Status { get; set; } = default!;
-
-        /// <summary>
-        /// True when the config names the plugin with user: each end user connects their own account in the conversation.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class PluginEntry
     {
@@ -8914,36 +8726,6 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// One thing to do with a plugin's provider before its OAuth client can be set.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginSetupStep
-    {
-
-        /// <summary>
-        /// How to do it with the provider.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string Description { get; set; } = default!;
-
-        /// <summary>
-        /// What the step does, in a few words.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("title")]
-        public string Title { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
     /// One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
@@ -8981,7 +8763,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? Toolsets { get; set; } = default!;
 
         /// <summary>
-        /// Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+        /// Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("user")]
         public bool? User { get; set; } = default!;
@@ -10307,7 +10089,7 @@ namespace GetStream.VisionAgents.Models
     }
 
     /// <summary>
-    /// What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user &lt;id&gt;, every user of app &lt;id&gt;, every user of organization &lt;id&gt;), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+    /// What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user &lt;id&gt;, every user of app &lt;id&gt;, every user of organization &lt;id&gt;), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
     /// </summary>
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class Quota
@@ -10458,7 +10240,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing.
+        /// A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("audio")]
         public AudioSource? Audio { get; set; } = default!;
@@ -12295,42 +12077,6 @@ namespace GetStream.VisionAgents.Models
 
     }
 
-    /// <summary>
-    /// The OAuth client an app registered with a plugin's provider, with the redirect URI &lt;public url&gt;/v1/agents/plugins/callback.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class SetPluginClientRequest
-    {
-
-        /// <summary>
-        /// The client id the provider issued.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_id")]
-        public string ClientId { get; set; } = default!;
-
-        /// <summary>
-        /// The client secret the provider issued. Left out for a public client.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("client_secret")]
-        public string? ClientSecret { get; set; } = default!;
-
-        /// <summary>
-        /// Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class SetSandboxRecipientsRequest
     {
@@ -13837,9 +13583,10 @@ namespace GetStream.VisionAgents.Models
         public string? Llm { get; set; } = default!;
 
         /// <summary>
-        /// MCP servers outside the plugin catalog, opened by their URL with no login.
+        /// No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
+        [System.Obsolete]
         public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
@@ -13852,14 +13599,14 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
         public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
 
         /// <summary>
-        /// Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+        /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugins")]
         [System.Obsolete]
@@ -13923,7 +13670,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
 
         /// <summary>
-        /// How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
+        /// How connector tools are offered. A setting left out keeps what is stored.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("tools")]
         public AgentTools? Tools { get; set; } = default!;
@@ -16061,7 +15808,7 @@ namespace GetStream.VisionAgents.Models
         public int? MaxFrames { get; set; } = default!;
 
         /// <summary>
-        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+        /// Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("url")]
         public string Url { get; set; } = default!;

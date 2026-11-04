@@ -170,7 +170,7 @@ export {
   type User,
 } from "./edge.js";
 
-export { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
+export { callOf, messageOf, type InboundCall, type InboundImage, type InboundMessage } from "./inbound.js";
 
 export {
   Dispatch,

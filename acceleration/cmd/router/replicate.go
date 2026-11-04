@@ -35,12 +35,17 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
   --once        stop as soon as there is nothing left to catch up on
   --resume      the cut-over, once the deployment copied from no longer delivers: resume
                 the scheduled tasks the copy paused because they were active there, each
-                at its first occurrence after now, and name the campaigns that were
-                running there, to start here
+                at its first occurrence after now, and name the campaigns still running
+                there at the last --once, which it leaves paused. Do not run --once again
+                after --resume: every run makes the deployment copied from the truth again
 
 Until the last --once the deployment copied from is the truth: a change it makes to a
 row overwrites what was done to that row here, a delete included. Once SDKs point here,
 stop writing there.
+
+Before the last --once, pause the campaigns there and wait for their calls to end. The
+copy then holds every call made there, and a campaign rings here only once it is started
+here.
 
 Copy an app here from one deployment only. A copied agent log is known here by the id it
 had there, so a copy from a second deployment into the same app overwrites the logs whose
@@ -251,8 +256,9 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 
 		if page.CaughtUp {
 			if once {
-				fmt.Printf("caught up at cursor %d. Point your SDKs here, then run this once more to pick up the last writes. "+
-					"Once the deployment copied from stops delivering, run it with --resume --as %s.\n", cursor, customerID)
+				fmt.Printf("caught up at cursor %d. Point your SDKs here, pause the campaigns at the deployment copied from "+
+					"and wait for their calls to end, then run this once more to pick up the last writes. "+
+					"Once the deployment copied from stops delivering, run it with --resume --as %s, and do not run --once again after that.\n", cursor, customerID)
 				return nil
 			}
 			fmt.Printf("caught up at cursor %d\n", cursor)
@@ -267,7 +273,9 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 	}
 }
 
-// resumeMove is the cut-over: it resumes what the copy paused and names what is left to start.
+// resumeMove is the cut-over: it resumes what the copy paused and names the campaigns the source
+// was still running at the last catch-up. It starts none: one the source rang from after that
+// would ring those contacts again here.
 func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
 	cutOver := time.Now()
 	if err := pgStore.SkipOccurrencesBeforeCutOver(ctx, customerID, cutOver, nextAfter(cutOver)); err != nil {
@@ -286,7 +294,20 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 			"Run --resume again once the user has made room; the oldest are resumed first\n", overLimit)
 	}
 	for _, id := range campaigns {
-		fmt.Fprintf(out, "campaign %s was running where it came from: start it here with POST /v1/agents/campaigns/%s/start\n", id, id)
+		fmt.Fprintf(out, "campaign %s was still running where it came from at the last --once, so it stays paused here: "+
+			"contacts rung there since then are still pending here, and starting it here rings them again. "+
+			"Read its contacts there (GET /v1/agents/campaigns/%s/contacts) before you start it here. "+
+			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n", id, id)
+	}
+	calling, err := pgStore.PausedCampaignsCalling(ctx, customerID)
+	if err != nil {
+		return err
+	}
+	for _, campaign := range calling {
+		fmt.Fprintf(out, "campaign %s is paused here with %d contacts in a call where it came from at the last --once: "+
+			"starting it here rings them again. Check them there (GET /v1/agents/campaigns/%s/contacts) before you start it here. "+
+			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n",
+			campaign.ID, campaign.Calls, campaign.ID)
 	}
 	return nil
 }

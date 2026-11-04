@@ -40,6 +40,8 @@ type UsageEvent struct {
 	BaseCostMicros int64             `bun:"base_cost_micros,notnull"`
 	PriceVersion   string            `bun:"price_version,notnull"`
 	SKU            string            `bun:"sku,notnull"`
+	Region         string            `bun:"region,notnull"`
+	BYOK           bool              `bun:"byok,notnull"`
 	Billable       bool              `bun:"billable,notnull"`
 	Success        bool              `bun:"success,notnull"`
 	ErrorCode      string            `bun:"error_code,notnull"`
@@ -57,7 +59,7 @@ func eventRow(e usage.Event) UsageEvent {
 		Meter: e.Meter, Provider: e.Provider, Model: e.Model, Purpose: e.Purpose,
 		Quantities: e.Quantities, Attributes: e.Attributes,
 		CostMicros: e.CostMicros, BaseCostMicros: e.BaseCostMicros, PriceVersion: e.PriceVersion, SKU: e.SKU,
-		Billable: e.Billable, Success: e.Success, ErrorCode: e.ErrorCode, Tags: e.Tags, Source: e.Source,
+		Region: e.Region, BYOK: e.BYOK, Billable: e.Billable, Success: e.Success, ErrorCode: e.ErrorCode, Tags: e.Tags, Source: e.Source,
 	}
 }
 
@@ -70,7 +72,7 @@ func (r UsageEvent) Event() usage.Event {
 		Meter: r.Meter, Provider: r.Provider, Model: r.Model, Purpose: r.Purpose,
 		Quantities: r.Quantities, Attributes: r.Attributes,
 		CostMicros: r.CostMicros, BaseCostMicros: r.BaseCostMicros, PriceVersion: r.PriceVersion, SKU: r.SKU,
-		Billable: r.Billable, Success: r.Success, ErrorCode: r.ErrorCode, Tags: r.Tags, Source: r.Source,
+		Region: r.Region, BYOK: r.BYOK, Billable: r.Billable, Success: r.Success, ErrorCode: r.ErrorCode, Tags: r.Tags, Source: r.Source,
 	}
 }
 

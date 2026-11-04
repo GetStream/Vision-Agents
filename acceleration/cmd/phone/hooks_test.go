@@ -69,7 +69,7 @@ func (s *HooksSuite) olderRouterMessageHook() {
 
 func (s *HooksSuite) urls() []string {
 	var urls []string
-	for _, hook := range s.chat.EventHooks("test") {
+	for _, hook := range s.chat.EventHooks(s.chat.Key) {
 		urls = append(urls, *hook.WebhookUrl)
 	}
 	return urls
@@ -77,7 +77,7 @@ func (s *HooksSuite) urls() []string {
 
 func (s *HooksSuite) updates() int {
 	updates := 0
-	for _, request := range s.chat.Requests("test") {
+	for _, request := range s.chat.Requests(s.chat.Key) {
 		if request.Method == http.MethodPatch {
 			updates++
 		}
@@ -111,7 +111,7 @@ func (s *HooksSuite) TestMovingOffAGoneTunnelPointsTheNewOneInTheSameRun() {
 	}, s.urls(), "the call hook only: Stream Chat delivers messages, no message hook is written")
 	s.Equal(2, s.updates(), "the seed and one update")
 	events := map[string][]string{}
-	for _, hook := range s.chat.EventHooks("test") {
+	for _, hook := range s.chat.EventHooks(s.chat.Key) {
 		events[*hook.WebhookUrl] = hook.EventTypes
 	}
 	s.Equal([]string{"call.session_started", "call.session_ended",
@@ -137,7 +137,7 @@ func (s *HooksSuite) TestPointingLeavesAnOlderMessageHookOfTheSameBaseAsItWas() 
 
 	s.Require().NoError(err)
 	s.Equal("call events now go to https://router.example/v1/phone/hooks/stream", said[len(said)-1])
-	hooks := s.chat.EventHooks("test")
+	hooks := s.chat.EventHooks(s.chat.Key)
 	s.Require().Len(hooks, 3)
 	s.Equal("https://router.example/v1/chat/hooks/stream", *hooks[1].WebhookUrl)
 	s.False(*hooks[1].Enabled)
@@ -209,12 +209,12 @@ func (s *HooksSuite) TestPointingAtAURLThatIsNotOneIsRefusedBeforeAnUpdate() {
 // router's hooks sends it back exactly as Stream sent it, rather than with it switched off.
 func (s *HooksSuite) TestMovingKeepsAnotherHookAsStreamSentIt() {
 	sqs := json.RawMessage(`{"id":"h1","hook_type":"sqs","enabled":true,"event_types":null,"sqs_queue_url":"https://sqs.example/q.fifo","sqs_region":"us-east-1","sqs_event_based_message_group_id_enabled":true}`)
-	s.chat.SetEventHooks("test", append(s.chat.EventHooksJSON("test"), sqs)...)
+	s.chat.SetEventHooks(s.chat.Key, append(s.chat.EventHooksJSON(s.chat.Key), sqs)...)
 
 	_, err := changeHooks(context.Background(), s.stream, "https://new.ngrok-free.dev", []string{goneBase}, "")
 
 	s.Require().NoError(err)
-	hooks := s.chat.EventHooksJSON("test")
+	hooks := s.chat.EventHooksJSON(s.chat.Key)
 	s.Require().Len(hooks, 3)
 	s.Equal(string(sqs), string(hooks[1]))
 }

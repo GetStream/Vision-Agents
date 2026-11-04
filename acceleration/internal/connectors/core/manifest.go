@@ -54,8 +54,8 @@ type Manifest struct {
 	// sending out what it read («Nessy as a connector» on AI-1538, change 13). Left out of the
 	// JSON when false, so the JSON of every manifest stored before it stays as it was.
 	Sensitive bool `yaml:"sensitive,omitempty" json:"sensitive,omitempty"`
-	// Setup is what a person does at the provider before the first consent, as the plugin
-	// catalog's setup_url and setup_steps say it (internal/plugins/plugins.yaml), so a
+	// Setup is what a person does at the provider before the first consent, as the removed plugin
+	// catalog's setup_url and setup_steps said it, so a
 	// dashboard's setup page can show it over a connector (architecture doc on
 	// connectors/planning, «Plugins move onto connectors», the Volt setup page row). Nothing
 	// that connects reads it.

@@ -120,8 +120,8 @@ func (s *ConnectorsSuite) TestNoOtherConnectorShowsASandbox() {
 	}
 }
 
-// TestAMovedPluginShowsItsSetupSteps: the steps the plugin catalog shows before a client is
-// pasted in come with its connector (T58), and a connector whose manifest has none shows none.
+// TestAMovedPluginShowsItsSetupSteps: the steps the removed plugin catalog showed before a
+// client was pasted in come with its connector (T58), and a connector whose manifest has none shows none.
 func (s *ConnectorsSuite) TestAMovedPluginShowsItsSetupSteps() {
 	calendar := s.get("google_calendar")
 	calcom := s.get("calcom")

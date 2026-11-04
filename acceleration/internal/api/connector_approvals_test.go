@@ -597,18 +597,19 @@ func (s *ConfigsSuite) TestNessyBesideAWriteToolHeldByAWildcardEntryIsAccepted()
 }
 
 // TestARefusalNamingNoConnectorToolSaysWhatItSaidBefore is a control: f38926d2 answered this
-// 400 with the same message (ai-1847/author-1.md, «Base probe»).
+// 400 with the same message (ai-1847/author-1.md, «Base probe»), there beside an MCP server,
+// and c467ee4d6 beside a networked sandbox (ai-2538/author-1.md, «Base probe»).
 func (s *ConfigsSuite) TestARefusalNamingNoConnectorToolSaysWhatItSaidBefore() {
 	s.useInternalApp()
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
 		"name": "athena", "connectors": []map[string]any{sessionNessy("customers")},
-		"mcp_servers": []map[string]any{{"name": "tablejourney", "url": "https://tablejourney.com/mcp"}},
+		"sandbox": "daytona", "sandbox_options": map[string]any{"network": true},
 	})
 
 	s.Equal(http.StatusBadRequest, status)
-	s.Equal(`connector binding "customers" binds "nessy", whose tools read private data, and MCP server `+
-		`"tablejourney" can send data out with no person's approval: take them out of this config`, failure)
+	s.Equal(`connector binding "customers" binds "nessy", whose tools read private data, and the sandbox's `+
+		`network access can send data out with no person's approval: take them out of this config`, failure)
 }
 
 // TestAPatternBindingOfAConnectorThatOnlyReadsNeedsNoApproval is a control: nessy.yaml's source

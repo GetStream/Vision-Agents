@@ -181,6 +181,7 @@ func (s *StallSuite) TestAStalledProviderIsAskedFirstAgainOnceItsWindowPasses() 
 	s.available(s.stalling, false)
 
 	s.available(s.stalling, true)
+	s.Require().NoError(s.live.Refresh(s.ctx), "the router routes by its snapshot, which hears of the forgotten stall at its next refresh")
 	s.start(r, router)
 	s.Equal(s.stalling, r.session.Provider(), "the preferred provider is tried again once its stall is forgotten")
 }

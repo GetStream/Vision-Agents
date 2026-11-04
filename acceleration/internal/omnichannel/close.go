@@ -262,7 +262,7 @@ func (c *Closer) write(ctx context.Context, episode store.ClosedEpisode) error {
 	}
 	card := store.EpisodeCard{
 		Episode: episode.Episode, Until: episode.EndedAt,
-		ContactKind: episode.ContactKind, ContactAddress: episode.ContactAddress,
+		ContactKind: episode.ContactKind, ContactAddress: episode.ContactAddress, AgentConfigID: episode.AgentConfigID,
 	}
 	lines, err := linesOf(ctx, bound, card, conversation.MaxHistoryMessages, true)
 	if err != nil {

@@ -29,6 +29,7 @@ func (s *MetaSuite) TestRejectsMissingCredentialsAndUnverifiedModels() {
 	s.Equal(DefaultModel, provider.Model())
 	s.Equal(ProviderName, provider.Provider())
 	s.False(provider.Capabilities().StreamsReasoning)
+	s.Equal([]string{"auto"}, provider.Capabilities().ToolChoices)
 	wonder, err := New(Options{Model: "muse-wonder-1.0"})
 	s.Require().NoError(err)
 	defer wonder.Close()
@@ -44,7 +45,10 @@ func (s *MetaSuite) TestUnsupportedToolChoicesAndEffortsFailBeforeNetworkAccess(
 	s.Require().NoError(err)
 	defer provider.Close()
 	for _, choice := range []string{"none", "required", "some_function"} {
-		_, err := provider.Create(context.Background(), llm.ResponseParams{ToolChoice: choice})
+		_, err := provider.Create(context.Background(), llm.ResponseParams{
+			Input:      []llm.Message{{Role: llm.User, Content: "hello"}},
+			ToolChoice: choice,
+		})
 		s.ErrorContains(err, "tool choice")
 	}
 	_, err = provider.Create(context.Background(), llm.ResponseParams{

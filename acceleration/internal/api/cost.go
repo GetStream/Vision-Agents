@@ -34,7 +34,8 @@ type costed struct {
 type costedKey struct{}
 
 // leaveUncosted has the answer say nothing of what the request cost, for an operation that
-// answers before its work runs, as createResponse does: its cost comes with its turn.
+// answers before its work runs, as createResponse and respondSession do: its cost comes with
+// its turn.
 func leaveUncosted(ctx context.Context) {
 	if state, ok := ctx.Value(costedKey{}).(*costed); ok {
 		state.off.Store(true)

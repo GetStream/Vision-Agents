@@ -45,6 +45,9 @@ type hookOrigin struct {
 	// queuedMessage is a queued delivery's Stream message id, here or on the peer it was handed
 	// to, whose answer settles its row first (answerOnce). Empty for a hook.
 	queuedMessage string
+	// heard is what a queued delivery's voice recording said, kept on its row by a try before
+	// (heardText). Nil until it was heard, and for a hook.
+	heard *string
 }
 
 // answer runs an answer: in line for a queued delivery, and off the request for a hook,
@@ -317,14 +320,14 @@ func (s *Server) pinHook(origin hookOrigin, customer, cid string) {
 	s.sessions.PinHook(customer, cid, origin.app)
 }
 
-// handOut is pinHook for a channel whose message went to one of the customer's workers, from
-// a hook of any origin: the text session the worker opens under the channel's id answers in
-// that channel (session.Manager.HandOut).
-func (s *Server) handOut(ctx context.Context, origin hookOrigin, customer, cid string) {
+// handOut is pinHook for a channel whose message, by user, went to one of the customer's
+// workers, from a hook of any origin: the text session the worker opens under the channel's
+// id answers in that channel (session.Manager.HandOut).
+func (s *Server) handOut(ctx context.Context, origin hookOrigin, customer, cid, user string) {
 	if s.sessions == nil {
 		return
 	}
-	s.sessions.HandOut(ctx, customer, cid, origin.app, origin.deployment)
+	s.sessions.HandOut(ctx, customer, cid, origin.app, origin.deployment, user)
 }
 
 // mayWrite reports whether what a hook found for a customer may be acted on: in app mode, a

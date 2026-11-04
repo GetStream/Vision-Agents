@@ -15,6 +15,7 @@ use GetStream\VisionAgents\Exception\RouterException;
 use GetStream\VisionAgents\Generated\Session as SessionRow;
 use GetStream\VisionAgents\Generated\SttOptions;
 use GetStream\VisionAgents\Inbound\InboundCall;
+use GetStream\VisionAgents\Inbound\InboundImage;
 use GetStream\VisionAgents\Inbound\InboundMessage;
 use GetStream\VisionAgents\Json;
 use GetStream\VisionAgents\Session;
@@ -22,6 +23,7 @@ use GetStream\VisionAgents\Tests\Support\LocalRouter;
 use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
 use GetStream\VisionAgents\Tests\Support\Rows;
 use GetStream\VisionAgents\Worker\Dispatch;
+use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;
 
@@ -126,7 +128,8 @@ final class WorkerTest extends TestCase
     public function testDispatchHandsTheMessageItsSessionAndRequest(): void
     {
         $server = $this->serve(static function (WebsocketClient $socket, LocalSocketServer $server): void {
-            LocalSocketServer::send($socket, ['type' => 'message', 'work_id' => 'wk1', 'session_id' => 'ses_1', 'request_id' => 'req_1', 'agent_id' => 'jean', 'text' => 'hi', 'user_id' => 'ada']);
+            LocalSocketServer::send($socket, ['type' => 'message', 'work_id' => 'wk1', 'session_id' => 'ses_1', 'request_id' => 'req_1', 'agent_id' => 'jean', 'text' => 'hi', 'user_id' => 'ada',
+                'images' => [['url' => 'https://example.com/cat.png', 'mime_type' => 'image/png']]]);
             while ($server->sent('done') === [] && $server->next($socket) !== null) {
             }
             $socket->close();
@@ -142,6 +145,57 @@ final class WorkerTest extends TestCase
         self::assertSame('ses_1', $received[0]->sessionId);
         self::assertSame('req_1', $received[0]->requestId);
         self::assertSame('', $received[0]->channelId);
+        self::assertEquals([new InboundImage('https://example.com/cat.png', 'image/png')], $received[0]->images);
+    }
+
+    /**
+     * @return iterable<string, array{string, list<array{string, string}>}>
+     */
+    public static function photosOfAMessageFrame(): iterable
+    {
+        yield 'absent' => ['{}', []];
+        yield 'null' => ['{"images": null}', []];
+        yield 'empty' => ['{"images": []}', []];
+        yield 'a string' => ['{"images": "https://example.com/cat.png"}', []];
+        yield 'one photo as an object' => ['{"images": {"url": "https://example.com/cat.png"}}', []];
+        yield 'photos keyed by name' => ['{"images": {"a": {"url": "https://example.com/cat.png"}}}', []];
+        yield 'photos among entries with nothing to fetch' => [
+            '{"images": [{"url": "https://example.com/cat.png", "mime_type": "image/png"}, {"url": "https://example.com/dog.jpg"},
+                {"url": "https://example.com/owl.webp", "mime_type": 7}, "https://example.com/bare.png", null, {}, [],
+                {"url": ""}, {"url": 5, "mime_type": "image/png"}, {"mime_type": "image/png"}]}',
+            [['https://example.com/cat.png', 'image/png'], ['https://example.com/dog.jpg', ''], ['https://example.com/owl.webp', '']],
+        ];
+    }
+
+    /**
+     * @param list<array{string, string}> $expected
+     */
+    #[DataProvider('photosOfAMessageFrame')]
+    public function testAMessageCarriesThePhotosItsFrameNamesByUrl(string $images, array $expected): void
+    {
+        $frame = ['type' => 'message', 'channel_id' => 'ch1', 'text' => 'hi'] + Json::asObject(Json::decode($images));
+
+        $message = InboundMessage::fromFrame($frame);
+
+        self::assertSame($expected, array_map(static fn (InboundImage $image): array => [$image->url, $image->mimeType], $message->images));
+    }
+
+    public function testAnswerShowsTheModelThePhotosOnTheRequestTheMessageWasSentAs(): void
+    {
+        $this->router = new LocalRouter();
+        $this->router->answer('POST', '/v1/agents/sessions/ses_1/responses', 201, Rows::response('resp_1', 'running'), Rows::response('resp_2', 'running'));
+        $dispatch = new Dispatch(client: new Client(new Backend(url: $this->router->url, apiKey: 'key', apiSecret: 'secret')));
+
+        $dispatch->answer(new InboundMessage(channelId: '', text: 'is this broken?', userId: 'ada', sessionId: 'ses_1', requestId: 'req_1',
+            images: [new InboundImage('https://example.com/screen.png', 'image/png'), new InboundImage('https://example.com/back.jpg')]));
+        $dispatch->answer(new InboundMessage(channelId: '', text: 'and this?', userId: 'ada', sessionId: 'ses_1',
+            images: [new InboundImage('https://example.com/side.png')]));
+
+        $sent = array_map(static fn ($seen) => $seen->json(), $this->router->to('POST', '/v1/agents/sessions/ses_1/responses'));
+        self::assertSame([
+            ['text' => 'is this broken?', 'images' => [['url' => 'https://example.com/screen.png'], ['url' => 'https://example.com/back.jpg']], 'request_id' => 'req_1'],
+            ['text' => 'and this?', 'images' => [['url' => 'https://example.com/side.png']]],
+        ], $sent);
     }
 
     public function testAnswerCreatesTheResponseActingForTheWriterWithTheServerCredential(): void

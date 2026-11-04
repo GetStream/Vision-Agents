@@ -41,22 +41,22 @@ var (
 )
 
 func (s *HandOutSuite) TestTheWorkersSessionAnswersInTheChannelHandedOutInItsApp() {
-	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true)
-	s.manager.HandOut(context.Background(), "customer-2", "agent:channel-2", 42, false)
+	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true, "")
+	s.manager.HandOut(context.Background(), "customer-2", "agent:channel-2", 42, false, "")
 
-	cid, handed := s.manager.handedOut(context.Background(), worker(), deploymentApp)
+	cid, _, handed := s.manager.handedOut(context.Background(), worker(), deploymentApp)
 	s.True(handed)
 	s.Equal("agent:channel-1", cid)
 	other := worker()
 	other.CustomerID, other.AgentID = "customer-2", "channel-2"
-	cid, handed = s.manager.handedOut(context.Background(), other, ownApp)
+	cid, _, handed = s.manager.handedOut(context.Background(), other, ownApp)
 	s.True(handed, "a registered app's hand-out, in that app")
 	s.Equal("agent:channel-2", cid)
 }
 
 func (s *HandOutSuite) TestAnyOtherSessionKeepsAChannelOfItsOwn() {
-	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true)
-	s.manager.HandOut(context.Background(), "customer-2", "agent:channel-2", 42, false)
+	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true, "")
+	s.manager.HandOut(context.Background(), "customer-2", "agent:channel-2", 42, false, "")
 	s.manager.PinHook("customer-3", "agent:channel-3", 42)
 	for name, spec := range map[string]func(*Spec){
 		"another customer":       func(spec *Spec) { spec.CustomerID = "customer-2" },
@@ -71,41 +71,41 @@ func (s *HandOutSuite) TestAnyOtherSessionKeepsAChannelOfItsOwn() {
 	} {
 		asked := worker()
 		spec(&asked)
-		_, handed := s.manager.handedOut(context.Background(), asked, deploymentApp)
+		_, _, handed := s.manager.handedOut(context.Background(), asked, deploymentApp)
 		s.False(handed, name)
 	}
 	pinned := worker()
 	pinned.CustomerID, pinned.AgentID = "customer-3", "channel-3"
-	_, handed := s.manager.handedOut(context.Background(), pinned, ownApp)
+	_, _, handed := s.manager.handedOut(context.Background(), pinned, ownApp)
 	s.False(handed, "a call's app pin, in its app, is no hand-out")
-	_, handed = s.manager.handedOut(context.Background(), worker(), ownApp)
+	_, _, handed = s.manager.handedOut(context.Background(), worker(), ownApp)
 	s.False(handed, "a deployment hand-out, to a session in the customer's own app")
-	_, handed = s.manager.handedOut(context.Background(), worker(), streamapp.Bound{})
+	_, _, handed = s.manager.handedOut(context.Background(), worker(), streamapp.Bound{})
 	s.False(handed, "a session with no Stream app")
 	registered := worker()
 	registered.CustomerID, registered.AgentID = "customer-2", "channel-2"
-	_, handed = s.manager.handedOut(context.Background(), registered, deploymentApp)
+	_, _, handed = s.manager.handedOut(context.Background(), registered, deploymentApp)
 	s.False(handed, "a registered app's hand-out, to a session in the deployment's app")
-	_, handed = s.manager.handedOut(context.Background(), registered, streamapp.Bound{Client: &getstream.Stream{}, Identity: streamapp.Identity{StreamApp: 43, Registered: true}})
+	_, _, handed = s.manager.handedOut(context.Background(), registered, streamapp.Bound{Client: &getstream.Stream{}, Identity: streamapp.Identity{StreamApp: 43, Registered: true}})
 	s.False(handed, "a registered app's hand-out, to a session in another app")
 }
 
 func (s *HandOutSuite) TestAHandOutIsTheSessionsForAsLongAsAnAppPin() {
-	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true)
+	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true, "")
 	s.age("customer-1", "agent:channel-1", hookPinFor-time.Minute)
-	_, handed := s.manager.handedOut(context.Background(), worker(), deploymentApp)
+	_, _, handed := s.manager.handedOut(context.Background(), worker(), deploymentApp)
 	s.True(handed)
 
 	s.age("customer-1", "agent:channel-1", hookPinFor+time.Minute)
-	_, handed = s.manager.handedOut(context.Background(), worker(), deploymentApp)
+	_, _, handed = s.manager.handedOut(context.Background(), worker(), deploymentApp)
 	s.False(handed)
 }
 
 // A hook the deployment signed pins no app: the session acts in whatever app its customer
 // acts in, as on base, where no pin was kept for one.
 func (s *HandOutSuite) TestOnlyARegisteredAppsHandOutPinsTheSessionsApp() {
-	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true)
-	s.manager.HandOut(context.Background(), "customer-2", "agent:channel-2", 42, false)
+	s.manager.HandOut(context.Background(), "customer-1", "agent:channel-1", 7, true, "")
+	s.manager.HandOut(context.Background(), "customer-2", "agent:channel-2", 42, false, "")
 
 	_, pinned := s.manager.hookPin(worker())
 	s.False(pinned)

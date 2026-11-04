@@ -256,34 +256,6 @@ func (s *DataMoveSuite) TestAnImportedConnectionHasToBeAuthorizedAgain() {
 	s.Empty(token)
 }
 
-func (s *DataMoveSuite) TestAPluginLoginAFileSaysIsConnectedIsNoLoginASessionUses() {
-	// The file is the importer's to write, but a login is only usable with a token, which never
-	// comes in with one.
-	config := newID()
-	// bob's own login, and the app's, which every session of the config uses.
-	for _, user := range []string{"bob", ""} {
-		_, err := s.source.DB().ExecContext(s.ctx,
-			"INSERT INTO agent_plugin_connections (id, customer_id, config_id, plugin_id, user_id, status)"+
-				" VALUES (?, 'acme', ?, 'slack', ?, ?)", newID(), config, user, PluginPending)
-		s.Require().NoError(err)
-	}
-
-	s.moveEdited("acme", "moved", "agent_plugin_connections", func(row map[string]any) {
-		row["status"] = PluginConnected
-		row["access_token"] = "a-token-of-the-files"
-	})
-
-	login, err := s.destination.UserPluginConnection(s.ctx, "moved", config, "bob", "slack")
-	s.Require().NoError(err, "the login arrives as its user's")
-	s.Empty(login.AccessToken)
-	ready, err := s.destination.ConnectedPlugins(s.ctx, "moved", config)
-	s.Require().NoError(err)
-	s.Empty(ready)
-	logins, err := s.destination.PluginLogins(s.ctx, "moved", config, "slack")
-	s.Require().NoError(err)
-	s.Empty(logins)
-}
-
 func (s *DataMoveSuite) TestAMoveKeepsWhoItsUsersAre() {
 	// What the router recorded of a user is the customer's data: an account arrives an account,
 	// and a claimed guest arrives claimed by the same account, so nobody else can claim it.
@@ -1464,6 +1436,131 @@ func (s *DataMoveSuite) TestACampaignStartedHereIsNoLongerTheMovesToName() {
 
 	_, campaigns := s.resume("moved")
 	s.Empty(campaigns, "the customer paused it here")
+}
+
+// ringOnSource rings a campaign's next contact on the source, as its runner does, and returns
+// it in a call.
+func (s *DataMoveSuite) ringOnSource(campaignID string) Contact {
+	contact, found, err := s.source.ClaimContact(s.ctx, campaignID)
+	s.Require().NoError(err)
+	s.Require().True(found)
+	return contact
+}
+
+// hangUpOnSource ends a call the source rang.
+func (s *DataMoveSuite) hangUpOnSource(contact Contact) {
+	contact.State = Done
+	s.Require().NoError(s.source.FinishContact(s.ctx, contact))
+}
+
+// startHere starts a moved campaign on the destination as campaign.Runner.Start does, and
+// returns the contact it rings first.
+func (s *DataMoveSuite) startHere(customerID, campaignID string) Contact {
+	s.Require().NoError(s.destination.ReleaseContacts(s.ctx, campaignID))
+	s.Require().NoError(s.destination.SetCampaignState(s.ctx, customerID, campaignID, Running))
+	contact, found, err := s.destination.ClaimContact(s.ctx, campaignID)
+	s.Require().NoError(err)
+	s.Require().True(found)
+	return contact
+}
+
+// The cut-over the docs give: pause the campaign at the source, let its calls end, then run the
+// last --once. The pause clears the move's mark, so --resume leaves the campaign alone, and
+// starting it here rings only those the source never rang.
+func (s *DataMoveSuite) TestACampaignPausedAtTheSourceBeforeTheLastCatchUpRingsNobodyTwiceHere() {
+	s.capture("acme")
+	running := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
+		{CampaignID: running, ToNumber: "+15550101"}, {CampaignID: running, ToNumber: "+15550102"}}))
+	inCall := s.ringOnSource(running)
+	cursor := s.move("acme", "moved")
+
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", running, Paused))
+	s.hangUpOnSource(inCall)
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	_, campaigns := s.resume("moved")
+	s.Empty(campaigns, "the user paused it at the source")
+	campaign, err := s.destination.Campaign(s.ctx, "moved", running)
+	s.Require().NoError(err)
+	s.Equal(Paused, campaign.State, "it rings here only once someone starts it")
+
+	next := s.startHere("moved", running)
+	s.NotEqual(inCall.ID, next.ID, "the source rang them")
+	s.Equal("+15550102", next.ToNumber)
+	s.Equal(1, next.Attempts)
+}
+
+// A campaign running at the source when the last --once read it stays paused here, and the
+// cut-over names it. The contacts the source rang up to then are done here.
+func (s *DataMoveSuite) TestACampaignTheCopyPausedIsNamedAndStartsWhereTheCopyLeftOff() {
+	running := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
+		{CampaignID: running, ToNumber: "+15550101"}, {CampaignID: running, ToNumber: "+15550102"}}))
+	s.hangUpOnSource(s.ringOnSource(running))
+	s.move("acme", "moved")
+
+	_, campaigns := s.resume("moved")
+	s.Equal([]string{running}, campaigns)
+	campaign, err := s.destination.Campaign(s.ctx, "moved", running)
+	s.Require().NoError(err)
+	s.Equal(Paused, campaign.State, "the cut-over starts no campaign")
+
+	next := s.startHere("moved", running)
+	s.Equal("+15550102", next.ToNumber)
+	s.Equal(1, next.Attempts)
+}
+
+// A campaign the user paused at the source without waiting for its calls to end arrives paused
+// and unmarked with a contact still calling. The cut-over names it with how many, since a start
+// here rings them again.
+func (s *DataMoveSuite) TestACampaignPausedAtTheSourceWithContactsCallingIsNamedWithTheirCount() {
+	s.capture("acme")
+	inCalls := s.seedCampaign("acme", Running)
+	quiet := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
+		{CampaignID: inCalls, ToNumber: "+15550101"}, {CampaignID: inCalls, ToNumber: "+15550102"},
+		{CampaignID: inCalls, ToNumber: "+15550103"}, {CampaignID: quiet, ToNumber: "+15550104"}}))
+	s.ringOnSource(inCalls)
+	s.ringOnSource(inCalls)
+	s.hangUpOnSource(s.ringOnSource(quiet))
+	cursor := s.move("acme", "moved")
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", inCalls, Paused))
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", quiet, Paused))
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	_, campaigns := s.resume("moved")
+	s.Empty(campaigns, "the user paused both at the source")
+	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
+	s.Require().NoError(err)
+	s.Equal([]CampaignCalls{{ID: inCalls, Calls: 2}}, calling, "only the one with contacts in a call, counted")
+
+	first := s.startHere("moved", inCalls)
+	s.Equal(2, first.Attempts, "a start here rings the one the source was calling again")
+}
+
+func (s *DataMoveSuite) TestACampaignNotPausedHereIsNotNamedForItsCalls() {
+	running := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: running, ToNumber: "+15550101"}}))
+	s.ringOnSource(running)
+	marked := s.seedCampaign("acme", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: marked, ToNumber: "+15550103"}}))
+	s.ringOnSource(marked)
+	other := s.seedCampaign("other", Running)
+	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: other, ToNumber: "+15550102"}}))
+	s.ringOnSource(other)
+	s.Require().NoError(s.source.SetCampaignState(s.ctx, "other", other, Paused))
+	s.move("acme", "moved")
+	s.move("other", "moved-other")
+	s.startHere("moved", running)
+
+	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
+	s.Require().NoError(err)
+	s.Empty(calling, "one started here rings its own calls, the move's mark names its own, and another customer's is not its")
 }
 
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a
