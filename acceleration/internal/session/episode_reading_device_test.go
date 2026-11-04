@@ -182,8 +182,8 @@ func (s *EpisodeReadingSuite) TestNoCardOfAStreamUserIsReadInAnAppThatChecksNoTo
 }
 
 // Defect: a device session that carries on a conversation is handed that conversation's own
-// card, which it reads word for word. Anya's resumed conversation reads her other chat's card
-// and not the one of the conversation it carries on.
+// card, which it reads word for word. Anya's resumed conversation, and her call on it, read her
+// other chat's card and not the one of the conversation they carry on.
 func (s *EpisodeReadingSuite) TestAResumedDeviceSessionLeavesItsOwnConversationsCardOut() {
 	s.anyasCard()
 	first, _ := s.deviceSession(signedIn("anya_123"), "", false, "hello")
@@ -204,6 +204,22 @@ func (s *EpisodeReadingSuite) TestAResumedDeviceSessionLeavesItsOwnConversations
 
 	handed := s.handed(params)
 	s.Require().Len(handed, 1, "her other chat's card alone")
+	s.Equal("Her appointment is Friday at 3.", handed[0]["summary"])
+
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "anya_123")
+	onCall, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call, ConversationID: kept, AgentID: first.Spec().AgentID,
+		Caller: signedIn("anya_123").caller, CallerKind: auth.KindAuthenticated,
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(onCall.ID(), OwnerOf(onCall.Spec())) })
+	said := "and on a call? " + uuid.NewString()
+	_, err = onCall.Respond(s.ctx, said, nil, options.LLM{})
+	s.Require().NoError(err)
+	handed = s.handed(s.replyTo(said))
+	s.Require().Len(handed, 1, "her call on the conversation: her other chat's card alone")
 	s.Equal("Her appointment is Friday at 3.", handed[0]["summary"])
 }
 
