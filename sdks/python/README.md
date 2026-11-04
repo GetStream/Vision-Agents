@@ -73,7 +73,7 @@ async def written(message: InboundMessage) -> None:
     agent = await dispatch.get_or_create_agent(
         message, lambda: Agent(config="customer_support")
     )
-    await agent.responses.create(message.text)
+    await agent.responses.create(message.text, images=message.images)
 ```
 
 ## Voice

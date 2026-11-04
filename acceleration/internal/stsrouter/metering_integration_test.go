@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"io"
 	"log/slog"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -366,6 +367,75 @@ func (s *MeteringSuite) TestGPTLiveBillsOnlyItsSecondsWhenTheCallerSpeaksAfterTh
 	s.Equal(tenSeconds, s.spent(routing.STS, customer))
 }
 
+// TestAGPTLiveCallHungUpBeforeItsLastReportIsBilledItsSeconds: the caller hangs up a second
+// into a reply and the vendor never answers session.close, as on staging, so no report ever
+// says how long the session was open. The router's own clock bills it, marked estimated.
+func (s *MeteringSuite) TestAGPTLiveCallHungUpBeforeItsLastReportIsBilledItsSeconds() {
+	socket := s.vendorSocket("", map[string]string{
+		"session.start": `{"type":"session.started","session":{"id":"sess_1","model":"gpt-live-1"}}`,
+	})
+	provider, err := openailive.New(openailive.Options{
+		APIKey: "k", URL: socket.url(), HandshakeTimeout: 5 * time.Second,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s.Require().NoError(err)
+	session, recorder, customer := s.session(provider, "openai/gpt-live-1")
+	<-socket.open
+
+	socket.send(`{"type":"session.output_audio.delta","delta":"` + audible(200) + `"}`)
+	time.Sleep(time.Second)
+	opened := time.Since(session.openedAt)
+	s.closed(session, recorder)
+	open := time.Since(session.openedAt)
+
+	var seconds []store.Request
+	for _, row := range s.rows(customer) {
+		if row.Meters[pricing.SessionSeconds] != 0 {
+			seconds = append(seconds, row)
+		}
+	}
+	s.Require().Len(seconds, 1, "the seconds nobody reported are one row")
+	billed := seconds[0].Meters[pricing.SessionSeconds]
+	s.GreaterOrEqual(billed, int64(math.Round(opened.Seconds())+1), "the second of the reply and the wait for the close")
+	s.LessOrEqual(billed, int64(math.Round(open.Seconds())))
+	s.Equal("true", seconds[0].Attributes[routing.AttributeUsageEstimated])
+	s.True(seconds[0].Billable)
+	s.Equal(s.priced(routing.STS, "openai/gpt-live-1", pricing.Quantities{pricing.SessionSeconds: billed}), seconds[0].CostMicros)
+	s.requireAttributed(seconds[0])
+}
+
+// TestAGPTLiveReportAheadOfTheClockLeavesNothingUnreported: the vendor's 13 s are more than the
+// router's clock counted, so a session ending without session.closed bills only those.
+func (s *MeteringSuite) TestAGPTLiveReportAheadOfTheClockLeavesNothingUnreported() {
+	socket := s.vendorSocket("", map[string]string{
+		"session.start": `{"type":"session.started","session":{"id":"sess_1","model":"gpt-live-1"}}`,
+	})
+	provider, err := openailive.New(openailive.Options{
+		APIKey: "k", URL: socket.url(), HandshakeTimeout: 5 * time.Second,
+		Logger: slog.New(slog.NewTextHandler(io.Discard, nil)),
+	})
+	s.Require().NoError(err)
+	session, recorder, customer := s.session(provider, "openai/gpt-live-1")
+	<-socket.open
+
+	socket.send(`{"type":"session.usage.updated","usage":{"seconds":13.0}}`)
+	s.Require().Eventually(func() bool {
+		session.mu.Lock()
+		defer session.mu.Unlock()
+		return session.billedSeconds == 13
+	}, 5*time.Second, 20*time.Millisecond)
+	s.closed(session, recorder)
+
+	var billed []int64
+	for _, row := range s.rows(customer) {
+		if n := row.Meters[pricing.SessionSeconds]; n != 0 {
+			billed = append(billed, n)
+			s.Empty(row.Attributes[routing.AttributeUsageEstimated], "the vendor's count")
+		}
+	}
+	s.Equal([]int64{13}, billed)
+}
+
 // TestXAIVoiceBillsTheAudioXAICountsAndTypedTurns plays back a recorded push-to-talk session
 // on grok-voice-3.0: billable_audio_seconds at 2, 7, 9, 11 and 13 over five replies, a typed
 // turn before the first, third and fifth, and a tool's result before the fourth. The caller
@@ -623,10 +693,9 @@ func unpriced(provider, model string) float64 {
 	return 0
 }
 
-// TestATranscriberBilledByTheSecondIsARowEvenUnpriced: whisper-1 reports the seconds it heard
-// rather than tokens, and the price list has no entry for it. The turn is still a row, of its
-// audio, counted unpriced so somebody prices it, rather than dropped.
-func (s *MeteringSuite) TestATranscriberBilledByTheSecondIsARowEvenUnpriced() {
+// TestATranscriberBilledByTheSecondIsPricedByItsAudio: whisper-1 reports the seconds it heard
+// rather than tokens, and the turn is a row of its audio at whisper-1's rate.
+func (s *MeteringSuite) TestATranscriberBilledByTheSecondIsPricedByItsAudio() {
 	socket := s.vendorSocket(`{"type":"session.created","session":{"id":"sess_1"}}`, map[string]string{
 		"session.update": `{"type":"session.updated","session":{"id":"sess_1"}}`,
 	})
@@ -653,8 +722,9 @@ func (s *MeteringSuite) TestATranscriberBilledByTheSecondIsARowEvenUnpriced() {
 	s.Equal("whisper-1", rows[0].Model)
 	s.EqualValues(2_400, rows[0].AudioMs)
 	s.True(rows[0].Billable)
-	s.Zero(rows[0].CostMicros)
-	s.Equal(before+1, unpriced("openai", "whisper-1"), "billable work with no price raises the alarm")
+	s.Equal(s.priced(routing.STS, "openai/whisper-1", pricing.Quantities{pricing.AudioMs: 2_400}), rows[0].CostMicros)
+	s.Positive(rows[0].CostMicros)
+	s.Equal(before, unpriced("openai", "whisper-1"))
 }
 
 // TestRealtimeTranscriptionIsItsOwnRow plays back OpenAI writing down two caller turns, the

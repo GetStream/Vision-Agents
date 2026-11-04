@@ -144,7 +144,7 @@ type Session struct {
 	// long a reply may say nothing before it is asked of that one as well, flowHedgeAfter the
 	// same for a flow decision. All are unset on a fallback child, which is only ever asked for
 	// a response its parent has chosen it for.
-	hedge          func(context.Context) (*Session, error)
+	hedge          func(context.Context, llm.ResponseParams) (*Session, error)
 	hedgeAfter     time.Duration
 	flowHedgeAfter time.Duration
 	provider       Provider
@@ -567,8 +567,14 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	// Measured once per request, up to its first attempt: a hedge or a fallback starts later by
 	// design, which is not the router's own time.
 	routing.ObserveLLMStage(s.config, routing.StageRouter, time.Since(enteredAt))
+	passedOver := s.passesOver(params)
+	if passedOver {
+		if alternate, err := s.fallback(ctx, params); err == nil {
+			return screened(alternate, verdict), nil
+		}
+	}
 	stream, err := open(ctx, params)
-	if err == nil || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
+	if err == nil || passedOver || ctx.Err() != nil || s.fallback == nil || params.PreviousResponseID != "" || params.Conversation != "" {
 		return screened(stream, verdict), stack.Wrap(err)
 	}
 	var apiError *openai.Error
@@ -582,6 +588,15 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 		return nil, stack.Wrap(errors.Join(err, fallbackErr))
 	}
 	return screened(alternate, verdict), nil
+}
+
+// passesOver reports whether a response is asked of the other candidates before this
+// session's own model, because that model would ignore the tools the response offers. It
+// is asked of its own model still when none of them answers, which is all a target naming
+// only such a model has. A response continuing from one the provider holds stays put.
+func (s *Session) passesOver(params llm.ResponseParams) bool {
+	return s.config.IgnoresTools && len(params.Tools) > 0 && s.fallback != nil &&
+		params.PreviousResponseID == "" && params.Conversation == ""
 }
 
 // counted reports whether this session's answers count toward a daily limit. A mock

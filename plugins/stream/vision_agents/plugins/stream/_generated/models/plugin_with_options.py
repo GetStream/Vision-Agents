@@ -29,9 +29,9 @@ class PluginWithOptions:
                 catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new
                 login.
             user (bool | Unset): Each end user connects the plugin with their own account, in the conversation, the first
-                time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching
-                a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's,
-                such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+                time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as
+                google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once,
+                from the dashboard. false has the app connect it whatever the catalog says.
     """
 
     name: str

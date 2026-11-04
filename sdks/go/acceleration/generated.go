@@ -1813,30 +1813,6 @@ func (e PhoneOperation) Valid() bool {
 	}
 }
 
-// Defines values for PluginConnectionStatus.
-const (
-	PluginConnectionStatusConnected    PluginConnectionStatus = "connected"
-	PluginConnectionStatusFailed       PluginConnectionStatus = "failed"
-	PluginConnectionStatusNotConnected PluginConnectionStatus = "not_connected"
-	PluginConnectionStatusPending      PluginConnectionStatus = "pending"
-)
-
-// Valid indicates whether the value is a known member of the PluginConnectionStatus enum.
-func (e PluginConnectionStatus) Valid() bool {
-	switch e {
-	case PluginConnectionStatusConnected:
-		return true
-	case PluginConnectionStatusFailed:
-		return true
-	case PluginConnectionStatusNotConnected:
-		return true
-	case PluginConnectionStatusPending:
-		return true
-	default:
-		return false
-	}
-}
-
 // Defines values for PolicyScope.
 const (
 	PolicyScopeApp          PolicyScope = "app"
@@ -2141,6 +2117,7 @@ const (
 	Start       SessionEndReason = "start"
 	Transferred SessionEndReason = "transferred"
 	Unanswered  SessionEndReason = "unanswered"
+	Voicemail   SessionEndReason = "voicemail"
 )
 
 // Valid indicates whether the value is a known member of the SessionEndReason enum.
@@ -2155,6 +2132,8 @@ func (e SessionEndReason) Valid() bool {
 	case Transferred:
 		return true
 	case Unanswered:
+		return true
+	case Voicemail:
 		return true
 	default:
 		return false
@@ -2836,6 +2815,24 @@ func (e VoiceBindingState) Valid() bool {
 	}
 }
 
+// Defines values for VoicemailAction.
+const (
+	HangUp       VoicemailAction = "hang_up"
+	LeaveMessage VoicemailAction = "leave_message"
+)
+
+// Valid indicates whether the value is a known member of the VoicemailAction enum.
+func (e VoicemailAction) Valid() bool {
+	switch e {
+	case HangUp:
+		return true
+	case LeaveMessage:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListAgentLogsParamsSeverity.
 const (
 	ListAgentLogsParamsSeverityError ListAgentLogsParamsSeverity = "error"
@@ -3050,7 +3047,7 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3067,19 +3064,10 @@ type AgentConfig struct {
 	// LeftOutConnectors The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none.
 	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
 	Llm               *string             `json:"llm,omitempty"`
-	McpServers        *[]McpServer        `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode AgentMode `json:"mode"`
 	Name string    `json:"name"`
-
-	// PluginEvents Deprecated: use the events of a fixed binding under connectors.
-	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
-
-	// Plugins Deprecated: use connectors, a binding to a connector.
-	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
 	// Region Where the agent's work is done: every model its sessions run, its knowledge base and its sandbox are in it. us unless the agent's agent.yaml or config names another.
 	//
@@ -3148,12 +3136,15 @@ type AgentConfigPatch struct {
 	Guardrail *string `json:"guardrail,omitempty"`
 
 	// Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
-	Harness            *Harness     `json:"harness,omitempty"`
-	Instructions       *string      `json:"instructions,omitempty"`
-	Keyterms           *[]string    `json:"keyterms,omitempty"`
-	KnowledgeNamespace *string      `json:"knowledge_namespace,omitempty"`
-	Llm                *string      `json:"llm,omitempty"`
-	McpServers         *[]McpServer `json:"mcp_servers,omitempty"`
+	Harness            *Harness  `json:"harness,omitempty"`
+	Instructions       *string   `json:"instructions,omitempty"`
+	Keyterms           *[]string `json:"keyterms,omitempty"`
+	KnowledgeNamespace *string   `json:"knowledge_namespace,omitempty"`
+	Llm                *string   `json:"llm,omitempty"`
+
+	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
+	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3161,11 +3152,11 @@ type AgentConfigPatch struct {
 	// Name What the config is called, which is unique among the customer's own.
 	Name *string `json:"name,omitempty"`
 
-	// PluginEvents Deprecated: use the events of a fixed binding under connectors.
+	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// Plugins Deprecated: use connectors, a binding to a connector.
+	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
@@ -3220,13 +3211,13 @@ type AgentConfigRequest struct {
 	// Channels The lines this agent answers on besides its Stream Chat channel. Each names a number the app connected with POST /v1/agents/channels, and only one agent may answer on a number. A message that arrives is answered in the sender's own conversation, so what they say is kept and shown wherever the rest of it is.
 	Channels *AgentChannels `json:"channels,omitempty"`
 
-	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config and different from every plugin and MCP server it names. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
+	// Connectors The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused.
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent writes an episode card into the caller's omni-channel: an agent channel for each caller number and agent, keyed by the caller's E.164 number. On, a session on a thread channel or a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3248,7 +3239,8 @@ type AgentConfigRequest struct {
 	// Llm The model holding the conversation.
 	Llm *string `json:"llm,omitempty"`
 
-	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login. Their tools are offered as <name>__<tool>.
+	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
@@ -3257,11 +3249,11 @@ type AgentConfigRequest struct {
 	// Name What the config is called, which is unique among the customer's own.
 	Name string `json:"name"`
 
-	// PluginEvents Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on the plugins it names, with every login it holds to each. Each event that arrives opens a text conversation of its own, as whoever's login it came through.
+	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// Plugins Deprecated: use connectors, a binding to a connector. Hosted MCP servers this agent may reach, named from the built-in catalog: an id alone, or an object naming it with how it is reached, such as linear's read-only endpoint and the scopes its login asks for. The app connects each once, from the dashboard, unless its entry sets user: then each end user connects it with their own account, and the agent asks for the login in the conversation, as a plugin_authorization attachment, the first time it needs one.
+	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
@@ -3359,11 +3351,11 @@ type AgentConnectorSelection struct {
 	// ConnectionId Required for fixed, and refused for session.
 	ConnectionId *string `json:"connection_id,omitempty"`
 
-	// Type fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+	// Type fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 	Type AgentConnectorSelectionType `json:"type"`
 }
 
-// AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is the user whose login subscribed the plugin event (none for the app's own login), or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
+// AgentConnectorSelectionType fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 type AgentConnectorSelectionType string
 
 // AgentDispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
@@ -3509,6 +3501,25 @@ type AgentTools struct {
 
 	// Progressive Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
 	Progressive *bool `json:"progressive,omitempty"`
+}
+
+// AgentUser defines model for AgentUser.
+type AgentUser struct {
+	// Phone The number linked to the user, in E.164; null when none is.
+	//
+	// Example: +15551234567
+	Phone *string `json:"phone"`
+
+	// UserId The Stream user id, as the app's own token signs it.
+	UserId string `json:"user_id"`
+}
+
+// AgentUserRequest Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
+type AgentUserRequest struct {
+	// Phone The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+	//
+	// Example: +15551234567
+	Phone *string `json:"phone"`
 }
 
 // AnalyzeReviewsRequest defines model for AnalyzeReviewsRequest.
@@ -3691,12 +3702,6 @@ type AuthorizationKind string
 type AuthorizationRequest struct {
 	// ReturnUrl The app's own page the browser goes back to when the consent ends, with connection_id and status added to its query and its own query kept: the query comes back re-encoded with its keys sorted (?a=1&a=2&b becomes ?a=1&a=2&b=&connection_id=...&status=...), and a connection_id or status already in it is replaced by the router's. The launch page then takes the handoff only from a page of this URL's origin, which opens launch_url. Absent or empty, the consent goes back to the dashboard. An absolute URL of at most 2048 bytes, whose host is ASCII (an internationalized one in punycode, xn--) and not an IPv4-mapped IPv6 address, since a browser's origin would not match it: https, or http on a loopback host (localhost, 127.0.0.0/8 or [::1]) for local development (RFC 8252 sections 7.3 and 8.3), with no user name or password, no fragment (RFC 6749 section 3.1.2) and a query of key=value pairs. A native app may instead name its own private-use scheme, in reverse domain form (RFC 8252 section 7.1), such as com.example.app:/connected, which needs no host: its launch page then takes handoff_token from its own fragment, and the callback hands the browser back to the app.
 	ReturnUrl *string `json:"return_url,omitempty"`
-}
-
-// AuthorizePluginRequest defines model for AuthorizePluginRequest.
-type AuthorizePluginRequest struct {
-	// InstanceUrl The shop hostname. Required for plugins that have no single global URL.
-	InstanceUrl *string `json:"instance_url,omitempty"`
 }
 
 // AvailableNumber defines model for AvailableNumber.
@@ -4612,7 +4617,7 @@ type Connector struct {
 	Setup *ConnectorSetup `json:"setup,omitempty"`
 }
 
-// ConnectorAuditAction grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
+// ConnectorAuditAction grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 type ConnectorAuditAction string
 
 // ConnectorAuditCredential The tokens a grant event left, or on grant_revoked the tokens that ended, each named by its fingerprint: the first 4 bytes of the token's SHA-256, as 8 lowercase hex characters. Two equal fingerprints are the same token, so a refresh shows whether the provider rotated the refresh token. No token, and no character of one, is shown.
@@ -4641,7 +4646,7 @@ type ConnectorAuditCredential struct {
 
 // ConnectorAuditEvent One grant a connection got, renewed or lost, one export of its access credential, or one direct call sent through it, with the ids that tie it to what caused it. It names no user and no provider account, so it outlives a user's connections being deleted.
 type ConnectorAuditEvent struct {
-	// Action grant_created: a consent, a credentials write or router plugins migrate gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
+	// Action grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 	Action ConnectorAuditAction `json:"action"`
 
 	// AttemptId The authorization attempt a consent finished. Absent once the connection's user was deleted.
@@ -4662,7 +4667,7 @@ type ConnectorAuditEvent struct {
 	// OwnerType app is the app's own account, user one user's.
 	OwnerType ConnectionOwnerType `json:"owner_type"`
 
-	// Reason Why: consent, credentials or plugin_migrate for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
+	// Reason Why: consent or credentials for a created grant; deleted or user_deleted for a delete; for a grant the provider ended, its word for why, such as invalid_grant, scope_required or revoked.
 	Reason *string `json:"reason,omitempty"`
 
 	// RequestId The X-Request-Id of the API request that caused it. For a change a session's tool call caused, that is the request that created the session, not the one that asked for the turn. Absent for an incognito session's, and once the connection's user was deleted.
@@ -4988,7 +4993,7 @@ type CreateResponseRequest struct {
 	// ReasoningEffort How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's.
 	ReasoningEffort *string `json:"reasoning_effort,omitempty"`
 
-	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
+	// RequestId Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images.
 	RequestId *string `json:"request_id,omitempty"`
 
 	// Text What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
@@ -5521,7 +5526,7 @@ type Equals1 struct {
 
 // ErrorDetail defines model for ErrorDetail.
 type ErrorDetail struct {
-	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, plugin, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+	// Code What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
 	Code string `json:"code"`
 
 	// DocUrl Where the code is explained.
@@ -5606,6 +5611,9 @@ type GuestUser struct {
 	Id        string     `json:"id"`
 	Name      *string    `json:"name,omitempty"`
 
+	// RefreshSecret What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it where the token is kept. It works once: every answer to it carries the next one, so store it each time. Absent where the deployment records no guests, and from a refresh made with the guest's own token while they already hold one, which keeps working.
+	RefreshSecret *string `json:"refresh_secret,omitempty"`
+
 	// Token A Stream user token for this guest, which is what the chat and video SDKs connect with. It carries role guest, so an app that has turned guests off refuses it.
 	Token string `json:"token"`
 }
@@ -5614,11 +5622,14 @@ type GuestUser struct {
 type GuestUserRequest struct {
 	Custom *map[string]interface{} `json:"custom,omitempty"`
 
-	// Id A guest id to reuse, for somebody coming back. Omitted mints a new one. Asking for an id that is already a guest of this customer returns that guest with a fresh token rather than failing, because coming back is the same person.
+	// Id A guest coming back, to be given a fresh token as the same guest. Only honoured for a caller that proves it is that guest: the app's backend, the guest's own still-valid token, or the refresh_secret they were last handed. Any other caller is minted a new guest, as if no id had been sent, because a guest id is no secret: it is the author of their messages. Omitted mints a new guest.
 	Id *string `json:"id,omitempty"`
 
-	// Name What to call them, for a transcript a person reads later.
+	// Name What to call a new guest, for a transcript a person reads later. A guest coming back keeps their name unless the app's backend renames them.
 	Name *string `json:"name,omitempty"`
+
+	// RefreshSecret The refresh_secret this guest was last handed, sent with their id once their token has expired. Spent by being used. One that is wrong or already spent mints a new guest instead.
+	RefreshSecret *string `json:"refresh_secret,omitempty"`
 }
 
 // Harness Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
@@ -5817,7 +5828,7 @@ type InputParts struct {
 	// Images Pictures, attached or returned by a tool.
 	Images int64 `json:"images"`
 
-	// Instructions The system prompt: the agent's instructions, skills and plugin guidance.
+	// Instructions The system prompt: the agent's instructions, skills and connector guidance.
 	Instructions int64 `json:"instructions"`
 
 	// Messages The conversation's words, from either side.
@@ -6641,6 +6652,9 @@ type PlaceCallRequest struct {
 	// Custom Put on the Stream call, where the agent in it can read it. It is set at Stream rather than at the vendor, so every vendor can carry it. phone_number is the router's own and cannot be set. A call into a session whose call already carries other custom data is refused before it rings, so omit custom or use a new session. A session whose call carries none, as a call an agent made itself, takes this custom. A dial that fails once its custom is on the call leaves it there, and it cannot be taken off: retry into that session with the same custom, or use a new session.
 	Custom *map[string]string `json:"custom,omitempty"`
 
+	// DetectVoicemail Ask the number's vendor to tell when an answering machine picks up. Ignored on vendors that cannot. A verdict the vendor cannot make, or none within 40 seconds of the answer, counts as a machine while the person called has said nothing to the agent. What the agent then does is the session's phone.voicemail.
+	DetectVoicemail *bool `json:"detect_voicemail,omitempty"`
+
 	// From One of the customer's own numbers, which is what the person sees.
 	From string `json:"from"`
 
@@ -6672,84 +6686,6 @@ type PlacedCall struct {
 	VendorCallId string  `json:"vendor_call_id"`
 }
 
-// Plugin One hosted MCP server from the built-in catalog.
-type Plugin struct {
-	Category string `json:"category"`
-
-	// ClientRequired True when the provider registers no client on the fly, so a config needs one of the app's own, set with setPluginClient, before anybody can connect the plugin.
-	ClientRequired   *bool   `json:"client_required,omitempty"`
-	Description      string  `json:"description"`
-	Id               string  `json:"id"`
-	InstanceHint     *string `json:"instance_hint,omitempty"`
-	InstanceRequired *bool   `json:"instance_required,omitempty"`
-
-	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential.
-	LogoUrl *string `json:"logo_url,omitempty"`
-	Name    string  `json:"name"`
-
-	// Readonly True when the plugin has a read-only endpoint an agent may pick on its entry.
-	Readonly *bool `json:"readonly,omitempty"`
-
-	// RedirectUri The redirect URI that client has to list, which is this deployment's. Only with client_required.
-	RedirectUri *string `json:"redirect_uri,omitempty"`
-
-	// ScopesSupported The OAuth scopes an agent may ask for on its entry, as the server advertises them. Absent when the server says nothing, and any scope is then passed through.
-	ScopesSupported *[]string `json:"scopes_supported,omitempty"`
-
-	// SetupSteps What to do there, in order, before pasting the client into setPluginClient. Absent when the catalog has no instructions for the plugin.
-	SetupSteps *[]PluginSetupStep `json:"setup_steps,omitempty"`
-
-	// SetupUrl Where the app creates that client with the provider. Only with client_required.
-	SetupUrl *string `json:"setup_url,omitempty"`
-
-	// Toolsets The groups of tools an agent may limit the plugin to on its entry. Absent when it cannot be limited.
-	Toolsets *[]string `json:"toolsets,omitempty"`
-}
-
-// PluginAuthorization defines model for PluginAuthorization.
-type PluginAuthorization struct {
-	// AuthorizeUrl The URL the browser should open to finish the login.
-	AuthorizeUrl string `json:"authorize_url"`
-}
-
-// PluginClient The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
-type PluginClient struct {
-	// ClientId The client id the provider issued.
-	ClientId string `json:"client_id"`
-
-	// HasSecret Whether a client secret is stored. It is never returned.
-	HasSecret bool `json:"has_secret"`
-}
-
-// PluginConnection A catalog plugin as this agent has it, including whether it is logged in. A plugin the config names that nobody has logged into yet is not_connected, which is what a dashboard reminds the app to finish, unless it has user, when each end user connects it in the conversation.
-type PluginConnection struct {
-	Category *string `json:"category,omitempty"`
-
-	// Client The OAuth client a config logs a plugin in with. Its secret is sealed and never returned.
-	Client *PluginClient `json:"client,omitempty"`
-
-	// ClientRequired True when nobody can connect the plugin until the config has a client of the app's own, set with setPluginClient.
-	ClientRequired   *bool   `json:"client_required,omitempty"`
-	Description      *string `json:"description,omitempty"`
-	InstanceHint     *string `json:"instance_hint,omitempty"`
-	InstanceRequired *bool   `json:"instance_required,omitempty"`
-	InstanceUrl      *string `json:"instance_url,omitempty"`
-
-	// LogoUrl Where this deployment serves the plugin's logo, as an SVG needing no credential. Empty for an MCP server named by URL.
-	LogoUrl  *string `json:"logo_url,omitempty"`
-	Name     string  `json:"name"`
-	PluginId string  `json:"plugin_id"`
-
-	// Status The app's login. Always not_connected for a plugin with user, which the app does not log into.
-	Status PluginConnectionStatus `json:"status"`
-
-	// User True when the config names the plugin with user: each end user connects their own account in the conversation.
-	User *bool `json:"user,omitempty"`
-}
-
-// PluginConnectionStatus The app's login. Always not_connected for a plugin with user, which the app does not log into.
-type PluginConnectionStatus string
-
 // PluginEntry One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
 type PluginEntry struct {
 	union json.RawMessage
@@ -6773,15 +6709,6 @@ type PluginEvent struct {
 	Plugin string `json:"plugin"`
 }
 
-// PluginSetupStep One thing to do with a plugin's provider before its OAuth client can be set.
-type PluginSetupStep struct {
-	// Description How to do it with the provider.
-	Description string `json:"description"`
-
-	// Title What the step does, in a few words.
-	Title string `json:"title"`
-}
-
 // PluginWithOptions One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
 type PluginWithOptions struct {
 	// Name A catalog plugin id, such as linear.
@@ -6799,7 +6726,7 @@ type PluginWithOptions struct {
 	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
 	Toolsets *[]string `json:"toolsets,omitempty"`
 
-	// User Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it, as a plugin_authorization attachment. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
+	// User Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
 	User *bool `json:"user,omitempty"`
 }
 
@@ -6825,7 +6752,7 @@ type Policy struct {
 	// PromptInjection Screen what every LLM response is asked for prompt injection. The newest input - the user's turn and any tool results - goes to a decision model beside the model call, so it adds nothing to time to first token. The end of the response is held until the verdict, and a response whose input reads as an injection fails with prompt_injection before its tool calls can be acted on.
 	PromptInjection *bool `json:"prompt_injection,omitempty"`
 
-	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 	Quota *Quota `json:"quota,omitempty"`
 
 	// RequireOwnStreamApp Keep the app out of the router's own Stream app: in app mode it is never written there for want of a registered Stream app of its own, and what it wrote there before can only be read. True at either scope requires it, so an app cannot turn its organization's off. An organization's is set by the router's operator and read here; sending it back unchanged is fine, and changing it is refused.
@@ -7389,7 +7316,7 @@ type ProviderPrice struct {
 	PerMillionOutputTokens *float64 `json:"per_million_output_tokens,omitempty"`
 }
 
-// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 type Quota struct {
 	// MessagesPerUserPerDay How many responses one end user may ask for in a UTC day. 0 is no cap. Left out, the next level's applies: the app's, then the organization's, then the router's default.
 	//
@@ -7940,7 +7867,7 @@ type Session struct {
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 
-	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 	EndReason *SessionEndReason `json:"end_reason,omitempty"`
 
 	// ForkedFrom The session this one continued from, empty for one opened fresh.
@@ -8045,7 +7972,7 @@ type SessionConnectorBinding struct {
 	Name string `json:"name"`
 }
 
-// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 type SessionEndReason string
 
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
@@ -8114,6 +8041,9 @@ type SessionPhone struct {
 
 	// VendorCallId The outbound leg, set for a call the agent placed. Without one the agent has no keypad to press at.
 	VendorCallId *string `json:"vendor_call_id,omitempty"`
+
+	// Voicemail What the agent does when an answering machine picks up.
+	Voicemail *SessionVoicemail `json:"voicemail,omitempty"`
 }
 
 // SessionQuery defines model for SessionQuery.
@@ -8241,6 +8171,16 @@ type SessionVideo struct {
 	Source *string `json:"source,omitempty"`
 }
 
+// SessionVoicemail What the agent does when an answering machine picks up.
+type SessionVoicemail struct {
+	// Action hang_up: end the call at once, saying nothing.
+	// leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+	Action VoicemailAction `json:"action"`
+
+	// Message Said word for word once the machine's greeting has ended, or once the call counts as a machine, then the agent hangs up. Required for leave_message, and not only spaces. Ignored for hang_up.
+	Message *string `json:"message,omitempty"`
+}
+
 // SetNumberAgentRequest defines model for SetNumberAgentRequest.
 type SetNumberAgentRequest struct {
 	// Agent The name of the agent config that answers the number. Give this or config_id.
@@ -8248,18 +8188,6 @@ type SetNumberAgentRequest struct {
 
 	// ConfigId The id of the agent config that answers the number. Give this or agent.
 	ConfigId *string `json:"config_id,omitempty"`
-}
-
-// SetPluginClientRequest The OAuth client an app registered with a plugin's provider, with the redirect URI <public url>/v1/agents/plugins/callback.
-type SetPluginClientRequest struct {
-	// ClientId The client id the provider issued.
-	ClientId string `json:"client_id"`
-
-	// ClientSecret The client secret the provider issued. Left out for a public client.
-	ClientSecret *string `json:"client_secret,omitempty"`
-
-	// User Also name the plugin under the config's plugins with user, so that each end user connects their own account in the conversation, the first time the agent needs it. Left out names nothing: the app connects the plugin once with authorize, which names it as the app's.
-	User *bool `json:"user,omitempty"`
 }
 
 // SetSandboxRecipientsRequest defines model for SetSandboxRecipientsRequest.
@@ -8926,7 +8854,8 @@ type SyncAgentRequest struct {
 	LeftOutConnectors *[]LeftOutConnector `json:"left_out_connectors,omitempty"`
 	Llm               *string             `json:"llm,omitempty"`
 
-	// McpServers MCP servers outside the plugin catalog, opened by their URL with no login.
+	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
@@ -8935,11 +8864,11 @@ type SyncAgentRequest struct {
 	// Name What the config is called, which is also the directory's name.
 	Name string `json:"name"`
 
-	// PluginEvents Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its plugins, each opening a text conversation when it arrives.
+	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
 
-	// Plugins Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object naming it with how it is reached. The app connects each once, unless its entry sets user: then each end user connects it with their own account, from the conversation, the first time the agent needs it.
+	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	Plugins *[]PluginEntry `json:"plugins,omitempty"`
 
@@ -9833,7 +9762,7 @@ type UserPolicy struct {
 	// Messages Responses counted today toward a quota the customer set, the app's backend acting for the user included. A day held only to the router's default counts the user's devices alone, which this leaves out.
 	Messages int64 `json:"messages"`
 
-	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 	Quota *Quota `json:"quota,omitempty"`
 
 	// ResetsAt When the day ends and the count starts again: the next UTC midnight.
@@ -9846,7 +9775,7 @@ type UserPolicy struct {
 
 // UserPolicyEntry defines model for UserPolicyEntry.
 type UserPolicyEntry struct {
-	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 	Quota     *Quota    `json:"quota,omitempty"`
 	UpdatedAt time.Time `json:"updated_at"`
 	UserId    string    `json:"user_id"`
@@ -9854,7 +9783,7 @@ type UserPolicyEntry struct {
 
 // UserPolicyInput One end user's own policy, which holds a quota only.
 type UserPolicyInput struct {
-	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A device is counted by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
+	// Quota What one end user may spend in a UTC day. Each number is the first set of the user's own (/v1/policies/users/{user_id}), the app's, the organization's and the router's default. A quota set here counts everything recorded with the user: what their devices ask for and what the app's backend asks for in their name. (An app's quota counted devices only before; the router's default still does.) A quota set here is counted per user only, never by the address a device calls from, which many users can share; the router's default counts a device by its address as well. A turn is counted on the day of the user who sent it. A request over the limit is a 429 rate_limited with Retry-After, whose message names the quota (user <id>, every user of app <id>, every user of organization <id>), and a counted request carries X-Quota-Limit, X-Quota-Remaining and X-Quota-Reset.
 	Quota *Quota `json:"quota,omitempty"`
 }
 
@@ -9870,7 +9799,7 @@ type VideoSource struct {
 	// MaxFrames How many frames to sample, evenly spaced across the clip. Default 8.
 	MaxFrames *int `json:"max_frames,omitempty"`
 
-	// Url Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... At most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
+	// Url Public HTTPS URL or base64 video data URI, such as data:video/mp4;base64,.... An MP4, MOV, 3GP, MKV or WebM file, at most 50 MB either way. The router fetches a URL itself, and refuses one that resolves to a private or loopback address.
 	Url string `json:"url"`
 }
 
@@ -9978,6 +9907,10 @@ type VoiceSampleRequest struct {
 	// Transcript What is said in the recording. Optional, and the providers that use one clone more faithfully with it.
 	Transcript *string `json:"transcript,omitempty"`
 }
+
+// VoicemailAction hang_up: end the call at once, saying nothing.
+// leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.
+type VoicemailAction string
 
 // WhatsAppProfile defines model for WhatsAppProfile.
 type WhatsAppProfile struct {
@@ -10231,19 +10164,6 @@ type ListCustomModelsParams struct {
 
 	// Cursor The `next_cursor` of the previous page. Omitted is the first page.
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
-}
-
-// ListPluginsParams defines parameters for ListPlugins.
-type ListPluginsParams struct {
-	// Q Filter by name, category or description.
-	Q *string `form:"q,omitempty" json:"q,omitempty"`
-}
-
-// PluginOAuthCallbackParams defines parameters for PluginOAuthCallback.
-type PluginOAuthCallbackParams struct {
-	Code  *string `form:"code,omitempty" json:"code,omitempty"`
-	State *string `form:"state,omitempty" json:"state,omitempty"`
-	Error *string `form:"error,omitempty" json:"error,omitempty"`
 }
 
 // ListProviderKeysParams defines parameters for ListProviderKeys.
@@ -10680,16 +10600,6 @@ type PatchAgentConfigJSONRequestBody = AgentConfigPatch
 // UpdateAgentConfigJSONRequestBody defines body for UpdateAgentConfig for application/json ContentType.
 type UpdateAgentConfigJSONRequestBody = AgentConfigRequest
 
-// AuthorizePluginJSONRequestBody defines body for AuthorizePlugin for application/json ContentType.
-//
-// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-type AuthorizePluginJSONRequestBody = AuthorizePluginRequest
-
-// SetPluginClientJSONRequestBody defines body for SetPluginClient for application/json ContentType.
-//
-// Deprecated: this type has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-type SetPluginClientJSONRequestBody = SetPluginClientRequest
-
 // CreateConnectionJSONRequestBody defines body for CreateConnection for application/json ContentType.
 type CreateConnectionJSONRequestBody = ConnectionRequest
 
@@ -10791,6 +10701,9 @@ type UpdateSkillJSONRequestBody = SkillRequest
 
 // SyncAgentJSONRequestBody defines body for SyncAgent for application/json ContentType.
 type SyncAgentJSONRequestBody = SyncAgentRequest
+
+// UpdateUserJSONRequestBody defines body for UpdateUser for application/json ContentType.
+type UpdateUserJSONRequestBody = AgentUserRequest
 
 // CreateVoiceJSONRequestBody defines body for CreateVoice for application/json ContentType.
 type CreateVoiceJSONRequestBody = VoiceRequest
@@ -11598,83 +11511,6 @@ type ClientInterface interface {
 	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
 	GetAgentChanges(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListConfigPlugins The plugin logins this agent holds
-	//
-	// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
-	//
-	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DisconnectPlugin Drop a plugin login
-	//
-	// Deprecated: use deleteConnection.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizePluginWithBody Start a plugin login
-	//
-	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// AuthorizePlugin Start a plugin login
-	//
-	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// DeletePluginClient Drop the OAuth client an agent logs a plugin in with
-	//
-	// Deprecated: use deleteConnectorOAuthClient.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
-	//
-	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes any type of body and a specified content type.
-	//
-	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// SetPluginClient Set the OAuth client an agent logs a plugin in with
-	//
-	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes a body of the `application/json` content type.
-	//
-	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
 	// ListConnections List connections
 	//
 	// Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
@@ -12123,7 +11959,7 @@ type ClientInterface interface {
 
 	// CreateGuestUserWithBody Mint a guest so somebody can talk to an agent before signing up
 	//
-	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 	//
 	// Takes any type of body and a specified content type.
@@ -12133,7 +11969,7 @@ type ClientInterface interface {
 
 	// CreateGuestUser Mint a guest so somebody can talk to an agent before signing up
 	//
-	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 	//
 	// Takes a body of the `application/json` content type.
@@ -12359,42 +12195,6 @@ type ClientInterface interface {
 	//
 	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
 	UpdateCustomModel(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListPlugins The hosted MCP servers an agent may attach
-	//
-	// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
-	//
-	// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ListPlugins(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// PluginOAuthCallback Finish a plugin login
-	//
-	// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
-	//
-	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ReceivePluginEvent Receive a plugin's MCP event
-	//
-	// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
-	//
-	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// GetPluginLogo A plugin's logo
-	//
-	// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
-	//
-	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListProviderKeys The keys the calling customer keeps for their own accounts at the vendors
 	//
@@ -12825,7 +12625,7 @@ type ClientInterface interface {
 
 	// ListSessionTools List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 	ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -13033,6 +12833,28 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateUserWithBody Link a user to a phone number
+	//
+	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+	UpdateUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpdateUser Link a user to a phone number
+	//
+	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+	UpdateUser(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DeleteUserConnections Delete every connection of one user
 	//
@@ -13441,6 +13263,13 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
 	ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ReceiveCallMachine Receive who picked up a placed call
+	//
+	// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+	ReceiveCallMachine(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ListPhoneNumbers The numbers the calling customer holds
 	//
 	// Corresponds with GET /v1/phone/numbers (the `ListPhoneNumbers` operationId).
@@ -13468,6 +13297,8 @@ type ClientInterface interface {
 	SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumbersParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ReleasePhoneNumber Give a number back, which stops its monthly charge
+	//
+	// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
 	//
 	// Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 	ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -15077,146 +14908,6 @@ func (c *Client) GetAgentChanges(ctx context.Context, id string, reqEditors ...R
 	return c.Client.Do(req)
 }
 
-// ListConfigPlugins The plugin logins this agent holds
-//
-// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
-//
-// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) ListConfigPlugins(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListConfigPluginsRequest(c.Server, id)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DisconnectPlugin Drop a plugin login
-//
-// Deprecated: use deleteConnection.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) DisconnectPlugin(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDisconnectPluginRequest(c.Server, id, pluginId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizePluginWithBody Start a plugin login
-//
-// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) AuthorizePluginWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizePluginRequestWithBody(c.Server, id, pluginId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// AuthorizePlugin Start a plugin login
-//
-// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) AuthorizePlugin(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewAuthorizePluginRequest(c.Server, id, pluginId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// DeletePluginClient Drop the OAuth client an agent logs a plugin in with
-//
-// Deprecated: use deleteConnectorOAuthClient.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) DeletePluginClient(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewDeletePluginClientRequest(c.Server, id, pluginId)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetPluginClientWithBody Set the OAuth client an agent logs a plugin in with
-//
-// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes any type of body and a specified content type.
-//
-// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) SetPluginClientWithBody(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetPluginClientRequestWithBody(c.Server, id, pluginId, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// SetPluginClient Set the OAuth client an agent logs a plugin in with
-//
-// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes a body of the `application/json` content type.
-//
-// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) SetPluginClient(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewSetPluginClientRequest(c.Server, id, pluginId, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
 // ListConnections List connections
 //
 // Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
@@ -16115,7 +15806,7 @@ func (c *Client) GetConversationMessages(ctx context.Context, cid string, params
 
 // CreateGuestUserWithBody Mint a guest so somebody can talk to an agent before signing up
 //
-// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 // Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 //
 // Takes any type of body and a specified content type.
@@ -16135,7 +15826,7 @@ func (c *Client) CreateGuestUserWithBody(ctx context.Context, contentType string
 
 // CreateGuestUser Mint a guest so somebody can talk to an agent before signing up
 //
-// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 // Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 //
 // Takes a body of the `application/json` content type.
@@ -16622,78 +16313,6 @@ func (c *Client) UpdateCustomModelWithBody(ctx context.Context, id string, conte
 // Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
 func (c *Client) UpdateCustomModel(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUpdateCustomModelRequest(c.Server, id, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ListPlugins The hosted MCP servers an agent may attach
-//
-// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
-//
-// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) ListPlugins(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListPluginsRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// PluginOAuthCallback Finish a plugin login
-//
-// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
-//
-// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) PluginOAuthCallback(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewPluginOAuthCallbackRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// ReceivePluginEvent Receive a plugin's MCP event
-//
-// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
-//
-// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) ReceivePluginEvent(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewReceivePluginEventRequest(c.Server, token)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-// GetPluginLogo A plugin's logo
-//
-// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
-//
-// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *Client) GetPluginLogo(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewGetPluginLogoRequest(c.Server, pluginId)
 	if err != nil {
 		return nil, err
 	}
@@ -17573,7 +17192,7 @@ func (c *Client) StopSession(ctx context.Context, id string, reqEditors ...Reque
 
 // ListSessionTools List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Corresponds with GET /v1/agents/sessions/{id}/tools (the `ListSessionTools` operationId).
 func (c *Client) ListSessionTools(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -18012,6 +17631,48 @@ func (c *Client) SyncAgentWithBody(ctx context.Context, contentType string, body
 // Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewSyncAgentRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateUserWithBody Link a user to a phone number
+//
+// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateUserRequestWithBody(c.Server, userId, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpdateUser Link a user to a phone number
+//
+// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+func (c *Client) UpdateUser(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpdateUserRequest(c.Server, userId, body)
 	if err != nil {
 		return nil, err
 	}
@@ -18869,6 +18530,23 @@ func (c *Client) ReceiveTelnyxCall(ctx context.Context, reqEditors ...RequestEdi
 	return c.Client.Do(req)
 }
 
+// ReceiveCallMachine Receive who picked up a placed call
+//
+// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+func (c *Client) ReceiveCallMachine(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReceiveCallMachineRequest(c.Server, token)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // ListPhoneNumbers The numbers the calling customer holds
 //
 // Corresponds with GET /v1/phone/numbers (the `ListPhoneNumbers` operationId).
@@ -18936,6 +18614,8 @@ func (c *Client) SearchPhoneNumbers(ctx context.Context, params *SearchPhoneNumb
 }
 
 // ReleasePhoneNumber Give a number back, which stops its monthly charge
+//
+// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
 //
 // Corresponds with DELETE /v1/phone/numbers/{e164} (the `ReleasePhoneNumber` operationId).
 func (c *Client) ReleasePhoneNumber(ctx context.Context, e164 string, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -22060,230 +21740,6 @@ func NewGetAgentChangesRequest(server string, id string) (*http.Request, error) 
 	return req, nil
 }
 
-// NewListConfigPluginsRequest constructs an http.Request for the ListConfigPlugins method
-func NewListConfigPluginsRequest(server string, id string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/configs/%s/plugins", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewDisconnectPluginRequest constructs an http.Request for the DisconnectPlugin method
-func NewDisconnectPluginRequest(server string, id string, pluginId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/configs/%s/plugins/%s", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewAuthorizePluginRequest calls the generic AuthorizePlugin builder with application/json body
-func NewAuthorizePluginRequest(server string, id string, pluginId string, body AuthorizePluginJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewAuthorizePluginRequestWithBody(server, id, pluginId, "application/json", bodyReader)
-}
-
-// NewAuthorizePluginRequestWithBody constructs an http.Request for the AuthorizePlugin method, with any body, and a specified content type
-func NewAuthorizePluginRequestWithBody(server string, id string, pluginId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/configs/%s/plugins/%s/authorize", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewDeletePluginClientRequest constructs an http.Request for the DeletePluginClient method
-func NewDeletePluginClientRequest(server string, id string, pluginId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/configs/%s/plugins/%s/client", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewSetPluginClientRequest calls the generic SetPluginClient builder with application/json body
-func NewSetPluginClientRequest(server string, id string, pluginId string, body SetPluginClientJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewSetPluginClientRequestWithBody(server, id, pluginId, "application/json", bodyReader)
-}
-
-// NewSetPluginClientRequestWithBody constructs an http.Request for the SetPluginClient method, with any body, and a specified content type
-func NewSetPluginClientRequestWithBody(server string, id string, pluginId string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	var pathParam1 string
-
-	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/configs/%s/plugins/%s/client", pathParam0, pathParam1)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
 // NewListConnectionsRequest constructs an http.Request for the ListConnections method
 func NewListConnectionsRequest(server string, params *ListConnectionsParams) (*http.Request, error) {
 	var err error
@@ -25201,206 +24657,6 @@ func NewUpdateCustomModelRequestWithBody(server string, id string, contentType s
 	return req, nil
 }
 
-// NewListPluginsRequest constructs an http.Request for the ListPlugins method
-func NewListPluginsRequest(server string, params *ListPluginsParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/plugins")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Q != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "q", *params.Q, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewPluginOAuthCallbackRequest constructs an http.Request for the PluginOAuthCallback method
-func NewPluginOAuthCallbackRequest(server string, params *PluginOAuthCallbackParams) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/plugins/callback")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	if params != nil {
-		// queryValues collects non-styled parameters (passthrough, JSON)
-		// that are safe to round-trip through url.Values.Encode().
-		queryValues := queryURL.Query()
-		// rawQueryFragments collects pre-encoded query fragments from
-		// styled parameters, preserving literal commas as delimiters
-		// per the OpenAPI spec (e.g. "color=blue,black,brown").
-		var rawQueryFragments []string
-
-		if params.Code != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "code", *params.Code, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.State != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "state", *params.State, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if params.Error != nil {
-
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "error", *params.Error, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			} else {
-				for _, qp := range strings.Split(queryFrag, "&") {
-					rawQueryFragments = append(rawQueryFragments, qp)
-				}
-			}
-
-		}
-
-		if encoded := queryValues.Encode(); encoded != "" {
-			rawQueryFragments = append(rawQueryFragments, encoded)
-		}
-		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewReceivePluginEventRequest constructs an http.Request for the ReceivePluginEvent method
-func NewReceivePluginEventRequest(server string, token string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/plugins/events/%s", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewGetPluginLogoRequest constructs an http.Request for the GetPluginLogo method
-func NewGetPluginLogoRequest(server string, pluginId string) (*http.Request, error) {
-	var err error
-
-	var pathParam0 string
-
-	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "plugin_id", pluginId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
-	if err != nil {
-		return nil, err
-	}
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/v1/agents/plugins/%s/logo", pathParam0)
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
 // NewListProviderKeysRequest constructs an http.Request for the ListProviderKeys method
 func NewListProviderKeysRequest(server string, params *ListProviderKeysParams) (*http.Request, error) {
 	var err error
@@ -27600,6 +26856,53 @@ func NewSyncAgentRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
+// NewUpdateUserRequest calls the generic UpdateUser builder with application/json body
+func NewUpdateUserRequest(server string, userId string, body UpdateUserJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpdateUserRequestWithBody(server, userId, "application/json", bodyReader)
+}
+
+// NewUpdateUserRequestWithBody constructs an http.Request for the UpdateUser method, with any body, and a specified content type
+func NewUpdateUserRequestWithBody(server string, userId string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/users/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewDeleteUserConnectionsRequest constructs an http.Request for the DeleteUserConnections method
 func NewDeleteUserConnectionsRequest(server string, userId string) (*http.Request, error) {
 	var err error
@@ -28820,6 +28123,40 @@ func NewReceiveTelnyxCallRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/v1/phone/hooks/telnyx")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewReceiveCallMachineRequest constructs an http.Request for the ReceiveCallMachine method
+func NewReceiveCallMachineRequest(server string, token string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "token", token, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/phone/machine/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -33086,89 +32423,6 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /v1/agents/configs/{id}/changes (the `GetAgentChanges` operationId).
 	GetAgentChangesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*GetAgentChangesResponse, error)
 
-	// ListConfigPluginsWithResponse The plugin logins this agent holds
-	//
-	// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error)
-
-	// DisconnectPluginWithResponse Drop a plugin login
-	//
-	// Deprecated: use deleteConnection.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error)
-
-	// AuthorizePluginWithBodyWithResponse Start a plugin login
-	//
-	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
-
-	// AuthorizePluginWithResponse Start a plugin login
-	//
-	// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error)
-
-	// DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
-	//
-	// Deprecated: use deleteConnectorOAuthClient.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error)
-
-	// SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
-	//
-	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
-
-	// SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
-	//
-	// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-	//
-	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error)
-
 	// ListConnectionsWithResponse List connections
 	//
 	// Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
@@ -33665,7 +32919,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateGuestUserWithBodyWithResponse Mint a guest so somebody can talk to an agent before signing up
 	//
-	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -33675,7 +32929,7 @@ type ClientWithResponsesInterface interface {
 
 	// CreateGuestUserWithResponse Mint a guest so somebody can talk to an agent before signing up
 	//
-	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+	// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 	// Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -33933,50 +33187,6 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with PUT /v1/agents/models/{id} (the `UpdateCustomModel` operationId).
 	UpdateCustomModelWithResponse(ctx context.Context, id string, body UpdateCustomModelJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateCustomModelResponse, error)
-
-	// ListPluginsWithResponse The hosted MCP servers an agent may attach
-	//
-	// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ListPluginsWithResponse(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*ListPluginsResponse, error)
-
-	// PluginOAuthCallbackWithResponse Finish a plugin login
-	//
-	// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error)
-
-	// ReceivePluginEventWithResponse Receive a plugin's MCP event
-	//
-	// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error)
-
-	// GetPluginLogoWithResponse A plugin's logo
-	//
-	// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
-	//
-	// Returns a wrapper object for the known response body format(s).
-	//
-	// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
-	//
-	// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error)
 
 	// ListProviderKeysWithResponse The keys the calling customer keeps for their own accounts at the vendors
 	//
@@ -34443,7 +33653,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListSessionToolsWithResponse List the tools a session's model is offered
 	//
-	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+	// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -34675,6 +33885,28 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
+
+	// UpdateUserWithBodyWithResponse Link a user to a phone number
+	//
+	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+	UpdateUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error)
+
+	// UpdateUserWithResponse Link a user to a phone number
+	//
+	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+	UpdateUserWithResponse(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error)
 
 	// DeleteUserConnectionsWithResponse Delete every connection of one user
 	//
@@ -35117,6 +34349,15 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/phone/hooks/telnyx (the `ReceiveTelnyxCall` operationId).
 	ReceiveTelnyxCallWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ReceiveTelnyxCallResponse, error)
 
+	// ReceiveCallMachineWithResponse Receive who picked up a placed call
+	//
+	// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+	ReceiveCallMachineWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallMachineResponse, error)
+
 	// ListPhoneNumbersWithResponse The numbers the calling customer holds
 	//
 	// Returns a wrapper object for the known response body format(s).
@@ -35148,6 +34389,8 @@ type ClientWithResponsesInterface interface {
 	SearchPhoneNumbersWithResponse(ctx context.Context, params *SearchPhoneNumbersParams, reqEditors ...RequestEditorFn) (*SearchPhoneNumbersResponse, error)
 
 	// ReleasePhoneNumberWithResponse Give a number back, which stops its monthly charge
+	//
+	// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -39320,532 +38563,6 @@ func (r GetAgentChangesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GetAgentChangesResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// ListConfigPluginsResponse200Headers the declared response headers of an HTTP 200 response for ListConfigPlugins
-type ListConfigPluginsResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// ListConfigPluginsResponse402Headers the declared response headers of an HTTP 402 response for ListConfigPlugins
-type ListConfigPluginsResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type ListConfigPluginsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]PluginConnection
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *ListConfigPluginsResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *ListConfigPluginsResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON200() *[]PluginConnection {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ListConfigPluginsResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListConfigPluginsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListConfigPluginsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListConfigPluginsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListConfigPluginsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// DisconnectPluginResponse204Headers the declared response headers of an HTTP 204 response for DisconnectPlugin
-type DisconnectPluginResponse204Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// DisconnectPluginResponse402Headers the declared response headers of an HTTP 402 response for DisconnectPlugin
-type DisconnectPluginResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type DisconnectPluginResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers204 the parsed response headers for an HTTP 204 response
-	Headers204 *DisconnectPluginResponse204Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *DisconnectPluginResponse402Headers
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r DisconnectPluginResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r DisconnectPluginResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r DisconnectPluginResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r DisconnectPluginResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r DisconnectPluginResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r DisconnectPluginResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r DisconnectPluginResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r DisconnectPluginResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DisconnectPluginResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DisconnectPluginResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DisconnectPluginResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// AuthorizePluginResponse200Headers the declared response headers of an HTTP 200 response for AuthorizePlugin
-type AuthorizePluginResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// AuthorizePluginResponse402Headers the declared response headers of an HTTP 402 response for AuthorizePlugin
-type AuthorizePluginResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type AuthorizePluginResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PluginAuthorization
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *AuthorizePluginResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *AuthorizePluginResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r AuthorizePluginResponse) GetJSON200() *PluginAuthorization {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r AuthorizePluginResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r AuthorizePluginResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r AuthorizePluginResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r AuthorizePluginResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r AuthorizePluginResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r AuthorizePluginResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r AuthorizePluginResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r AuthorizePluginResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r AuthorizePluginResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r AuthorizePluginResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r AuthorizePluginResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// DeletePluginClientResponse204Headers the declared response headers of an HTTP 204 response for DeletePluginClient
-type DeletePluginClientResponse204Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// DeletePluginClientResponse402Headers the declared response headers of an HTTP 402 response for DeletePluginClient
-type DeletePluginClientResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type DeletePluginClientResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers204 the parsed response headers for an HTTP 204 response
-	Headers204 *DeletePluginClientResponse204Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *DeletePluginClientResponse402Headers
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r DeletePluginClientResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r DeletePluginClientResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r DeletePluginClientResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r DeletePluginClientResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r DeletePluginClientResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r DeletePluginClientResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r DeletePluginClientResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r DeletePluginClientResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r DeletePluginClientResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r DeletePluginClientResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r DeletePluginClientResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-// SetPluginClientResponse200Headers the declared response headers of an HTTP 200 response for SetPluginClient
-type SetPluginClientResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// SetPluginClientResponse402Headers the declared response headers of an HTTP 402 response for SetPluginClient
-type SetPluginClientResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type SetPluginClientResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *PluginClient
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *SetPluginClientResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *SetPluginClientResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r SetPluginClientResponse) GetJSON200() *PluginClient {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r SetPluginClientResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r SetPluginClientResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r SetPluginClientResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r SetPluginClientResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r SetPluginClientResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r SetPluginClientResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r SetPluginClientResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r SetPluginClientResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r SetPluginClientResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r SetPluginClientResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r SetPluginClientResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -45890,237 +44607,6 @@ func (r UpdateCustomModelResponse) ContentType() string {
 	return ""
 }
 
-// ListPluginsResponse200Headers the declared response headers of an HTTP 200 response for ListPlugins
-type ListPluginsResponse200Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-	XStreamCostEstimated  *string
-	XStreamCostMicros     *int64
-}
-
-// ListPluginsResponse402Headers the declared response headers of an HTTP 402 response for ListPlugins
-type ListPluginsResponse402Headers struct {
-	XStreamBalanceMicros  *int64
-	XStreamBalanceWarning *string
-}
-
-type ListPluginsResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *[]Plugin
-	// JSON400 the response for an HTTP 400 `application/json` response
-	JSON400 *BadRequest
-	// JSON401 the response for an HTTP 401 `application/json` response
-	JSON401 *Unauthorized
-	// JSON402 the response for an HTTP 402 `application/json` response
-	JSON402 *PaymentRequired
-	// JSON403 the response for an HTTP 403 `application/json` response
-	JSON403 *Forbidden
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-	// JSON503 the response for an HTTP 503 `application/json` response
-	JSON503 *Unavailable
-	// Headers200 the parsed response headers for an HTTP 200 response
-	Headers200 *ListPluginsResponse200Headers
-	// Headers402 the parsed response headers for an HTTP 402 response
-	Headers402 *ListPluginsResponse402Headers
-}
-
-// GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListPluginsResponse) GetJSON200() *[]Plugin {
-	return r.JSON200
-}
-
-// GetJSON400 returns the response for an HTTP 400 `application/json` response
-func (r ListPluginsResponse) GetJSON400() *BadRequest {
-	return r.JSON400
-}
-
-// GetJSON401 returns the response for an HTTP 401 `application/json` response
-func (r ListPluginsResponse) GetJSON401() *Unauthorized {
-	return r.JSON401
-}
-
-// GetJSON402 returns the response for an HTTP 402 `application/json` response
-func (r ListPluginsResponse) GetJSON402() *PaymentRequired {
-	return r.JSON402
-}
-
-// GetJSON403 returns the response for an HTTP 403 `application/json` response
-func (r ListPluginsResponse) GetJSON403() *Forbidden {
-	return r.JSON403
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ListPluginsResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetJSON503 returns the response for an HTTP 503 `application/json` response
-func (r ListPluginsResponse) GetJSON503() *Unavailable {
-	return r.JSON503
-}
-
-// GetBody returns the raw response body bytes
-func (r ListPluginsResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ListPluginsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListPluginsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ListPluginsResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type PluginOAuthCallbackResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r PluginOAuthCallbackResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r PluginOAuthCallbackResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r PluginOAuthCallbackResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r PluginOAuthCallbackResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r PluginOAuthCallbackResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type ReceivePluginEventResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r ReceivePluginEventResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r ReceivePluginEventResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r ReceivePluginEventResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ReceivePluginEventResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r ReceivePluginEventResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
-type GetPluginLogoResponse struct {
-	Body         []byte
-	HTTPResponse *http.Response
-	// JSON404 the response for an HTTP 404 `application/json` response
-	JSON404 *NotFound
-	// JSON500 the response for an HTTP 500 `application/json` response
-	JSON500 *InternalError
-}
-
-// GetJSON404 returns the response for an HTTP 404 `application/json` response
-func (r GetPluginLogoResponse) GetJSON404() *NotFound {
-	return r.JSON404
-}
-
-// GetJSON500 returns the response for an HTTP 500 `application/json` response
-func (r GetPluginLogoResponse) GetJSON500() *InternalError {
-	return r.JSON500
-}
-
-// GetBody returns the raw response body bytes
-func (r GetPluginLogoResponse) GetBody() []byte {
-	return r.Body
-}
-
-// Status returns HTTPResponse.Status
-func (r GetPluginLogoResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r GetPluginLogoResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
-func (r GetPluginLogoResponse) ContentType() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Header.Get("Content-Type")
-	}
-	return ""
-}
-
 // ListProviderKeysResponse200Headers the declared response headers of an HTTP 200 response for ListProviderKeys
 type ListProviderKeysResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -51346,6 +49832,114 @@ func (r SyncAgentResponse) ContentType() string {
 	return ""
 }
 
+// UpdateUserResponse200Headers the declared response headers of an HTTP 200 response for UpdateUser
+type UpdateUserResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// UpdateUserResponse402Headers the declared response headers of an HTTP 402 response for UpdateUser
+type UpdateUserResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type UpdateUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentUser
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *UpdateUserResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *UpdateUserResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpdateUserResponse) GetJSON200() *AgentUser {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UpdateUserResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpdateUserResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UpdateUserResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpdateUserResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpdateUserResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpdateUserResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UpdateUserResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UpdateUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpdateUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpdateUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpdateUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // DeleteUserConnectionsResponse204Headers the declared response headers of an HTTP 204 response for DeleteUserConnections
 type DeleteUserConnectionsResponse204Headers struct {
 	XStreamBalanceMicros  *int64
@@ -54215,6 +52809,47 @@ func (r ReceiveTelnyxCallResponse) ContentType() string {
 	return ""
 }
 
+type ReceiveCallMachineResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReceiveCallMachineResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r ReceiveCallMachineResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReceiveCallMachineResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReceiveCallMachineResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReceiveCallMachineResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // ListPhoneNumbersResponse200Headers the declared response headers of an HTTP 200 response for ListPhoneNumbers
 type ListPhoneNumbersResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -54559,6 +53194,8 @@ type ReleasePhoneNumberResponse struct {
 	JSON403 *Forbidden
 	// JSON404 the response for an HTTP 404 `application/json` response
 	JSON404 *NotFound
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -54592,6 +53229,11 @@ func (r ReleasePhoneNumberResponse) GetJSON403() *Forbidden {
 // GetJSON404 returns the response for an HTTP 404 `application/json` response
 func (r ReleasePhoneNumberResponse) GetJSON404() *NotFound {
 	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ReleasePhoneNumberResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -62339,129 +60981,6 @@ func (c *ClientWithResponses) GetAgentChangesWithResponse(ctx context.Context, i
 	return ParseGetAgentChangesResponse(rsp)
 }
 
-// ListConfigPluginsWithResponse The plugin logins this agent holds
-//
-// Deprecated: use listConnections for the logins, and the config's connectors for what it binds. The app's own logins, then every plugin the config names that has none yet, as not_connected, then every MCP server it names by URL that needs a login and has no user, which the app logs into the same way. An end user's logins, made for a plugin or a server with user, are never listed.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/agents/configs/{id}/plugins (the `ListConfigPlugins` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) ListConfigPluginsWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListConfigPluginsResponse, error) {
-	rsp, err := c.ListConfigPlugins(ctx, id, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListConfigPluginsResponse(rsp)
-}
-
-// DisconnectPluginWithResponse Drop a plugin login
-//
-// Deprecated: use deleteConnection.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id} (the `DisconnectPlugin` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) DisconnectPluginWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DisconnectPluginResponse, error) {
-	rsp, err := c.DisconnectPlugin(ctx, id, pluginId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDisconnectPluginResponse(rsp)
-}
-
-// AuthorizePluginWithBodyWithResponse Start a plugin login
-//
-// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) AuthorizePluginWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
-	rsp, err := c.AuthorizePluginWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizePluginResponse(rsp)
-}
-
-// AuthorizePluginWithResponse Start a plugin login
-//
-// Deprecated: use createConnection, which returns the consent URL of a connector login; an MCP server named by URL becomes a custom connector with createConnector. Discovers the MCP server's OAuth endpoints and returns the URL the browser should open. Shopify needs an instance url, because it has no single global host.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/agents/configs/{id}/plugins/{plugin_id}/authorize (the `AuthorizePlugin` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) AuthorizePluginWithResponse(ctx context.Context, id string, pluginId string, body AuthorizePluginJSONRequestBody, reqEditors ...RequestEditorFn) (*AuthorizePluginResponse, error) {
-	rsp, err := c.AuthorizePlugin(ctx, id, pluginId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseAuthorizePluginResponse(rsp)
-}
-
-// DeletePluginClientWithResponse Drop the OAuth client an agent logs a plugin in with
-//
-// Deprecated: use deleteConnectorOAuthClient.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with DELETE /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `DeletePluginClient` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) DeletePluginClientWithResponse(ctx context.Context, id string, pluginId string, reqEditors ...RequestEditorFn) (*DeletePluginClientResponse, error) {
-	rsp, err := c.DeletePluginClient(ctx, id, pluginId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseDeletePluginClientResponse(rsp)
-}
-
-// SetPluginClientWithBodyWithResponse Set the OAuth client an agent logs a plugin in with
-//
-// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) SetPluginClientWithBodyWithResponse(ctx context.Context, id string, pluginId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
-	rsp, err := c.SetPluginClientWithBody(ctx, id, pluginId, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetPluginClientResponse(rsp)
-}
-
-// SetPluginClientWithResponse Set the OAuth client an agent logs a plugin in with
-//
-// Deprecated: use setConnectorOAuthClient, which sets the app's own client once per connector. The OAuth app the app registered with the provider, such as a Google Cloud client, used for this config's logins to the plugin: the app's own and every end user's. A plugin with client_required has no other way in. The secret is sealed and never returned. Replaces the client set before; a login made with that one keeps working until it has to be renewed.
-// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
-//
-// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
-//
-// Corresponds with PUT /v1/agents/configs/{id}/plugins/{plugin_id}/client (the `SetPluginClient` operationId).
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) SetPluginClientWithResponse(ctx context.Context, id string, pluginId string, body SetPluginClientJSONRequestBody, reqEditors ...RequestEditorFn) (*SetPluginClientResponse, error) {
-	rsp, err := c.SetPluginClient(ctx, id, pluginId, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseSetPluginClientResponse(rsp)
-}
-
 // ListConnectionsWithResponse List connections
 //
 // Connections, newest first: the app's own, those of the user the backend acts for, or every user's when it acts for none.
@@ -63228,7 +61747,7 @@ func (c *ClientWithResponses) GetConversationMessagesWithResponse(ctx context.Co
 
 // CreateGuestUserWithBodyWithResponse Mint a guest so somebody can talk to an agent before signing up
 //
-// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 // Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -63244,7 +61763,7 @@ func (c *ClientWithResponses) CreateGuestUserWithBodyWithResponse(ctx context.Co
 
 // CreateGuestUserWithResponse Mint a guest so somebody can talk to an agent before signing up
 //
-// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id.
+// Returns a user id and a Stream token with role guest, which is what the chat and video SDKs connect with, and a refresh_secret to come back with once it has expired. From the router's point of view a guest is an ordinary end user whose name is worth less: their sessions are their own and nobody else's, but a guest id is not evidence of who anybody is, so a guest cannot be handed another guest's conversations by naming their id. A token for an existing guest goes only to the app's backend, to the guest's own still-valid token, or to the refresh_secret the guest was last handed; any other caller naming an id is minted a new guest.
 // Open to a page on purpose. A guest that a backend had to mint is a guest every anonymous visitor costs a round trip through the customer's own servers, which is exactly the integration this is meant to remove. An app that has turned guests off refuses it.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -63663,74 +62182,6 @@ func (c *ClientWithResponses) UpdateCustomModelWithResponse(ctx context.Context,
 		return nil, err
 	}
 	return ParseUpdateCustomModelResponse(rsp)
-}
-
-// ListPluginsWithResponse The hosted MCP servers an agent may attach
-//
-// Deprecated: use listConnectors, whose built-in connectors replace the plugin catalog. A built-in catalog, not the customer's own rows. q filters by name, category or description. Connecting one is a login on a config, not a change to this list.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/agents/plugins (the `ListPlugins` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) ListPluginsWithResponse(ctx context.Context, params *ListPluginsParams, reqEditors ...RequestEditorFn) (*ListPluginsResponse, error) {
-	rsp, err := c.ListPlugins(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListPluginsResponse(rsp)
-}
-
-// PluginOAuthCallbackWithResponse Finish a plugin login
-//
-// Deprecated: a connector login finishes at finishConnectorConsent. The provider redirects here with a code. The path is unauthenticated because the browser arrives from the identity provider, and the state is the secret.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/agents/plugins/callback (the `PluginOAuthCallback` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) PluginOAuthCallbackWithResponse(ctx context.Context, params *PluginOAuthCallbackParams, reqEditors ...RequestEditorFn) (*PluginOAuthCallbackResponse, error) {
-	rsp, err := c.PluginOAuthCallback(ctx, params, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParsePluginOAuthCallbackResponse(rsp)
-}
-
-// ReceivePluginEventWithResponse Receive a plugin's MCP event
-//
-// Deprecated: a connector binding's events are delivered to receiveConnectionEvent. Where a plugin's MCP server delivers the events an agent subscribed to, signed with Standard Webhooks. The path is unauthenticated because the server is not a customer: the token names the subscription and its secret signs each delivery. A verification is answered with its challenge, and an event opens a text conversation.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with POST /v1/agents/plugins/events/{token} (the `ReceivePluginEvent` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) ReceivePluginEventWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceivePluginEventResponse, error) {
-	rsp, err := c.ReceivePluginEvent(ctx, token, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseReceivePluginEventResponse(rsp)
-}
-
-// GetPluginLogoWithResponse A plugin's logo
-//
-// Deprecated with the plugin catalog. Connectors have no logo route. The image a card uses to show which plugin it is asking about, as an SVG. The path is unauthenticated because what draws it is an `<img>` in a chat client or a browser, which has no credential of this API's to send, and because the catalog is the same built-in list for every customer, so there is nothing of anybody's here.
-//
-// Returns a wrapper object for the known response body format(s).
-//
-// Corresponds with GET /v1/agents/plugins/{plugin_id}/logo (the `GetPluginLogo` operationId).
-//
-// Deprecated: this operation has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-func (c *ClientWithResponses) GetPluginLogoWithResponse(ctx context.Context, pluginId string, reqEditors ...RequestEditorFn) (*GetPluginLogoResponse, error) {
-	rsp, err := c.GetPluginLogo(ctx, pluginId, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseGetPluginLogoResponse(rsp)
 }
 
 // ListProviderKeysWithResponse The keys the calling customer keeps for their own accounts at the vendors
@@ -64462,7 +62913,7 @@ func (c *ClientWithResponses) StopSessionWithResponse(ctx context.Context, id st
 
 // ListSessionToolsWithResponse List the tools a session's model is offered
 //
-// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its plugins' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
+// The tools the conversation model is offered on every request, with the description and schema each is sent with: the agent's own, its connectors' and the built-in ones this session can carry out. A session the router no longer holds answers what it was offered when it last opened; one that ended before that was kept, or kept nothing, is a 404.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -64837,6 +63288,40 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 		return nil, err
 	}
 	return ParseSyncAgentResponse(rsp)
+}
+
+// UpdateUserWithBodyWithResponse Link a user to a phone number
+//
+// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context, userId string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error) {
+	rsp, err := c.UpdateUserWithBody(ctx, userId, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateUserResponse(rsp)
+}
+
+// UpdateUserWithResponse Link a user to a phone number
+//
+// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /v1/agents/users/{user_id} (the `UpdateUser` operationId).
+func (c *ClientWithResponses) UpdateUserWithResponse(ctx context.Context, userId string, body UpdateUserJSONRequestBody, reqEditors ...RequestEditorFn) (*UpdateUserResponse, error) {
+	rsp, err := c.UpdateUser(ctx, userId, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpdateUserResponse(rsp)
 }
 
 // DeleteUserConnectionsWithResponse Delete every connection of one user
@@ -65544,6 +64029,21 @@ func (c *ClientWithResponses) ReceiveTelnyxCallWithResponse(ctx context.Context,
 	return ParseReceiveTelnyxCallResponse(rsp)
 }
 
+// ReceiveCallMachineWithResponse Receive who picked up a placed call
+//
+// Where the vendor that placed a call posts whether a person or an answering machine picked up. Unauthenticated because the vendor is not a customer: the token made when the call was placed is the only proof, and it names that one call.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/phone/machine/{token} (the `ReceiveCallMachine` operationId).
+func (c *ClientWithResponses) ReceiveCallMachineWithResponse(ctx context.Context, token string, reqEditors ...RequestEditorFn) (*ReceiveCallMachineResponse, error) {
+	rsp, err := c.ReceiveCallMachine(ctx, token, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReceiveCallMachineResponse(rsp)
+}
+
 // ListPhoneNumbersWithResponse The numbers the calling customer holds
 //
 // Returns a wrapper object for the known response body format(s).
@@ -65599,6 +64099,8 @@ func (c *ClientWithResponses) SearchPhoneNumbersWithResponse(ctx context.Context
 }
 
 // ReleasePhoneNumberWithResponse Give a number back, which stops its monthly charge
+//
+// A vendor still setting up a number bought in the last minute may refuse to give it back: that is a 409 `phone_number_settling`, and the same release goes through once it has. Any other vendor failure is a 503 `phone_vendor_failed`.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -70791,628 +69293,6 @@ func ParseGetAgentChangesResponse(rsp *http.Response) (*GetAgentChangesResponse,
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GetAgentChangesResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseListConfigPluginsResponse parses an HTTP response from a ListConfigPluginsWithResponse call
-func ParseListConfigPluginsResponse(rsp *http.Response) (*ListConfigPluginsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListConfigPluginsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []PluginConnection
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers ListConfigPluginsResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers ListConfigPluginsResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseDisconnectPluginResponse parses an HTTP response from a DisconnectPluginWithResponse call
-func ParseDisconnectPluginResponse(rsp *http.Response) (*DisconnectPluginResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DisconnectPluginResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		var headers DisconnectPluginResponse204Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers204 = &headers
-	case rsp.StatusCode == 402:
-		var headers DisconnectPluginResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseAuthorizePluginResponse parses an HTTP response from a AuthorizePluginWithResponse call
-func ParseAuthorizePluginResponse(rsp *http.Response) (*AuthorizePluginResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &AuthorizePluginResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PluginAuthorization
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers AuthorizePluginResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers AuthorizePluginResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseDeletePluginClientResponse parses an HTTP response from a DeletePluginClientWithResponse call
-func ParseDeletePluginClientResponse(rsp *http.Response) (*DeletePluginClientResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &DeletePluginClientResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 204:
-		var headers DeletePluginClientResponse204Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers204 = &headers
-	case rsp.StatusCode == 402:
-		var headers DeletePluginClientResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParseSetPluginClientResponse parses an HTTP response from a SetPluginClientWithResponse call
-func ParseSetPluginClientResponse(rsp *http.Response) (*SetPluginClientResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &SetPluginClientResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest PluginClient
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers SetPluginClientResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers SetPluginClientResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -78494,228 +76374,6 @@ func ParseUpdateCustomModelResponse(rsp *http.Response) (*UpdateCustomModelRespo
 	return response, nil
 }
 
-// ParseListPluginsResponse parses an HTTP response from a ListPluginsWithResponse call
-func ParseListPluginsResponse(rsp *http.Response) (*ListPluginsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListPluginsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest []Plugin
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
-		var dest BadRequest
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON400 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
-		var dest Unauthorized
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON401 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
-		var dest PaymentRequired
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON402 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
-		var dest Forbidden
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON403 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
-		var dest Unavailable
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON503 = &dest
-
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		var headers ListPluginsResponse200Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostEstimated = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamCostMicros = &value
-		}
-		response.Headers200 = &headers
-	case rsp.StatusCode == 402:
-		var headers ListPluginsResponse402Headers
-		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
-			var value int64
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceMicros = &value
-		}
-		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
-			var value string
-			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
-				return nil, err
-			}
-			headers.XStreamBalanceWarning = &value
-		}
-		response.Headers402 = &headers
-	}
-
-	return response, nil
-}
-
-// ParsePluginOAuthCallbackResponse parses an HTTP response from a PluginOAuthCallbackWithResponse call
-func ParsePluginOAuthCallbackResponse(rsp *http.Response) (*PluginOAuthCallbackResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &PluginOAuthCallbackResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 302:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseReceivePluginEventResponse parses an HTTP response from a ReceivePluginEventWithResponse call
-func ParseReceivePluginEventResponse(rsp *http.Response) (*ReceivePluginEventResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ReceivePluginEventResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case rsp.StatusCode == 200:
-		break // No content-type
-
-	case rsp.StatusCode == 202:
-		break // No content-type
-
-	case rsp.StatusCode == 401:
-		break // No content-type
-
-	case rsp.StatusCode == 410:
-		break // No content-type
-
-	case rsp.StatusCode == 413:
-		break // No content-type
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseGetPluginLogoResponse parses an HTTP response from a GetPluginLogoWithResponse call
-func ParseGetPluginLogoResponse(rsp *http.Response) (*GetPluginLogoResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &GetPluginLogoResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
-		var dest NotFound
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON404 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
-		var dest InternalError
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON500 = &dest
-
-	}
-
-	return response, nil
-}
-
 // ParseListProviderKeysResponse parses an HTTP response from a ListProviderKeysWithResponse call
 func ParseListProviderKeysResponse(rsp *http.Response) (*ListProviderKeysResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -84877,6 +82535,132 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 	return response, nil
 }
 
+// ParseUpdateUserResponse parses an HTTP response from a UpdateUserWithResponse call
+func ParseUpdateUserResponse(rsp *http.Response) (*UpdateUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpdateUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentUser
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers UpdateUserResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers UpdateUserResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseDeleteUserConnectionsResponse parses an HTTP response from a DeleteUserConnectionsWithResponse call
 func ParseDeleteUserConnectionsResponse(rsp *http.Response) (*DeleteUserConnectionsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -88190,6 +85974,44 @@ func ParseReceiveTelnyxCallResponse(rsp *http.Response) (*ReceiveTelnyxCallRespo
 	return response, nil
 }
 
+// ParseReceiveCallMachineResponse parses an HTTP response from a ReceiveCallMachineWithResponse call
+func ParseReceiveCallMachineResponse(rsp *http.Response) (*ReceiveCallMachineResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReceiveCallMachineResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case rsp.StatusCode == 204:
+		break // No content-type
+
+	case rsp.StatusCode == 400:
+		break // No content-type
+
+	case rsp.StatusCode == 404:
+		break // No content-type
+
+	case rsp.StatusCode == 413:
+		break // No content-type
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseListPhoneNumbersResponse parses an HTTP response from a ListPhoneNumbersWithResponse call
 func ParseListPhoneNumbersResponse(rsp *http.Response) (*ListPhoneNumbersResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -88612,6 +86434,13 @@ func ParseReleasePhoneNumberResponse(rsp *http.Response) (*ReleasePhoneNumberRes
 			return nil, err
 		}
 		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError

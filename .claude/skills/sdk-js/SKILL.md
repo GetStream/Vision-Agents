@@ -142,8 +142,27 @@ would hang on a session nobody is watching.
 - A tool that throws is answered with `{ error }`, never dropped. The model can only say
   something useful about a tool that did not work if it is told that it did not work.
 - `tool_cancel` aborts that call's `AbortController`; ending the session aborts all of them.
-- `events()` buffers 256 and then drops the oldest rather than stalling the socket. Dropping an
-  event never drops a turn, because turns are answered by `watch`.
+- `events()` gives each loop its own queue, from when it started reading; the first loop also
+  gets what arrived while nobody read (256, oldest dropped). A loop that falls 256 behind is
+  ended rather than left with a hole, as Swift's are. Neither ever drops a turn, because turns
+  are answered by `watch`.
+
+## Stores fed beside `events()`
+
+What a page shows is fed from the frames `watch` reads, never from `events()`: `session.state`
+(what the agent is doing), `session.speech` (how much of a reply has been heard) and
+`session.conversation` (turns, `failure` with `failureContext` and `failureAt`, cleared when the
+agent next hears, answers or speaks, the `approvals` waiting, `connected` and `socketError`).
+Each has bound `get` and `subscribe` for `useSyncExternalStore`, and a snapshot that stays the
+same object until it changes. Extend one of these rather than adding a store or asking a page to
+loop over `events()`.
+
+- `socketError` comes from `Socket.closedBy`: an error event, or a close other than 1000 or 1005,
+  never a close this side asked for. A browser reports a drop as an error and then the close,
+  and the close's code wins.
+- A tool returns words, or a `ToolOutput` with `images`, which goes on the wire as parts.
+- Session options keep the wire's snake_case names, with camelCase only where the phones' name
+  differs from the wire's and a port would reach for it: `modelOverwrites`, `returnUrl`.
 
 ## nil means omit
 

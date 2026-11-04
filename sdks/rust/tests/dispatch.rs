@@ -9,7 +9,8 @@ use serde_json::json;
 use support::{Server, claims, response, session};
 use tokio::sync::mpsc;
 use vision_agents::{
-    Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundMessage, ToolCall, types,
+    Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundImage, InboundMessage, ToolCall,
+    types,
 };
 
 fn stream_support(client: &Client) -> AgentRef {
@@ -404,6 +405,140 @@ async fn a_message_left_to_dispatch_is_answered_on_its_session_for_whoever_wrote
     assert_eq!(sent.header("x-stream-user-id"), "ada");
     assert_eq!(sent.header("stream-auth-type"), "server");
     assert_eq!(claims(sent.header("authorization"))["server"], true);
+
+    dispatch.stop();
+    running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn a_message_carries_the_photos_its_frame_names_by_url() {
+    let server = Server::start().await;
+    let dispatch = Dispatch::new(server.client());
+    let (handled, mut messages) = mpsc::unbounded_channel::<InboundMessage>();
+    dispatch.wait_for_message(move |message| {
+        let handled = handled.clone();
+        async move {
+            handled.send(message).unwrap();
+            Ok(())
+        }
+    });
+
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    let photo = |url: &str, mime_type: &str| InboundImage {
+        url: url.into(),
+        mime_type: mime_type.into(),
+    };
+    let cases = [
+        (json!(null), vec![]),
+        (json!([]), vec![]),
+        (json!({}), vec![]),
+        (json!("https://example.com/cat.png"), vec![]),
+        (
+            json!([
+                {"url": "https://example.com/cat.png", "mime_type": "image/png"},
+                {"url": "https://example.com/dog.jpg"},
+                {"url": "https://example.com/owl.webp", "mime_type": 7},
+                "https://example.com/bare.png",
+                null,
+                {},
+                {"url": ""},
+                {"url": 5, "mime_type": "image/png"},
+                {"mime_type": "image/png"},
+            ]),
+            vec![
+                photo("https://example.com/cat.png", "image/png"),
+                photo("https://example.com/dog.jpg", ""),
+                photo("https://example.com/owl.webp", ""),
+            ],
+        ),
+    ];
+    socket
+        .send(json!({"type": "message", "work_id": "absent", "channel_id": "c1", "text": "hi"}))
+        .await;
+    socket.expect("done").await;
+    assert_eq!(messages.recv().await.unwrap().images, vec![]);
+    for (images, expected) in cases {
+        socket
+            .send(json!({"type": "message", "work_id": "w", "channel_id": "c1", "text": "hi", "images": images}))
+            .await;
+        socket.expect("done").await;
+        assert_eq!(
+            messages.recv().await.unwrap().images,
+            expected,
+            "images: {images}"
+        );
+    }
+
+    dispatch.stop();
+    running.await.unwrap().unwrap();
+}
+
+#[tokio::test]
+async fn an_answer_shows_the_model_the_photos_on_the_request_the_message_was_sent_as() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/s1/responses",
+        201,
+        response("r1", "s1"),
+    );
+    let dispatch = Dispatch::new(server.backend());
+    {
+        let worker = dispatch.clone();
+        dispatch.wait_for_message(move |message| {
+            let worker = worker.clone();
+            async move {
+                worker.answer(&message).await?;
+                Ok(())
+            }
+        });
+    }
+
+    let running = {
+        let dispatch = dispatch.clone();
+        tokio::spawn(async move { dispatch.run().await })
+    };
+    let mut socket = server.accept().await;
+    socket
+        .send(json!({"type": "message", "work_id": "work-1", "session_id": "s1", "request_id": "req-1",
+                     "agent_id": "support", "user_id": "ada", "text": "is this broken?",
+                     "images": [{"url": "https://example.com/screen.png", "mime_type": "image/png"},
+                                {"url": "https://example.com/back.jpg"}]}))
+        .await;
+    assert_eq!(
+        socket.expect("done").await,
+        json!({"type": "done", "work_id": "work-1"})
+    );
+    socket
+        .send(
+            json!({"type": "message", "work_id": "work-2", "session_id": "s1",
+                     "agent_id": "support", "user_id": "ada", "text": "and this?",
+                     "images": [{"url": "https://example.com/side.png"}]}),
+        )
+        .await;
+    assert_eq!(
+        socket.expect("done").await,
+        json!({"type": "done", "work_id": "work-2"})
+    );
+
+    let sent: Vec<_> = server
+        .requests(Method::POST, "/v1/agents/sessions/s1/responses")
+        .into_iter()
+        .map(|seen| seen.body)
+        .collect();
+    assert_eq!(
+        sent,
+        vec![
+            json!({"text": "is this broken?", "request_id": "req-1",
+                   "images": [{"url": "https://example.com/screen.png"},
+                              {"url": "https://example.com/back.jpg"}]}),
+            json!({"text": "and this?", "images": [{"url": "https://example.com/side.png"}]}),
+        ]
+    );
 
     dispatch.stop();
     running.await.unwrap().unwrap();

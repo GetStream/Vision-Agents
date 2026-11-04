@@ -45,6 +45,10 @@ import (
 // with.
 const streamKey = "deploy-key"
 
+// suiteDeploymentApp is the id the suite's deployment app is configured with: the app a
+// deployment hook names, and so the one its Stream users' cards are keyed by.
+const suiteDeploymentApp = 4
+
 // cardsNote starts the system message the cards are handed behind.
 const cardsNote = "The person's earlier episodes with this agent on other channels follow"
 
@@ -88,7 +92,7 @@ func (s *EpisodeReadingSuite) SetupSuite() {
 func (s *EpisodeReadingSuite) SetupTest() {
 	s.chat = chattest.NewServer(s.T())
 	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
-		APIKey: streamKey, Secret: "deploy-secret", BaseURL: s.chat.URL,
+		APIKey: streamKey, Secret: "deploy-secret", BaseURL: s.chat.URL, App: suiteDeploymentApp,
 	}), streamapp.ClientsOptions{})
 	var err error
 	s.cards, err = omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.apps})
@@ -731,10 +735,12 @@ func (s *EpisodeReadingSuite) TestANativeSessionReadsNoCards() {
 
 	native := spec
 	native.STSTarget = "sts-native"
-	s.Nil(s.manager.cards.read(s.ctx, native, bound))
+	cards, _ := s.manager.cards.read(s.ctx, native, bound)
+	s.Nil(cards)
 	s.Empty(namingAny(s.requests()[asked:], "/video/call/agent/"+call), "the call is not even read")
 
-	s.NotEmpty(s.manager.cards.read(s.ctx, spec, bound), "the same call cascaded reads the SMS card")
+	cards, _ = s.manager.cards.read(s.ctx, spec, bound)
+	s.NotEmpty(cards, "the same call cascaded reads the SMS card")
 }
 
 // With the cards on, a call whose Stream does not answer who is on it joins within the read's

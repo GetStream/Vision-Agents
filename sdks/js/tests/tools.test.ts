@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { describe, it } from "node:test";
 
-import { CallNotHeldError, ConfigurationError, ToolCall, Tools, render } from "../src/index.js";
+import { CallNotHeldError, ConfigurationError, ToolCall, ToolOutput, Tools, render } from "../src/index.js";
 
 describe("Tools", () => {
   const nothing = new AbortController().signal;
@@ -146,6 +146,13 @@ describe("render", () => {
     assert.equal(render({ sky: "clear" }), '{"sky":"clear"}');
     assert.equal(render([1, 2]), "[1,2]");
     assert.equal(render(3), "3");
+  });
+
+  it("renders what a function shows as parts, and words alone as words", () => {
+    assert.deepEqual(render(new ToolOutput({ images: [{ url: "https://example.com/a.png", detail: "low" }] })), [
+      { type: "image_url", image_url: { url: "https://example.com/a.png", detail: "low" } },
+    ]);
+    assert.equal(render(new ToolOutput({ text: "nothing to see" })), "nothing to see");
   });
 
   it("renders a function that returned nothing as nothing", () => {

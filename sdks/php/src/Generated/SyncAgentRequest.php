@@ -49,14 +49,14 @@ final readonly class SyncAgentRequest
         /** @var list<LeftOutConnector>|null */
         public ?array $leftOutConnectors = null,
         public ?string $llm = null,
-        // MCP servers outside the plugin catalog, opened by their URL with no login.
+        // No longer read: a server named by URL is now a custom connector, so create one for its URL and name it unde...
         /** @var list<McpServer>|null */
         public ?array $mcpServers = null,
         public AgentMode|string|null $mode = null,
-        // Deprecated: use the events of a fixed binding under connectors. MCP events the agent subscribes to on its p...
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<PluginEvent>|null */
         public ?array $pluginEvents = null,
-        // Deprecated: use connectors, a binding to a connector. Plugins the agent reaches: a catalog id, or an object...
+        // No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty lis...
         /** @var list<mixed>|null */
         public ?array $plugins = null,
         // agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is serv...
@@ -81,7 +81,7 @@ final readonly class SyncAgentRequest
         public ?string $subagent = null,
         /** @var array<string, string>|null */
         public ?array $tags = null,
-        // How plugin, MCP server and connector tools are offered. A setting left out keeps what is stored.
+        // How connector tools are offered. A setting left out keeps what is stored.
         public ?AgentTools $tools = null,
         public ?string $tts = null,
         public ?SessionVideo $video = null,

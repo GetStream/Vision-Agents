@@ -1,6 +1,7 @@
 import type { Client, Schemas } from "./client.js";
+import { ConfigurationError } from "./errors.js";
 import { Responses } from "./responses.js";
-import { Session, type SessionOptions } from "./session.js";
+import { Session, type ForkOptions, type SessionOptions } from "./session.js";
 
 /**
  * What a session can be opened with, beyond which agent is holding it.
@@ -15,6 +16,12 @@ export interface SessionSpec
     Schemas["CreateSessionRequest"],
     "agent" | "config_id" | "model_overwrites" | "tools" | "timezone"
   > {
+  /**
+   * The app's own page a connector's sign-in goes back to, as `returnURL` and `returnUrl` are on
+   * iOS and Android: https, or http on localhost, of the page that opens the sign-in. The same as
+   * the wire's `return_url`, which this wins over when both are given.
+   */
+  returnUrl?: string;
   /** What to change about the models for this conversation alone. */
   modelOverwrites?: Schemas["ModelOverwrites"];
   /**
@@ -48,6 +55,18 @@ export interface SessionQuery {
   state?: Schemas["SessionState"];
   /** Only the ones created with this agent id, which names their transcript channel. */
   agentId?: string;
+  /** Only the ones created at or after this moment. */
+  createdSince?: Date;
+  /** Only the ones created before this moment. */
+  createdBefore?: Date;
+  /** Only the ones whose `custom` labels hold every one of these pairs. */
+  custom?: Record<string, string>;
+  /**
+   * The order, always newest first: by when each last changed, or for `search` by how well it
+   * matches. Omitted is the router's own, which is `updated_at` for a query and `relevance`
+   * for a search.
+   */
+  sort?: Schemas["SessionSortField"];
   /** Up to 200. Omitted is 25. */
   limit?: number;
   /** The `next_cursor` of the page before, sent with the same filters. */
@@ -81,14 +100,16 @@ export class Sessions {
    * Opened from a page, the session is in the device's own zone unless `timezone` says
    * otherwise.
    */
-  create(options: CreateSessionOptions = {}): Promise<Session> {
-    const { tools, interim, decisions, watch, modelOverwrites, timezone, ...rest } = options;
+  async create(options: CreateSessionOptions = {}): Promise<Session> {
+    const { tools, interim, decisions, watch, modelOverwrites, timezone, memory, returnUrl, ...rest } = options;
     const zone = timezone ?? deviceTimezone();
     const request: Schemas["CreateSessionRequest"] = {
       agent: this.agent,
       ...rest,
       ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}),
       ...(zone ? { timezone: zone } : {}),
+      ...(memory ? { memory: this.memoryOf(memory) } : {}),
+      ...(returnUrl ? { return_url: returnUrl } : {}),
     };
     return Session.open(this.client, request, watching({ tools, interim, decisions, watch }));
   }
@@ -140,6 +161,52 @@ export class Sessions {
   }
 
   /**
+   * Renames or relabels a conversation this process is not holding, running or ended, and
+   * answers it as it now is. A field left out is left as it is; `custom` replaces the labels
+   * whole. `session.update` does the same for one that is held.
+   */
+  update(id: string, changes: Schemas["UpdateSessionRequest"]): Promise<Schemas["Session"]> {
+    return this.client.patch("/v1/agents/sessions/{id}", { path: { id }, body: changes });
+  }
+
+  /**
+   * Has the agent join a conversation's call, `agent:<session id>`, and carry it on there.
+   * Starting voice that is already on does nothing.
+   */
+  startVoice(id: string): Promise<Schemas["Session"]> {
+    return this.client.post("/v1/agents/sessions/{id}/voice", { path: { id } });
+  }
+
+  /**
+   * Takes the agent off a conversation's call and carries it on in writing. Stopping voice
+   * that is off does nothing.
+   */
+  stopVoice(id: string): Promise<Schemas["Session"]> {
+    return this.client.delete("/v1/agents/sessions/{id}/voice", { path: { id } });
+  }
+
+  /**
+   * Stops a conversation, which is how the agent leaves. What it recorded and remembered is
+   * kept; `delete` takes it away.
+   */
+  async close(id: string): Promise<void> {
+    await this.client.post("/v1/agents/sessions/{id}/stop", { path: { id } });
+  }
+
+  /**
+   * Continues a conversation as a new one, leaving the parent as it was, and starts watching
+   * the fork. `session.fork` does the same for one that is held, and passes its tools on.
+   */
+  async fork(id: string, options: ForkOptions = {}): Promise<Session> {
+    const { tools, interim, decisions, watch, modelOverwrites, ...rest } = options;
+    const forked = await this.client.post("/v1/agents/sessions/{id}/fork", {
+      path: { id },
+      body: { ...rest, ...(modelOverwrites ? { model_overwrites: modelOverwrites } : {}) },
+    });
+    return Session.watching(this.client, forked, watching({ tools, interim, decisions, watch }));
+  }
+
+  /**
    * Deletes a conversation, running or ended: it is stopped, and its turns and what it
    * remembered are deleted with it. The user's other memories are kept.
    */
@@ -155,6 +222,10 @@ export class Sessions {
     return this.client.delete("/v1/agents/sessions/{id}/memories", { path: { id } });
   }
 
+  private memoryOf(memory: Schemas["SessionMemory"]): Schemas["SessionMemory"] {
+    return memoryFor(this.client, memory);
+  }
+
   /** The query as the wire spells it, with the agent's own name always in it. */
   private queryOf(text: string, query: SessionQuery): Schemas["SessionQuery"] {
     return {
@@ -165,12 +236,44 @@ export class Sessions {
         ...(query.modality ? { modality: query.modality } : {}),
         ...(query.state ? { state: query.state } : {}),
         ...(query.agentId ? { agent_id: query.agentId } : {}),
+        ...(query.createdSince || query.createdBefore
+          ? {
+              created_at: {
+                ...(query.createdSince ? { $gte: query.createdSince.toISOString() } : {}),
+                ...(query.createdBefore ? { $lt: query.createdBefore.toISOString() } : {}),
+              },
+            }
+          : {}),
+        ...(query.custom && Object.keys(query.custom).length > 0 ? { custom: query.custom } : {}),
         ...(text ? { text: { $q: text } } : {}),
       },
+      // One field and no direction: newest first is the only order there is.
+      ...(query.sort ? { sort: [{ field: query.sort }] } : {}),
       ...(query.limit ? { limit: query.limit } : {}),
       ...(query.cursor ? { cursor: query.cursor } : {}),
     };
   }
+}
+
+/**
+ * The memory a session is opened with, for whom it is remembered.
+ *
+ * A device remembers for the user `setUser` named and nobody else, whatever `user_id` it was
+ * handed, since the router refuses a device naming another user. A backend may name any of its
+ * users, and names the one it acts for when it names none.
+ */
+function memoryFor(
+  client: Client,
+  memory: Schemas["SessionMemory"],
+): Schemas["SessionMemory"] {
+  const backend = client.backend;
+  const user = backend.serverSide ? memory.user_id || backend.actsFor || backend.userId : backend.userId;
+  if (!user) {
+    throw new ConfigurationError(
+      "memory is remembered for a user: call setUser first, or on a server name user_id",
+    );
+  }
+  return { ...memory, user_id: user };
 }
 
 /**

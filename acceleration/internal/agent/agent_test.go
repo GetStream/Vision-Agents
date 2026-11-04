@@ -861,6 +861,8 @@ type AgentSuite struct {
 	runner *stubToolRunner
 	// toolPolicy is what a test's tools ask of the agent (Options.ToolPolicy).
 	toolPolicy func(tool string) ToolPolicy
+	// onHeard is Options.OnHeard (holdsHeard).
+	onHeard func(Heard)
 	// duplex is how the agent listens and talks at the same time, off unless a test says
 	// otherwise.
 	duplex DuplexOptions
@@ -951,6 +953,7 @@ func (s *AgentSuite) SetupTest() {
 	s.tools = harness.Tools{}
 	s.runner = nil
 	s.toolPolicy = nil
+	s.onHeard = nil
 	s.duplex = DuplexOptions{}
 	s.speculates = false
 	s.unified = false
@@ -1200,6 +1203,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		EndCallWhen:        s.endCallWhen,
 		ToolRunner:         running,
 		ToolPolicy:         s.toolPolicy,
+		OnHeard:            s.onHeard,
 		Tools:              s.tools,
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculates,
@@ -1721,6 +1725,97 @@ func (s *AgentSuite) TestASpeculativeReplyIsDroppedWhenTheRulingDoesNotAnswer() 
 		"a reply to speech the agent was not meant to answer must never be heard")
 	s.Empty(harness.WithoutNotes(s.agent.History()))
 	s.Zero(countOf[Responding](s.reported()))
+}
+
+func (s *AgentSuite) TestEverySpeculativeReplyIsAskedForUnderItsOwnGeneration() {
+	// A speculation thrown away is forgotten on its own goroutine, possibly after the turn
+	// was asked for again under the same id, and only its generation tells the two apart.
+	s.speculates = true
+	s.join(true)
+	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
+	var generations []uint64
+	for range 2 {
+		s.agent.speculate(s.agent.harness, ready, false, false)
+		s.agent.mu.Lock()
+		generations = append(generations, s.agent.speculations[ready.ID].turn.Generation)
+		s.agent.mu.Unlock()
+	}
+
+	s.NotZero(generations[0], "the first speculation was asked for without a generation")
+	s.NotZero(generations[1], "the second speculation was asked for without a generation")
+	s.NotEqual(generations[0], generations[1], "the replaced speculation shares its generation with the one that replaced it")
+}
+
+func (s *AgentSuite) TestADroppedSpeculationForgottenAfterTheAnswerWasAskedLeavesItsOfferAlone() {
+	s.speculates = true
+	s.join(true)
+	finish := make(chan struct{})
+	s.model.holdCompletion = finish
+	ready := candidate{ID: "turn-1", Text: "where is my order", ReadyAt: time.Now()}
+	s.agent.speculate(s.agent.harness, ready, false, false)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the speculation was never asked for")
+
+	// The speculation is dropped, but reading it out to its end waits for the model, so
+	// its Forget lands only once the answer under the same id was asked for.
+	s.agent.dropSpeculation(ready.ID)
+	answer, err := s.agent.harness.Respond(s.ctx, harness.Turn{
+		ID: ready.ID, Instructions: "be brief", NoTools: true,
+		History: []llm.Message{{Role: llm.User, Content: ready.Text}},
+	})
+	s.Require().NoError(err)
+	defer answer.Close()
+	forgotten := make(chan struct{})
+	go func() {
+		s.agent.pumps.Wait()
+		close(forgotten)
+	}()
+	isClosed := func(done chan struct{}) bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}
+	close(finish)
+	s.eventually(func() bool { return isClosed(forgotten) }, "the dropped speculation was never forgotten")
+
+	called := []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: "{}"}}
+	s.Empty(s.agent.harness.DropUnoffered(ready.ID, called), "the speculation's Forget cleared that the answer was offered no tools")
+}
+
+func (s *AgentSuite) TestATypedTurnAfterTheCallersWereAnsweredBySpeculationsIsOfferedTools() {
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = []string{"Hello there."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "hello")
+
+	s.eventually(func() bool { return s.spokenText("Hello there.") }, "the reply was never spoken")
+	s.Require().Len(s.model.requests(), 1, "the reply was not the speculation adopted")
+	_, err := s.agent.RespondTo(s.ctx, "where is order twelve", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the typed turn was never answered")
+	typed := s.model.requests()[1]
+	s.NotEqual("none", typed.ToolChoice, "a caller already spoke, so the typed turn was offered no tools")
+	s.NotEmpty(typed.Tools)
+}
+
+func (s *AgentSuite) TestATypedTurnBeforeAnyoneSpokeIsOfferedNoToolsWithSpeculationOn() {
+	s.speculates = true
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(true)
+	s.model.reply = []string{"Hello, how can I help?"}
+
+	_, err := s.agent.RespondTo(s.ctx, "greet the caller", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return s.spokenText("Hello, how can I help?") }, "the greeting was not said")
+	s.Equal("none", s.model.requests()[0].ToolChoice, "the greeting was offered tools")
 }
 
 func (s *AgentSuite) TestAClarifyingRulingStartsAgainRatherThanUsingTheEarlyReply() {
@@ -2451,6 +2546,25 @@ func (s *AgentSuite) TestAFinishedExchangeIsRemembered() {
 	s.Equal(llm.Assistant, exchange[1].Role)
 }
 
+// A photo sent alone into a call is remembered as its note: an empty message is one a
+// memory store drops, which leaves the reply about the photo answering nothing.
+func (s *AgentSuite) TestAPhotoSentAloneIsRememberedAsItsNote() {
+	s.remembers = &stubMemory{}
+	s.subagent = newStubLLM()
+	s.skills = harness.Skills{Skills: []harness.Skill{{
+		Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+	}}}
+	s.join(true)
+
+	_, err := s.agent.RespondTo(s.ctx, "", []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
+	exchange := s.remembers.remembered()[0]
+	s.Require().Len(exchange, 2, "what was asked and what was answered")
+	s.Equal(llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]"}, exchange[0])
+}
+
 func (s *AgentSuite) TestARequestForHelpIsHandedOverRatherThanSpoken() {
 	s.delegates()
 	s.join(true)
@@ -2669,6 +2783,214 @@ func (s *AgentSuite) TestAPhotoIsNotShownAgainToALaterTurnsTool() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the reply after the second turn's tool was never asked")
 	s.False(llm.HasImage(harness.WithoutNotes(s.model.requests()[2].Input)), "a photo is seen with the turn it came with alone")
+}
+
+// A turn's photos are kept as a note once the reply to it has seen them, as an aside's are,
+// so the turn after it is asked with the note: not with an empty message for a photo sent
+// alone, and not with words that no longer say a photo came with them.
+func (s *AgentSuite) TestATurnsPhotosAreKeptAsANoteOnceTheyHaveBeenSeen() {
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+	frame := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}, Caption: "video 1, 0.0s of 1.0s", Video: true}
+	cases := map[string]struct {
+		text   string
+		photos []llm.ImagePart
+		kept   string
+	}{
+		"words and a photo":   {"is this fan broken?", []llm.ImagePart{photo}, "is this fan broken?\n\n[sent with a photo, not shown again]"},
+		"words and 2 photos":  {"which is nicer?", []llm.ImagePart{photo, photo}, "which is nicer?\n\n[sent with 2 photos, not shown again]"},
+		"a photo alone":       {"", []llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
+		"blanks and a photo":  {" \n", []llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
+		"2 photos alone":      {"", []llm.ImagePart{photo, photo}, "[sent with 2 photos, not shown again]"},
+		"words with no photo": {"is the fan broken?", nil, "is the fan broken?"},
+		"words, a photo and a video's frames": {"which is it?", []llm.ImagePart{photo, frame, frame},
+			"which is it?\n\n[sent with a photo, not shown again]"},
+		"words and a video's frames": {"what happens here?", []llm.ImagePart{frame, frame}, "what happens here?"},
+	}
+	for name, c := range cases {
+		s.Run(name, func() {
+			s.sees = true
+			s.joinText()
+
+			_, err := s.agent.RespondTo(s.ctx, c.text, c.photos, options.LLM{})
+			s.Require().NoError(err)
+			s.eventually(func() bool { return len(harness.WithoutNotes(s.agent.History())) == 2 }, "the turn was never answered")
+			_, err = s.agent.RespondTo(s.ctx, "and now?", nil, options.LLM{})
+			s.Require().NoError(err)
+			s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the next turn was never asked")
+
+			kept := llm.Message{Role: llm.User, Content: c.kept}
+			s.Equal(kept, harness.WithoutNotes(s.agent.History())[0])
+			s.Zero(photoNotes(s.model.requests()[0].Input), "the turn's reply is sent its images without the note")
+			next := harness.WithoutNotes(s.model.requests()[1].Input)
+			s.Contains(next, kept, "the next turn is asked with the note")
+			s.False(llm.HasImage(next), "and not with the photos")
+		})
+	}
+}
+
+// While a turn's photos go with its replies, its message is its words alone: the note says
+// the photos are not shown, which is untrue beside them. The reply after its tool is sent
+// the turn's message as the turn's reply was, and the turn after it the note once.
+func (s *AgentSuite) TestATurnsPhotoNoteIsNotSentWithThePhoto() {
+	for _, text := range []string{"are these from order 1042?", ""} {
+		s.Run(fmt.Sprintf("%q", text), func() {
+			s.sees = true
+			s.ownsTools("order 1042 is a pair of running shoes")
+			s.joinText()
+			s.model.reply = []string{"Let me check."}
+			s.model.then = []string{"Those are the running shoes from order 1042."}
+			s.asksFor("lookup_order", `{"order":"1042"}`)
+			photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+			_, err := s.agent.RespondTo(s.ctx, text, photo, options.LLM{})
+			s.Require().NoError(err)
+			s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the reply after the tool was never asked")
+			s.eventually(func() bool { return !s.agent.floor().Talking && !s.agent.Busy() }, "the turn never finished")
+			_, err = s.agent.RespondTo(s.ctx, "and now?", nil, options.LLM{})
+			s.Require().NoError(err)
+			s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the next turn was never asked")
+
+			requests := s.model.requests()
+			turn := lastFromCaller(harness.WithoutNotes(requests[0].Input))
+			s.True(turn.HasImage(), "the turn's reply is sent the photo")
+			s.Equal(text, llm.TextOf(turn.Parts), "with the words alone")
+			s.True(llm.SameMessage(turn, lastFromCaller(harness.WithoutNotes(requests[1].Input))),
+				"the reply after the tool is sent the turn's message as the turn's reply was")
+			for i, request := range requests[:2] {
+				s.Zero(photoNotes(request.Input), "request %d is sent the photo and its note", i)
+			}
+			next := harness.WithoutNotes(requests[2].Input)
+			s.False(llm.HasImage(next), "the next turn is not sent the photo")
+			s.Equal(1, photoNotes(next), "the next turn is sent the note once")
+		})
+	}
+}
+
+// photoNotes counts the messages in input that carry a note of photos (PhotoNote).
+func photoNotes(input []llm.Message) int {
+	notes := 0
+	for _, message := range input {
+		if strings.Contains(message.Content+llm.TextOf(message.Parts), "not shown again]") {
+			notes++
+		}
+	}
+	return notes
+}
+
+// Once two people have written, a photo's message is sent under its writer's label while
+// the photo goes with it, and kept under it with the note after.
+func (s *AgentSuite) TestAPhotoWrittenInAGroupIsSentUnderItsWritersLabel() {
+	s.sees = true
+	s.joinText()
+	_, err := s.agent.RespondTo(WithAuthor(s.ctx, "alice"), "hi all", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(harness.WithoutNotes(s.agent.History())) == 2 }, "the first turn was never answered")
+
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+	_, err = s.agent.RespondTo(WithAuthor(s.ctx, "bob"), "is this broken?", photo, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the photo was never asked about")
+
+	asked := lastFromCaller(harness.WithoutNotes(s.model.requests()[1].Input))
+	s.True(asked.HasImage())
+	s.Equal("Speaker 2: is this broken?", llm.TextOf(asked.Parts))
+	kept := harness.WithoutNotes(s.agent.History())[2]
+	s.Equal("Speaker 2", kept.Speaker)
+	s.Equal("is this broken?\n\n[sent with a photo, not shown again]", kept.Content)
+}
+
+// A photo the vision skill looks at never reaches the conversation model, so the turn is
+// kept with its note from the start rather than as an empty message.
+func (s *AgentSuite) TestAPhotoTheVisionSkillLooksAtIsKeptAsANote() {
+	photo := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}
+	frame := llm.ImagePart{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}, Caption: "video 1, 0.0s of 1.0s", Video: true}
+	cases := map[string]struct {
+		images []llm.ImagePart
+		kept   string
+	}{
+		"a photo":                      {[]llm.ImagePart{photo}, "[sent with a photo, not shown again]"},
+		"a photo and a video's frames": {[]llm.ImagePart{photo, frame, frame}, "[sent with a photo, not shown again]"},
+	}
+	for name, c := range cases {
+		s.Run(name, func() {
+			s.subagent = newStubLLM()
+			s.skills = harness.Skills{Skills: []harness.Skill{{
+				Name: "vision", Description: "look at pictures", Instructions: "describe them", Deadline: time.Minute,
+			}}}
+			s.joinText()
+
+			_, err := s.agent.RespondTo(s.ctx, "", c.images, options.LLM{})
+			s.Require().NoError(err)
+			s.eventually(func() bool { return len(s.model.requests()) >= 1 }, "the turn was never asked")
+
+			kept := llm.Message{Role: llm.User, Content: c.kept}
+			s.Equal(kept, harness.WithoutNotes(s.agent.History())[0])
+			s.Contains(harness.WithoutNotes(s.model.requests()[0].Input), kept)
+		})
+	}
+}
+
+// Something written in as the caller's after a turn with photos, such as an aside asked
+// while its tool ran, is the message its photos go with from then on, and keeps its own
+// words: they are not taken for the turn's.
+func (s *AgentSuite) TestAnAsideWrittenWhileAPhotosToolRunsKeepsItsWords() {
+	s.sees = true
+	release := make(chan struct{})
+	s.T().Cleanup(func() {
+		select {
+		case <-release:
+		default:
+			close(release)
+		}
+	})
+	s.ownsTools("")
+	s.runner.run = func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		<-release
+		return llm.TextParts("order 1042 is a pair of running shoes"), nil
+	}
+	s.joinText()
+	s.model.reply = []string{"Let me check."}
+	s.model.then = []string{"Those are the running shoes from order 1042."}
+	s.asksFor("lookup_order", `{"order":"1042"}`)
+	photo := []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+
+	_, err := s.agent.RespondTo(s.ctx, "are these from order 1042?", photo, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the tool was never run")
+	_, err = s.agent.Ask(s.ctx, "what time do you close?")
+	s.Require().NoError(err)
+	close(release)
+	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the reply after the tool was never asked")
+
+	var said []string
+	for _, message := range harness.WithoutNotes(s.model.requests()[2].Input) {
+		if message.Role == llm.User {
+			said = append(said, message.Content+llm.TextOf(message.Parts))
+		}
+	}
+	s.Equal([]string{"are these from order 1042?", "what time do you close?"}, said)
+	s.True(llm.HasImage(s.model.requests()[2].Input), "the reply after the tool is still sent the photo")
+	s.Zero(photoNotes(s.model.requests()[2].Input), "and no note stands beside it")
+}
+
+// A late tool result is a message from the caller too, and comes after the turn, so the
+// words of a turn with photos are sent as they were wherever it sits, with no note beside
+// the photos.
+func (s *AgentSuite) TestAMessageAfterATurnWithPhotosLeavesTheTurnsWordsAsTheyWere() {
+	s.joinText()
+	turn := llm.Message{Role: llm.User, Content: PhotoNote("are these from order 1042?", 1)}
+	late := llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\norder 1042 is a pair of running shoes"}
+	s.agent.mu.Lock()
+	s.agent.history = []llm.Message{turn,
+		{Role: llm.Assistant, Content: "Let me check."},
+		late}
+	s.agent.turnKept, s.agent.turnSaid = turn.Content, "are these from order 1042?"
+	s.agent.turnImages = []llm.ImagePart{{MIME: "image/jpeg", Data: []byte{0xff, 0xd8, 0xff}}}
+	replay := s.agent.turnReplayLocked()
+	s.agent.mu.Unlock()
+
+	s.Equal("are these from order 1042?", replay[0].Content)
+	s.Equal(late.Content, replay[2].Content, "the late result is sent as it came")
 }
 
 func (s *AgentSuite) TestAnAgentWithAVisionSkillSeesImages() {

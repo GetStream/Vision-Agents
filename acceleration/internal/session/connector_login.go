@@ -23,7 +23,7 @@ import (
 
 // A session binding the caller has no usable connection for, because none was chosen or the
 // chosen one needs reauthorization, is offered as two tools whose names do not depend on the
-// connection, as a user plugin is (plugins.UserTools): a session's tools are fixed when it
+// connection, as the removed plugin system's user tools were: a session's tools are fixed when it
 // opens. The first call asks the person to log in, in the conversation; once they have, the
 // same two tools reach their account through the dispatcher, and the session carries on.
 const (
@@ -295,8 +295,7 @@ func (d *dispatcher) openOrAsk(ctx context.Context, l *login, callID string) (*d
 //
 // A consent finished on another router, or one whose hand-back failed, still connected the
 // connection in the store, so the connection is read before anybody is asked again: once
-// it is connected and the binding may use it, the binding opens here. The plugin path does
-// the same by reading its login on every call (userPluginRunner.connect).
+// it is connected and the binding may use it, the binding opens here.
 //
 // A connection the chat asked to consent on again, which was connected already, opens only
 // once that consent connected it anew (connectedBefore): the person consents in this chat
@@ -653,7 +652,7 @@ func loginStopped(name string) string {
 }
 
 // authorizationRequired is the status a waiting binding's tools answer with until the person
-// logs in, the word a user plugin's do (plugins.AuthorizationRequired).
+// logs in.
 const authorizationRequired = "authorization_required"
 
 // credentialRejected is what the model reads for a connection whose token or key the provider

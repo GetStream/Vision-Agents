@@ -291,7 +291,7 @@ what to close instead means a new operation is open by accident, and the cost of
 that wrong is a config a phone can rewrite. The generated SDKs and the check in front of the
 handlers both read the same marks, so there is one answer rather than two that can drift.
 
-Unauthenticated paths — health, the plugin OAuth callback — declare `security: []` and sit
+Unauthenticated paths — health, for one — declare `security: []` and sit
 outside this entirely: there is no caller to classify.
 
 A server-side caller says so twice. `Stream-Auth-Type: server` is the declaration, and a
@@ -698,6 +698,16 @@ live transcriber is realtime, low-latency and speaks English, so nothing any of 
 tells one from another, and it names both Deepgram Flux models, Grok and Muse outright with
 `only`. Gemini, the two Parakeets, Ink 2, Inworld and Scribe stay reachable by
 `provider/model` and through the other shortcuts.
+
+A shortcut's candidates are ranked by their live health, which each router reads from a snapshot
+in memory, never from Redis while a request waits. The snapshot reads every model the router can
+build in one pipelined round trip a second. A model missing from it is read along with the rest
+of the walk's missing models in one round trip, and is kept from then on. What a router records
+itself counts in its own snapshot at once, so it stops routing to a model that just failed fatally
+there before the next refresh, and other routers learn of it within a second. A failed refresh
+keeps the last snapshot, and a model no read has reached within the health window is unmeasured,
+as with no Redis at all. The metrics are `router_health_reads_total` (by `kind`: `refresh` or
+`miss`), `router_health_refresh_errors_total` and `router_health_snapshot_age_seconds`.
 
 ### The default groups
 
@@ -2388,10 +2398,18 @@ back if the source edits it afterwards. So once SDKs point here, stop writing at
 
 Cut over once SDKs point here:
 
-1. Run `replicate --from … --once` one last time, to pick up the last writes.
-2. Stop the source delivering. Do not pause the tasks there before that last `--once`: the
-   pauses are carried over, they clear the marks, and step 3 then resumes nothing.
-3. Run the cut-over:
+1. Pause each running campaign at the source (`POST /v1/agents/campaigns/{id}/pause`). Wait
+   until none of its contacts is `calling` there (`GET /v1/agents/campaigns/{id}/contacts`).
+   A pause stops every replica from taking its next contact. It ends the call in progress only
+   on the replica the request reaches: a call on another replica goes on until it ends, for
+   at most 15 minutes. A call that ends after the last `--once` is not carried, so with more
+   than one replica at the source, wait until no contact is `calling`.
+2. Run `replicate --from … --once` one last time, to pick up the last writes. The copy now
+   holds every call the source made.
+3. Stop the source delivering. Do not pause the scheduled tasks there before that last
+   `--once`: the pauses are carried over, they clear the marks, and step 4 then resumes
+   nothing.
+4. Run the cut-over:
 
    ```bash
    go run ./cmd/router replicate --resume --as <app id>
@@ -2399,21 +2417,30 @@ Cut over once SDKs point here:
 
 `--resume` reads only this deployment, so it takes no `--from`. It resumes the marked tasks, each
 at its first occurrence after the cut-over, as any resume counts a paused task's next run from now,
-and lists the marked campaigns. The source went on delivering between the last `--once` and its
+and names the marked campaigns. The source went on delivering between the last `--once` and its
 stop, and nothing it delivered then reached this copy, so an occurrence that came due at or before
 the cut-over was the source's: it is not delivered here. One the source held for quiet hours past
 the cut-over was never delivered there: it keeps its time, and this deployment delivers it when the
 hold ends. A marked task with no occurrence left is
-completed, a one-shot with a `missed` run of the time it slept through. Run step 3 right after
-step 2: an occurrence due between the two is delivered by neither. A marked task whose
+completed, a one-shot with a `missed` run of the time it slept through. Run step 4 right after
+step 3: an occurrence due between the two is delivered by neither. A marked task whose
 agent config is deleted or missing here has nothing to run on: it stays paused, loses the mark,
 and the command prints how many it left that way. A user holds at most the config's
 `max_tasks_per_user` active tasks on it (25 when unset), as with a resume over the API: when tasks the user
 made here before the cut-over leave less room than the move brought tasks, the oldest are resumed
 and the rest stay paused and marked. The command prints how many; run it again once the user
-has made room. A campaign rings
-only from the router that started it, so start each one here with
-`POST /v1/agents/campaigns/{id}/start`.
+has made room.
+
+A campaign rings only from the router that started it, and `--resume` starts none. A campaign
+paused at the source in step 1 stays paused here and is not named. Start it here with
+`POST /v1/agents/campaigns/{id}/start` when it is to ring again. A campaign still running at the
+source at the last `--once` stays paused here, and `--resume` names it: a contact the source rang
+after that is still `pending` here, and a start here rings that contact again. Read its contacts
+at the source before you start it here. A campaign paused at the source that still holds contacts
+`calling` is named too, with how many: a start here rings them again.
+
+Do not run `--once` again after `--resume`. Every run reads the source and makes it the truth
+again: it overwrites what the cut-over resumed and started here with what the source has.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app
@@ -2516,9 +2543,8 @@ a new operation is reachable there as soon as the types are regenerated.
 
 The three sockets cannot be Huma operations, since an upgrade returns a connection rather than
 a response, and neither can the log stream, the data export and import, which stream, or the
-plugin callback and the connector consent's launch page, handoff and callback, which a browser
-reaches. Their handlers are written by hand in `internal/api/sessionws.go`, `streamws.go`,
-`dispatchws.go`, `logs.go`, `datamove.go`, `plugins.go` and `authorizations.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
+connector consent's launch page, handoff and callback, which a browser reaches. Their handlers are written by hand in `internal/api/sessionws.go`, `streamws.go`,
+`dispatchws.go`, `logs.go`, `datamove.go` and `authorizations.go`, and the Python side of the sockets in `plugins/stream/.../_socket.py`. Each is
 still declared, with its `101` or streamed response, in `internal/api/handwritten.go`, so a
 reader and a client generator know it exists and the server-side check reads its marks like
 any other operation's: an operation the spec cannot see is the one place a default that

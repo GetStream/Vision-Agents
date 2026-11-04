@@ -1,5 +1,7 @@
 # Google Calendar's hosted MCP server, moved from the plugin catalog
-# (internal/plugins/plugins.yaml, entry google_calendar, «[plugin]» below; T58 in
+# (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
+# entry google_calendar, «[plugin]» below; T58 in
 # acceleration/docs/connectors/subtasks.md on connectors/planning). Vendor pages, opened
 # October 7, 2026:
 #   [setup] https://developers.google.com/workspace/calendar/api/guides/configure-mcp-server
@@ -57,8 +59,8 @@ client:
   # hand, and [as] has no registration_endpoint. [plugin] is client_required, with an agent's
   # own client before the deployment's.
   registration: [operator, customer]
-  # The plugin sends client_secret_post (setClientSecret in internal/plugins/oauth.go); [as]
-  # lists it.
+  # The plugin sends client_secret_post (setClientSecret in
+  # https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/oauth.go); [as] lists it.
   auth_method: client_secret_post
   # One Cloud-project client serves Calendar, Drive, Docs and Gmail ([plugin]'s setup steps
   # say so), so the four share GOOGLE_MCP_CLIENT_ID and GOOGLE_MCP_CLIENT_SECRET. The plugin

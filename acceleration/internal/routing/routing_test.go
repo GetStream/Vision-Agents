@@ -1609,6 +1609,29 @@ func (s *RoutingSuite) TestDefaultConfigDeclaresVisionOnOpenAIGeminiAnthropicMet
 	}
 }
 
+func (s *RoutingSuite) TestAShortcutThatRequiresToolsLeavesOutAModelThatIgnoresThem() {
+	requiring := Alias{RequireTools: true}
+	s.True(requiring.matches(ProviderConfig{Provider: "quick", Model: "talk"}))
+	s.False(requiring.matches(ProviderConfig{Provider: "quick", Model: "look", IgnoresTools: true}))
+	s.True(Alias{}.matches(ProviderConfig{Provider: "quick", Model: "look", IgnoresTools: true}),
+		"a shortcut that does not ask still takes it")
+}
+
+func (s *RoutingSuite) TestNoConversationShortcutReachesMoondream() {
+	config, err := DefaultConfig()
+	s.Require().NoError(err)
+	moondream, ok := config[LLM].Provider("moondream/moondream3-preview")
+	s.Require().True(ok)
+	s.True(moondream.IgnoresTools, "it accepts tools and never calls one")
+
+	for _, name := range []string{"llm-fast", "en-low-latency"} {
+		alias := config[LLM].Aliases[name]
+		s.Truef(alias.RequireTools, "%s is what an agent holds a conversation on", name)
+		s.Falsef(alias.matches(moondream), "%s would answer a turn that needed a tool without one", name)
+	}
+	s.True(config[LLM].Aliases["vlm"].matches(moondream), "a question about a picture may still go to it")
+}
+
 // failingUse is a Walk's use that fails for the models in failing, with their error, and
 // keeps every candidate it was handed, in order.
 func failingUse(asked *[]string, failing map[string]error) func(*stubProvider, ProviderConfig) error {

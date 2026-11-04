@@ -16,9 +16,7 @@ import (
 // backend). A page of the session's return_url's origin opens launch_url in a popup and posts it
 // handoff_token, as for one the backend began with that return_url, and the consent goes back
 // to that page; for a session created without one, the dashboard does, as for a consent begun
-// without a return_url. It is
-// the connector counterpart of plugin_authorization (authorizations.go), which stays as it is
-// until the plugins go (T23).
+// without a return_url.
 
 // ConnectorAuthorizationType is the Chat attachment type that asks an end user to connect a
 // connector binding.
@@ -137,8 +135,7 @@ func markConnectorConnected(m *Message, authorizationID string) bool {
 	return false
 }
 
-// loginConnected is the Status of a connector login the user has finished, the same
-// word plugin_authorization uses (plugins.AuthorizationConnected).
+// loginConnected is the Status of a connector login the user has finished.
 const loginConnected = "connected"
 
 func mergeConnectorAuthorizations(existing []ConnectorAuthorization, found ConnectorAuthorization) []ConnectorAuthorization {
@@ -152,7 +149,7 @@ func mergeConnectorAuthorizations(existing []ConnectorAuthorization, found Conne
 }
 
 // connectorAuthorizationAttachments are the logins as a partial update sets them, each field
-// on the attachment itself, as authorizationAttachments does for plugins.
+// on the attachment itself, as partialAttachments does for artifacts.
 func connectorAuthorizationAttachments(found []ConnectorAuthorization) []map[string]any {
 	attachments := make([]map[string]any, 0, len(found))
 	for _, authorization := range found {
@@ -210,7 +207,7 @@ func validConnectorAuthorization(found ConnectorAuthorization) bool {
 		return false
 	}
 	parsed, err := url.Parse(found.LaunchURL)
-	// https only, as plugins.ValidAuthorization requires of an authorize URL.
+	// https only.
 	return err == nil && parsed.Scheme == "https" && parsed.Host != "" &&
 		parsed.User == nil && strings.HasSuffix(parsed.Path, connectorLaunchPath+found.AuthorizationID)
 }
