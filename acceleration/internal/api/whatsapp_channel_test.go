@@ -399,6 +399,24 @@ func (s *WhatsAppChannelSuite) TestAPhotoAloneThatCannotBeDownloadedIsNotWritten
 	s.Contains(s.logged.String(), `level=WARN msg="an inbound message that is only files none of which could be downloaded is not written or answered" connector=whatsapp`)
 }
 
+// An upload Stream Chat fails is the attempt failing, as its other writes are: the row is tried
+// again, downloads the photo again, and the person's message is written with it.
+func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadFailedIsWrittenWithItOnTheNextAttempt() {
+	s.answersWith("vision/vision-model")
+	person, asked := s.digits(), len(s.vision.replies())
+	photo := s.photo(person, "Is this tooth chipped?")
+	s.chat.Fail(http.MethodPost, "/image")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, photo)))
+
+	s.failedOnce()
+	s.chat.Heal(http.MethodPost, "/image")
+	stored := s.written(s.threadChannel(person), 1)[0]
+	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored))
+	s.Equal("Two roses.", s.took(1)[0].text)
+	s.Equal([]llm.ImagePart{{Data: s.photoBytes(photo), MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
+}
+
 // An attempt whose write Stream Chat already holds (alreadyWritten) hands the model the photo
 // this attempt uploaded: the refusal carries no message, and the rebuilt one never has Meta's
 // URLs, which only the token reads.
@@ -918,10 +936,6 @@ func (f *fakeMeta) lookup(w http.ResponseWriter, r *http.Request) {
 	case media.data == nil && media.lookup == 0:
 		media.lookup = http.StatusNotFound
 	}
-	if media.lookup != 0 {
-		w.WriteHeader(media.lookup)
-		return
-	}
 	answer := map[string]any{"messaging_product": "whatsapp", "mime_type": "image/jpeg", "sha256": "c3ludGhldGlj",
 		"file_size": len(media.data), "id": r.PathValue("media"), "pad": strings.Repeat("x", media.pad)}
 	switch media.file {
@@ -931,7 +945,11 @@ func (f *fakeMeta) lookup(w http.ResponseWriter, r *http.Request) {
 	default:
 		answer["url"] = media.file
 	}
+	// A failed lookup answers the file's url all the same: only its status says it failed.
 	w.Header().Set("Content-Type", "application/json")
+	if media.lookup != 0 {
+		w.WriteHeader(media.lookup)
+	}
 	_ = json.NewEncoder(w).Encode(answer)
 }
 
@@ -939,15 +957,16 @@ func (f *fakeMeta) lookup(w http.ResponseWriter, r *http.Request) {
 // media»): its bytes to the test's token, 401 without it, as Meta answered in a probe.
 func (f *fakeMeta) download(w http.ResponseWriter, r *http.Request) {
 	media, authorized := f.saw(r, r.URL.Query().Get("mid"))
-	switch {
-	case !authorized:
+	if !authorized {
 		w.WriteHeader(http.StatusUnauthorized)
-	case media.status != 0:
-		w.WriteHeader(media.status)
-	default:
-		w.Header().Set("Content-Type", "image/jpeg")
-		_, _ = w.Write(media.data)
+		return
 	}
+	// A failed download answers the file all the same: only its status says it failed.
+	w.Header().Set("Content-Type", "image/jpeg")
+	if media.status != 0 {
+		w.WriteHeader(media.status)
+	}
+	_, _ = w.Write(media.data)
 }
 
 // saw records a GET and is the media of id, and whether the GET carried the test's token.

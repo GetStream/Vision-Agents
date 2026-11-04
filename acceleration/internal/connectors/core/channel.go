@@ -245,7 +245,7 @@ func (rule MessageRule) mention(metadata map[string]string) (string, bool) {
 func (rule MessageRule) IsZero() bool {
 	return rule.Each == "" && len(rule.Match) == 0 && len(rule.Also) == 0 && len(rule.SkipIfPresent) == 0 && rule.ProviderUnitID == "" &&
 		len(rule.ThreadKey) == 0 && rule.AuthorID == "" && rule.ProviderMessageID == "" && rule.Text == "" &&
-		rule.TextParts == "" && rule.Media == nil && rule.MediaLookup == nil && rule.Addressed == nil
+		rule.TextParts == "" && rule.Media == nil && rule.Addressed == nil
 }
 
 // ThreadKeyPart is one named part of a thread key.
