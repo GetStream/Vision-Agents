@@ -156,6 +156,26 @@ func (s *ChannelSuite) TestAMediaLookupTakesTheIDAsOnePathSegment() {
 	s.ErrorContains(err, "has no channel.messages.media_lookup")
 }
 
+// A lookup URL may name a value the connection captures, such as its account; until the
+// connection has captured it, no URL is made, rather than one with the value left out.
+func (s *ChannelSuite) TestAMediaLookupNamingAValueNotCapturedYetMakesNoURL() {
+	capture := "capture:\n  - name: account\n    from: token_response\n    path: $.account\n"
+	m, err := ParseManifest(minimal(capture + strings.Replace(baseChannel, "text: $.text",
+		strings.Replace(photoKind, "https://graph.example.com/v1/{id}", "https://graph.example.com/{metadata.account}/{id}", 1), 1)))
+	s.Require().NoError(err)
+
+	captured, err := m.Resolve("oauth2_code", nil, map[string]string{"account": "acct-1"})
+	s.Require().NoError(err)
+	target, err := captured.MediaLookupURL("1003383421387256")
+	s.Require().NoError(err)
+	s.Equal("https://graph.example.com/acct-1/1003383421387256", target)
+
+	uncaptured, err := m.Resolve("oauth2_code", nil, nil)
+	s.Require().NoError(err)
+	_, err = uncaptured.MediaLookupURL("1003383421387256")
+	s.ErrorContains(err, "channel.messages.media_lookup.url names a value the connection has not captured")
+}
+
 // The connection's credential goes with the GET of the file a lookup answers, so the file is
 // requested only at an https URL on the lookup's host, with no userinfo and no port.
 func (s *ChannelSuite) TestAMediaLookupsFileIsOnlyOnItsHost() {
