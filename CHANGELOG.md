@@ -361,6 +361,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A repeat copy keeps a connection authorized again where it moved to
+
+`router replicate --once` and `POST /v1/data/import` reset each connector connection to `needs_reauthorization`, even one the owner had authorized again on the destination, whose credentials then no longer opened. A connection that is `connected` on the destination now keeps its state, whatever the source sends for it. A connection not authorized there still arrives needing it, with the source's edits (AI-2656).
+
 ### Pausing a campaign stops its calls on every router
 
 `POST /v1/agents/campaigns/{id}/pause` stopped the campaign only on the router that answered it. A router behind the same load balancer that was running the campaign went on ringing people, and finished the campaign over the pause when nobody was left. Now no router takes another contact from a campaign that is not running. A router whose loop outlived a pause made elsewhere exits that loop at its next claim and writes no state. A start on that router before then runs the campaign again (AI-2681).
