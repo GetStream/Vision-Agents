@@ -29,7 +29,7 @@ Leave out the running header and footer and the page number. Do not describe pic
 // figureInstructions say what a figure's reading is: the words in it, for search to find,
 // and a summary of what it shows, for a question about it to be answered from. Logos and
 // ornaments say nothing a customer would ask about, so they are left out.
-const figureInstructions = `For each chart, diagram, photo, screenshot or table drawn as a picture, write the words printed in it, then a summary as a quote that opens with "> **Figure:**". Say what it shows so that somebody who cannot see it could answer a question about it:
+const figureInstructions = `For each chart, diagram, photo, screenshot or table drawn as a picture, write the words printed in it, as printed and with no label of your own, then a summary as a quote that opens with "> **Figure:**". Say what it shows so that somebody who cannot see it could answer a question about it:
 - a chart: what is measured against what, the trend, and the values that stand out, as printed;
 - a diagram: its parts by their labels, and how they connect or follow on;
 - a photo or screenshot: what it shows and where things are in it, by their labels;
