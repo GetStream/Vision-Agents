@@ -116,7 +116,7 @@ func (c *Cards) Context(ctx context.Context, reading Reading) ([]llm.Message, er
 	var tolds []told
 	var failed []error
 	for _, card := range cards {
-		told, err := c.tell(ctx, contact, card)
+		told, err := c.tell(ctx, card)
 		if err != nil {
 			failed = append(failed, fmt.Errorf("episode %s: %w", card.ID, err))
 			continue
@@ -179,14 +179,14 @@ func (c *Cards) alone(ctx context.Context, reading Reading) (bool, error) {
 
 // tell reads one card: its summary when it is summarized and has one, otherwise the last
 // lines of its thread channel within the episode.
-func (c *Cards) tell(ctx context.Context, contact store.ContactMapEntry, card store.EpisodeCard) (told, error) {
+func (c *Cards) tell(ctx context.Context, card store.EpisodeCard) (told, error) {
 	bound, err := c.stream.ForAppReading(ctx, card.CustomerID, card.StreamAppPK)
 	if err != nil {
 		return told{}, err
 	}
 	out := told{Source: card.Source, Status: card.Status, StartedAt: card.StartedAt.UTC()}
 	if card.Status == store.EpisodeSummarized {
-		summary, err := summaryOf(ctx, bound, contact, card)
+		summary, err := summaryOf(ctx, bound, card)
 		if err != nil {
 			return told{}, err
 		}
@@ -199,19 +199,28 @@ func (c *Cards) tell(ctx context.Context, contact store.ContactMapEntry, card st
 	return out, err
 }
 
-// summaryOf is the summary T55 writes into a card's text, read from the card itself. A card
-// that is not in the person's omni-channel, or still holds the text it was written with, has
-// none.
-func summaryOf(ctx context.Context, bound streamapp.Bound, contact store.ContactMapEntry, card store.EpisodeCard) (string, error) {
+// summaryOf is the summary T55 writes into a card's text, read from the card itself. A message
+// that is not a card as Write writes it, or a card that still holds the text it was written
+// with, has none.
+func summaryOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard) (string, error) {
 	r, err := bound.Client.Chat().GetMessage(ctx, card.CardMessageID, &getstream.GetMessageRequest{})
 	if err != nil {
 		return "", stack.Wrap(err)
 	}
 	message := r.Data.Message
-	if message.Cid != contact.ConversationID || message.DeletedAt != nil || message.Text == cardText {
+	if !writtenAsCard(message) || message.DeletedAt != nil || message.Text == cardText {
 		return "", nil
 	}
 	return strings.TrimSpace(message.Text), nil
+}
+
+// writtenAsCard reports whether a message is in an omni-channel, by the channel's own agent
+// user, as Write writes a card. Not only in the reader's omni-channel: once a link joins a
+// Stream user's and a number's rows (store.LinkUserPhone), the cards written before stay in the
+// omni-channel their row pointed at then, and are still the person's.
+func writtenAsCard(message getstream.MessageWithChannelResponse) bool {
+	channelID, ok := strings.CutPrefix(message.Cid, chatlog.ChannelType+":")
+	return ok && strings.HasPrefix(channelID, omniChannelPrefix) && message.User.ID == channelID
 }
 
 // linesOf is the last lines, at most most, of a card's thread channel said during its
