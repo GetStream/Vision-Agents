@@ -1407,15 +1407,11 @@ func (s *AppsSuite) TestAWorkingLineAsksStreamWhatItAskedBefore() {
 	_, err = s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
 	s.Require().NoError(err)
 
-	var asked []string
-	for _, request := range s.deployment.Requests(s.deployment.Key)[before:] {
-		asked = append(asked, request.Method+" "+request.Path)
-	}
 	s.Equal([]string{
 		"PUT /api/v2/video/sip/inbound_routing_rules/" + attached.RouteID,
 		"PUT /api/v2/video/sip/inbound_trunks/" + attached.TrunkID,
 		"POST /api/v2/video/sip/inbound_routing_rules",
-	}, asked)
+	}, s.askedSince(before))
 }
 
 func (s *AppsSuite) TestAnAdoptedNumberWhoseRuleStreamLostGetsANewOne() {
@@ -1599,6 +1595,16 @@ func (s *AppsSuite) TestARuleMadeAgainForALineThatThenFailsIsDeleted() {
 	s.Equal(attached.RouteID, s.number().StreamRouteID)
 }
 
+// askedSince is each request the deployment's app was asked after the first since, as
+// "<method> <path>".
+func (s *AppsSuite) askedSince(since int) []string {
+	var asked []string
+	for _, request := range s.deployment.Requests(s.deployment.Key)[since:] {
+		asked = append(asked, request.Method+" "+request.Path)
+	}
+	return asked
+}
+
 func (s *AppsSuite) TestACallFromANumberAnotherRuleAnswersPlacesOnATrunkOfItsOwn() {
 	s.sealed()
 	s.deployment.OneTrunkPerNumber()
@@ -1641,6 +1647,40 @@ func (s *AppsSuite) TestANotFoundForASharedTrunkStreamStillHasDropsNoneOfItsNumb
 	s.Require().NoError(err)
 	s.Equal(first.TrunkID, joined.TrunkID, "the trunk's row is kept")
 	s.Equal([]string{s.e164, second}, s.deployment.TrunkNumbers(first.TrunkID))
+}
+
+func (s *AppsSuite) TestAJoinWhoseTrunkUpdateFailsAsksStreamNothingMore() {
+	s.sealed()
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	s.deployment.Fail(http.MethodPut, "/sip/inbound_trunks/"+first.TrunkID)
+	before := len(s.deployment.Requests(s.deployment.Key))
+
+	_, err = s.lineFor(s.customer, second)
+
+	s.Require().ErrorContains(err, "boom")
+	s.Equal([]string{"PUT /api/v2/video/sip/inbound_trunks/" + first.TrunkID}, s.askedSince(before),
+		"only a trunk Stream says is gone is looked for")
+	s.Equal([]string{first.TrunkID}, s.deployment.Trunks())
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(first.TrunkID))
+	s.Equal([]string{first.RouteID}, s.deployment.Rules())
+}
+
+func (s *AppsSuite) TestAnAdoptedNumberWhoseRuleUpdateFailsIsNotGivenANewRule() {
+	s.sealed()
+	_, attached, _ := s.onItsOwnTrunk()
+	s.deployment.Fail(http.MethodPut, "/sip/inbound_routing_rules/"+attached.RouteID)
+	before := len(s.deployment.Requests(s.deployment.Key))
+
+	_, err := s.lineFor(s.customer, s.e164)
+
+	s.Require().ErrorContains(err, "boom")
+	s.NotErrorIs(err, errRoutedElsewhere)
+	s.Equal([]string{"PUT /api/v2/video/sip/inbound_routing_rules/" + attached.RouteID}, s.askedSince(before))
+	s.Equal([]string{attached.RouteID}, s.deployment.Rules())
+	s.Equal([]string{attached.TrunkID}, s.deployment.Trunks())
+	s.Equal(attached.RouteID, s.number().StreamRouteID)
 }
 
 func (s *AppsSuite) TestTwoNumbersJoiningAtOnceMakeOneTrunk() {
