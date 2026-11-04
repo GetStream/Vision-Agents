@@ -59,7 +59,9 @@ The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the rou
 `XAI_API_KEY`. Web search needs one of `EXA_API_KEY`, `TAVILY_API_KEY` or `PERPLEXITY_API_KEY`.
 Stream Chat is on `https://stream-io-repo.com` rather than Maven Central, which
 `settings.gradle.kts` adds. The sign-in card and `AIConversation`'s `contentPadding` need 7.17.0
-or newer.
+or newer, and generated UI replies need 7.18.0: `stream-chat-android-ai-compose`,
+`stream-chat-android-ai-a2ui` and `stream-chat-android-ai-openui` all take `streamChatAi` in
+`gradle/libs.versions.toml`.
 
 ## What the app shows
 
@@ -76,6 +78,18 @@ or newer.
   answer streaming in. Older messages load as you scroll up. Under a finished reply you can
   copy, share and rate it; ratings stay on the phone, as the router takes none yet. The composer
   floats over the bottom of the conversation, which fades away under it.
+- **Interactive replies**: the gear at the top right of the drawer, beside New chat, opens
+  Settings, where Reply format chooses how Juno answers: in Markdown, or with interactive UI in
+  [A2UI](https://a2ui.org) or [OpenUI](https://openui.com). It is the agent's instructions, kept by
+  swift_assistant's backend (`GET`/`PUT /reply-format`), so every app answers the same way, from
+  the next new conversation on. The app reads it on opening and keeps the last choice on the
+  phone. With A2UI or OpenUI, "Plan a weekend in Ohrid" answers with UI in place of the reply's
+  words, which `AIConversation` draws with `stream-chat-android-ai-a2ui`'s `A2UIRenderer` or
+  `stream-chat-android-ai-openui`'s `OpenUIRenderer`. One `AIUIHost` holds both for the screen's
+  life, whatever the format, so earlier replies keep their UI and its state when the format
+  changes, Markdown included; a Markdown reply simply has no UI. Tapping in the UI or sending its form is the person's
+  next question, the action's label as their words and the action as `Responses.create`'s
+  `uiAction`, so the agent answers again.
 - **Photos** from the composer's button, which opens the system photo picker, go with the
   question, shrunk to 1280 pixels across and inline as JPEG data URIs (`Photos.kt`). The question
   shows them at once; the router uploads them to the conversation's channel and writes them on
@@ -130,5 +144,8 @@ URLs, the customer id, the Stream key, the agent's name and the user.
 
 ## What is not here yet
 
+- The trip's own components, the map, the place cards and the calendar that swift_assistant's
+  `UIComponents.json` describes: the app gives its renderers none, so a reply has only its
+  format's own.
 - Think harder, which iOS offers in the composer's options: Stream's Android composer has no
   options sheet.

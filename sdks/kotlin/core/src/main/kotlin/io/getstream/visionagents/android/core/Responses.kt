@@ -9,6 +9,11 @@ import io.ktor.http.HttpMethod
 import java.util.UUID
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.flow
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
+import kotlinx.serialization.json.JsonNull
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 
 /** How many items are read per request while unwinding. */
 private const val ITEM_PAGE = 200
@@ -39,12 +44,17 @@ public class Responses internal constructor(
      * [maxOutputTokens] caps this answer, reasoning included, and [reasoningEffort] is how long
      * the model may think first, one of the efforts the session's model accepts. Both cover the
      * replies that finish it after its tools; left null, the session's own apply.
+     *
+     * [uiAction] is what the person did in the generated UI of an earlier reply (an object with
+     * `message_id`, `format`, `name` and `payload`, at most 8 KB as JSON), sent as `ui_action`;
+     * [text] then says it in their words, such as the action's label.
      */
     public suspend fun create(
         text: String,
         images: List<ImageSource> = emptyList(),
         maxOutputTokens: Int? = null,
         reasoningEffort: String? = null,
+        uiAction: Map<String, Any?>? = null,
     ): AgentResponse {
         val request = CreateResponseRequest(
             text = text,
@@ -52,6 +62,7 @@ public class Responses internal constructor(
             maxOutputTokens = maxOutputTokens,
             reasoningEffort = reasoningEffort,
             requestId = UUID.randomUUID().toString(),
+            uiAction = uiAction?.mapValues { (_, value) -> value.toJsonElement() },
         )
         asked(text)
         val created = backend.post(
@@ -133,4 +144,17 @@ public class Responses internal constructor(
     public suspend fun rewind(to: ResponseItem): Unit = rewind(to.responseId)
 
     private fun path(vararg rest: String) = listOf("v1", "agents", "sessions", sessionId, "responses") + rest
+}
+
+/** Plain values (maps, lists, strings, numbers, booleans) as JSON, for a [Responses.create] ui action. */
+internal fun Any?.toJsonElement(): JsonElement = when (this) {
+    null -> JsonNull
+    is JsonElement -> this
+    is String -> JsonPrimitive(this)
+    is Number -> JsonPrimitive(this)
+    is Boolean -> JsonPrimitive(this)
+    is Map<*, *> -> JsonObject(entries.associate { (key, value) -> key.toString() to value.toJsonElement() })
+    is Iterable<*> -> JsonArray(map { it.toJsonElement() })
+    is Array<*> -> JsonArray(map { it.toJsonElement() })
+    else -> JsonPrimitive(toString())
 }
