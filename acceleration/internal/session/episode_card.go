@@ -82,12 +82,18 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 //
 //   - a text session on a thread channel reads the cards of the person its thread's episode
 //     is with, the thread itself left out, since it reads that word for word;
+//   - a text session a worker opened to answer a message in an app chat's agent channel
+//     (Spec.Dispatched) reads the cards of the one Stream user who wrote there, the channel
+//     itself left out for the same reason. The spec does not name that person: UserID is
+//     who the agent writes as, and Caller is empty, since the worker opens the session with
+//     its own server key (Manager.handedOut). The channel's messages do, as they named the
+//     person whose card the message wrote (api.chatEpisode);
 //   - a voice session reads the cards of the number on its call (calledParty), its own
 //     call's card left out.
 //
 // Any other session reads none: an incognito one, which keeps nothing of the person, one
 // with no agent config, whose contact map the cards are keyed by, a text session on any
-// other channel, whose person the contact map cannot key yet, and a native speech-to-speech
+// other channel, whose person the contact map cannot key, and a native speech-to-speech
 // one. A native model is handed its history as a transcript in its instructions
 // (agent.openSpeech), which keeps no system note, so the cards would reach it without the
 // note that they are context, not authority, and a new call would read as one carried on.
@@ -105,6 +111,8 @@ func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound)
 	switch {
 	case spec.Text && spec.PersistConversation && spec.Shared():
 		reading.Thread = spec.ConversationID
+	case spec.Text && spec.PersistConversation && spec.Dispatched:
+		reading.Chat = spec.ConversationID
 	case !spec.Text && spec.CallID != "" && stream.Client != nil:
 		number, err := calledParty(ctx, spec, stream)
 		if err != nil {

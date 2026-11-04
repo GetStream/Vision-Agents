@@ -55,8 +55,9 @@ class AgentConfig:
             are none.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
-        episode_cards (bool | Unset): Whether each phone call under this agent writes an episode card into the caller's
-            omni-channel, and each session on a thread channel or a phone call starts with the person's other cards.
+        episode_cards (bool | Unset): Whether each phone call and each app chat conversation under this agent writes an
+            episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel
+            or a phone call starts with the person's other cards.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset):
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
