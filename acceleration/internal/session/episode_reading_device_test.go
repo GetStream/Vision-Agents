@@ -88,8 +88,7 @@ func (s *EpisodeReadingSuite) deviceCallOn(by opener, call, text string) (*Sessi
 
 // Defect: a session Anya's own device opens with her token reads none of her app chat's
 // cards. Her text session and her call from the app start with the card's summary, and each
-// names her as the one person it answers (CardsFor), so a message by anybody else in its
-// channel is kept from it (api.routeArrivingMessage).
+// names her as the one person it answers (CardsFor).
 func (s *EpisodeReadingSuite) TestASessionThePersonsOwnDeviceOpensReadsTheirChatCard() {
 	s.anyasCard()
 
