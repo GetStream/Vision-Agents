@@ -79,7 +79,6 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val failure by viewModel.failure.collectAsStateWithLifecycle()
     val hasOlder by viewModel.hasOlderMessages.collectAsStateWithLifecycle()
     val chat by viewModel.chat.collectAsStateWithLifecycle()
-    val uiHost by viewModel.uiHost.collectAsStateWithLifecycle()
     val approver = chat?.let { rememberApprover(it) }
     val views = remember(viewModel) { AssistantViews(viewModel) }
     var draft by rememberSaveable(stateSaver = MessageData.Saver) { mutableStateOf(MessageData()) }
@@ -111,7 +110,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                 },
                 emptyContent = { Welcome() },
                 contentPadding = PaddingValues(bottom = barHeight),
-                ui = uiHost,
+                ui = viewModel.uiHost,
             )
 
             // The conversation fades away under the composer rather than stopping at a hairline,

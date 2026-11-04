@@ -1,9 +1,6 @@
 package io.getstream.visionagents.androidassistant
 
 import android.content.Context
-import io.getstream.chat.android.ai.a2ui.generativeui.A2UIRenderer
-import io.getstream.chat.android.ai.compose.generativeui.AIUIRenderer
-import io.getstream.chat.android.ai.openui.generativeui.OpenUIRenderer
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -19,22 +16,12 @@ import okhttp3.RequestBody.Companion.toRequestBody
  * How the agent writes its replies: plain Markdown, or a generated UI in A2UI or OpenUI.
  *
  * The agent's instructions choose it, on the backend, so a change applies to the next new
- * conversation. This phone keeps the choice too, to pick the renderer for what arrives.
+ * conversation. This phone keeps the choice too, and shows generated UI unless it is Markdown.
  */
 enum class ReplyFormat(val wire: String, val title: String) {
     Markdown("markdown", "Markdown"),
     A2UI("a2ui", "A2UI"),
     OpenUI("openui", "OpenUI");
-
-    /**
-     * The renderers for replies in this format. Markdown keeps both, so the UI of replies written
-     * before the switch still shows.
-     */
-    fun renderers(): List<AIUIRenderer> = when (this) {
-        Markdown -> listOf(OpenUIRenderer(), A2UIRenderer())
-        A2UI -> listOf(A2UIRenderer())
-        OpenUI -> listOf(OpenUIRenderer())
-    }
 
     companion object {
         private const val PREFERENCES = "juno"
