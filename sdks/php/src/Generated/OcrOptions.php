@@ -15,6 +15,8 @@ final readonly class OcrOptions
 {
     public function __construct(
         public ?DataPolicy $dataPolicy = null,
+        // Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and...
+        public ?bool $figures = null,
         // A priority list of where to try, in the order given, which wins over target when it holds anything.
         /** @var list<string>|null */
         public ?array $providers = null,
@@ -30,6 +32,7 @@ final readonly class OcrOptions
     {
         return new self(
             dataPolicy: array_key_exists('data_policy', $data) && $data['data_policy'] !== null ? DataPolicy::fromArray(Json::object($data, 'data_policy')) : null,
+            figures: array_key_exists('figures', $data) && $data['figures'] !== null ? Json::bool($data, 'figures') : null,
             providers: array_key_exists('providers', $data) && $data['providers'] !== null ? Json::strings($data, 'providers') : null,
             target: array_key_exists('target', $data) && $data['target'] !== null ? Json::string($data, 'target') : null,
         );
@@ -45,6 +48,9 @@ final readonly class OcrOptions
         $out = [];
         if ($this->dataPolicy !== null) {
             $out['data_policy'] = $this->dataPolicy->toArray();
+        }
+        if ($this->figures !== null) {
+            $out['figures'] = $this->figures;
         }
         if ($this->providers !== null) {
             $out['providers'] = $this->providers;

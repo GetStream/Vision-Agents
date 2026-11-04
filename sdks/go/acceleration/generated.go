@@ -6614,6 +6614,9 @@ type OcrOptions struct {
 	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
 	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
 
+	// Figures Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+	Figures *bool `json:"figures,omitempty"`
+
 	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything.
 	Providers *[]string `json:"providers,omitempty"`
 
@@ -13341,7 +13344,7 @@ type ClientInterface interface {
 
 	// ReadPageWithBody Read the text of one page, and return it as Markdown
 	//
-	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 	//
 	// Takes any type of body and a specified content type.
@@ -13351,7 +13354,7 @@ type ClientInterface interface {
 
 	// ReadPage Read the text of one page, and return it as Markdown
 	//
-	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 	//
 	// Takes a body of the `application/json` content type.
@@ -18539,7 +18542,7 @@ func (c *Client) GenerateImage(ctx context.Context, body GenerateImageJSONReques
 
 // ReadPageWithBody Read the text of one page, and return it as Markdown
 //
-// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 // A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 //
 // Takes any type of body and a specified content type.
@@ -18559,7 +18562,7 @@ func (c *Client) ReadPageWithBody(ctx context.Context, contentType string, body 
 
 // ReadPage Read the text of one page, and return it as Markdown
 //
-// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 // A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 //
 // Takes a body of the `application/json` content type.
@@ -34617,7 +34620,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReadPageWithBodyWithResponse Read the text of one page, and return it as Markdown
 	//
-	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -34627,7 +34630,7 @@ type ClientWithResponsesInterface interface {
 
 	// ReadPageWithResponse Read the text of one page, and return it as Markdown
 	//
-	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 	//
 	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
@@ -64484,7 +64487,7 @@ func (c *ClientWithResponses) GenerateImageWithResponse(ctx context.Context, bod
 
 // ReadPageWithBodyWithResponse Read the text of one page, and return it as Markdown
 //
-// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 // A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
@@ -64500,7 +64503,7 @@ func (c *ClientWithResponses) ReadPageWithBodyWithResponse(ctx context.Context, 
 
 // ReadPageWithResponse Read the text of one page, and return it as Markdown
 //
-// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
 // A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
 //
 // Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).

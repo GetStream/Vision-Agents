@@ -7615,6 +7615,9 @@ impl ::std::convert::TryFrom<::std::string::String> for OcrErrorCode {
 pub struct OcrOptions {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub data_policy: ::std::option::Option<DataPolicy>,
+    ///Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub figures: ::std::option::Option<bool>,
     ///A priority list of where to try, in the order given, which wins over target when it holds anything.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub providers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,

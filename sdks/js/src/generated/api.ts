@@ -2955,7 +2955,7 @@ export type paths = {
         readonly put?: never;
         /**
          * Read the text of one page, and return it as Markdown
-         * @description Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+         * @description Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
          *     A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
          */
         readonly post: operations["readPage"];
@@ -7352,6 +7352,8 @@ export type components = {
         /** @description Who reads the page, and what may happen to it afterwards. */
         readonly OcrOptions: {
             readonly data_policy?: components["schemas"]["DataPolicy"];
+            /** @description Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best. */
+            readonly figures?: boolean;
             /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. */
             readonly providers?: readonly string[];
             /**

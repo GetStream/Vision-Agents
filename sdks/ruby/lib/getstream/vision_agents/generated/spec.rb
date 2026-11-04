@@ -2428,7 +2428,7 @@ module GetStream
           required: %w[numbers skipped].freeze, open: false
         }.freeze,
         "OcrOptions" => {
-          properties: %w[data_policy providers target].freeze,
+          properties: %w[data_policy figures providers target].freeze,
           required: [].freeze, open: false
         }.freeze,
         "OcrRequest" => {

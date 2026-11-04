@@ -25,12 +25,16 @@ class OcrOptions:
             transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a
             requirement rather than a description: a request naming one is only routed to a model whose declared handling
             meets it, and if none does the request is refused rather than sent somewhere that does not.
+        figures (bool | Unset): Summarise each chart, diagram, photo or table drawn as a picture where it is on the
+            page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried
+            first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
         providers (list[str] | Unset): A priority list of where to try, in the order given, which wins over target when
             it holds anything.
         target (str | Unset): A provider/model or a shortcut. Defaults to ocr-default. Example: ocr-vision.
     """
 
     data_policy: DataPolicy | Unset = UNSET
+    figures: bool | Unset = UNSET
     providers: list[str] | Unset = UNSET
     target: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -39,6 +43,8 @@ class OcrOptions:
         data_policy: dict[str, Any] | Unset = UNSET
         if not isinstance(self.data_policy, Unset):
             data_policy = self.data_policy.to_dict()
+
+        figures = self.figures
 
         providers: list[str] | Unset = UNSET
         if not isinstance(self.providers, Unset):
@@ -51,6 +57,8 @@ class OcrOptions:
         field_dict.update({})
         if data_policy is not UNSET:
             field_dict["data_policy"] = data_policy
+        if figures is not UNSET:
+            field_dict["figures"] = figures
         if providers is not UNSET:
             field_dict["providers"] = providers
         if target is not UNSET:
@@ -70,12 +78,15 @@ class OcrOptions:
         else:
             data_policy = DataPolicy.from_dict(_data_policy)
 
+        figures = d.pop("figures", UNSET)
+
         providers = cast(list[str], d.pop("providers", UNSET))
 
         target = d.pop("target", UNSET)
 
         ocr_options = cls(
             data_policy=data_policy,
+            figures=figures,
             providers=providers,
             target=target,
         )

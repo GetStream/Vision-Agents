@@ -8307,6 +8307,12 @@ namespace GetStream.VisionAgents.Models
         public DataPolicy? DataPolicy { get; set; } = default!;
 
         /// <summary>
+        /// Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("figures")]
+        public bool? Figures { get; set; } = default!;
+
+        /// <summary>
         /// A priority list of where to try, in the order given, which wins over target when it holds anything.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("providers")]

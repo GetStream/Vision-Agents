@@ -100,7 +100,9 @@ def sync_detailed(
      Routed like detection: a target or a priority list picks the model, failover and billing work as
     they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over
     to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision
-    asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+    asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a
+    vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a
+    vision model by the tokens it took.
     A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading
     that got as far as a provider answers 200 whether it read anything or not: a failed one carries
     status failed, an error_code and the error, and costs nothing. A page with no text on it is
@@ -138,7 +140,9 @@ def sync(
      Routed like detection: a target or a priority list picks the model, failover and billing work as
     they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over
     to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision
-    asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+    asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a
+    vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a
+    vision model by the tokens it took.
     A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading
     that got as far as a provider answers 200 whether it read anything or not: a failed one carries
     status failed, an error_code and the error, and costs nothing. A page with no text on it is
@@ -171,7 +175,9 @@ async def asyncio_detailed(
      Routed like detection: a target or a priority list picks the model, failover and billing work as
     they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over
     to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision
-    asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+    asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a
+    vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a
+    vision model by the tokens it took.
     A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading
     that got as far as a provider answers 200 whether it read anything or not: a failed one carries
     status failed, an error_code and the error, and costs nothing. A page with no text on it is
@@ -207,7 +213,9 @@ async def asyncio(
      Routed like detection: a target or a priority list picks the model, failover and billing work as
     they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over
     to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision
-    asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+    asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a
+    vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a
+    vision model by the tokens it took.
     A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading
     that got as far as a provider answers 200 whether it read anything or not: a failed one carries
     status failed, an error_code and the error, and costs nothing. A page with no text on it is
