@@ -293,7 +293,7 @@ func grantOf(grant store.LimitGrant, now time.Time) LimitGrant {
 }
 
 func (s *Server) createGrant(ctx context.Context, organization string, sent LimitGrantInput, audit store.LimitAudit) (*createdGrantResponse, error) {
-	ref, err := usageTarget(sent.LimitTarget, organization)
+	ref, err := usageTarget(sent.LimitTarget, organization, "api_key")
 	if err != nil {
 		return nil, err
 	}

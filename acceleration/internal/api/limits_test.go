@@ -177,6 +177,27 @@ func (s *LimitsSuite) TestLimitsListWithTheCallersKeyInTheQuery() {
 	s.Equal([]int64{key.Id}, s.limitIDs("api_key_id=key_a"), "the same with no credential in the query")
 }
 
+// A usage read's refusal names the query field it was sent, api_key_id; a write's names the
+// body field, api_key (AI-2684).
+func (s *LimitsSuite) TestAUsageReadRefusalNamesTheKeyFieldOfTheQuery() {
+	status, failure := s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key_id")
+
+	status, failure = s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=user&app_id=a&user_id=u1&api_key_id=k1", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names no api_key_id")
+
+	status, failure = s.refusal(s.serverClient, http.MethodGet, "/v1/spend/limits/usage?subject=api_key&app_id=a&api_key_id=hook:chat", nil)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "api_key_id is 1 to 128 characters")
+
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits", map[string]any{"subject": "api_key", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1})
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure.Message, "names api_key")
+	s.NotContains(failure.Message, "api_key_id", "a write names the body field")
+}
+
 // The usage read names a key subject by api_key_id, so the caller's key the proxy forwards as
 // api_key is no subject id: a user's usage is read beside it (AI-2684).
 func (s *LimitsSuite) TestLimitUsageWithTheCallersKeyInTheQuery() {
