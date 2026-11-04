@@ -89,18 +89,20 @@ npm run build     # types, then the bundle
   composer floats over the bottom of the conversation, which fades away under it, and its
   options offer Think harder, which asks with a higher `reasoning_effort`.
 - **Interactive replies**: the gear in the top bar picks how Juno answers, as the iOS app's
-  settings do: in text, or with interactive UI written in [A2UI](https://a2ui.org). It is the
+  settings do: in text, or with interactive UI written in [A2UI](https://a2ui.org) or
+  [OpenUI](https://openui.com). It is the
   agent's instructions, kept by swift_assistant's backend (`GET`/`PUT /reply-format`), so every
   app answers the same way, from the next conversation on. "Plan a weekend in Ohrid" then
   answers with a card in place of the reply's words: a map of the places with their pins
   dropping in, Juno's calendar for those days, a tab per day of place cards with their Wikipedia
   photos, and a form to change the plan. The map, the place cards and the calendar are the
   page's own components (`tripComponents.tsx`), described once for every platform in
-  swift_assistant's `UIComponents.json`; the rest is A2UI's basic catalog, drawn by
-  `stream-chat-react/a2ui` on the official `@a2ui/web_core` and `@a2ui/react`. Tapping a place
-  or sending the form is the person's next question, in their words, with what they did as its
-  `uiAction`, so the agent answers with a new plan. A reply in OpenUI, which the iOS app also
-  writes, shows its words here.
+  swift_assistant's `UIComponents.json`; the rest is the format's own: A2UI's basic catalog,
+  drawn by `stream-chat-react/a2ui` on the official `@a2ui/web_core` and `@a2ui/react`, or
+  OpenUI's chat library, drawn by `stream-chat-react/openui` on the official `@openuidev`
+  packages. Tapping a place or sending the form is the person's next question, in their words,
+  with what they did as its `uiAction`, so the agent answers with a new plan. One done while
+  Juno is still answering isn't sent, and the line over the composer says so.
 - **Photos** from the composer's button go with the question, shrunk to 1280 pixels across and
   inline as JPEG data URIs (`photos.ts`), turned the way the camera held them. The question shows
   them at once; the router uploads them to the conversation's channel and writes them on the
