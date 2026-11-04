@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/imagegen"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 const model = "gemini-3.1-flash-image"
@@ -155,6 +156,46 @@ func (s *GoogleSuite) TestSeveralPicturesAreOneCallEach() {
 	s.Equal("image/png", result.Images[0].MediaType)
 	s.Equal("image/jpeg", result.Images[1].MediaType)
 	s.Len(s.gemini.asked(), 2)
+}
+
+// TestThePromptAndTheThinkingAreCountedBesideThePictures: Gemini bills the prompt, its
+// thinking and any words it wrote by the token, and the picture's own tokens are the price per
+// image's, so only the others are counted, across every call.
+func (s *GoogleSuite) TestThePromptAndTheThinkingAreCountedBesideThePictures() {
+	for _, thoughts := range []int64{150, 0} {
+		answer := drawn("image/png", picture("png", 64, 64))
+		answer["usageMetadata"] = map[string]any{
+			"promptTokenCount": 12, "candidatesTokenCount": 1125, "thoughtsTokenCount": thoughts,
+			"candidatesTokensDetails": []any{
+				map[string]any{"modality": "IMAGE", "tokenCount": 1120},
+				map[string]any{"modality": "TEXT", "tokenCount": 5},
+			},
+		}
+		s.gemini.answer(http.StatusOK, answer)
+	}
+
+	result, err := s.provider.Generate(s.ctx, imagegen.Request{Prompt: "a field", N: 2})
+	s.Require().NoError(err)
+
+	s.Equal(int64(24), result.InputTokens)
+	s.Equal(int64(160), result.OutputTokens)
+	used := result.Used()
+	s.Equal(int64(2), used[pricing.Images])
+	s.Equal(int64(24), used[pricing.InputTokens])
+	s.Equal(int64(160), used[pricing.OutputTokens])
+}
+
+// TestAnAnswerWithoutUsageCountsOnlyThePictures: the price per image still prices it.
+func (s *GoogleSuite) TestAnAnswerWithoutUsageCountsOnlyThePictures() {
+	s.gemini.answer(http.StatusOK, drawn("image/png", picture("png", 64, 64)))
+
+	result, err := s.provider.Generate(s.ctx, imagegen.Request{Prompt: "a field"})
+	s.Require().NoError(err)
+
+	used := result.Used()
+	s.Equal(int64(1), used[pricing.Images])
+	s.NotContains(used, pricing.InputTokens)
+	s.NotContains(used, pricing.OutputTokens)
 }
 
 func (s *GoogleSuite) TestASketchTheModelThoughtWithIsNotTheAnswer() {
