@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"maps"
 	"mime"
 	"net/http"
 	"path"
@@ -55,6 +56,18 @@ func (s *Server) uploadKnowledgeFile(w http.ResponseWriter, r *http.Request) {
 		writeError(w, invalidRequest("a namespace is required, knowledge is never shared"))
 		return
 	}
+	// Reading the file is paid for, so a customer who may spend nothing is told now, as a
+	// text ingest would be, rather than once the file is sent and the worker refuses it.
+	if err := s.knowledgeFor(r.Context(), customerID, "").Admit(r.Context()); err != nil {
+		if answer, ok := moneyError(err); ok {
+			maps.Copy(w.Header(), moneyHeaders(err))
+			writeError(w, answer)
+			return
+		}
+		s.logger.Warn("could not admit a knowledge file", "namespace", namespace, "error", err)
+		writeError(w, unavailable("the file could not be taken now: try again shortly"))
+		return
+	}
 
 	_ = http.NewResponseController(w).SetReadDeadline(time.Now().Add(fileReadTimeout))
 	r.Body = http.MaxBytesReader(w, r.Body, files.MaxBytes+maxFormOverhead)
@@ -72,7 +85,7 @@ func (s *Server) uploadKnowledgeFile(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if err != nil {
-			writeError(w, uploadFailure(err))
+			writeError(w, s.uploadFailure(err))
 			return
 		}
 		if next.FormName() != "file" {
@@ -109,7 +122,7 @@ func (s *Server) uploadKnowledgeFile(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeError(w, uploadFailure(err))
+		writeError(w, s.uploadFailure(err))
 		return
 	}
 
@@ -135,12 +148,13 @@ func (s *Server) uploadKnowledgeFile(w http.ResponseWriter, r *http.Request) {
 }
 
 // uploadFailure is the answer to an upload that failed while its body was read or kept.
-func uploadFailure(err error) APIError {
+func (s *Server) uploadFailure(err error) APIError {
 	var tooLarge *http.MaxBytesError
 	if errors.Is(err, errFileTooLarge) || errors.As(err, &tooLarge) {
 		return payloadTooLarge("a knowledge file is at most 50 MB: split a larger one, or compress its pictures")
 	}
-	return unavailable("the file could not be kept: " + err.Error())
+	s.logger.Warn("could not keep a knowledge file", "error", err)
+	return unavailable("the file could not be kept: upload it again")
 }
 
 // contentTypeOf is the type the file was sent as, or the one its name says when the sender

@@ -157,7 +157,7 @@ func (s *KnowledgeFilesSuite) TestAFormWithoutAFileIsRefused() {
 	s.Require().NoError(form.WriteField("note", "no file here"))
 	s.Require().NoError(form.Close())
 
-	status, answer := s.send(s.serverClient, body.Bytes(), form.FormDataContentType(), url.Values{"namespace": {s.namespace}})
+	status, answer := s.postKnowledgeFile(s.serverClient, body.Bytes(), form.FormDataContentType(), url.Values{"namespace": {s.namespace}})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(string(answer), "no part named file")
@@ -166,7 +166,7 @@ func (s *KnowledgeFilesSuite) TestAFormWithoutAFileIsRefused() {
 func (s *KnowledgeFilesSuite) TestANamespaceIsRequired() {
 	body, contentType := formWith("notes.md", []byte("# Notes"))
 
-	status, _ := s.send(s.serverClient, body, contentType, url.Values{})
+	status, _ := s.postKnowledgeFile(s.serverClient, body, contentType, url.Values{})
 
 	s.Equal(http.StatusBadRequest, status)
 }
@@ -174,7 +174,7 @@ func (s *KnowledgeFilesSuite) TestANamespaceIsRequired() {
 func (s *KnowledgeFilesSuite) TestOnlyTheCustomersOwnBackendMayUpload() {
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		body, contentType := formWith("notes.md", []byte("# Notes"))
-		status, _ := s.send(as, body, contentType, url.Values{"namespace": {s.namespace}})
+		status, _ := s.postKnowledgeFile(as, body, contentType, url.Values{"namespace": {s.namespace}})
 		return status
 	})
 }
@@ -186,7 +186,7 @@ func (s *KnowledgeFilesSuite) upload(name string, data []byte, source string) (i
 	if source != "" {
 		query.Set("source", source)
 	}
-	status, answer := s.send(s.serverClient, body, contentType, query)
+	status, answer := s.postKnowledgeFile(s.serverClient, body, contentType, query)
 	var sent IndexedKnowledgeDocument
 	if status == http.StatusAccepted {
 		s.Require().NoError(json.Unmarshal(answer, &sent), string(answer))
@@ -194,7 +194,9 @@ func (s *KnowledgeFilesSuite) upload(name string, data []byte, source string) (i
 	return status, sent, answer
 }
 
-func (s *KnowledgeFilesSuite) send(as *testClient, body []byte, contentType string, query url.Values) (int, []byte) {
+// postKnowledgeFile sends body to the upload endpoint as the client as, and returns the status
+// and what it answered.
+func (s *RouterSuite) postKnowledgeFile(as *testClient, body []byte, contentType string, query url.Values) (int, []byte) {
 	request, err := http.NewRequest(http.MethodPost, as.base()+knowledgeFilesPath+"?"+query.Encode(), bytes.NewReader(body))
 	s.Require().NoError(err)
 	request.Header = as.header.Clone()

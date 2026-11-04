@@ -18,6 +18,7 @@ import (
 	"io"
 	"log/slog"
 	"path"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -31,6 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ocr"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -302,6 +304,25 @@ type unreadable struct{ reason string }
 
 func (u *unreadable) Error() string { return u.reason }
 
+// unpaid is a read refused because the customer may not spend money now: no credit, a
+// spend limit reached, a suspended organization. Unlike other errors its reason is the
+// customer's to read, and it may pass, so it is tried again.
+type unpaid struct{ err error }
+
+func (u *unpaid) Error() string { return u.err.Error() }
+
+func (u *unpaid) Unwrap() error { return u.err }
+
+// why is the refusal as the customer reads it, without the package that made it, as the API
+// answers it.
+func (u *unpaid) why() string { return strings.TrimPrefix(u.err.Error(), "policy: ") }
+
+// spendRefusals are the refusals of an admission that are the customer's own to read and to
+// fix. A spend check that could not be shared is the router's, and reads as any other error.
+var spendRefusals = []error{
+	policy.ErrSuspended, policy.ErrNoCredits, policy.ErrSystemLimit, policy.ErrBudgetSpent, policy.ErrUserLimit,
+}
+
 // process is the worker's half of an upload: it reads the file, writes its passages,
 // records what happened and deletes the file.
 //
@@ -347,13 +368,20 @@ func (s *Service) process(ctx context.Context, task *asynq.Task) error {
 	retried, _ := asynq.GetRetryCount(ctx)
 	limit, _ := asynq.GetMaxRetry(ctx)
 	var cannot *unreadable
+	var refused *unpaid
 	last := errors.As(err, &cannot) || retried >= limit
-	reason := "The file could not be read, and is tried again: " + err.Error()
+	// Only the reasons that are the customer's own are written for them: the rest, a
+	// bucket path or a vendor's answer, stay in the log.
+	reason := "The file could not be read yet, and is tried again."
 	switch {
 	case cannot != nil:
 		reason = cannot.reason
+	case errors.As(err, &refused) && last:
+		reason = "The file was not read, as nothing can be spent now: " + refused.why() + ". Upload it again once it can."
+	case refused != nil:
+		reason = "The file is not read yet, as nothing can be spent now: " + refused.why() + ". It is tried again."
 	case last:
-		reason = "The file could not be read: " + err.Error() + ". Upload it again."
+		reason = "The file could not be read. Upload it again."
 	}
 	s.logger.Warn("could not read a file into a knowledge base",
 		"source", document.Source, "namespace", document.Namespace, "attempt", retried+1, "last", last, "error", err)
@@ -389,6 +417,9 @@ func (s *Service) read(ctx context.Context, owned metered.OwnedKnowledge, payloa
 	// Reading scans and writing passages are paid for, so a customer whose write would be
 	// refused is not read for.
 	if err := owned.Admit(ctx); err != nil {
+		if slices.ContainsFunc(spendRefusals, func(refusal error) bool { return errors.Is(err, refusal) }) {
+			return &unpaid{err: err}
+		}
 		return err
 	}
 	data, err := s.bucket.Read(ctx, payload.ObjectKey)
