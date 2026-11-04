@@ -125,6 +125,12 @@ func (s *StoreSuite) TestTheSameUserIdInAnotherAppIsAnotherPerson() {
 	s.Require().NoError(s.link("anya", "+15550100"))
 
 	s.Equal("agent:omni-chat", s.omniOf(other))
+	smsTwo := contact("+15550100", "agent:omni-sms-two")
+	smsTwo.AgentConfigID = "agent-two"
+	s.made(smsTwo)
+	later := streamUser("anya", "agent:omni-chat-two")
+	later.AgentConfigID, later.StreamAppPK = "agent-two", 7
+	s.Equal("agent:omni-chat-two", s.made(later).ConversationID, "a row made later in app 7")
 }
 
 // Catches a number linked to two users of one app, a second app refused the number, and a
@@ -138,15 +144,23 @@ func (s *StoreSuite) TestANumberIsOneUserOfAnApp() {
 	s.Equal(2, s.rows("SELECT count(*) FROM user_phones"))
 }
 
-// Catches a link of one customer that joins another customer's rows of the same user and number.
+// Catches a link of one customer that joins another customer's rows of the same user and
+// number, and a row made later that finds the other customer's link rather than its own.
 func (s *StoreSuite) TestAnotherCustomersLinkJoinsNothingOfThisCustomer() {
 	sms := s.made(contact("+15550100", "agent:omni-sms"))
 	chat := s.made(streamUser("anya", "agent:omni-chat"))
 
-	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "globex-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550100"}))
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "globex-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550199"}))
 
 	s.Equal("agent:omni-sms", s.omniOf(sms))
 	s.Equal("agent:omni-chat", s.omniOf(chat))
+	s.Require().NoError(s.link("anya", "+15550100"))
+	smsTwo := contact("+15550100", "agent:omni-sms-two")
+	smsTwo.AgentConfigID = "agent-two"
+	s.made(smsTwo)
+	chatTwo := streamUser("anya", "agent:omni-chat-two")
+	chatTwo.AgentConfigID = "agent-two"
+	s.Equal("agent:omni-sms-two", s.made(chatTwo).ConversationID, "acme's own link, not globex's")
 }
 
 // Catches an unlink that splits what was joined, or leaves the link to join the next row.
@@ -154,6 +168,8 @@ func (s *StoreSuite) TestAnUnlinkKeepsWhatWasJoinedAndJoinsNoMore() {
 	sms := s.made(contact("+15550100", "agent:omni-sms"))
 	chat := s.made(streamUser("anya", "agent:omni-chat"))
 	s.Require().NoError(s.link("anya", "+15550100"))
+	s.Require().NoError(s.link("bob", "+15550199"))
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "acme-app", StreamAppPK: 7, UserID: "anya", Phone: "+15550100"}))
 
 	s.Require().NoError(s.store.UnlinkUserPhone(s.ctx, "acme-app", 4242, "anya"))
 
@@ -165,7 +181,9 @@ func (s *StoreSuite) TestAnUnlinkKeepsWhatWasJoinedAndJoinsNoMore() {
 	later := contact("+15550100", "agent:omni-later")
 	later.AgentConfigID = "agent-two"
 	s.Equal("agent:omni-later", s.made(later).ConversationID)
-	s.Zero(s.rows("SELECT count(*) FROM user_phones"))
+	s.Equal(1, s.rows("SELECT count(*) FROM user_phones WHERE user_id = 'bob'"), "another user's link")
+	s.Equal(1, s.rows("SELECT count(*) FROM user_phones WHERE stream_app_pk = 7"), "the user's link in another app")
+	s.Equal(2, s.rows("SELECT count(*) FROM user_phones"))
 }
 
 // Catches a new number that leaves the old one linked, and a join that takes the older row
