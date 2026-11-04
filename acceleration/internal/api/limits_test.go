@@ -192,7 +192,7 @@ func (s *LimitsSuite) TestAUsageReadRefusalNamesTheKeyFieldOfTheQuery() {
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure.Message, "api_key_id is 1 to 128 characters")
 
-	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits", map[string]any{"subject": "api_key", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1})
+	status, failure = s.refusal(s.serverClient, http.MethodPost, "/v1/spend/limits", map[string]any{"subject": "api_key", "level": "api_key", "app_id": s.customerID(), "interval": "daily", "limit_micros": 1})
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure.Message, "names api_key")
 	s.NotContains(failure.Message, "api_key_id", "a write names the body field")
