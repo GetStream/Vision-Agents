@@ -21,7 +21,7 @@ var (
 
 // AgentUserRequest is what the customer's backend knows about one of its users.
 type AgentUserRequest struct {
-	Phone *string `json:"phone" nullable:"true" example:"+15551234567" doc:"The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had; what was joined before stays joined. A new number takes the place of the old one. A number linked to another user of the app is refused (409 phone_taken)."`
+	Phone *string `json:"phone" nullable:"true" example:"+15551234567" doc:"The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken)."`
 }
 
 func (*AgentUserRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -37,8 +37,8 @@ type AgentUser struct {
 }
 
 type putUserRequest struct {
-	UserID string `path:"user_id" minLength:"1" doc:"The Stream user id the app chat knows the user by: the id the app's own token signs."`
-	Body   *AgentUserRequest
+	UserID string            `path:"user_id" minLength:"1" doc:"The Stream user id the app chat knows the user by: the id the app's own token signs."`
+	Body   *AgentUserRequest `required:"true"`
 }
 
 type putUserResponse struct {
@@ -73,9 +73,6 @@ func (s *Server) putUser(ctx context.Context, request *putUserRequest) (*putUser
 	}
 	if s.store == nil {
 		return nil, errNoUserLinks
-	}
-	if request.Body == nil {
-		return nil, invalidRequest("a request body is required")
 	}
 	var app int64
 	if s.stream != nil {

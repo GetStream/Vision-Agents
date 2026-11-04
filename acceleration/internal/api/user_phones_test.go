@@ -6,7 +6,6 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -37,6 +36,9 @@ func TestUserPhonesSuite(t *testing.T) {
 
 func (s *UserPhonesSuite) SetupSuite() {
 	s.database = "user_phones"
+	// The message hook names the deployment's own app by its id once it is known, and opens
+	// no chat episode for a message of an app it cannot name.
+	s.deploymentKnown = true
 	s.telnyxLine.SetupSuite()
 }
 
@@ -99,7 +101,9 @@ func (s *UserPhonesSuite) TestAPutAnswersTheNumberInE164AndIsIdempotent() {
 	formatted := s.person[:2] + " (" + s.person[2:5] + ") " + s.person[5:8] + "-" + s.person[8:]
 
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+formatted+`"}`, &user))
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person}, user, "the router's form, not the one sent")
 	s.Require().Equal([]string{s.person}, s.links(), "kept as an SMS from it names it")
+	user = AgentUser{}
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, &user))
 
 	s.Equal(AgentUser{UserID: s.user, Phone: &s.person}, user)
@@ -132,6 +136,51 @@ func (s *UserPhonesSuite) TestNullUnlinksAndFreesTheNumber() {
 	s.Equal(http.StatusOK, s.put("other-"+s.utils.uuid(), `{"phone": "`+s.person+`"}`, nil))
 }
 
+// Catches an unlink that leaves the number on the user's omni-channel: an SMS from it then still
+// reads the user's chat card, and a second user linked to the freed number (a number given to
+// somebody else) reads the first user's card and is read by them.
+func (s *UserPhonesSuite) TestAnUnlinkedNumberReadsNoneOfTheUsersCards() {
+	anya := s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "first"), time.Now()))
+	s.Require().Contains(s.took(1)[0].text, chatSummary, "linked, the SMS reads the chat card")
+
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": null}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "after the unlink"), time.Now()))
+
+	turns := s.took(2)
+	s.NotContains(s.cardsBefore(turns[1].text, "first"), chatSummary)
+	s.Equal(anya, s.chatOmniChannel(), "the user keeps their omni-channel")
+	s.NotEqual(anya, s.omniChannel(s.person))
+	bob := "bob-" + s.utils.uuid()
+	s.chatCardOf(bob, "Bob asked about his bill.")
+	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
+	s.NotEqual(anya, s.chatOmniChannelOf(bob), "bob is not on anya's omni-channel")
+	s.Equal(anya, s.chatOmniChannel(), "anya is not on bob's")
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "bob here"), time.Now()))
+	turns = s.took(3)
+	s.NotContains(s.cardsBefore(turns[2].text, "first"), chatSummary, "bob's SMS reads none of anya's cards")
+	s.Contains(s.cardsBefore(turns[2].text, "first"), "Bob asked about his bill.")
+}
+
+// Catches a new number that leaves the old one on the user's omni-channel: the old number
+// linked next to another user would join that user onto the first user's omni-channel.
+func (s *UserPhonesSuite) TestAnOldNumberLinkedToAnotherUserJoinsNoneOfTheFirstUsersCards() {
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi"), time.Now()))
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.utils.number()+`"}`, nil))
+
+	bob := "bob-" + s.utils.uuid()
+	s.chatCardOf(bob, "Bob asked about his bill.")
+	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
+
+	s.NotEqual(s.chatOmniChannel(), s.chatOmniChannelOf(bob))
+	s.NotEqual(s.chatOmniChannel(), s.omniChannel(s.person))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "bob here"), time.Now()))
+	s.NotContains(s.took(2)[1].text, chatSummary, "the old number reads none of anya's cards")
+}
+
 // Catches a number that is not E.164 stored as a link no SMS could ever match, and a body of
 // the wrong shape taken as an unlink.
 func (s *UserPhonesSuite) TestABodyThatIsNotANumberIsRefused() {
@@ -148,6 +197,9 @@ func (s *UserPhonesSuite) TestABodyThatIsNotANumberIsRefused() {
 		s.Equal(http.StatusBadRequest, status, body)
 		s.Contains(string(payload), codeValidationFailed, body)
 	}
+	status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/users/"+s.user, ``)
+	s.Equal(http.StatusBadRequest, status, "no body")
+	s.Contains(string(payload), "request body is required", "no body, refused by the schema")
 	s.Empty(s.links())
 }
 
@@ -194,6 +246,14 @@ func (s *UserPhonesSuite) TestAnEndUserCannotLinkAUser() {
 	s.Empty(s.links())
 }
 
+// cardsBefore is what a turn's session was handed before the thread's history: the recited
+// cards come first, and the history starts with the thread's first message, first.
+func (s *UserPhonesSuite) cardsBefore(reply, first string) string {
+	at := strings.Index(reply, "user: "+first+"\n")
+	s.Require().NotEqual(-1, at, "the reply recites the thread's first message")
+	return reply[:at]
+}
+
 // put sends a PUT of the user with the raw body as the app's backend, and decodes the answer.
 func (s *UserPhonesSuite) put(user, body string, into any) int {
 	return s.serverClient.do(http.MethodPut, "/v1/agents/users/"+user, body, into)
@@ -210,24 +270,28 @@ func (s *UserPhonesSuite) links() []string {
 // chatCard writes the test's user's chat card into their omni-channel, as the app chat does
 // (api.chatEpisode), summarized as the idle sweeper leaves it, and returns the omni-channel.
 func (s *UserPhonesSuite) chatCard() string {
+	return s.chatCardOf(s.user, chatSummary)
+}
+
+// chatCardOf is chatCard for a user of the app and the summary given.
+func (s *UserPhonesSuite) chatCardOf(user, summary string) string {
 	ctx := context.Background()
 	cards, err := omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.stream})
 	s.Require().NoError(err)
-	pin, err := s.stream.Pin(ctx, s.customerID())
+	app := s.hookApp()
+	person, err := omnichannel.StreamUser(app, user)
 	s.Require().NoError(err)
-	// The address #1701's review makes a Stream user's, «<app pk>:<user id>».
-	person := omnichannel.Person{Kind: store.ContactStreamUser, Address: s.streamUserAddress(pin)}
 	opened, err := cards.Open(ctx, omnichannel.Episode{
 		CustomerID: s.customerID(), AgentConfigID: s.config.ID, AgentName: s.config.Name, Person: person,
-		Source: store.EpisodeChat, ThreadChannel: "agent:chat-" + s.utils.uuid(), StreamAppPK: pin,
+		Source: store.EpisodeChat, ThreadChannel: "agent:chat-" + s.utils.uuid(), StreamAppPK: app,
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(cards.Write(ctx, opened))
 	omni := strings.TrimPrefix(opened.Contact.ConversationID, "agent:")
-	bound, err := s.stream.ForApp(ctx, s.customerID(), pin)
+	bound, err := s.stream.ForApp(ctx, s.customerID(), app)
 	s.Require().NoError(err)
 	_, err = bound.Client.Chat().UpdateMessagePartial(ctx, opened.Episode.CardMessageID, &getstream.UpdateMessagePartialRequest{
-		UserID: &omni, Set: map[string]any{"text": chatSummary, "status": store.EpisodeSummarized},
+		UserID: &omni, Set: map[string]any{"text": summary, "status": store.EpisodeSummarized},
 	})
 	s.Require().NoError(err)
 	_, err = s.store.DB().ExecContext(ctx, "UPDATE episodes SET status = ?, ended_at = now() WHERE id = ?",
@@ -236,16 +300,27 @@ func (s *UserPhonesSuite) chatCard() string {
 	return omni
 }
 
-// chatOmniChannel is the omni-channel the test's user's chat row points at now.
-func (s *UserPhonesSuite) chatOmniChannel() string {
+// hookApp is the app the message hook names a message of the test's customer by: the pin the
+// customer acts in, and the deployment's own app by its id.
+func (s *UserPhonesSuite) hookApp() int64 {
 	pin, err := s.stream.Pin(context.Background(), s.customerID())
 	s.Require().NoError(err)
-	contact, err := s.store.Contact(context.Background(), s.customerID(), s.config.ID, store.ContactStreamUser, s.streamUserAddress(pin))
-	s.Require().NoError(err)
-	return strings.TrimPrefix(contact.ConversationID, "agent:")
+	if pin == 0 {
+		return suiteStreamApp
+	}
+	return pin
 }
 
-// streamUserAddress is the test's user's contact map address in an app.
-func (s *UserPhonesSuite) streamUserAddress(app int64) string {
-	return strconv.FormatInt(app, 10) + ":" + s.user
+// chatOmniChannel is the omni-channel the test's user's chat row points at now.
+func (s *UserPhonesSuite) chatOmniChannel() string {
+	return s.chatOmniChannelOf(s.user)
+}
+
+// chatOmniChannelOf is chatOmniChannel for a user of the app.
+func (s *UserPhonesSuite) chatOmniChannelOf(user string) string {
+	person, err := omnichannel.StreamUser(s.hookApp(), user)
+	s.Require().NoError(err)
+	contact, err := s.store.Contact(context.Background(), s.customerID(), s.config.ID, store.ContactStreamUser, person.Address)
+	s.Require().NoError(err)
+	return strings.TrimPrefix(contact.ConversationID, "agent:")
 }
