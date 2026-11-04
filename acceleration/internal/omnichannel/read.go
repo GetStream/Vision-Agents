@@ -236,8 +236,9 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 // Between reports whether a channel's members, by user id, are person alone, or person and
 // agent, and nobody else: with agent equal to person, any other member is one, and so is a
 // member with no id. An app chat's cards are written (api.chatEpisode) and read (chatContact)
-// only in such a channel, so a channel's lines never reach the cards of one of its people
-// unless that person is the only one there. Example: Anya's channel with the agent is hers;
+// only in such a channel, so a channel's lines reach the cards of one of its people
+// only while that person is the only one there (a member added later is an open case, see
+// AGENTS.md). Example: Anya's channel with the agent is hers;
 // her team's channel with the agent, which Carl is a member of, is nobody's.
 func Between(members []string, person, agent string) bool {
 	for _, member := range members {

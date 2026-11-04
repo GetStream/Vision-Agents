@@ -80,10 +80,11 @@ func (e messageEvent) bridged() bool {
 
 // members are the user ids of the channel's members as Stream sends them with the message, in
 // the channel of the event, as the app's webhook carries it: «For message and channel events
-// the webhook request body will also include the list of channel members», «truncated up to 50
-// members» (https://getstream.io/chat/docs/go-golang/webhook_events/). A list cut short is
-// longer than two, so omnichannel.Between reads it as the channel of more than one person it
-// is. A channel sent with no members, or none sent, has none, and so no person.
+// the webhook request body will also include the list of channel members»
+// (https://getstream.io/chat/docs/go-golang/webhook_events/). The docs say «truncated up to 50
+// members»; the delivery loads up to 100 (DefaultMemberLimit, chat send_message.go:418,
+// channel_cache.go:39). A list cut short is longer than two, so omnichannel.Between reads it as
+// the channel of more than one person it is. A channel sent with no members, or none sent, has none, and so no person.
 func (e messageEvent) members() []string {
 	var channel struct {
 		Members []struct {
