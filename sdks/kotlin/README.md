@@ -3,14 +3,14 @@
 One Android library for talking to an agent from an Android app: `io.getstream:vision-agents-core`,
 package `io.getstream.visionagents.android.core`. It holds sessions, responses, the event socket
 and the conversation as `StateFlow`; the Stream Chat channel a text conversation is kept in; and
-joining the call, so the conversation can be spoken. It depends on Stream Chat (7.15.0) and
+joining the call, so the conversation can be spoken. It depends on Stream Chat (7.18.0) and
 Stream Video (1.34.0), and needs minSdk 24 and compileSdk 37, which is what Stream's SDKs require.
 
 It ships no views. Show a conversation with Stream Chat's AI components,
 `io.getstream:stream-chat-android-ai-compose`, which the app adds itself;
 [`examples/voice_agents/android_demo`](../../examples/voice_agents/android_demo) does.
 
-Stream Chat 7.15.0 is published to Stream's Maven repository rather than Maven Central:
+Stream Chat 7.18.0 is published to Stream's Maven repository rather than Maven Central:
 
 ```kotlin
 dependencyResolutionManagement {

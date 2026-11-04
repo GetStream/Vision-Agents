@@ -6,12 +6,15 @@ material-icons = "1.7.8"
 activity = "1.11.0"
 lifecycle = "2.11.0"
 okhttp = "5.5.0"
-stream-chat-ai-compose = "7.17.0"
+# One version for every Stream Chat AI artifact.
+streamChatAi = "7.18.0"
 browser = "1.10.0"
 
 [libraries]
 vision-agents-core = { module = "io.getstream:vision-agents-core", version = "0.1.0-SNAPSHOT" }
-stream-chat-ai-compose = { module = "io.getstream:stream-chat-android-ai-compose", version.ref = "stream-chat-ai-compose" }
+stream-chat-ai-compose = { module = "io.getstream:stream-chat-android-ai-compose", version.ref = "streamChatAi" }
+stream-chat-ai-openui = { module = "io.getstream:stream-chat-android-ai-openui", version.ref = "streamChatAi" }
+stream-chat-ai-a2ui = { module = "io.getstream:stream-chat-android-ai-a2ui", version.ref = "streamChatAi" }
 compose-bom = { module = "androidx.compose:compose-bom", version.ref = "compose-bom" }
 compose-material3 = { module = "androidx.compose.material3:material3" }
 compose-ui = { module = "androidx.compose.ui:ui" }

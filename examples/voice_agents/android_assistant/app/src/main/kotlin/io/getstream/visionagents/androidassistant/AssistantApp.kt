@@ -31,6 +31,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -107,6 +108,17 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
 
     val voiceShown by chat.isVoiceShown.collectAsStateWithLifecycle()
     val open by chat.chat.collectAsStateWithLifecycle()
+    val replyFormat by chat.replyFormat.collectAsStateWithLifecycle()
+    var isSettingsShown by rememberSaveable { mutableStateOf(false) }
+
+    if (isSettingsShown) {
+        SettingsScreen(
+            replyFormat = replyFormat,
+            onReplyFormat = chat::chooseReplyFormat,
+            onBack = { isSettingsShown = false },
+        )
+        return
+    }
 
     ModalNavigationDrawer(
         drawerState = drawer,
@@ -122,6 +134,10 @@ fun AssistantApp(chat: ChatViewModel = viewModel(), conversations: Conversations
                     onDelete = {
                         conversations.delete(it)
                         if (it.id == selected) chat.show(null)
+                    },
+                    onSettings = {
+                        isSettingsShown = true
+                        scope.launch { drawer.close() }
                     },
                 )
             }
