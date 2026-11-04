@@ -30,6 +30,11 @@ const (
 	// pongWait is how long a round trip is given before the last measurement is kept
 	// instead. A figure that is out of date is more use than a zero.
 	pongWait = 5 * time.Second
+	// silentPings is how many pings in a row may go unanswered before the connection is
+	// taken for dead. A router pod that is gone without a close frame or a reset leaves the
+	// socket open and the read blocked forever, while the router has forgotten this worker
+	// and every session it opens goes without the tools hosted here.
+	silentPings = 3
 	// firstRetry and lastRetry bound the wait between attempts to reach a router that
 	// dropped this worker, doubling from one to the other. A router being redeployed is
 	// back within seconds; one that is down for longer is not worth asking twice a second.
@@ -181,6 +186,7 @@ type Dispatch struct {
 	holds holds
 
 	firstRetry time.Duration
+	pongWait   time.Duration
 }
 
 // NewDispatch describes a worker without connecting it.
@@ -204,6 +210,7 @@ func NewDispatch(options DispatchOptions) (*Dispatch, error) {
 		logger:      options.Logger,
 		pong:        make(chan struct{}, 1),
 		firstRetry:  firstRetry,
+		pongWait:    pongWait,
 	}, nil
 }
 
@@ -597,12 +604,22 @@ func (d *Dispatch) report(ctx context.Context) {
 	ticker := time.NewTicker(d.reportEvery)
 	defer ticker.Stop()
 
+	silent := 0
 	for {
 		select {
 		case <-ctx.Done():
 			return
 		case <-ticker.C:
-			d.measure(ctx)
+			switch asked, answered := d.measure(ctx); {
+			case answered:
+				silent = 0
+			case asked:
+				if silent++; silent >= silentPings {
+					d.logger.Warn("the router stopped answering, reconnecting", "pings", silent)
+					d.drop()
+					silent = 0
+				}
+			}
 			d.tell(Frame{
 				"type":          "load",
 				"active_agents": d.Active(),
@@ -612,8 +629,9 @@ func (d *Dispatch) report(ctx context.Context) {
 	}
 }
 
-// measure times a round trip to the router, keeping the last figure if none comes back.
-func (d *Dispatch) measure(ctx context.Context) {
+// measure times a round trip to the router, keeping the last figure if none comes back. It
+// reports whether a ping went out and whether the router answered it.
+func (d *Dispatch) measure(ctx context.Context) (asked, answered bool) {
 	select {
 	case <-d.pong:
 	default:
@@ -621,19 +639,32 @@ func (d *Dispatch) measure(ctx context.Context) {
 
 	sent := time.Now()
 	if !d.tell(Frame{"type": "ping", "at": float64(sent.UnixNano()) / float64(time.Second)}) {
-		return
+		return false, false
 	}
 
-	waited := time.NewTimer(pongWait)
+	waited := time.NewTimer(d.pongWait)
 	defer waited.Stop()
 	select {
 	case <-d.pong:
 		d.mu.Lock()
 		d.latencyMS = float64(time.Since(sent).Microseconds()) / 1000
 		d.mu.Unlock()
+		return true, true
 	case <-waited.C:
-		d.logger.Debug("the router did not answer a ping", "within", pongWait)
+		d.logger.Debug("the router did not answer a ping", "within", d.pongWait)
+		return true, false
 	case <-ctx.Done():
+		return false, false
+	}
+}
+
+// drop closes the connection in use, which ends its read with an error so Run reconnects.
+func (d *Dispatch) drop() {
+	d.mu.Lock()
+	socket := d.socket
+	d.mu.Unlock()
+	if socket != nil {
+		socket.Close()
 	}
 }
 
