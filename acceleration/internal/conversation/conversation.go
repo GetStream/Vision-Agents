@@ -809,6 +809,12 @@ func (s *Service) Describe(ctx context.Context, customer, cid, title, descriptio
 	return stack.Wrap(err)
 }
 
+// Shared reports whether a conversation's channel is open to every member of it
+// (support_access "members"), not to its owner alone; custom is the channel's.
+func Shared(custom map[string]any) bool {
+	return custom["support_access"] == "members"
+}
+
 // ownedBy reads server-owned channel metadata. Explicit member access still
 // requires the caller's current membership, checked against the query response.
 // A channel with no owner is a backend-owned demo, which no end user may claim.
@@ -1021,7 +1027,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: Shared(r.Data.Channel.Custom), thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {

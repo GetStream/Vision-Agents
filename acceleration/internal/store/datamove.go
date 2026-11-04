@@ -1213,12 +1213,19 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		limit = 500
 	}
 
-	var earliest sql.NullInt64
+	// Sequence numbers are shared by every customer and pruning drops the oldest of all of
+	// them, so a gap before this customer's first change is the other customers' changes,
+	// not a pruned one: only a cursor older than the oldest change kept has lost any. With
+	// none of theirs kept, a quiet customer and one whose every change aged out look the
+	// same, and the follower that is only waiting is not refused.
+	var kept sql.NullInt64
+	var theirs bool
 	if err := s.db.QueryRowContext(ctx,
-		"SELECT MIN(seq) FROM data_changes WHERE customer_id = ?", customerID).Scan(&earliest); err != nil {
+		"SELECT (SELECT MIN(seq) FROM data_changes), EXISTS (SELECT 1 FROM data_changes WHERE customer_id = ?)",
+		customerID).Scan(&kept, &theirs); err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
-	if after > 0 && earliest.Valid && earliest.Int64 > after+1 {
+	if after > 0 && theirs && kept.Int64 > after+1 {
 		return nil, 0, ErrChangesExpired
 	}
 

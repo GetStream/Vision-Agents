@@ -477,6 +477,83 @@ func (s *DataMoveSuite) TestAnExpiredCursorSaysToExportAgain() {
 	s.ErrorIs(err, ErrChangesExpired)
 }
 
+// The numbers are shared by every customer, so the ones between an export's cursor and the
+// customer's first change after it can be another customer's.
+func (s *DataMoveSuite) TestTheFirstChangeAfterAnExportIsAnsweredWhenOthersChangedInBetween() {
+	s.capture("other")
+	s.seedAgentConfig(s.source, "other", "before")
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "other", "between")
+	first := s.seedAgentConfig(s.source, "acme", "first")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), first)
+}
+
+func (s *DataMoveSuite) TestACursorWhoseNextChangeWasPrunedSaysToExportAgain() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.age()
+	s.seedAgentConfig(s.source, "acme", "kept")
+	s.prune()
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+func (s *DataMoveSuite) TestACursorRightBeforeTheOldestChangeKeptIsAnswered() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.age()
+	next := s.seedAgentConfig(s.source, "acme", "next")
+	s.prune()
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// A customer with nothing kept may have had nothing to record: a follower waiting out a quiet
+// spell longer than the retention gets an empty page, as it did before the numbers were read
+// across customers.
+func (s *DataMoveSuite) TestAQuietCustomerWhoseCursorAgedOutIsNotRefused() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "other", "aged out too")
+	s.age()
+	s.prune()
+	s.seedAgentConfig(s.source, "other", "later")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Empty(changes)
+}
+
+// age makes every change recorded so far older than the retention prune keeps.
+func (s *DataMoveSuite) age() {
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE data_changes SET at = now() - interval '30 days'")
+	s.Require().NoError(err)
+}
+
+func (s *DataMoveSuite) prune() {
+	removed, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
+	s.Require().NoError(err)
+	s.Require().Positive(removed)
+}
+
 func (s *DataMoveSuite) TestPruningDropsWhatNobodyCanResumeFrom() {
 	s.capture("acme")
 	s.seedAgentConfig(s.source, "acme", "old")
