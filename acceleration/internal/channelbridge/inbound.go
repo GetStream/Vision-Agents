@@ -247,7 +247,7 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	if err != nil {
 		return err
 	}
-	if named > 0 && len(files) == 0 && inbound.Text == "" && len(photos(inbound.Media)) == 0 {
+	if nothingToWrite(inbound, files, named) {
 		log.Warn("an inbound message that is only files none of which could be downloaded is not written or answered")
 		return nil
 	}
@@ -297,6 +297,13 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 		turn()
 	}()
 	return nil
+}
+
+// nothingToWrite is whether a message has nothing for the agent once download is done: it names
+// files by id, none of which downloaded, and has no text and no photo at a URL. A message that
+// names no file by id, such as a Linq video alone, is written as before.
+func nothingToWrite(message core.InboundMessage, files []sandbox.File, named int) bool {
+	return named > 0 && len(files) == 0 && message.Text == "" && len(photos(message.Media)) == 0
 }
 
 // forwardUnanswered hands a given-up message's delivery to the customer's event destinations of
