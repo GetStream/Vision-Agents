@@ -4608,7 +4608,7 @@ export type components = {
         /** @description Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none. */
         readonly AgentUserRequest: {
             /**
-             * @description The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had; what was joined before stays joined. A new number takes the place of the old one. A number linked to another user of the app is refused (409 phone_taken).
+             * @description The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
              * @example +15551234567
              */
             readonly phone: string | null;
@@ -16241,7 +16241,7 @@ export interface operations {
             };
             readonly cookie?: never;
         };
-        readonly requestBody?: {
+        readonly requestBody: {
             readonly content: {
                 readonly "application/json": components["schemas"]["AgentUserRequest"];
             };

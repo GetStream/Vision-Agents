@@ -9,13 +9,13 @@ from ...client import AuthenticatedClient, Client
 from ...models.agent_user import AgentUser
 from ...models.agent_user_request import AgentUserRequest
 from ...models.error_response import ErrorResponse
-from ...types import UNSET, Response, Unset
+from ...types import Response
 
 
 def _get_kwargs(
     user_id: str,
     *,
-    body: AgentUserRequest | Unset = UNSET,
+    body: AgentUserRequest,
 ) -> dict[str, Any]:
     headers: dict[str, Any] = {}
 
@@ -26,8 +26,7 @@ def _get_kwargs(
         ),
     }
 
-    if not isinstance(body, Unset):
-        _kwargs["json"] = body.to_dict()
+    _kwargs["json"] = body.to_dict()
 
     headers["Content-Type"] = "application/json"
 
@@ -99,7 +98,7 @@ def sync_detailed(
     user_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AgentUserRequest | Unset = UNSET,
+    body: AgentUserRequest,
 ) -> Response[AgentUser | ErrorResponse]:
     """Link a user to a phone number
 
@@ -114,8 +113,8 @@ def sync_detailed(
     Args:
         user_id (str): The Stream user id the app chat knows the user by: the id the app's own
             token signs.
-        body (AgentUserRequest | Unset): Who one of the app's users is, as the app's backend knows
-            it. phone is required: a number, or null for none.
+        body (AgentUserRequest): Who one of the app's users is, as the app's backend knows it.
+            phone is required: a number, or null for none.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -141,7 +140,7 @@ def sync(
     user_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AgentUserRequest | Unset = UNSET,
+    body: AgentUserRequest,
 ) -> AgentUser | ErrorResponse | None:
     """Link a user to a phone number
 
@@ -156,8 +155,8 @@ def sync(
     Args:
         user_id (str): The Stream user id the app chat knows the user by: the id the app's own
             token signs.
-        body (AgentUserRequest | Unset): Who one of the app's users is, as the app's backend knows
-            it. phone is required: a number, or null for none.
+        body (AgentUserRequest): Who one of the app's users is, as the app's backend knows it.
+            phone is required: a number, or null for none.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -178,7 +177,7 @@ async def asyncio_detailed(
     user_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AgentUserRequest | Unset = UNSET,
+    body: AgentUserRequest,
 ) -> Response[AgentUser | ErrorResponse]:
     """Link a user to a phone number
 
@@ -193,8 +192,8 @@ async def asyncio_detailed(
     Args:
         user_id (str): The Stream user id the app chat knows the user by: the id the app's own
             token signs.
-        body (AgentUserRequest | Unset): Who one of the app's users is, as the app's backend knows
-            it. phone is required: a number, or null for none.
+        body (AgentUserRequest): Who one of the app's users is, as the app's backend knows it.
+            phone is required: a number, or null for none.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
@@ -218,7 +217,7 @@ async def asyncio(
     user_id: str,
     *,
     client: AuthenticatedClient | Client,
-    body: AgentUserRequest | Unset = UNSET,
+    body: AgentUserRequest,
 ) -> AgentUser | ErrorResponse | None:
     """Link a user to a phone number
 
@@ -233,8 +232,8 @@ async def asyncio(
     Args:
         user_id (str): The Stream user id the app chat knows the user by: the id the app's own
             token signs.
-        body (AgentUserRequest | Unset): Who one of the app's users is, as the app's backend knows
-            it. phone is required: a number, or null for none.
+        body (AgentUserRequest): Who one of the app's users is, as the app's backend knows it.
+            phone is required: a number, or null for none.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.

@@ -2088,13 +2088,13 @@ impl Client {
     pub async fn update_user(
         &self,
         user_id: &str,
-        body: Option<&types::AgentUserRequest>,
+        body: &types::AgentUserRequest,
     ) -> Result<types::AgentUser> {
         self.send(
             Method::PUT,
             &format!("/v1/agents/users/{user_id}", user_id = segment(user_id)),
             None::<&()>,
-            body,
+            Some(body),
             "updateUser",
         )
         .await

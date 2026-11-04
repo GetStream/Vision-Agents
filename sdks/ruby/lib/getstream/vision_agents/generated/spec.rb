@@ -1643,7 +1643,7 @@ module GetStream
         "updateUser" => {
           method: :put, path: "/v1/agents/users/{user_id}",
           path_params: %w[user_id].freeze, query: [].freeze,
-          body: "AgentUserRequest", body_required: false,
+          body: "AgentUserRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "updateUserPolicy" => {
