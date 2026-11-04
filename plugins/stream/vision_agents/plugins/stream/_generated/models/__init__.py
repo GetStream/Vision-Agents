@@ -256,6 +256,7 @@ from .invocation_argument import InvocationArgument
 from .invocation_argument_type import InvocationArgumentType
 from .invocation_error_type import InvocationErrorType
 from .knowledge_document import KnowledgeDocument
+from .knowledge_document_state import KnowledgeDocumentState
 from .knowledge_passage import KnowledgePassage
 from .knowledge_url import KnowledgeUrl
 from .knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -548,6 +549,7 @@ from .update_session_request_custom import UpdateSessionRequestCustom
 from .update_session_request_thinking import UpdateSessionRequestThinking
 from .update_session_request_verbosity import UpdateSessionRequestVerbosity
 from .update_sip_trunk_request import UpdateSipTrunkRequest
+from .upload_knowledge_file_body import UploadKnowledgeFileBody
 from .usage_event import UsageEvent
 from .usage_event_attributes import UsageEventAttributes
 from .usage_event_page import UsageEventPage
@@ -831,6 +833,7 @@ __all__ = (
     "InvocationArgumentType",
     "InvocationErrorType",
     "KnowledgeDocument",
+    "KnowledgeDocumentState",
     "KnowledgePassage",
     "KnowledgeUrl",
     "KnowledgeUrlDeclaration",
@@ -1123,6 +1126,7 @@ __all__ = (
     "UpdateSessionRequestThinking",
     "UpdateSessionRequestVerbosity",
     "UpdateSipTrunkRequest",
+    "UploadKnowledgeFileBody",
     "UsageEvent",
     "UsageEventAttributes",
     "UsageEventPage",

@@ -1382,6 +1382,28 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/agents/knowledge/files": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Upload a file to a knowledge base, to be read in the background
+         * @description A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+         *     The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+         *     The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+         */
+        readonly post: operations["uploadKnowledgeFile"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/agents/knowledge/urls": {
         readonly parameters: {
             readonly query?: never;
@@ -6599,18 +6621,33 @@ export type components = {
             readonly fallback_channels?: readonly string[] | null;
         };
         readonly IndexedKnowledgeDocument: {
+            /**
+             * Format: int64
+             * @description The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+             */
+            readonly bytes: number;
+            /**
+             * @description The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+             * @example application/pdf
+             */
+            readonly content_type: string;
             /** Format: date-time */
             readonly created_at: string;
+            /** @description Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good. */
+            readonly error?: string;
             readonly id: string;
             readonly namespace: string;
-            /** @description How many passages it was last cut into. */
+            /** @description How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet. */
+            readonly pages: number;
+            /** @description How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read. */
             readonly passages: number;
             /**
              * @description What the document was posted as, and what its passages are keyed by.
              * @example pricing.md
              */
             readonly source: string;
-            /** @description The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none. */
+            readonly state: components["schemas"]["KnowledgeDocumentState"];
+            /** @description The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none. */
             readonly text?: string;
             /**
              * Format: date-time
@@ -6697,6 +6734,11 @@ export type components = {
             /** @description The document, whole. It is cut into passages here. */
             readonly text: string;
         };
+        /**
+         * @description Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+         * @enum {string}
+         */
+        readonly KnowledgeDocumentState: "pending" | "indexed" | "failed";
         readonly KnowledgePassage: {
             readonly id: string;
             /** @description The heading or file the passage sits under. */
@@ -13767,6 +13809,68 @@ export interface operations {
             readonly 404: components["responses"]["NotFound"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly uploadKnowledgeFile: {
+        readonly parameters: {
+            readonly query: {
+                /** @description The knowledge base to read the file into. */
+                readonly namespace: string;
+                /** @description What the document is called and its passages keyed by. The file part's filename when left out. */
+                readonly source?: string;
+            };
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "multipart/form-data": {
+                    /**
+                     * Format: binary
+                     * @description The file, at most 50 MB.
+                     */
+                    readonly file: string;
+                };
+            };
+        };
+        readonly responses: {
+            /** @description The document, pending until its file is read */
+            readonly 202: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["IndexedKnowledgeDocument"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            /** @description The file is over 50 MB. */
+            readonly 413: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
+            readonly 500: components["responses"]["InternalError"];
+            /** @description This deployment does not take files for knowledge, or could not keep this one. */
+            readonly 503: {
+                headers: {
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["ErrorResponse"];
+                };
+            };
         };
     };
     readonly listKnowledgeUrls: {

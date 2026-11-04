@@ -6522,8 +6522,26 @@ namespace GetStream.VisionAgents.Models
     public partial class IndexedKnowledgeDocument
     {
 
+        /// <summary>
+        /// The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("bytes")]
+        public long Bytes { get; set; } = default!;
+
+        /// <summary>
+        /// The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("content_type")]
+        public string ContentType { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("created_at")]
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
@@ -6532,7 +6550,13 @@ namespace GetStream.VisionAgents.Models
         public string Namespace { get; set; } = default!;
 
         /// <summary>
-        /// How many passages it was last cut into.
+        /// How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("pages")]
+        public int Pages { get; set; } = default!;
+
+        /// <summary>
+        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("passages")]
         public int Passages { get; set; } = default!;
@@ -6543,8 +6567,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string Source { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string State { get; set; } = default!;
+
         /// <summary>
-        /// The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+        /// The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an &lt;!-- page N --&gt; comment. Only reading one document fills it in, and one written before its text was kept has none.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string? Text { get; set; } = default!;

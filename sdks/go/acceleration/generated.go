@@ -1414,6 +1414,27 @@ func (e InvocationErrorType) Valid() bool {
 	}
 }
 
+// Defines values for KnowledgeDocumentState.
+const (
+	KnowledgeDocumentStateFailed  KnowledgeDocumentState = "failed"
+	KnowledgeDocumentStateIndexed KnowledgeDocumentState = "indexed"
+	KnowledgeDocumentStatePending KnowledgeDocumentState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the KnowledgeDocumentState enum.
+func (e KnowledgeDocumentState) Valid() bool {
+	switch e {
+	case KnowledgeDocumentStateFailed:
+		return true
+	case KnowledgeDocumentStateIndexed:
+		return true
+	case KnowledgeDocumentStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for KnowledgeUrlState.
 const (
 	KnowledgeUrlStateFailed  KnowledgeUrlState = "failed"
@@ -5805,11 +5826,24 @@ type ImageSourceDetail string
 
 // IndexedKnowledgeDocument defines model for IndexedKnowledgeDocument.
 type IndexedKnowledgeDocument struct {
-	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
-	Namespace string    `json:"namespace"`
+	// Bytes The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+	Bytes int64 `json:"bytes"`
 
-	// Passages How many passages it was last cut into.
+	// ContentType The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+	//
+	// Example: application/pdf
+	ContentType string    `json:"content_type"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	// Error Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+	Error     *string `json:"error,omitempty"`
+	Id        string  `json:"id"`
+	Namespace string  `json:"namespace"`
+
+	// Pages How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+	Pages int `json:"pages"`
+
+	// Passages How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
 	Passages int `json:"passages"`
 
 	// Source What the document was posted as, and what its passages are keyed by.
@@ -5817,7 +5851,10 @@ type IndexedKnowledgeDocument struct {
 	// Example: pricing.md
 	Source string `json:"source"`
 
-	// Text The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+	// State Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+	State KnowledgeDocumentState `json:"state"`
+
+	// Text The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
 	Text *string `json:"text,omitempty"`
 
 	// UpdatedAt When it was last written.
@@ -5895,6 +5932,9 @@ type KnowledgeDocument struct {
 	// Text The document, whole. It is cut into passages here.
 	Text string `json:"text"`
 }
+
+// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+type KnowledgeDocumentState string
 
 // KnowledgePassage defines model for KnowledgePassage.
 type KnowledgePassage struct {
@@ -10193,6 +10233,21 @@ type ListKnowledgeDocumentsParams struct {
 	Namespace *string `form:"namespace,omitempty" json:"namespace,omitempty"`
 }
 
+// UploadKnowledgeFileMultipartBody defines parameters for UploadKnowledgeFile.
+type UploadKnowledgeFileMultipartBody struct {
+	// File The file, at most 50 MB.
+	File openapi_types.File `json:"file"`
+}
+
+// UploadKnowledgeFileParams defines parameters for UploadKnowledgeFile.
+type UploadKnowledgeFileParams struct {
+	// Namespace The knowledge base to read the file into.
+	Namespace string `form:"namespace" json:"namespace"`
+
+	// Source What the document is called and its passages keyed by. The file part's filename when left out.
+	Source *string `form:"source,omitempty" json:"source,omitempty"`
+}
+
 // ListKnowledgeUrlsParams defines parameters for ListKnowledgeUrls.
 type ListKnowledgeUrlsParams struct {
 	// Namespace One knowledge base. Omit to list every page the customer has.
@@ -10719,6 +10774,9 @@ type ClaimGuestUserJSONRequestBody = ClaimGuestRequest
 
 // IngestKnowledgeJSONRequestBody defines body for IngestKnowledge for application/json ContentType.
 type IngestKnowledgeJSONRequestBody = IngestKnowledgeRequest
+
+// UploadKnowledgeFileMultipartRequestBody defines body for UploadKnowledgeFile for multipart/form-data ContentType.
+type UploadKnowledgeFileMultipartRequestBody UploadKnowledgeFileMultipartBody
 
 // AddKnowledgeUrlJSONRequestBody defines body for AddKnowledgeUrl for application/json ContentType.
 type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
@@ -12142,6 +12200,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 	ListKnowledgeDocumentPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UploadKnowledgeFileWithBody Upload a file to a knowledge base, to be read in the background
+	//
+	// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+	// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+	// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+	UploadKnowledgeFileWithBody(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListKnowledgeUrls The pages a knowledge base is kept filled from
 	//
@@ -16088,6 +16157,27 @@ func (c *Client) GetKnowledgeDocument(ctx context.Context, id string, reqEditors
 // Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 func (c *Client) ListKnowledgeDocumentPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListKnowledgeDocumentPassagesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UploadKnowledgeFileWithBody Upload a file to a knowledge base, to be read in the background
+//
+// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+func (c *Client) UploadKnowledgeFileWithBody(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUploadKnowledgeFileRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -23921,6 +24011,70 @@ func NewListKnowledgeDocumentPassagesRequest(server string, id string) (*http.Re
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUploadKnowledgeFileRequestWithBody constructs an http.Request for the UploadKnowledgeFile method, with any body, and a specified content type
+func NewUploadKnowledgeFileRequestWithBody(server string, params *UploadKnowledgeFileParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/files")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace", params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -33101,6 +33255,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 	ListKnowledgeDocumentPassagesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentPassagesResponse, error)
+
+	// UploadKnowledgeFileWithBodyWithResponse Upload a file to a knowledge base, to be read in the background
+	//
+	// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+	// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+	// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+	UploadKnowledgeFileWithBodyWithResponse(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKnowledgeFileResponse, error)
 
 	// ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 	//
@@ -43202,6 +43367,114 @@ func (r ListKnowledgeDocumentPassagesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListKnowledgeDocumentPassagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UploadKnowledgeFileResponse202Headers the declared response headers of an HTTP 202 response for UploadKnowledgeFile
+type UploadKnowledgeFileResponse202Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// UploadKnowledgeFileResponse402Headers the declared response headers of an HTTP 402 response for UploadKnowledgeFile
+type UploadKnowledgeFileResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type UploadKnowledgeFileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *IndexedKnowledgeDocument
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *UploadKnowledgeFileResponse202Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *UploadKnowledgeFileResponse402Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON202() *IndexedKnowledgeDocument {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON413() *ErrorResponse {
+	return r.JSON413
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UploadKnowledgeFileResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UploadKnowledgeFileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UploadKnowledgeFileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UploadKnowledgeFileResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -61994,6 +62267,23 @@ func (c *ClientWithResponses) ListKnowledgeDocumentPassagesWithResponse(ctx cont
 	return ParseListKnowledgeDocumentPassagesResponse(rsp)
 }
 
+// UploadKnowledgeFileWithBodyWithResponse Upload a file to a knowledge base, to be read in the background
+//
+// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+func (c *ClientWithResponses) UploadKnowledgeFileWithBodyWithResponse(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKnowledgeFileResponse, error) {
+	rsp, err := c.UploadKnowledgeFileWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUploadKnowledgeFileResponse(rsp)
+}
+
 // ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 //
 // Returns a wrapper object for the known response body format(s).
@@ -74695,6 +74985,132 @@ func ParseListKnowledgeDocumentPassagesResponse(rsp *http.Response) (*ListKnowle
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ListKnowledgeDocumentPassagesResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUploadKnowledgeFileResponse parses an HTTP response from a UploadKnowledgeFileWithResponse call
+func ParseUploadKnowledgeFileResponse(rsp *http.Response) (*UploadKnowledgeFileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UploadKnowledgeFileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest IndexedKnowledgeDocument
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers UploadKnowledgeFileResponse202Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 402:
+		var headers UploadKnowledgeFileResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

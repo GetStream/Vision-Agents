@@ -1658,6 +1658,12 @@ module GetStream
           body: "VoiceRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "uploadKnowledgeFile" => {
+          method: :post, path: "/v1/agents/knowledge/files",
+          path_params: [].freeze, query: %w[namespace source].freeze,
+          body: nil, body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "validateConnection" => {
           method: :post, path: "/v1/agents/connections/{id}/validate",
           path_params: %w[id].freeze, query: [].freeze,
@@ -2256,8 +2262,8 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "IndexedKnowledgeDocument" => {
-          properties: %w[created_at id namespace passages source text updated_at].freeze,
-          required: %w[created_at id namespace passages source updated_at].freeze, open: false
+          properties: %w[bytes content_type created_at error id namespace pages passages source state text updated_at].freeze,
+          required: %w[bytes content_type created_at id namespace pages passages source state updated_at].freeze, open: false
         }.freeze,
         "IngestKnowledgeRequest" => {
           properties: %w[chunk_size documents namespace].freeze,

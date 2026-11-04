@@ -5981,16 +5981,26 @@ impl ::std::convert::TryFrom<::std::string::String> for ImageSourceDetail {
     }
 }
 ///`IndexedKnowledgeDocument`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct IndexedKnowledgeDocument {
+    ///The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+    pub bytes: i64,
+    ///The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+    pub content_type: ::std::string::String,
     pub created_at: ::std::string::String,
+    ///Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
     pub namespace: ::std::string::String,
-    ///How many passages it was last cut into.
+    ///How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+    pub pages: i64,
+    ///How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
     pub passages: i64,
     ///What the document was posted as, and what its passages are keyed by.
     pub source: ::std::string::String,
-    ///The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+    pub state: KnowledgeDocumentState,
+    ///The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<::std::string::String>,
     ///When it was last written.
@@ -6180,6 +6190,61 @@ pub struct KnowledgeDocument {
     pub source: ::std::string::String,
     ///The document, whole. It is cut into passages here.
     pub text: ::std::string::String,
+}
+///Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeDocumentState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "indexed")]
+    Indexed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for KnowledgeDocumentState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Indexed => f.write_str("indexed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeDocumentState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "indexed" => Ok(Self::Indexed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`KnowledgePassage`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
