@@ -65,8 +65,8 @@ type Reading struct {
 	// Chat is a text session's own agent channel cid in the app chat, ChatUser the Stream user
 	// who wrote the message the session was opened for, and ChatAgent the Stream user the
 	// agent writes there as. The person is ChatUser, in the session's app, when the channel's
-	// members are ChatUser and ChatAgent alone and every person's message there is theirs; its
-	// episodes are left out, as a thread's are.
+	// members are ChatUser alone or ChatUser and ChatAgent, and every person's message there
+	// is theirs; its episodes are left out, as a thread's are.
 	Chat      string
 	ChatUser  string
 	ChatAgent string
@@ -184,9 +184,10 @@ func (c *Cards) alone(ctx context.Context, reading Reading) (bool, error) {
 // Stream user who wrote the message the session was opened for (Reading.ChatUser), keyed by
 // the session's Stream app and message.user.id as api.chatEpisode keys their cards
 // (StreamUser); the deployment's own app is zero for a session (samePin). The channel is the
-// customer's app's, so who made it says nothing. Its members must be that user and the agent
-// (Reading.ChatAgent) alone, as the channel's state lists them: a team channel, one with a
-// third member, or one whose members are not listed has no person. Every person's message the
+// customer's app's, so who made it says nothing. Its members, as the channel's state lists
+// them, must be that user alone, or that user and the agent (Reading.ChatAgent), who writes
+// the session's replies there: a team channel, one with any other member, or one whose members
+// are not listed has no person. Every person's message the
 // session reads there, and every message with no source, which the router hands out whether
 // it is a line or not (a voice recording alone, api.addressed), must be by that user: a
 // channel somebody else wrote in has no person, and Alice's cards are never read for Bob. A
@@ -224,15 +225,21 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 	return contact, nil
 }
 
-// between reports whether a channel's members are person and agent, and nobody else.
+// between reports whether a channel's members are person alone, or person and agent, and
+// nobody else: with agent equal to person, any other member is one.
 func between(members []getstream.ChannelMemberResponse, person, agent string) bool {
-	if len(members) != 2 {
+	if len(members) == 0 || len(members) > 2 {
 		return false
 	}
 	is := func(id string) func(getstream.ChannelMemberResponse) bool {
 		return func(member getstream.ChannelMemberResponse) bool { return member.UserID != nil && *member.UserID == id }
 	}
-	return slices.ContainsFunc(members, is(person)) && slices.ContainsFunc(members, is(agent))
+	for _, member := range members {
+		if !is(person)(member) && !is(agent)(member) {
+			return false
+		}
+	}
+	return slices.ContainsFunc(members, is(person))
 }
 
 // samePin reports whether two pins name one Stream app. The deployment's own app is pinned as
