@@ -56,9 +56,12 @@ class AgentConfigRequest:
             agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id.
             On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the
             person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a
-            summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that
-            anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did.
-            Left out on an update, the stored setting stays.
+            summary, or the last lines of the episode's channel while there is none. So does a session the person's own app
+            opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members
+            or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a
+            member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth
+            checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting
+            stays.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
