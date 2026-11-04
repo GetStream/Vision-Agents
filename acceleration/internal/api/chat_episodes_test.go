@@ -162,6 +162,55 @@ func (s *ChatEpisodesSuite) TestAMessageInThePersonsChannelWithTheAgentWritesACa
 	s.Equal(store.EpisodeChat, custom["source"])
 }
 
+// Catches a chat episode that starts anywhere but when Stream made its message, as its
+// created_at says in RFC 3339 with any offset, and a message whose created_at says no time
+// left without its card: its episode starts when it is opened, as before.
+func (s *ChatEpisodesSuite) TestAChatEpisodeStartsWhenItsMessageWasMade() {
+	made := time.Date(2026, 11, 3, 8, 5, 28, 655123456, time.UTC)
+	for _, c := range []struct {
+		name, createdAt string
+		made            bool
+	}{
+		{"in UTC", `"2026-11-03T08:05:28.655123456Z"`, true},
+		{"with an offset", `"2026-11-03T10:05:28.655123456+02:00"`, true},
+		{"none", ``, false},
+		{"null", `null`, false},
+		{"a number", `1762157128`, false},
+		{"not a time", `"yesterday"`, false},
+	} {
+		s.Run(c.name, func() {
+			s.channelID = "chat-" + s.utils.uuid()
+			s.user = "user-" + s.utils.uuid()
+			worker := s.worker()
+			config := s.config(true, "llm-flow")
+			channel := fmt.Sprintf(`{"members": [{"user_id": %q}]}`, s.user)
+			body := s.writtenIn(config.ID, "where is my order?", channel, made)
+			field := fmt.Sprintf(`"created_at": %q, `, made.Format(time.RFC3339Nano))
+			s.Require().Contains(body, field)
+			if c.createdAt == "" {
+				body = strings.Replace(body, field, "", 1)
+			} else {
+				body = strings.Replace(body, field, `"created_at": `+c.createdAt+`, `, 1)
+			}
+			before := time.Now().Truncate(time.Microsecond)
+
+			s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
+
+			s.True(s.reachesWorker(worker), "the message is answered")
+			s.cards(s.omniChannel(), 1)
+			var started time.Time
+			s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+				"SELECT ep.started_at FROM episodes AS ep JOIN contact_map AS cm ON cm.id = ep.contact_id WHERE cm.address = ?",
+				fmt.Sprintf("%d:%s", suiteStreamApp, s.user)).Scan(&started))
+			if c.made {
+				s.True(started.Equal(made.Truncate(time.Microsecond)), "started at %s", started)
+			} else {
+				s.False(started.Before(before), "started at %s, before the delivery at %s", started, before)
+			}
+		})
+	}
+}
+
 // Catches a session running on the channel passed over by the members rule: its message in a
 // channel with a third member opens nothing, as a worker's does.
 func (s *ChatEpisodesSuite) TestAMessageToARunningSessionInAChannelWithAThirdMemberOpensNoEpisode() {
