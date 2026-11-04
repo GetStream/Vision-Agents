@@ -79,14 +79,16 @@ type ChannelInboundForward struct {
 }
 
 // ChannelInboundMedia is a queued message's media. Its JSON, the row's media column, is an
-// array of {"url", "mime_type"}, never null: core.Media has no json tags, and keying the rows
-// by its field names would empty the media of rows queued before a rename of one.
+// array of {"url", "mime_type"}, with "id" for a file named by its id, never null: core.Media
+// has no json tags, and keying the rows by its field names would empty the media of rows
+// queued before a rename of one.
 type ChannelInboundMedia []core.Media
 
 // channelInboundFile is one file of ChannelInboundMedia as the row holds it.
 type channelInboundFile struct {
 	URL      string `json:"url"`
 	MIMEType string `json:"mime_type"`
+	ID       string `json:"id,omitempty"`
 }
 
 // MarshalJSON writes the media as the row holds it.

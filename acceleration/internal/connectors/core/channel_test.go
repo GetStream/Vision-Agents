@@ -698,7 +698,7 @@ func (s *ChannelSuite) TestAlsoIsCheckedWhenTheManifestIsParsed() {
 			`channel.messages.also[0].text: "" is not a path of member names`},
 		{"a text that is not a path", strings.Replace(captioned, "text: $.image.caption", "text: image.caption", 1),
 			`channel.messages.also[0].text: "image.caption" is not a path of member names`},
-		{"an unknown field", captioned + "\n        media: $.image.id", "field media not found"},
+		{"an unknown field", captioned + "\n        files: $.image.id", "field files not found"},
 	} {
 		_, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", tc.also, 1)))
 		s.ErrorContains(err, tc.want, tc.name)
@@ -804,7 +804,7 @@ func (s *ChannelSuite) TestMediaIsCheckedWhenTheManifestIsParsed() {
 	}
 	for _, tc := range []struct{ name, media, want string }{
 		{"no [*]", media("$.parts[0].url", "$.parts[0].mime_type"), `channel.messages.media.url: "$.parts[0].url" has no [*] past messages.each`},
-		{"no url", "text: $.text\n    media:\n      mime_type: $.parts[*].mime_type", `channel.messages.media.url: "" is not a path`},
+		{"no url", "text: $.text\n    media:\n      mime_type: $.parts[*].mime_type", `channel.messages.media: names its file by exactly one of url and id`},
 		{"no mime type", "text: $.text\n    media:\n      url: $.parts[*].url", `channel.messages.media.mime_type: "" is not a path`},
 		{"mime type without [*]", media("$.parts[*].url", "$.mime_type"), `channel.messages.media.mime_type: "$.mime_type" has no [*]`},
 		{"another element", media("$.parts[*].url", "$.files[*].mime_type"), `channel.messages.media: url "$.parts[*].url" and mime_type "$.files[*].mime_type" differ up to their last [*]`},

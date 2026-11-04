@@ -240,6 +240,16 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	inbound := message.Message()
 	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
 		"seq", message.Seq)
+	// Before the episode opens: a message that is only photos none of which downloaded is
+	// not written, so it opens no episode whose card nothing would ever write.
+	files, wanted, err := b.download(ctx, thread, inbound, log)
+	if err != nil {
+		return err
+	}
+	if wanted > 0 && len(files) == 0 && inbound.Text == "" && len(photos(inbound.Media)) == 0 {
+		log.Warn("an inbound message that is only photos none of which could be downloaded is not written or answered")
+		return nil
+	}
 	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
 	if err != nil {
 		log.Error("could not open the episode of an inbound message", "error", err)
@@ -254,11 +264,10 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 		opened.New = true
 	}
 	id := inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)
-	written, err := b.writeInto(ctx, thread, config, inbound, id)
-	switch {
-	case alreadyWritten(err):
-		written = rewritten(thread, inbound, id)
-	case err != nil:
+	// Stream Chat refusing the write as already done answers no message, so writeInto
+	// rebuilds it.
+	written, err := b.writeInto(ctx, thread, config, inbound, id, files)
+	if err != nil && !alreadyWritten(err) {
 		return err
 	}
 	log.Info("an inbound message is written into its thread channel", "message", id)

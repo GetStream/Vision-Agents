@@ -817,8 +817,12 @@ func (b *Bridge) read(connection store.ConnectorConnection, definition store.Con
 var errNotRead = errors.New("not read by the connection's revision")
 
 // writeInto writes message into its thread channel as its author under the Stream message id
-// id, creating the channel the first time, with the agent config that answers it.
-func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, id string) (Written, error) {
+// id, creating the channel the first time, with the agent config that answers it, and with
+// files, its photos download fetched, uploaded to the channel. When Stream Chat refuses the
+// write as already done (alreadyWritten), that refusal carries no message, so the message is
+// rebuilt as written and returned with the error: with this attempt's uploads, never a
+// provider's URL that needs the connection's credential.
+func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, id string, files []sandbox.File) (Written, error) {
 	bound, err := b.stream.ForApp(ctx, thread.CustomerID, thread.StreamAppPK)
 	if err != nil {
 		return Written{}, err
@@ -851,11 +855,25 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 	if err != nil {
 		return Written{}, stack.Wrap(err)
 	}
+	attachments := photos(message.Media)
+	for _, file := range files {
+		// As the person, as a photo they send in an app chat is (conversation.PublishPhotos).
+		uploaded, err := conversation.Upload(ctx, bound.Client, thread.ChannelID, file, author)
+		if err != nil {
+			return Written{}, stack.Wrap(err)
+		}
+		attachments = append(attachments, getstream.Attachment{
+			Type: getstream.PtrTo("image"), ImageUrl: &uploaded.URL, Custom: map[string]any{"mime_type": file.MIME},
+		})
+	}
 	// No source: the conversation reads a message without one as the person's
 	// (conversation.messageFromThread). Bridged: the message hook leaves it to the worker.
-	request := getstream.MessageRequest{ID: &id, Text: &message.Text, UserID: &author, Attachments: photos(message.Media),
+	request := getstream.MessageRequest{ID: &id, Text: &message.Text, UserID: &author, Attachments: attachments,
 		Custom: map[string]any{BridgedField: true}}
 	sent, err := bound.Client.Chat().SendMessage(ctx, chatlog.ChannelType, thread.ChannelID, &getstream.SendMessageRequest{Message: request})
+	if alreadyWritten(err) {
+		return Written{ID: id, Text: message.Text, Author: author, Attachments: attachments}, err
+	}
 	if err != nil {
 		return Written{}, stack.Wrap(err)
 	}
@@ -864,21 +882,14 @@ func (b *Bridge) writeInto(ctx context.Context, thread store.ChannelThread, conf
 		bounced: stored.Type == "error"}, nil
 }
 
-// rewritten is the message an attempt whose write Stream Chat refused as already done wrote
-// (alreadyWritten), rebuilt from its row as writeInto wrote it: that refusal carries no
-// message.
-func rewritten(thread store.ChannelThread, message core.InboundMessage, id string) Written {
-	return Written{ID: id, Text: message.Text, Author: AuthorUserID(thread.CustomerID, thread.ConnectorID, thread.ProviderUnitID, message.AuthorID),
-		Attachments: photos(message.Media)}
-}
-
 // photos are a message's image files as Stream Chat image attachments, the shape the message
 // hook hands the model (api.messageEvent.photos), as conversation.chatFileAttachments writes
 // one. Any other file, such as a video, is left out: the agent gets the text alone (AI-2094).
+// So is one named by its id, which has no URL to read it at: download fetches it instead.
 func photos(media []core.Media) []getstream.Attachment {
 	var attachments []getstream.Attachment
 	for _, file := range media {
-		if strings.HasPrefix(file.MIMEType, "image/") {
+		if file.ID == "" && strings.HasPrefix(file.MIMEType, "image/") {
 			attachments = append(attachments, getstream.Attachment{
 				Type: getstream.PtrTo("image"), ImageUrl: &file.URL, Custom: map[string]any{"mime_type": file.MIMEType},
 			})
