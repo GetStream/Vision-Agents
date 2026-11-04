@@ -157,6 +157,80 @@ func (s *ChatEpisodesSuite) TestAConfigWithoutCardsWritesAndReadsNothingNew() {
 	s.Equal(int64(1), s.configReads.reads.Load(), "the config's row is read as many times as at base")
 }
 
+// The control in a channel a session answered before, whose calls row ownerOf finds first: a
+// config without episode_cards writes nothing, and its row is read once at most. At base
+// c9a61fc90 the probe of each delivery read it: naming the row's config, none; naming none or
+// another config, none; with a voice recording, once (unopenedSpec). Here naming the row's
+// config reads it once (heldConfigOf), as a channel with no row does at base: the one read the
+// cards' gate needs. Catches a second read, a read for a channel naming no config, and a card
+// written for a config the channel names other than the one that answers.
+func (s *ChatEpisodesSuite) TestAConfigWithoutCardsInAChannelASessionAnsweredReadsItOnceAtMost() {
+	for _, c := range []struct {
+		name      string
+		naming    func(row, other store.AgentConfig) string
+		recording bool
+		reads     int64
+	}{
+		{"names the row's config", func(row, _ store.AgentConfig) string { return row.ID }, false, 1},
+		{"names none", func(store.AgentConfig, store.AgentConfig) string { return "" }, false, 0},
+		{"names another config with cards on", func(_, other store.AgentConfig) string { return other.ID }, false, 0},
+		{"holds a voice recording", func(row, _ store.AgentConfig) string { return row.ID }, true, 1},
+	} {
+		s.Run(c.name, func() {
+			s.channelID = "chat-" + s.utils.uuid()
+			worker := s.worker()
+			config, other := s.config(false, "llm-flow"), s.config(true, "llm-flow")
+			s.sessionAnswered(config)
+			before := len(s.chat.Requests(suiteStreamKey))
+			s.configReads.reads.Store(0)
+			s.configReads.id.Store(&config.ID)
+			defer s.configReads.id.Store(nil)
+			body := s.written(c.naming(config, other), "where is my order?")
+			if c.recording {
+				body = strings.Replace(body, `"text":`,
+					`"attachments": [{"type": "voiceRecording", "asset_url": "https://example.invalid/note.aac"}], "text":`, 1)
+			}
+
+			s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, body, s.current))
+
+			s.Equal(config.ID, s.handedTo(worker).ConfigID, "the message is answered under the row's config")
+			s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+			s.Equal(before, len(s.chat.Requests(suiteStreamKey)), "Stream was asked something")
+			s.Equal(c.reads, s.configReads.reads.Load(), "the config's row is read once at most")
+		})
+	}
+}
+
+// Catches a chat a worker's session answered before losing its cards: the session leaves a
+// calls row for the channel, which ownerOf finds first, so without heldConfigOf the next
+// message keeps no episode open, and the one after the episode closed opens none.
+func (s *ChatEpisodesSuite) TestAChatASessionAnsweredGoesOnWritingCards() {
+	ctx := context.Background()
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+	s.True(s.reachesWorker(worker))
+	omni := s.omniChannel()
+	s.cards(omni, 1)
+	first := s.lastMessage()
+	s.sessionAnswered(config)
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "it was due on Monday"))
+
+	s.True(s.reachesWorker(worker), "the second message is answered")
+	s.Require().Eventually(func() bool { return s.lastMessage().After(first) }, settleFor, 10*time.Millisecond,
+		"the second message keeps the episode open")
+	_, err := s.store.DB().ExecContext(ctx, "UPDATE episodes SET status = ?, ended_at = now() WHERE customer_id = ?",
+		store.EpisodeSummarized, s.customerID())
+	s.Require().NoError(err)
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "and now it is late"))
+
+	s.True(s.reachesWorker(worker), "the third message is answered")
+	s.cards(omni, 2)
+	s.Equal(2, s.episodeCount(), "the message after the close opens the next episode")
+}
+
 // Catches an omni-channel taken for a channel a person writes in: it is where cards are
 // written, so a message in it, which a config of its own names, opens no episode of its own.
 func (s *ChatEpisodesSuite) TestAMessageInAnOmniChannelOpensNoChatEpisode() {
@@ -551,18 +625,31 @@ func (s *ChatEpisodesSuite) writes(configID, text string) int {
 }
 
 // written is a message.new the test's user wrote in the test's channel, which names the
-// config given.
+// config given, or none for an empty one.
 func (s *ChatEpisodesSuite) written(configID, text string) string {
+	custom := fmt.Sprintf("{%q: %q}", ConfigField, configID)
+	if configID == "" {
+		custom = "{}"
+	}
 	return fmt.Sprintf(`{
   "type": "message.new",
   "app_id": %d,
   "channel_id": %q,
   "channel_type": "agent",
   "created_at": %q,
-  "channel_custom": {%q: %q},
+  "channel_custom": %s,
   "message": {"id": %q, "text": %q, "user": {"id": %q, "name": "Anya"}}
-}`, suiteStreamApp, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), ConfigField, configID,
+}`, suiteStreamApp, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), custom,
 		"message-"+s.utils.uuid(), text, s.user)
+}
+
+// sessionAnswered leaves the calls row a worker's session answering in the test's channel
+// under config leaves (session.Manager), which ended.
+func (s *ChatEpisodesSuite) sessionAnswered(config store.AgentConfig) {
+	started := time.Now().UTC().Add(-time.Minute)
+	ended := started.Add(30 * time.Second)
+	s.Require().NoError(s.store.StartCall(context.Background(), &store.Call{ID: s.utils.uuid(), CustomerID: s.customerID(),
+		CallID: s.utils.callID(), AgentID: s.channelID, ConfigID: config.ID, Direction: "inbound", StartedAt: started, EndedAt: &ended}))
 }
 
 // config is a text agent of the test's app on the LLM named, with episode cards on or off.

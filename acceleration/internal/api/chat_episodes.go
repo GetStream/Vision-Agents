@@ -75,9 +75,8 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 // chatEpisodeUnopened is chatEpisode for a message nothing runs for, which a worker is handed:
 // the agent that answers is the config the channel's owner holds (ownerOf), from a read made
 // already, so a config with episode_cards off costs no read of its own. heardFor is that
-// config's spec when a voice recording read it; declared is the config the channel names, when
-// ownerOf read it. A channel whose last call names its config (lastCallOn) has neither unless a
-// recording was heard, and opens no chat episode.
+// config's spec when a voice recording read it; declared is the config ownerOf read: the one
+// the channel names, also when its last call (lastCallOn) ran under it (heldConfigOf).
 func (s *Server) chatEpisodeUnopened(ctx context.Context, origin hookOrigin, event messageEvent, declared *store.AgentConfig,
 	heardFor session.Spec, recorded bool) {
 	switch {
