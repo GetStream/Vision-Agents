@@ -56,12 +56,6 @@ module GetStream
           body: "AttachNumberRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
-        "authorizePlugin" => {
-          method: :post, path: "/v1/agents/configs/{id}/plugins/{plugin_id}/authorize",
-          path_params: %w[id plugin_id].freeze, query: [].freeze,
-          body: "AuthorizePluginRequest", body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
         "buyPhoneNumber" => {
           method: :post, path: "/v1/phone/numbers",
           path_params: [].freeze, query: [].freeze,
@@ -314,12 +308,6 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
-        "deletePluginClient" => {
-          method: :delete, path: "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
-          path_params: %w[id plugin_id].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
         "deleteProviderKey" => {
           method: :delete, path: "/v1/agents/provider-keys/{provider}",
           path_params: %w[provider].freeze, query: %w[region].freeze,
@@ -407,12 +395,6 @@ module GetStream
         "disconnectChannel" => {
           method: :delete, path: "/v1/agents/channels/{id}",
           path_params: %w[id].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
-        "disconnectPlugin" => {
-          method: :delete, path: "/v1/agents/configs/{id}/plugins/{plugin_id}",
-          path_params: %w[id plugin_id].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -650,12 +632,6 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
-        "getPluginLogo" => {
-          method: :get, path: "/v1/agents/plugins/{plugin_id}/logo",
-          path_params: %w[plugin_id].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
         "getPriceChange" => {
           method: :get, path: "/v1/manage/price-lists/changes/{name}",
           path_params: %w[name].freeze, query: [].freeze,
@@ -872,12 +848,6 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
-        "listConfigPlugins" => {
-          method: :get, path: "/v1/agents/configs/{id}/plugins",
-          path_params: %w[id].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
         "listConnectionInvocations" => {
           method: :get, path: "/v1/agents/connections/{id}/invocations",
           path_params: %w[id].freeze, query: %w[limit cursor].freeze,
@@ -989,12 +959,6 @@ module GetStream
         "listPhoneVendors" => {
           method: :get, path: "/v1/phone/vendors",
           path_params: [].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
-        "listPlugins" => {
-          method: :get, path: "/v1/agents/plugins",
-          path_params: [].freeze, query: %w[q].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1232,12 +1196,6 @@ module GetStream
           body: "PlaceCallRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
-        "pluginOAuthCallback" => {
-          method: :get, path: "/v1/agents/plugins/callback",
-          path_params: [].freeze, query: %w[code state error].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
         "prepareVoice" => {
           method: :post, path: "/v1/agents/voices/{id}/prepare",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1361,12 +1319,6 @@ module GetStream
         "receiveDLCReport" => {
           method: :post, path: "/v1/phone/hooks/10dlc",
           path_params: [].freeze, query: [].freeze,
-          body: nil, body_required: false,
-          socket: false, client_accessible: false
-        }.freeze,
-        "receivePluginEvent" => {
-          method: :post, path: "/v1/agents/plugins/events/{token}",
-          path_params: %w[token].freeze, query: [].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1518,12 +1470,6 @@ module GetStream
           method: :put, path: "/v1/phone/numbers/{e164}/agent",
           path_params: %w[e164].freeze, query: [].freeze,
           body: "SetNumberAgentRequest", body_required: true,
-          socket: false, client_accessible: false
-        }.freeze,
-        "setPluginClient" => {
-          method: :put, path: "/v1/agents/configs/{id}/plugins/{plugin_id}/client",
-          path_params: %w[id plugin_id].freeze, query: [].freeze,
-          body: "SetPluginClientRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
         "setSandboxRecipients" => {
@@ -1694,6 +1640,12 @@ module GetStream
           body: "UseCaseRequest", body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "updateUser" => {
+          method: :put, path: "/v1/agents/users/{user_id}",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: "AgentUserRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "updateUserPolicy" => {
           method: :put, path: "/v1/policies/users/{user_id}",
           path_params: %w[user_id].freeze, query: [].freeze,
@@ -1752,7 +1704,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[calls channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[calls channels connectors created_at dispatch episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
@@ -1815,6 +1767,14 @@ module GetStream
           properties: %w[output_retention progressive].freeze,
           required: [].freeze, open: false
         }.freeze,
+        "AgentUser" => {
+          properties: %w[phone user_id].freeze,
+          required: %w[user_id phone].freeze, open: false
+        }.freeze,
+        "AgentUserRequest" => {
+          properties: %w[phone].freeze,
+          required: %w[phone].freeze, open: false
+        }.freeze,
         "AnalyzeReviewsRequest" => {
           properties: %w[from target to].freeze,
           required: %w[from to].freeze, open: false
@@ -1869,10 +1829,6 @@ module GetStream
         }.freeze,
         "AuthorizationRequest" => {
           properties: %w[return_url].freeze,
-          required: [].freeze, open: false
-        }.freeze,
-        "AuthorizePluginRequest" => {
-          properties: %w[instance_url].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AvailableNumber" => {
@@ -2495,29 +2451,9 @@ module GetStream
           properties: %w[session_id status vendor vendor_call_id].freeze,
           required: %w[status vendor_call_id].freeze, open: false
         }.freeze,
-        "Plugin" => {
-          properties: %w[category client_required description id instance_hint instance_required logo_url name readonly redirect_uri scopes_supported setup_steps setup_url toolsets].freeze,
-          required: %w[category description id logo_url name].freeze, open: false
-        }.freeze,
-        "PluginAuthorization" => {
-          properties: %w[authorize_url].freeze,
-          required: %w[authorize_url].freeze, open: false
-        }.freeze,
-        "PluginClient" => {
-          properties: %w[client_id has_secret].freeze,
-          required: %w[client_id has_secret].freeze, open: false
-        }.freeze,
-        "PluginConnection" => {
-          properties: %w[category client client_required description instance_hint instance_required instance_url logo_url name plugin_id status user].freeze,
-          required: %w[logo_url name plugin_id status].freeze, open: false
-        }.freeze,
         "PluginEvent" => {
           properties: %w[arguments event instructions plugin].freeze,
           required: %w[plugin event].freeze, open: false
-        }.freeze,
-        "PluginSetupStep" => {
-          properties: %w[description title].freeze,
-          required: %w[title description].freeze, open: false
         }.freeze,
         "PluginWithOptions" => {
           properties: %w[name readonly scopes tools toolsets user].freeze,
@@ -2826,10 +2762,6 @@ module GetStream
         "SetNumberAgentRequest" => {
           properties: %w[agent config_id].freeze,
           required: [].freeze, open: false
-        }.freeze,
-        "SetPluginClientRequest" => {
-          properties: %w[client_id client_secret user].freeze,
-          required: %w[client_id].freeze, open: false
         }.freeze,
         "SetSandboxRecipientsRequest" => {
           properties: %w[recipients].freeze,

@@ -187,6 +187,8 @@ type converse struct {
 	cadence *cadence
 	duplex  *duplex
 	emitter *Emitter
+	// onHeard is Options.OnHeard.
+	onHeard func(Heard)
 	logger  *slog.Logger
 	// patience is how long the same unfinished words are waited on before the caller is
 	// asked what they meant.
@@ -742,7 +744,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 	if released != "" {
 		c.cadence.ReleaseHeld(released)
 	}
-	c.emitter.Send(Heard{
+	sendHeard(c.emitter, c.onHeard, Heard{
 		Participant: ready.Participant,
 		Text:        shown,
 		Language:    ready.Language,
@@ -1068,7 +1070,7 @@ func (c *converse) Waiting(state floor) (Action, bool) {
 		// are written over this one.
 		var shown string
 		shown, line = c.closeQueuedLine(held)
-		c.emitter.Send(Heard{
+		sendHeard(c.emitter, c.onHeard, Heard{
 			Participant: held.candidate.Participant,
 			Text:        shown,
 			Language:    held.candidate.Language,
@@ -1280,7 +1282,7 @@ func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 		// The line it waited in was let go of, so it is heard on one of its own, as when
 		// it is answered alone (Waiting).
 		shown, line := c.closeQueuedLine(*held)
-		c.emitter.Send(Heard{
+		sendHeard(c.emitter, c.onHeard, Heard{
 			Participant: held.candidate.Participant,
 			Text:        shown,
 			Language:    held.candidate.Language,

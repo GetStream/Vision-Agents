@@ -9,8 +9,8 @@ A connector lets an agent call tools at a provider (GitHub, Linear, Slack) with 
 that someone connected. The router keeps the credential sealed and adds it to each call.
 The agent's own code never sees a token.
 
-Connectors replace plugins. Plugins still work but are deprecated: do not start new work on
-them (`plugin` skill).
+Connectors replaced plugins. The router refuses a config naming `plugins`, `plugin_events` or
+`mcp_servers` and opens none a stored config still names.
 
 To add a new connector to the catalog, read the `add-connector` skill.
 

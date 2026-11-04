@@ -90,6 +90,10 @@ type Request struct {
 	PriceVersion string `bun:"price_version,notnull"`
 	// SKU is the priced item's, as its entry names it: empty for work no entry matched.
 	SKU string `bun:"sku,notnull"`
+	// Region and BYOK are the priced item's, whether or not an entry matched it: where the
+	// work ran, and whether on the customer's own key. Rows from before them read "" and false.
+	Region string `bun:"region,notnull"`
+	BYOK   bool   `bun:"byok,notnull"`
 	// BaseCostMicros is the cost at the vendor's rates, for reference, so the margin on the
 	// row is CostMicros - BaseCostMicros.
 	BaseCostMicros int64 `bun:"base_cost_micros,notnull"`
@@ -873,63 +877,6 @@ type Skill struct {
 	DeletedAt  *time.Time `bun:"deleted_at"`
 }
 
-// How far a plugin login has got.
-const (
-	// PluginPending means the browser is still at the provider.
-	PluginPending = "pending"
-	// PluginConnected means tokens are stored and a session may use them.
-	PluginConnected = "connected"
-	// PluginFailed means the exchange did not work.
-	PluginFailed = "failed"
-)
-
-// PluginConnection is one hosted MCP server authorized for one agent config, by the app
-// or by one of its end users.
-type PluginConnection struct {
-	bun.BaseModel `bun:"table:agent_plugin_connections,alias:apc"`
-
-	ID         string `bun:"id,pk"`
-	CustomerID string `bun:"customer_id,notnull"`
-	ConfigID   string `bun:"config_id,notnull"`
-	PluginID   string `bun:"plugin_id,notnull"`
-	// UserID is the end user whose account this is. Empty is the app's own login, made once
-	// on the dashboard and used by every session of the config.
-	UserID string `bun:"user_id,notnull"`
-	// InstanceURL is the shop or org hostname for plugins that have no single global URL,
-	// or the URL of an MCP server named by URL, whose login is good only there.
-	InstanceURL  string     `bun:"instance_url,notnull"`
-	AccessToken  string     `bun:"access_token,notnull"`
-	RefreshToken string     `bun:"refresh_token,notnull"`
-	ExpiresAt    *time.Time `bun:"expires_at"`
-	Status       string     `bun:"status,notnull"`
-	// OAuthState, CodeVerifier, ClientID and TokenEndpoint are what the callback needs
-	// to finish the login. They are cleared once the connection is connected.
-	OAuthState    string     `bun:"oauth_state,notnull"`
-	CodeVerifier  string     `bun:"code_verifier,notnull"`
-	ClientID      string     `bun:"client_id,notnull"`
-	TokenEndpoint string     `bun:"token_endpoint,notnull"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
-}
-
-// PluginClient is the OAuth client one agent config logs into one plugin with, for a
-// plugin that registers no client on the fly.
-type PluginClient struct {
-	bun.BaseModel `bun:"table:agent_plugin_clients,alias:apcl"`
-
-	CustomerID string `bun:"customer_id,pk"`
-	ConfigID   string `bun:"config_id,pk"`
-	PluginID   string `bun:"plugin_id,pk"`
-	ClientID   string `bun:"client_id,notnull"`
-	// SecretSealed is the client secret, sealed under SecretKEKVersion with the customer,
-	// the config and the plugin as additional data. Empty for a public client.
-	SecretSealed     []byte    `bun:"secret_sealed"`
-	SecretKEKVersion int       `bun:"kek_version,notnull"`
-	CreatedAt        time.Time `bun:"created_at,notnull"`
-	UpdatedAt        time.Time `bun:"updated_at,notnull"`
-}
-
 // MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
 type MCPServer struct {
 	// Name prefixes its tools, as a plugin's id does.
@@ -1110,7 +1057,7 @@ type ChannelLine struct {
 // ChannelAccount is one app's line on a channel: the number people write to and the
 // credentials of the provider carrying it.
 //
-// It belongs to the app rather than to an agent, the way a plugin login does: the number is
+// It belongs to the app rather than to an agent, the way a removed plugin login did: the number is
 // connected once and any number of configs name it.
 type ChannelAccount struct {
 	bun.BaseModel `bun:"table:channel_accounts,alias:ca"`
@@ -1152,30 +1099,6 @@ type PluginEntry struct {
 	Tools []string `json:"tools,omitempty"`
 }
 
-// PluginNames are the ids entries name.
-func PluginNames(entries []PluginEntry) []string {
-	names := make([]string, 0, len(entries))
-	for _, entry := range entries {
-		names = append(names, entry.Name)
-	}
-	return names
-}
-
-// NamesPlugin reports whether entries name the plugin id.
-func NamesPlugin(entries []PluginEntry, id string) bool {
-	return slices.ContainsFunc(entries, func(entry PluginEntry) bool { return entry.Name == id })
-}
-
-// AppPlugins are the entries the app logs into once.
-func AppPlugins(entries []PluginEntry) []PluginEntry {
-	return slices.DeleteFunc(slices.Clone(entries), func(entry PluginEntry) bool { return entry.User })
-}
-
-// UserPlugins are the entries each end user connects with their own account.
-func UserPlugins(entries []PluginEntry) []PluginEntry {
-	return slices.DeleteFunc(slices.Clone(entries), func(entry PluginEntry) bool { return !entry.User })
-}
-
 // PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
 type PluginEvent struct {
 	Plugin string `json:"plugin"`
@@ -1184,47 +1107,6 @@ type PluginEvent struct {
 	Arguments map[string]any `json:"arguments,omitempty"`
 	// Instructions say what the agent does with the event when it arrives.
 	Instructions string `json:"instructions,omitempty"`
-}
-
-// How far a plugin event subscription has got.
-const (
-	// PluginEventPending means the server has not yet accepted it.
-	PluginEventPending = "pending"
-	// PluginEventActive means the server accepted it and delivers to its callback.
-	PluginEventActive = "active"
-	// PluginEventFailed means the server refused it, and Error says why.
-	PluginEventFailed = "failed"
-)
-
-// PluginEventSubscription is one declared event subscribed to with one login: the app's
-// own, or one end user's.
-type PluginEventSubscription struct {
-	bun.BaseModel `bun:"table:agent_plugin_event_subscriptions,alias:apes"`
-
-	ID         string `bun:"id,pk"`
-	CustomerID string `bun:"customer_id,notnull"`
-	ConfigID   string `bun:"config_id,notnull"`
-	PluginID   string `bun:"plugin_id,notnull"`
-	// UserID is whose login subscribed. Empty is the app's own.
-	UserID    string         `bun:"user_id,notnull"`
-	Event     string         `bun:"event,notnull"`
-	Arguments map[string]any `bun:"arguments,type:jsonb,notnull"`
-	// Key is the event and its arguments as canonical JSON, hashed, so the same filters
-	// in another key order are the same subscription.
-	Key string `bun:"key,notnull"`
-	// Token is the callback's path segment and Secret what deliveries to it are signed with.
-	Token  string `bun:"token,notnull"`
-	Secret string `bun:"secret,notnull"`
-	// RemoteID is the id the server gave the subscription.
-	RemoteID string `bun:"remote_id,notnull"`
-	// RefreshBefore is when the server stops delivering unless subscribed to again. Nil
-	// is a subscription that does not expire.
-	RefreshBefore *time.Time `bun:"refresh_before"`
-	Status        string     `bun:"status,notnull"`
-	Error         string     `bun:"error,notnull"`
-	CreatedAt     time.Time  `bun:"created_at,notnull"`
-	UpdatedAt     time.Time  `bun:"updated_at,notnull"`
-	DeletedAt     *time.Time `bun:"deleted_at"`
 }
 
 // Where a knowledge url has got to.
@@ -1381,6 +1263,11 @@ type Call struct {
 	// CallID is the Stream call, and AgentID is the transcript channel.
 	CallID  string `bun:"call_id,notnull"`
 	AgentID string `bun:"agent_id,notnull"`
+	// ConversationID is the conversation the call was bound to when it started, as its
+	// session's row names it. It outlives that row, so a deleted session's call can still
+	// find its transcript. Empty for a call from before the column, and for one that kept
+	// no conversation.
+	ConversationID string `bun:"conversation_id,nullzero"`
 	// ConfigID names the agent config the call ran under. Empty when the caller spelled
 	// the whole spec out.
 	ConfigID   string `bun:"config_id,nullzero"`

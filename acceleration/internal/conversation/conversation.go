@@ -21,7 +21,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -80,9 +79,6 @@ type Message struct {
 	UI map[string]any `json:"ui,omitempty"`
 	// UIAction is what a person did in a reply's UI, on their message (custom.ai_ui_action).
 	UIAction map[string]any `json:"ui_action,omitempty"`
-	// Authorizations ask the end user to connect a plugin the reply needed (authorizations.go).
-	// They are written among the attachments, by MarshalJSON.
-	Authorizations []plugins.Authorization `json:"-"`
 	// ConnectorAuthorizations ask the end user to connect a connector binding the reply
 	// needed (connector_logins.go). They are written among the attachments, by MarshalJSON.
 	ConnectorAuthorizations []ConnectorAuthorization `json:"-"`
@@ -186,9 +182,6 @@ type ledger struct {
 	// StreamApp is the app the conversation is kept in, its pin: zero for the deployment's
 	// own. Every write and read for it is made there.
 	StreamApp int64 `json:",omitempty"`
-	// Logins are the servers the session reaches that log in, the only ones whose tool
-	// results may ask for a login.
-	Logins []string `json:",omitempty"`
 }
 type operation struct {
 	Message Message
@@ -1065,7 +1058,6 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 		if err == nil {
 			msg.Artifacts = artifactsFromAttachments(m.Attachments)
 			msg.Files = filesFromAttachments(m.Attachments)
-			msg.Authorizations = authorizationsFromAttachments(m.Attachments)
 			msg.ConnectorAuthorizations = connectorAuthorizationsFromAttachments(m.Attachments)
 			msg.Saved = true
 			msg.Refused = m.Custom[RefusedField] == true
@@ -1331,13 +1323,6 @@ func (c *Conversation) ShowTools(patterns []string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	c.data.VisibleTools = append([]string(nil), patterns...)
-}
-
-// AcceptLogins sets the servers whose tool results may ask somebody to log in.
-func (c *Conversation) AcceptLogins(servers []string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.data.Logins = append([]string(nil), servers...)
 }
 
 func (c *Conversation) Agent() string             { return c.data.Agent }
@@ -1696,11 +1681,6 @@ func (c *Conversation) Observe(event agent.Event) {
 				m.Sources = mergeSources(m.Sources, sourcesOf(e.Result))
 				m.Artifacts = mergeArtifacts(m.Artifacts, StoredArtifacts(e.Result))
 			}
-			// Asked of whoever is in the conversation, whether or not the tool's steps are
-			// shown: a login nobody sees is one nobody can finish.
-			if found, ok := plugins.RequestedAuthorization(t.Name, e.Result, c.data.Logins); ok && e.Err == nil {
-				m.Authorizations = mergeAuthorizations(m.Authorizations, found)
-			}
 			failure := ""
 			if e.Err != nil {
 				failure = e.Err.Error()
@@ -1943,7 +1923,6 @@ func (c *Conversation) publish(m Message) {
 		m.Sources = append([]Source{}, m.Sources...)
 		m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 		m.Files = append([]sandbox.Attachment{}, m.Files...)
-		m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 		m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 		c.emit(Updated{CID: c.data.CID, Message: m})
 	}
@@ -1961,7 +1940,6 @@ func (c *Conversation) enqueue(m Message, create bool) {
 	m.Sources = append([]Source{}, m.Sources...)
 	m.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 	m.Files = append([]sandbox.Attachment{}, m.Files...)
-	m.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 	m.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 	op := operation{Message: m, Create: create}
 	if m.Role == "user" {
@@ -2033,8 +2011,7 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	if op.live != nil {
 		parts = liveParts(parts, *op.live)
 	}
-	extra := append(partialAttachments(m.Artifacts), authorizationAttachments(m.Authorizations)...)
-	extra = append(extra, connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
+	extra := append(partialAttachments(m.Artifacts), connectorAuthorizationAttachments(m.ConnectorAuthorizations)...)
 	extra = append(extra, fileAttachments(m.Files, m.Role == "user")...)
 	if attachments := messageAttachments(parts, extra); len(attachments) > 0 {
 		fields["attachments"] = attachments
@@ -2255,7 +2232,6 @@ func (c *Conversation) run() {
 				copy.Sources = append([]Source{}, m.Sources...)
 				copy.Artifacts = append([]ArtifactAttachment{}, m.Artifacts...)
 				copy.Files = append([]sandbox.Attachment{}, m.Files...)
-				copy.Authorizations = append([]plugins.Authorization{}, m.Authorizations...)
 				copy.ConnectorAuthorizations = append([]ConnectorAuthorization{}, m.ConnectorAuthorizations...)
 				m = &copy
 			}

@@ -195,6 +195,13 @@ type Session struct {
 	// carded is whether the session started with the person's episode cards
 	// (callCards.read). Set once, before the session can be reached.
 	carded bool
+	// cardsFor is the Stream user whose cards a session on an app chat's agent channel started
+	// with (callCards.read), the only person it answers (CardsFor). Set once, before the
+	// session can be reached.
+	cardsFor string
+	// retiring is set once the session takes no new message and closes after the replies it
+	// owes (Manager.Retire).
+	retiring atomic.Bool
 	// transcribedInto is the channel a call's transcript is written into: the conversation's,
 	// else the agent id's. Empty when it is written nowhere the call may write, a device's
 	// call under a thread channel's agent id (persistent.Barred). Set once, before the
@@ -326,6 +333,14 @@ func (s *Session) ID() string { return s.id }
 
 // current is the agent holding the conversation now.
 func (s *Session) current() *agent.Agent { return s.held.Load() }
+
+// CardsFor is the Stream user whose episode cards the session started with in an app chat's
+// agent channel, empty when it started with none there. Their cards are in its context, so it
+// answers nobody else (api.routeArrivingMessage).
+func (s *Session) CardsFor() string { return s.cardsFor }
+
+// Retiring reports whether the session was retired (Manager.Retire).
+func (s *Session) Retiring() bool { return s.retiring.Load() }
 
 // Spec is what the session was asked for.
 func (s *Session) Spec() Spec {
@@ -596,6 +611,13 @@ func (s *Session) abandon() {
 
 // unwatchedFor reports whether the session holds the persistent conversation cid and
 // nobody is watching it.
+// holds reports whether the session holds the persistent conversation cid.
+func (s *Session) holds(cid string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.persisted != nil && s.persisted.CID() == cid && s.state != Ended
+}
+
 func (s *Session) unwatchedFor(cid string) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -636,6 +658,9 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
+		if nothingToAnswer(text, images) {
+			return "", stack.Wrap(errNothingToAnswer)
+		}
 		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked, false)
 		return turnID, err
 	}
@@ -661,6 +686,16 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// Opening the turn here as well as on the event is what makes the id available to whoever
 	// asked for the answer. It happens once whichever way round the two arrive.
 	return s.openTurn(turnID, text), nil
+}
+
+// errNothingToAnswer is an answer handed on from a channel with no text and no images.
+var errNothingToAnswer = errors.New("there is nothing to answer")
+
+// nothingToAnswer is a respond a worker from before photos were read sends for a photo sent
+// alone: no text and no images, so the model has nothing to be asked, as on the HTTP answer's
+// 400. It is the worker's socket only: a photo the router follows up itself reaches the model.
+func nothingToAnswer(text string, images []llm.ImagePart) bool {
+	return strings.TrimSpace(text) == "" && len(images) == 0
 }
 
 // errPersonalNeedsCommand is a question to a personal conversation sent without a command ID.
@@ -695,6 +730,33 @@ func (s *Session) CheckRespond(ctx context.Context, id, text string, images bool
 	return "", stack.Wrap(err)
 }
 
+// SampleVideos refuses what Respond, or RespondCommand with command id, would refuse a
+// question with videos for, before the videos are fetched and sampled: work that is wasted on
+// a refused question. sample is false for a retry of a command already taken, which is
+// answered with its receipt and never shown to the model again, unless a dispatch worker's
+// server is answering it now (AwaitCommand).
+func (s *Session) SampleVideos(ctx context.Context, id string) (sample bool, err error) {
+	if s.persisted == nil {
+		return true, nil
+	}
+	if id == "" {
+		if !s.Voicing() && s.spec.Caller.UserID != "" {
+			return false, stack.Wrap(errPersonalNeedsCommand)
+		}
+		return true, nil
+	}
+	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
+		return false, stack.Wrap(err)
+	}
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if _, err := s.persisted.Command(id); err != nil {
+		return true, nil
+	}
+	_, waiting := s.awaiting[id]
+	return waiting, nil
+}
+
 // Durable is whether a question's request id is kept, so a retry of it is answered once.
 // Only a conversation stored in Stream Chat keeps them; any other answers every question.
 func (s *Session) Durable() bool { return s.persisted != nil }
@@ -704,8 +766,10 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // that one returns the id of the response it recorded. clientID names the install the
 // command came from, which a client tool called while answering is addressed to. images
 // are photos sent with it, shown on the person's message and to the model with this reply
-// alone. asked is what the caller wants changed about this reply alone. notes are voice
-// notes sent with it, shown on the person's message; text already holds what they said.
+// alone; the frames of a video among them are the model's alone, as Respond's are, and are not
+// part of what a retry is matched on. asked is what the caller wants changed about this reply
+// alone. notes are voice notes sent with it, shown on the person's message; text already holds
+// what they said.
 func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
 	return s.RespondCommandWithAction(ctx, id, text, clientID, images, asked, nil, notes...)
 }
@@ -719,7 +783,8 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	var photos []persistent.Photo
 	if !handedOn {
 		var err error
-		if photos, err = s.photos(ctx, id, images, notes); err != nil {
+		sent := slices.DeleteFunc(slices.Clone(images), func(image llm.ImagePart) bool { return image.Video })
+		if photos, err = s.photos(ctx, id, sent, notes); err != nil {
 			return persistent.CommandReceipt{}, "", err
 		}
 	}
@@ -739,6 +804,9 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 		told += "\n\n" + note
 	}
 	if handedOn {
+		if nothingToAnswer(told, images) {
+			return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
+		}
 		return s.followUp(ctx, id, told, images, asked, true)
 	}
 	receipt, err := s.persisted.BeginCommandWithAction(id, text, clientID, action, photos...)
@@ -1679,7 +1747,6 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 			transferred = true
 		}
 		s.observe(run, event)
-		s.heardCaller(event)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)

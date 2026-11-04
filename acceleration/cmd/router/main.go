@@ -72,8 +72,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/pluginevents"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/plugins"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/providerkeys"
@@ -716,6 +714,11 @@ func run(settings config.Config, logger *slog.Logger) error {
 	// with limits off. Money is read from the usage service, and from Postgres without one.
 	warnLimits(settings, logger)
 	warnKnowledgeLimits(settings, logger)
+	// Checked here as well as where the backends are built, since a router that cannot build
+	// them serves without knowledge rather than failing.
+	if err := knowledgeRegionsApart(knowledgeRegions(settings.Knowledge)); err != nil {
+		return err
+	}
 	if err := limitsNeedSomewhereToRead(settings, pgStore); err != nil {
 		return err
 	}
@@ -1104,12 +1107,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		return err
 	}
 
-	pluginAuth := &plugins.Auth{
-		PublicURL:    settings.PublicURL,
-		DashboardURL: settings.DashboardURL,
-		Clients:      session.PluginClients(pgStore, secrets),
-	}
-
 	// An LLM-only deployment serves text sessions; voice modes validate their own
 	// speech dependencies before a call is opened.
 	sessionConnectors := session.Connectors{Registry: connectors, Transports: connectorTransports,
@@ -1120,7 +1117,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients, pluginAuth,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1142,23 +1139,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 			return err
 		}
 		defer campaigns.Close()
-	}
-
-	// A plugin event opens a conversation and is subscribed to from a row, so events need
-	// both. Elsewhere a config's plugin_events are stored and nothing subscribes to them.
-	var events *pluginevents.Service
-	if pgStore != nil && sessions != nil {
-		events, err = pluginevents.New(pluginevents.Options{
-			Store:    pgStore,
-			Sessions: sessions,
-			Auth:     pluginAuth,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		events.Start()
-		defer events.Close()
 	}
 
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
@@ -1338,7 +1318,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
 		Campaigns:             campaigns,
 		Simulations:           simulations,
-		PluginEvents:          events,
 		DLC:                   registrations,
 		Gate:                  dlcGate,
 		OpsKey:                settings.Auth.OpsKey,
@@ -1586,7 +1565,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1701,10 +1680,11 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, and chat answers a router holds; one without one of them holds none of its work. A
-// turn counts until it ends, also before the session it opens is counted.
+// over, chat answers and the app chat's episode cards a router holds; one without one of them
+// holds none of its work. A turn counts until it ends, also before the session it opens is
+// counted.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker) int {
+	deliveries *chatinbound.Worker, server *api.Server) int {
 	held := 0
 	if sessions != nil {
 		held += sessions.Len()
@@ -1717,6 +1697,9 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge 
 	}
 	if deliveries != nil {
 		held += deliveries.Running()
+	}
+	if server != nil {
+		held += server.ChatCardsRunning()
 	}
 	return held
 }
@@ -1938,7 +1921,6 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	stream *streamapp.Clients,
-	pluginAuth *plugins.Auth,
 	connectors session.Connectors,
 	prices pricing.Pricer,
 	policies *policy.Enforcer,
@@ -1985,7 +1967,6 @@ func buildSessions(
 		Transcript:         transcriptFor(settings.Agent.ChatTimings),
 		Configs:            configs,
 		Directory:          directory,
-		PluginAuth:         pluginAuth,
 		// The session's dispatcher shares the validate endpoint's transports, so each
 		// connection has one outbound client in the router.
 		Connectors: connectors,
@@ -2090,12 +2071,9 @@ func knowledgeAccounts(settings config.Knowledge, timeout time.Duration, logger 
 // gcp-us-central1, as before regions. One key, TURBOPUFFER_API_KEY, is the organization's in
 // every turbopuffer region.
 func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger *slog.Logger) (map[string]knowledge.Backend, error) {
-	mapped := maps.Clone(settings.Regions)
-	if mapped == nil {
-		mapped = map[string]string{}
-	}
-	if _, ok := mapped[pricing.DefaultRegion]; !ok {
-		mapped[pricing.DefaultRegion] = ""
+	mapped := knowledgeRegions(settings)
+	if err := knowledgeRegionsApart(mapped); err != nil {
+		return nil, err
 	}
 	backends := make(map[string]knowledge.Backend, len(mapped))
 	for region, theirs := range mapped {
@@ -2106,6 +2084,35 @@ func knowledgeBackends(settings config.Knowledge, timeout time.Duration, logger 
 		backends[region] = backend
 	}
 	return backends, nil
+}
+
+// knowledgeRegions is each region knowledge is kept in, mapped to the turbopuffer region the
+// settings name for it, the default region always among them and empty where none is named.
+func knowledgeRegions(settings config.Knowledge) map[string]string {
+	mapped := maps.Clone(settings.Regions)
+	if mapped == nil {
+		mapped = map[string]string{}
+	}
+	if _, ok := mapped[pricing.DefaultRegion]; !ok {
+		mapped[pricing.DefaultRegion] = ""
+	}
+	return mapped
+}
+
+// knowledgeRegionsApart refuses two regions kept in one turbopuffer region, the default
+// region's included: its knowledge bases would be listed under both, and the storage job would
+// bill each twice.
+func knowledgeRegionsApart(mapped map[string]string) error {
+	served := map[string]string{}
+	for _, region := range slices.Sorted(maps.Keys(mapped)) {
+		theirs := turbopuffer.Region(mapped[region])
+		if other, ok := served[theirs]; ok {
+			return fmt.Errorf("knowledge.regions (ROUTER_KNOWLEDGE_REGIONS) keeps %s and %s in one turbopuffer region, %s: "+
+				"give each its own", other, region, theirs)
+		}
+		served[theirs] = region
+	}
+	return nil
 }
 
 // knowledgeCost is the knowledge provider's rates as the settings name them.

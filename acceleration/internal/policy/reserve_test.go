@@ -313,7 +313,8 @@ func (s *PolicySuite) TestAHoldIsKeptUntilTheStandingHasTheRow() {
 	<-sampling
 
 	s.GreaterOrEqual(gone, 2*quick.Fresh, "kept 2 × Fresh after the ack")
-	s.EqualValues(2_000_000, availableShared(b.Enforcer, s.org))
+	s.eventually(func() bool { return availableShared(b.Enforcer, s.org) == 2_000_000 }, 5*time.Second, 5*time.Millisecond,
+		"b's own read of the standing, which lags the hold's 2 × Fresh on a loaded machine, has the row")
 	s.LessOrEqual(over.Load(), int64(3_000_000), "never more than is truly left")
 	s.eventually(func() bool { return pending(a.Enforcer, s.org) == 0 }, time.Second, 5*time.Millisecond,
 		"and on the router that made it")

@@ -2,6 +2,7 @@ package conversation
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -186,7 +187,7 @@ func newChat(t *testing.T) (*chatStore, *getstream.Stream) {
 		_ = json.NewEncoder(w).Encode(result)
 	}))
 	t.Cleanup(server.Close)
-	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(server.URL))
+	client, err := getstream.NewClient(rand.Text(), "secret", getstream.WithBaseUrl(server.URL))
 	require.NoError(t, err)
 	return db, client
 }

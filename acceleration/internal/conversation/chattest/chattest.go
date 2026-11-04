@@ -122,6 +122,9 @@ type Server struct {
 	Client *getstream.Stream
 	// URL is where it is served, for a client of one's own to be pointed at.
 	URL string
+	// Key is the API key Client calls with, one of its own per server: a reused port must not
+	// let a user cache (conversation.CreateMissingUsers) keyed by URL and key carry over.
+	Key string
 	db  *store
 	t   *testing.T
 }
@@ -138,11 +141,12 @@ func NewServer(t *testing.T) *Server {
 	}
 	server := httptest.NewServer(http.HandlerFunc(db.serve))
 	t.Cleanup(server.Close)
-	client, err := getstream.NewClient("test", "secret", getstream.WithBaseUrl(server.URL))
+	key := rand.Text()
+	client, err := getstream.NewClient(key, "secret", getstream.WithBaseUrl(server.URL))
 	if err != nil {
 		t.Fatalf("chattest: %v", err)
 	}
-	return &Server{Client: client, URL: server.URL, db: db, t: t}
+	return &Server{Client: client, URL: server.URL, Key: key, db: db, t: t}
 }
 
 // Client serves Chat from memory for the life of the test.

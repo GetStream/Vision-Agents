@@ -95,6 +95,8 @@ pub struct InboundMessage {
     /// The request it was sent as, which the answer is created on. May be empty.
     pub request_id: String,
     pub text: String,
+    /// The photos sent with it, as URLs to fetch. Empty when none was sent.
+    pub images: Vec<InboundImage>,
     pub message_id: String,
     pub user_id: String,
     pub user_name: String,
@@ -111,12 +113,40 @@ impl InboundMessage {
             session_id: frame.text("session_id").into(),
             request_id: frame.text("request_id").into(),
             text: frame.text("text").into(),
+            images: images_of(frame),
             message_id: frame.text("message_id").into(),
             user_id: frame.text("user_id").into(),
             user_name: frame.text("user_name").into(),
             at: frame.text("at").into(),
         }
     }
+}
+
+/// A photo sent with an inbound message.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct InboundImage {
+    pub url: String,
+    /// Empty when the router does not know it.
+    pub mime_type: String,
+}
+
+/// The photos a message frame carries. An entry with no URL is dropped, since there is
+/// nothing to fetch, and so is one that is not an object.
+fn images_of(frame: &Frame) -> Vec<InboundImage> {
+    frame
+        .get("images")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|entry| {
+            let described = Frame(entry.as_object()?.clone());
+            let url = described.text("url");
+            (!url.is_empty()).then(|| InboundImage {
+                url: url.into(),
+                mime_type: described.text("mime_type").into(),
+            })
+        })
+        .collect()
 }
 
 type CallHandler = Arc<dyn Fn(InboundCall) -> BoxFuture<'static, Result<()>> + Send + Sync>;
@@ -332,7 +362,8 @@ impl Dispatch {
     ///
     /// The response is created with this worker's own credential acting for whoever wrote
     /// the message, so it reaches their conversation and goes to the model rather than back
-    /// to a worker. It carries the message's request id, so the answer lands on it.
+    /// to a worker. It carries the message's request id, so the answer lands on it, and the
+    /// photos sent with it, by the URLs the router handed over.
     pub async fn answer(&self, message: &InboundMessage) -> Result<AgentResponse> {
         if message.session_id.is_empty() {
             return Err(Error::configuration(
@@ -346,6 +377,16 @@ impl Dispatch {
         .create_answering(
             &types::CreateResponseRequest {
                 text: message.text.clone(),
+                images: (!message.images.is_empty()).then(|| {
+                    message
+                        .images
+                        .iter()
+                        .map(|image| types::ImageSource {
+                            url: image.url.clone(),
+                            ..Default::default()
+                        })
+                        .collect()
+                }),
                 ..Default::default()
             },
             (!message.request_id.is_empty()).then(|| message.request_id.clone()),

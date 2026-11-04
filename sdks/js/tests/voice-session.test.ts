@@ -158,6 +158,7 @@ describe("VoiceSession", () => {
     await assert.rejects(voice.join(), /Permission denied/);
     assert.deepEqual(log.slice(-2).sort(), ["camera.off", "mic.off"]);
     assert.equal(voice.get().status, "connecting");
+    assert.equal(voice.get().failure?.message, "Permission denied", "kept for the page to show");
 
     failJoin = undefined;
     // The client hands back fresh calls from here on; the failed one is never reused.
@@ -165,6 +166,7 @@ describe("VoiceSession", () => {
     await voice.join();
     assert.equal(calls.length, 1);
     assert.equal(voice.call, calls[0]);
+    assert.equal(voice.get().failure, undefined, "a join that works clears it");
     assert.deepEqual([calls[0]?.type, calls[0]?.id], ["agent", "sess_1"]);
     await voice.end();
   });
@@ -180,6 +182,25 @@ describe("VoiceSession", () => {
     await voice.setMuted(false);
     assert.equal(voice.get().muted, false);
     assert.deepEqual(log.slice(-2), ["mic.off", "mic.on"]);
+    await voice.end();
+  });
+
+  it("keeps why the camera failed until it next works, so a page shows no stale error", async () => {
+    const [voice] = await started();
+    await voice.join();
+    const camera = calls[0]!.camera;
+    const enable = camera.enable;
+    camera.enable = async () => {
+      throw new Error("Permission denied");
+    };
+
+    await assert.rejects(voice.setCameraEnabled(true), /Permission denied/);
+    assert.equal(voice.get().failure?.message, "Permission denied");
+
+    camera.enable = enable;
+    await voice.setCameraEnabled(true);
+    assert.equal(voice.get().failure, undefined);
+    assert.equal(voice.get().cameraEnabled, true);
     await voice.end();
   });
 
@@ -237,6 +258,32 @@ describe("VoiceSession", () => {
     await host.join();
     await host.end();
     assert.equal(session.live, false);
+  });
+
+  it("attaches to a call by the session's id alone, and leaving keeps the session going", async () => {
+    router.serve("GET", "/v1/agents/sessions/sess_1", {
+      body: {
+        id: "sess_1",
+        call_id: "sess_1",
+        call_type: "agent",
+        user_id: "john",
+        agent_id: "john",
+        state: "live",
+        created_at: "2026-01-01T00:00:00Z",
+      },
+    });
+    const attaching = VoiceSession.attach(api, "sess_1");
+    const connection = await router.socket();
+    const voice = await attaching;
+    await voice.join();
+
+    assert.equal(connection.path, "/v1/agents/sessions/sess_1/events");
+    const sent: string[] = [];
+    connection.socket.on("message", (data) => sent.push(String(data)));
+    await voice.leave();
+    assert.equal(voice.session.live, false, "its own watcher stopped");
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/sess_1/stop").length, 0);
+    assert.deepEqual(sent.filter((frame) => frame.includes('"close"')), [], "the conversation goes on");
   });
 
   it("refuses a session held in writing", async () => {
