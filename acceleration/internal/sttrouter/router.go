@@ -16,7 +16,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 )
+
+var tracer = tracing.Tracer("sttrouter")
 
 // Registry is the set of speech-to-text providers a build can construct.
 type Registry = routing.Registry[stt.STT]
@@ -94,7 +97,12 @@ func New(options Options) (*Router, error) {
 
 // Start selects a provider and opens a session, falling back to the next candidate when
 // one fails to start, and again when one refuses the session part way through.
-func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
+func (r *Router) Start(ctx context.Context, request Request) (_ *Session, err error) {
+	ctx, span := tracer.Start(ctx, "stt.start")
+	defer func() {
+		tracing.Fail(span, err)
+		span.End()
+	}()
 	request.Options = routeDefaults(request.Target, request.Options)
 	if err := r.Live(request); err != nil {
 		return nil, err
@@ -132,7 +140,12 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 		next.Exclude = refused
 		return r.Select(reopenCtx, next)
 	}
-	return newSession(provider, config, core.Owner(), r.Recorder(), reopen, cancel), nil
+	// The session takes its lease's first minute as it opens, after the provider has
+	// answered, so the trace shows what the hold costs.
+	_, leased := tracer.Start(ctx, "stt.lease")
+	session := newSession(provider, config, core.Owner(), r.Recorder(), reopen, cancel)
+	leased.End()
+	return session, nil
 }
 
 // Live refuses a session pinned only to batch models before any vendor is dialled: a
