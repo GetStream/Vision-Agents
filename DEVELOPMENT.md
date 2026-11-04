@@ -97,7 +97,8 @@ STREAM_API_SECRET=...
 Production has no hostname without a region in it.
 
 The regions on offer are `local.accelerate_prod_regions` in `GetStream/chat`'s
-`infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`, today `us-east4`. The SDKs check
+`infra/dns/gcp-stream-io-api-com/accelerate_global_lb.tf`, today `us-east4`, `us-west1` and
+`europe-west4`. The SDKs check
 only that a name looks like a region, so offering another needs no SDK release. In code it is
 the `region` option (`Region` in Go and .NET). Go and Python also accept the region's own
 URL alongside it, so a resolved backend can be reused; a conflicting URL is refused.

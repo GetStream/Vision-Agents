@@ -819,6 +819,101 @@ func (s *DataMoveSuite) TestAChangeToAConnectorConnectionLeavesItsCredentialsBeh
 	s.assertArrivedWithoutCredentials(id, "acme")
 }
 
+func (s *DataMoveSuite) TestCopyingAgainKeepsAConnectionAuthorizedAgainOnTheDestination() {
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	authorized := s.authorizeAgain(s.destination, "moved", id)
+	// The source is still live during a move, and a refresh there rewrites its row after the
+	// owner authorized the connection here.
+	s.authorizeAgain(s.source, "acme", id)
+
+	s.move("acme", "moved")
+
+	s.assertCredentialsKept(authorized)
+}
+
+func (s *DataMoveSuite) TestAChangeAppliedLaterKeepsAConnectionAuthorizedAgainOnTheDestination() {
+	s.capture("acme")
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	authorized := s.authorizeAgain(s.destination, "moved", id)
+	s.authorizeAgain(s.source, "acme", id)
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
+
+	s.assertCredentialsKept(authorized)
+}
+
+func (s *DataMoveSuite) TestCopyingAgainStillUpdatesAConnectionNotAuthorizedOnTheDestination() {
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE connector_connections SET label = 'renamed' WHERE id = ?", id)
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	s.assertArrivedWithoutCredentials(id, "moved")
+	moved, err := s.destination.ConnectorConnection(s.ctx, "moved", id)
+	s.Require().NoError(err)
+	s.Equal("renamed", moved.Label, "the source's edit arrives")
+}
+
+func (s *DataMoveSuite) TestCopyingAgainDuringARefreshOnTheDestinationKeepsItsCredentials() {
+	id := s.seedConnectorConnection(s.source, "acme")
+	s.move("acme", "moved")
+	s.authorizeAgain(s.destination, "moved", id)
+
+	err := s.destination.WithLockedConnectorConnection(s.ctx, "moved", id,
+		func(connection *ConnectorConnection, checkpoint func() error) (bool, error) {
+			// The resolver checkpoints the row before the refresh token leaves.
+			connection.Status = ConnectionNeedsReauthorization
+			s.Require().NoError(checkpoint())
+			// A repeat copy lands while the provider answers.
+			s.move("acme", "moved")
+			connection.Status = ConnectionConnected
+			connection.Revision++
+			connection.CredentialsSealed = []byte("rotated on moved")
+			connection.CredentialsKEKVersion = 1
+			return true, nil
+		})
+
+	s.Require().NoError(err, "the rotated credentials are saved")
+	held, err := s.destination.ConnectorConnection(s.ctx, "moved", id)
+	s.Require().NoError(err)
+	s.Equal(ConnectionConnected, held.Status)
+	s.Equal([]byte("rotated on moved"), held.CredentialsSealed)
+}
+
+// authorizeAgain saves new credentials onto a connection, as a consent or a refresh does, and
+// returns the connection as it was saved.
+func (s *DataMoveSuite) authorizeAgain(store *Store, customerID, id string) ConnectorConnection {
+	connection, err := store.ConnectorConnection(s.ctx, customerID, id)
+	s.Require().NoError(err)
+	expires := time.Now().Add(2 * time.Hour).UTC().Truncate(time.Microsecond)
+	connection.Status = ConnectionConnected
+	connection.Revision++
+	connection.CredentialsSealed = []byte("sealed on " + customerID)
+	connection.CredentialsKEKVersion = 1
+	connection.ExpiresAt = &expires
+	s.Require().NoError(store.SaveConnectorConnectionAtRevision(s.ctx, &connection, connection.Revision-1))
+	return connection
+}
+
+// assertCredentialsKept checks the destination still holds the credential state a save left:
+// the sealed credentials open only at the revision and key version they were sealed under.
+func (s *DataMoveSuite) assertCredentialsKept(saved ConnectorConnection) {
+	held, err := s.destination.ConnectorConnection(s.ctx, saved.CustomerID, saved.ID)
+	s.Require().NoError(err)
+	s.Equal(ConnectionConnected, held.Status)
+	s.Equal(saved.Revision, held.Revision)
+	s.Equal(saved.CredentialsSealed, held.CredentialsSealed)
+	s.Equal(saved.CredentialsKEKVersion, held.CredentialsKEKVersion)
+	s.Require().NotNil(held.ExpiresAt)
+	s.True(saved.ExpiresAt.Equal(*held.ExpiresAt))
+}
+
 // seedScheduledTask stores a task on the source in a state, claimed by a worker there, with a
 // finished run.
 // seedScheduledTask stores a task on the source with its run, and the agent config it runs

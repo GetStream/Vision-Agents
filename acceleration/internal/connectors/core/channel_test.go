@@ -572,6 +572,157 @@ func (s *ChannelSuite) TestTextPartsReadsOneElementOfEveryPart() {
 	s.Equal("b\ne", read.Messages[0].Text)
 }
 
+// captioned is baseChannel reading text messages, and photos by their caption (also), as
+// WhatsApp's revision 2 does (AI-2133).
+const captioned = "text: $.text\n    match:\n      $.type: text\n    also:\n      - match:\n          $.type: image\n        text: $.image.caption"
+
+// also reads a message that differs from match by the first also entry whose match it has,
+// with that entry's text, and only when that text is a value that is not empty. A shape it
+// cannot read leaves the message out without failing the body, as before also.
+func (s *ChannelSuite) TestAlsoReadsAnotherKindByItsOwnText() {
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", captioned+"\n    skip_if_present:\n      - $.echo", 1)))
+	s.Require().NoError(err)
+	for _, tc := range []struct {
+		name, message string
+		text          string
+		skipped       string
+	}{
+		{"a text message", `"type":"text","text":"hi"`, "hi", ""},
+		{"a text message without text, as before", `"type":"text"`, "", ""},
+		{"a text message's text, not a caption beside it", `"type":"text","text":"hi","image":{"caption":"no"}`, "hi", ""},
+		{"a photo by its caption", `"type":"image","image":{"caption":"Is this chipped?"},"text":"no"`, "Is this chipped?", ""},
+		{"a caption of spaces, as text of spaces", `"type":"image","image":{"caption":"  "}`, "  ", ""},
+		{"a photo without a caption", `"type":"image","image":{"id":"1"}`, "", "match $.type"},
+		{"an empty caption", `"type":"image","image":{"caption":""}`, "", "match $.type"},
+		{"a null caption", `"type":"image","image":{"caption":null}`, "", "match $.type"},
+		{"a caption that is an object", `"type":"image","image":{"caption":{"text":"x"}}`, "", "match $.type"},
+		{"an image that is not an object", `"type":"image","image":"x"`, "", "match $.type"},
+		{"another kind with a caption", `"type":"video","image":{"caption":"x"}`, "", "match $.type"},
+		{"no type", `"image":{"caption":"x"}`, "", "match $.type"},
+		{"a type that is an object", `"type":{"name":"image"},"image":{"caption":"x"}`, "", "match $.type"},
+		{"a photo skip_if_present leaves out", `"type":"image","image":{"caption":"x"},"echo":true`, "", "skip_if_present $.echo"},
+	} {
+		read, err := m.Channel.Read(m.ID, []byte(`{"chat":"c","from":"u","id":"1",`+tc.message+`}`))
+		if tc.name == "a type that is an object" {
+			s.Error(err, "match reads a type that is not a value as an error, as before also")
+			continue
+		}
+		s.Require().NoError(err, tc.name)
+		if tc.skipped != "" {
+			s.Empty(read.Messages, tc.name)
+			s.Equal([]string{tc.skipped}, read.Skipped, tc.name)
+			continue
+		}
+		s.Require().Len(read.Messages, 1, tc.name)
+		s.Equal(tc.text, read.Messages[0].Text, tc.name)
+		s.Equal("c", read.Messages[0].ThreadKey, tc.name)
+	}
+}
+
+// The first also entry whose match a message has reads it; one after it is not tried, even
+// when the first finds no text.
+func (s *ChannelSuite) TestTheFirstAlsoEntryThatMatchesReadsTheMessage() {
+	entries := captioned + "\n      - match:\n          $.type: video\n        text: $.video.caption" +
+		"\n      - match:\n          $.type: image\n        text: $.image.title"
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", entries, 1)))
+	s.Require().NoError(err)
+	for message, want := range map[string]string{
+		`"type":"video","video":{"caption":"a video"}`:              "a video",
+		`"type":"image","image":{"caption":"a photo","title":"no"}`: "a photo",
+		`"type":"image","image":{"title":"no"}`:                     "",
+	} {
+		read, err := m.Channel.Read(m.ID, []byte(`{"chat":"c","from":"u","id":"1",`+message+`}`))
+		s.Require().NoError(err, message)
+		var texts []string
+		for _, read := range read.Messages {
+			texts = append(texts, read.Text)
+		}
+		if want == "" {
+			s.Empty(texts, message)
+		} else {
+			s.Equal([]string{want}, texts, message)
+		}
+	}
+}
+
+// An also match that cannot be read, such as a member of a value, is a kind the message is
+// not: the next entry is tried, and the body is still read.
+func (s *ChannelSuite) TestAnAlsoMatchThatCannotBeReadIsNotTheKind() {
+	entries := "text: $.text\n    match:\n      $.type: text\n    also:\n      - match:\n          $.media.kind: photo\n        text: $.media.caption" +
+		"\n      - match:\n          $.type: image\n        text: $.image.caption"
+	m, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", entries, 1)))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, []byte(`{"chat":"c","from":"u","id":"1","type":"image","media":"x","image":{"caption":"a photo"}}`))
+	s.Require().NoError(err)
+	s.Require().Len(read.Messages, 1)
+	s.Equal("a photo", read.Messages[0].Text)
+}
+
+// In a batch, a message also cannot read is left out and the messages beside it are read.
+func (s *ChannelSuite) TestAMessageAlsoCannotReadLeavesTheBatchRead() {
+	batch := strings.NewReplacer(
+		"thread_key:", "each: $.messages[*]\n    thread_key:",
+		"$.chat", "$.messages[*].chat",
+		"$.from", "$.messages[*].from",
+		"$.id", "$.messages[*].id",
+		"text: $.text", strings.NewReplacer("$.", "$.messages[*].").Replace(captioned),
+	).Replace(baseChannel)
+	m, err := ParseManifest(minimal(batch))
+	s.Require().NoError(err)
+	read, err := m.Channel.Read(m.ID, []byte(`{"messages":[
+		{"chat":"c","from":"u","id":"1","type":"image","image":{"caption":{"text":"x"}}},
+		{"chat":"c","from":"u","id":"2","type":"image","image":{"caption":"second"}},
+		{"chat":"c","from":"u","id":"3","type":"text","text":"third"}]}`))
+	s.Require().NoError(err)
+	var got []string
+	for _, message := range read.Messages {
+		got = append(got, message.ProviderMessageID+" "+message.Text)
+	}
+	s.Equal([]string{"2 second", "3 third"}, got)
+	s.Equal([]string{"match $.messages[*].type"}, read.Skipped)
+}
+
+func (s *ChannelSuite) TestAlsoIsCheckedWhenTheManifestIsParsed() {
+	for _, tc := range []struct {
+		name, also, want string
+	}{
+		{"without match", strings.Replace(captioned, "match:\n      $.type: text\n    ", "", 1),
+			"channel.messages.also: needs messages.match"},
+		{"an entry without match", strings.Replace(captioned, "- match:\n          $.type: image\n        text:", "- text:", 1),
+			"channel.messages.also[0].match: is empty"},
+		{"an empty value", strings.Replace(captioned, "$.type: image", `$.type: ""`, 1),
+			"channel.messages.also[0].match.$.type: is empty"},
+		{"a match that is not a path", strings.Replace(captioned, "$.type: image", "$..type: image", 1),
+			`channel.messages.also[0].match.$..type: "$..type" is not a path of member names`},
+		{"an entry without text", strings.Replace(captioned, "\n        text: $.image.caption", "", 1),
+			`channel.messages.also[0].text: "" is not a path of member names`},
+		{"a text that is not a path", strings.Replace(captioned, "text: $.image.caption", "text: image.caption", 1),
+			`channel.messages.also[0].text: "image.caption" is not a path of member names`},
+		{"an unknown field", captioned + "\n        media: $.image.id", "field media not found"},
+	} {
+		_, err := ParseManifest(minimal(strings.Replace(baseChannel, "text: $.text", tc.also, 1)))
+		s.ErrorContains(err, tc.want, tc.name)
+	}
+	in := func(path string) string {
+		return strings.NewReplacer(
+			"thread_key:", "each: $.messages[*]\n    thread_key:",
+			"$.chat", "$.messages[*].chat",
+			"$.from", "$.messages[*].from",
+			"$.id", "$.messages[*].id",
+			"text: $.text", strings.Replace(strings.NewReplacer("$.", "$.messages[*].").Replace(captioned),
+				"$.messages[*].image.caption", path, 1),
+		).Replace(baseChannel)
+	}
+	_, err := ParseManifest(minimal(in("$.other[*].image.caption")))
+	s.ErrorContains(err, `channel.messages.also[0].text: "$.other[*].image.caption"`, "a text outside the message each binds")
+	_, err = ParseManifest(minimal(in("$.messages[*].image.caption")))
+	s.NoError(err)
+}
+
+func (s *ChannelSuite) TestABlockWithOnlyAlsoIsNotZero() {
+	s.False(MessageRule{Also: []MessageKind{{Match: map[string]string{"$.type": "image"}, Text: "$.image.caption"}}}.IsZero())
+}
+
 func (s *ChannelSuite) TestABlockWithOnlyTextPartsIsNotZero() {
 	s.False(MessageRule{TextParts: "$.parts[*].value"}.IsZero())
 }
