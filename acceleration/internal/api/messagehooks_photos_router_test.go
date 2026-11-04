@@ -243,16 +243,22 @@ func (s *MessageHooksSuite) TestAVoiceRecordingSentWithAPhotoToAWorkersRunningSe
 }
 
 // A message of blanks alone to a worker's running session has nothing to answer: the model is
-// not asked and nothing is written.
+// not asked, nothing is written and nothing is logged as a failure. The text sent after it is
+// the first thing the model is asked, which also says the blanks were handled by then.
 func (s *MessageHooksSuite) TestABlankMessageToAWorkersRunningSessionIsNotAnswered() {
 	first := s.workerAnswering("vision/vision-model")
 	seen := len(s.vision.requests())
+	question := "and the other one? " + s.utils.uuid()
+	before := len(s.logged.String())
 
 	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), "  \n "))
+	s.Require().Equal(http.StatusOK, s.sentWithPhotos(s.namesConfig(), question))
 
-	s.Never(func() bool { return len(s.vision.requests()) > seen || len(s.inTheChannel()) > 1 }, dropped, 10*time.Millisecond,
-		"a blank message was asked or answered")
-	s.Equal([]string{first}, s.inTheChannel())
+	s.answered(first, finishedReply)
+	asked := s.vision.requests()[seen:]
+	s.Require().Len(asked, 1, "only the text was asked")
+	s.Equal(question, s.lastTurn(asked).Content)
+	s.NotContains(s.logged.String()[before:], "could not answer a message", "a blank message is no failure")
 }
 
 // Control, as on base: text alone sent to a worker's running session reaches its model as the

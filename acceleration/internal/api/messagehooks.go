@@ -288,7 +288,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 		}
 		// A thread is answered from what was written and the photos, as before voice recordings
 		// were heard in a plain channel: a recording alone has nothing in it to answer there.
-		if event.Message.Text == "" && len(event.photos()) == 0 {
+		if strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 {
 			return true
 		}
 		origin.answer(func() { s.answerThread(origin, thread, event) })
@@ -322,6 +322,10 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			// The session a worker opened to answer this channel answers in it, as a thread's
 			// does: the message is already there, so only the reply is written.
 			if found.Spec().Dispatched {
+				// Blanks alone have nothing to answer: the session refuses the turn.
+				if strings.TrimSpace(event.Message.Text) == "" && len(event.photos()) == 0 && !recorded {
+					return true
+				}
 				if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 					return settled
 				}
