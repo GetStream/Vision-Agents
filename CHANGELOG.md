@@ -366,6 +366,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### An app's first `router replicate --once` is not refused as expired
 
 `GET /v1/data/changes` answered 410 to the cursor of an app's own export when other apps that are moving had changes after it, so the first `--once` stopped with "the source no longer keeps the changes since that cursor" and only a rerun went on. Change numbers are shared by every app, so those numbers are not a sign of pruning. Now a cursor gets 410 only when it is older than the oldest change still kept and the app has a change kept (AI-2683).
+
 ### A repeat copy keeps a connection authorized again where it moved to
 
 `router replicate --once` and `POST /v1/data/import` reset each connector connection to `needs_reauthorization`, even one the owner had authorized again on the destination, whose credentials then no longer opened. A connection that is `connected` on the destination now keeps its state and credentials: a rename, a disconnect or a soft delete at the source no longer reaches it, while a hard delete still does. A connection not authorized there still arrives needing it, with the source's edits (AI-2656).
