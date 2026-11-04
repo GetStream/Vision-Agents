@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -259,10 +258,9 @@ func (r *Recordings) speak(
 ) (tts.Recorded, error) {
 	defer provider.Close()
 
-	startedAt := time.Now()
 	// No voice is named here: the recorder was built for the voice this vendor knows the
 	// request's by, or the one its overwrite named, and the request's own is neither.
-	recorded, err := provider.Record(ctx, tts.Recording{
+	asked := tts.Recording{
 		Text:           recording.Text,
 		Language:       first(recording.Options.Languages),
 		Format:         recording.Options.Format,
@@ -273,29 +271,21 @@ func (r *Recordings) speak(
 		Stability:      number(recording.Options.Stability),
 		Similarity:     number(recording.Options.Similarity),
 		Pronunciations: recording.Options.Pronunciations,
+	}
+	// A text the vendor takes no more of, such as one over Inworld's limit, is the caller's
+	// to shorten, and says nothing about the model's health, which is every customer's (as
+	// routing.Select does for ErrRequest).
+	if checked, ok := provider.(tts.Checked); ok {
+		if err := checked.Check(asked); err != nil {
+			return tts.Recorded{}, routing.Refused(err)
+		}
+	}
+	recorded, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: owner,
+		Code: func(error) string { return "record_failed" },
+	}, func(ctx context.Context) (tts.Recorded, error) {
+		return provider.Record(ctx, asked)
 	})
-
-	// A text Inworld takes no more of is the caller's to shorten, and says nothing about the
-	// model's health, which is every customer's (as routing.Select does for ErrRequest).
-	if errors.Is(err, inworld.ErrTextTooLong) {
-		return tts.Recorded{}, routing.Refused(err)
-	}
-
-	stat := routing.Stat{
-		Owner:     owner,
-		StartedAt: startedAt.UTC(),
-		LatencyMs: routing.MsSince(startedAt),
-		Success:   err == nil,
-		Usage: routing.Usage{
-			Characters: recorded.Characters,
-			AudioMs:    recorded.AudioDurationMs,
-		},
-	}
-	if err != nil {
-		stat.ErrorCode = "record_failed"
-		stat.ErrorMessage = err.Error()
-	}
-	r.Recorder().Record(config, stat)
 	if err != nil {
 		return tts.Recorded{}, err
 	}

@@ -2,7 +2,6 @@ package sttrouter
 
 import (
 	"context"
-	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -129,20 +128,12 @@ func (r *Recordings) Transcribe(
 	}
 	defer provider.Close()
 
-	startedAt := time.Now()
-	transcription, err := provider.Transcribe(ctx, recording.Source)
-	stat := routing.Stat{
-		Owner:     request.Owner(),
-		StartedAt: startedAt.UTC(),
-		LatencyMs: routing.MsSince(startedAt),
-		Success:   err == nil,
-		Usage:     routing.Usage{AudioMs: transcription.AudioDurationMs},
-	}
-	if err != nil {
-		stat.ErrorCode = "transcribe_failed"
-		stat.ErrorMessage = err.Error()
-	}
-	r.Recorder().Record(config, stat)
+	transcription, err := routing.Call(ctx, routing.Meter{
+		Recorder: r.Recorder(), Config: config, Owner: request.Owner(),
+		Code: func(error) string { return "transcribe_failed" },
+	}, func(ctx context.Context) (stt.Transcription, error) {
+		return provider.Transcribe(ctx, recording.Source)
+	})
 	if err != nil {
 		return stt.Transcription{}, config, err
 	}
