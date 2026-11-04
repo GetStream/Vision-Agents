@@ -1520,14 +1520,21 @@ func (s *AppsSuite) TestAttachingANumberWhoseOwnTrunkStreamLostPutsItOnASharedOn
 	s.Equal(again.RouteID, held.StreamRouteID)
 }
 
-func (s *AppsSuite) TestANumberJoiningASharedTrunkStreamLostGetsANewOneAndTheTrunksNumbersFollow() {
-	s.sealed()
+// onALostSharedTrunk lines the suite's number on a shared trunk, then has Stream lose the
+// trunk and its rule, and answers the app and the line.
+func (s *AppsSuite) onALostSharedTrunk() (*Stream, TrunkLine) {
 	stream, _, err := s.service.streamFor(s.ctx, s.customer)
 	s.Require().NoError(err)
 	first, err := s.lineFor(s.customer, s.e164)
 	s.Require().NoError(err)
 	s.Require().NoError(stream.DeleteRoute(s.ctx, first.RouteID))
 	s.Require().NoError(stream.DeleteTrunk(s.ctx, first.TrunkID))
+	return stream, first
+}
+
+func (s *AppsSuite) TestANumberJoiningASharedTrunkStreamLostGetsANewOneAndTheTrunksNumbersFollow() {
+	s.sealed()
+	_, first := s.onALostSharedTrunk()
 	second := s.anotherNumber(s.customer, s.vendor.vendor)
 
 	joined, err := s.lineFor(s.customer, second)
@@ -1548,12 +1555,7 @@ func (s *AppsSuite) TestANumberJoiningASharedTrunkStreamLostGetsANewOneAndTheTru
 
 func (s *AppsSuite) TestANumberJoiningALostTrunkWhileStreamRoutesItElsewhereIsRefused() {
 	s.sealed()
-	stream, _, err := s.service.streamFor(s.ctx, s.customer)
-	s.Require().NoError(err)
-	first, err := s.lineFor(s.customer, s.e164)
-	s.Require().NoError(err)
-	s.Require().NoError(stream.DeleteRoute(s.ctx, first.RouteID))
-	s.Require().NoError(stream.DeleteTrunk(s.ctx, first.TrunkID))
+	stream, _ := s.onALostSharedTrunk()
 	second := s.anotherNumber(s.customer, s.vendor.vendor)
 	theirs, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "theirs", Numbers: []string{second}})
 	s.Require().NoError(err)
@@ -1563,6 +1565,24 @@ func (s *AppsSuite) TestANumberJoiningALostTrunkWhileStreamRoutesItElsewhereIsRe
 	s.ErrorIs(err, errRoutedElsewhere)
 	s.Equal([]string{theirs}, s.deployment.Trunks())
 	s.Empty(s.deployment.Rules())
+}
+
+func (s *AppsSuite) TestANumberJoiningALostTrunkWhileAnotherRuleAnswersItIsRefused() {
+	s.sealed()
+	stream, _ := s.onALostSharedTrunk()
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	elsewhere, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "theirs", Numbers: []string{aNumber()}})
+	s.Require().NoError(err)
+	theirs, err := stream.CreateRoute(s.ctx, Route{
+		Name: "theirs", TrunkIDs: []string{elsewhere}, CalledNumbers: []string{second}, CallID: "{{uuid}}",
+	})
+	s.Require().NoError(err)
+
+	_, err = s.lineFor(s.customer, second)
+
+	s.ErrorIs(err, errRoutedElsewhere)
+	s.Equal([]string{elsewhere}, s.deployment.Trunks())
+	s.Equal([]string{theirs}, s.deployment.Rules())
 }
 
 func (s *AppsSuite) TestARuleMadeAgainForALineThatThenFailsIsDeleted() {
