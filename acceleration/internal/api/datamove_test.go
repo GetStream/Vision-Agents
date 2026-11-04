@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -21,8 +24,11 @@ type DataMoveSuite struct {
 	RouterSuite
 }
 
+// TestDataMoveSuite runs on its own rather than beside the other suites: the change feed waits
+// for every transaction open on the Postgres server, and other suites hold one for longer than
+// a change is waited for (a row locked past auditWriteTimeout).
 func TestDataMoveSuite(t *testing.T) {
-	runSuite(t, new(DataMoveSuite))
+	suite.Run(t, new(DataMoveSuite))
 }
 
 func (s *DataMoveSuite) SetupTest() {
@@ -91,6 +97,27 @@ func (s *DataMoveSuite) TestFollowingTheChangesFromWhereTheLastPageEndedRepeatsN
 	second := s.changesSince(first.Cursor)
 
 	s.NotContains(s.rendered(second.Changes), s.rendered(first.Changes))
+}
+
+// The numbers are shared by every app, so the ones between the export's cursor and the app's
+// first change after it can be another moving app's.
+func (s *DataMoveSuite) TestTheFirstChangeAfterAnExportIsAnsweredWhenAnotherAppChangedInBetween() {
+	stranger := s.data.backendOfAnotherApp()
+	s.Require().Equal(http.StatusOK, stranger.do(http.MethodGet, "/v1/data/export", nil, nil))
+	theirs := func() {
+		s.Require().Equal(http.StatusCreated, stranger.do(http.MethodPost, "/v1/agents/configs",
+			AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo("llm-flow")}, nil))
+	}
+	theirs()
+	exported := s.export()
+	cursor := exported[len(exported)-1].Cursor
+	s.Require().NotNil(cursor, "the export did not finish")
+	theirs()
+	agent := s.data.createAgentConfig()
+
+	changed := s.changesSince(*cursor)
+
+	s.Contains(s.rendered(changed.Changes), agent.Id)
 }
 
 func (s *DataMoveSuite) TestACursorThatIsNotOneIsRefused() {
@@ -222,12 +249,13 @@ func (s *DataMoveSuite) export() []dataLine {
 // it has committed.
 func (s *DataMoveSuite) changesSince(after int64) changedRows {
 	var page changedRows
-	answered := 0
-	s.Require().Eventually(func() bool {
-		answered = s.serverClient.do(http.MethodGet,
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		page = changedRows{}
+		answered := s.serverClient.do(http.MethodGet,
 			"/v1/data/changes?after="+strconv.FormatInt(after, 10), nil, &page)
-		return answered == http.StatusOK && len(page.Changes) > 0
-	}, settleFor, 50*time.Millisecond, "no change became readable, the last answer was %d", answered)
+		assert.Equal(c, http.StatusOK, answered, "the change feed's answer")
+		assert.NotEmpty(c, page.Changes, "no change became readable")
+	}, settleFor, 50*time.Millisecond)
 	return page
 }
 

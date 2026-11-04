@@ -7,7 +7,6 @@ import (
 	"context"
 	"fmt"
 	"strings"
-	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 	"github.com/google/uuid"
@@ -16,7 +15,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -230,49 +228,6 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsTheCardsOfTheSameUserInItsOwn
 	s.inApp(3, own)
 	s.write(chat, "anya_123", "and in app 3?", nil)
 	s.Nil(s.handed(s.chatSession(chat, 3, false, "anya_123", true, "and in app 3?")), "the deployment app's card is not app 3's")
-}
-
-// Defect: a session that is not the router's hand-out reads a chat person's cards. Anya's
-// own device resumes her conversation (Caller anya_123), whose channel holds her words, and
-// reads none, as before the app chat's cards existed.
-func (s *EpisodeReadingSuite) TestOnlyTheHandedOutSessionReadsAChatPersonsCards() {
-	s.at(-3600)
-	chat := s.chatChannel("anya_123")
-	s.write(chat, "anya_123", "my address is 1 Main St", nil)
-	s.summarize(s.chatEpisode("anya_123", chat, 0), "Gave her address.")
-	s.at(0)
-	device := func(conversation, text string) *Session {
-		created, err := s.manager.Create(s.ctx, Spec{
-			CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, ConversationID: conversation,
-			Text: true, PersistConversation: true, Caller: routing.Caller{UserID: "anya_123"}, CallerKind: auth.KindAuthenticated,
-			LLMTarget: "en-low-latency", Instructions: "be brief",
-		})
-		s.Require().NoError(err)
-		s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
-		s.Require().False(created.Spec().Dispatched)
-		_, _, err = created.RespondCommand(s.ctx, "command-"+uuid.NewString(), text, "", nil, options.LLM{})
-		s.Require().NoError(err)
-		return created
-	}
-	first := device("", "hello")
-	s.replyTo("hello")
-	// The resumed session reads the channel as it opens: once it holds her turn, or it reads
-	// nobody's cards for want of an author, whatever the case that reads them says.
-	kept := strings.TrimPrefix(first.Spec().ConversationID, "agent:")
-	s.Require().Eventually(func() bool {
-		for _, message := range s.chat.Stored(kept) {
-			if user, _ := message["user"].(map[string]any); user["id"] == "anya_123" && message["text"] == "hello" {
-				return true
-			}
-		}
-		return false
-	}, settleFor, 10*time.Millisecond, "her turn is not in the conversation's channel")
-	_, err := s.manager.Close(first.ID(), OwnerOf(first.Spec()))
-	s.Require().NoError(err)
-
-	device(first.Spec().ConversationID, "what is my address?")
-
-	s.Nil(s.handed(s.replyTo("what is my address?")))
 }
 
 // Control, from base c9a61fc90 (probe TestProbeBaseChatSession, base-probe.log): with

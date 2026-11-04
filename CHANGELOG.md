@@ -24,6 +24,10 @@ The `swift_assistant` example plans a trip as interactive UI, in A2UI or OpenUI,
 
 Under an agent config with `episode_cards` on, a person's message in a plain `agent` channel of the app chat now opens an episode, as a call or a Slack thread does. Its card (source `chat`) goes to the person's omni-channel and names the channel the chat is in. The person is the Stream user who wrote, in the Stream app the message came from. One run of messages is one episode and one card; after `episodes.idle_after` without a message, the sweeper closes it and writes its summary. A thread channel, an omni-channel, an incognito session and a call's session open none. A config with `episode_cards` off writes nothing new; a message in a chat a session has answered before reads the config once, as a chat's first message did before (AI-2632, #1701).
 
+### The person's own device reads their app chat's cards
+
+Under an agent config with `episode_cards` on, a session the person's own app opens with their user token now starts with their episode cards, as the app chat's session does: the cards of that Stream user, in the session's Stream app, under that agent config. Text and voice sessions both read them, unless somebody else reads the answers: a conversation shared with its members or with any other member, or a call anybody else is on, reads none. A call with a phone number on it still reads the number's. A guest, an anonymous caller, a backend naming a user, and a scheduled task's session read none. Neither this session nor the app chat's reads any card in a Stream app whose auth checks are off, or one Stream cannot be asked about. A config with `episode_cards` off reads nothing new (AI-2709, #1727).
+
 ### A personal conversation takes a video with a question
 
 `POST /v1/agents/sessions/{id}/responses` takes `videos` with a `request_id`, where it was a 400 ("a request id carries text and images, not videos"), so a session with a user can be shown a clip. The model gets the clip's frames with the question, each with the moment it was taken. The person's message shows only what they typed and their photos. A retry under the same `request_id` does not fetch or sample its videos again and does not reach the model again. Without a `request_id`, a personal conversation still refuses the question, now before any video is fetched. Go's `Responses.Create` now sends a request id with clips when no photos go with them. `VideoSource.url` names the containers it takes: MP4, MOV, 3GP, MKV and WebM (AI-2515, AI-2508).
@@ -370,6 +374,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A new phone link starts the number clean
 
 `PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716, #1728).
+
+### An app's first `router replicate --once` is not refused as expired
+
+`GET /v1/data/changes` answered 410 to the cursor of an app's own export when other apps that are moving had changes after it, so the first `--once` stopped with "the source no longer keeps the changes since that cursor" and only a rerun went on. Change numbers are shared by every app, so those numbers are not a sign of pruning. Now a cursor gets 410 only when it is older than the oldest change still kept and the app has a change kept (AI-2683).
 
 ### A repeat copy keeps a connection authorized again where it moved to
 
