@@ -24,6 +24,7 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -394,6 +395,9 @@ type Server struct {
 	// chatCards opens the episodes of the app chat and writes their cards (chatEpisode); nil
 	// without a store or Stream clients.
 	chatCards *omnichannel.Cards
+	// chatCardsWriting counts the chat cards being written off a hook's request
+	// (ChatCardsRunning).
+	chatCardsWriting atomic.Int32
 	// readCallStats and callStatsWaits are how an ended phone call's sites are read from
 	// Stream, and how long to wait before each read. Tests replace both.
 	readCallStats  readCallStats

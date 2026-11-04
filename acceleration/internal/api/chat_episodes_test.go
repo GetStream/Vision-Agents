@@ -7,12 +7,15 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -27,6 +30,23 @@ type ChatEpisodesSuite struct {
 
 	// user is the Stream user who writes, unique to the test.
 	user string
+	// configReads counts the reads of one agent config's row.
+	configReads *configReads
+}
+
+// configReads counts the statements that read the agent_configs row of the config id it is
+// set to, as runReads counts the scheduled task runs read.
+type configReads struct {
+	id    atomic.Pointer[string]
+	reads atomic.Int64
+}
+
+func (*configReads) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context { return ctx }
+
+func (c *configReads) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	if id := c.id.Load(); id != nil && strings.Contains(event.Query, "agent_configs") && strings.Contains(event.Query, *id) {
+		c.reads.Add(1)
+	}
 }
 
 func TestChatEpisodesSuite(t *testing.T) {
@@ -39,6 +59,8 @@ func (s *ChatEpisodesSuite) SetupSuite() {
 	s.database = "chatcards"
 	s.RouterSuite.SetupSuite()
 	s.wake(&s.RouterSuite)
+	s.configReads = &configReads{}
+	s.store.DB().AddQueryHook(s.configReads)
 }
 
 func (s *ChatEpisodesSuite) SetupTest() {
@@ -114,17 +136,101 @@ func (s *ChatEpisodesSuite) TestAQueuedMessageTriedAgainOpensNoSecondEpisode() {
 }
 
 // The control: a config without episode_cards answers as at base c9a61fc90, where the probe
-// of this delivery made no contact map row, no episode and asked Stream nothing.
+// of this delivery made no contact map row, no episode, asked Stream nothing and read the
+// config's row once (ownerOf). Catches a second read of the config to learn that its cards are
+// off.
 func (s *ChatEpisodesSuite) TestAConfigWithoutCardsWritesAndReadsNothingNew() {
 	worker := s.worker()
 	config := s.config(false, "llm-flow")
 	before := len(s.chat.Requests(suiteStreamKey))
+	s.configReads.reads.Store(0)
+	s.configReads.id.Store(&config.ID)
+	s.T().Cleanup(func() { s.configReads.id.Store(nil) })
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
 	s.True(s.reachesWorker(worker), "the message is answered as before")
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
 	s.Equal(before, len(s.chat.Requests(suiteStreamKey)), "Stream was asked something")
+	s.Equal(int64(1), s.configReads.reads.Load(), "the config's row is read as many times as at base")
+}
+
+// Catches an omni-channel taken for a channel a person writes in: it is where cards are
+// written, so a message in it, which a config of its own names, opens no episode of its own.
+func (s *ChatEpisodesSuite) TestAMessageInAnOmniChannelOpensNoChatEpisode() {
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+	s.channelID = "omni-" + s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.True(s.reachesWorker(worker), "answered as before")
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond)
+}
+
+// Catches a Stream user keyed by user id alone, or pinned to an app other than the one the
+// message came from: the same user id in two Stream apps of one customer is two people, each
+// with an omni-channel in their own app.
+func (s *ChatEpisodesSuite) TestOneUserIDInTwoStreamAppsIsTwoPeople() {
+	ctx := context.Background()
+	config := s.config(true, "llm-flow")
+	for _, app := range []int64{111, 222} {
+		var event messageEvent
+		event.ChannelType, event.ChannelID = "agent", fmt.Sprintf("chat-%d-%s", app, s.utils.uuid())
+		event.Message.ID, event.Message.Text, event.Message.User.ID = "message-"+s.utils.uuid(), "where is my order?", s.user
+		s.router.chatEpisode(ctx, hookOrigin{app: app, queued: true}, event, session.FromConfig(config))
+	}
+
+	rows, err := s.store.DB().QueryContext(ctx, `SELECT address, stream_app_pk, conversation_id FROM contact_map
+WHERE customer_id = ? AND kind = ? ORDER BY stream_app_pk`, s.customerID(), store.ContactStreamUser)
+	s.Require().NoError(err)
+	defer rows.Close()
+	var addresses, omnis []string
+	var apps []int64
+	for rows.Next() {
+		var address, omni string
+		var app int64
+		s.Require().NoError(rows.Scan(&address, &app, &omni))
+		addresses, apps, omnis = append(addresses, address), append(apps, app), append(omnis, omni)
+	}
+	s.Require().NoError(rows.Err())
+	s.Equal([]string{"111:" + s.user, "222:" + s.user}, addresses)
+	s.Equal([]int64{111, 222}, apps, "each person's omni-channel is in the app they wrote in")
+	s.Require().Len(omnis, 2)
+	s.NotEqual(omnis[0], omnis[1])
+	var pinned []int64
+	s.Require().NoError(s.store.DB().NewSelect().Table("episodes").Column("stream_app_pk").
+		Where("customer_id = ?", s.customerID()).Order("stream_app_pk").Scan(ctx, &pinned))
+	s.Equal([]int64{111, 222}, pinned, "each episode's card is read and closed in its own app")
+}
+
+// Catches a card written off a hook's request that a draining router does not wait for: it is
+// counted (ChatCardsRunning, which cmd/router's running sums) until Stream has it, and a card
+// lost then is lost for good, as the next message finds its episode open.
+func (s *ChatEpisodesSuite) TestADrainWaitsForAChatCardInFlight() {
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+	waiting, release := s.chat.Hold("/message")
+	released := false
+	s.T().Cleanup(func() {
+		if !released {
+			release()
+		}
+	})
+
+	s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", s.written(config.ID, "where is my order?"), suiteStreamSecret))
+
+	s.True(s.reachesWorker(worker), "the message is answered while its card is written")
+	select {
+	case <-waiting:
+	case <-time.After(settleFor):
+		s.FailNow("the card was never sent")
+	}
+	s.Equal(1, s.router.ChatCardsRunning(), "the drain counts the card in flight")
+	release()
+	released = true
+	s.Require().Eventually(func() bool { return s.router.ChatCardsRunning() == 0 }, settleFor, 10*time.Millisecond)
+	s.cards(s.omniChannel(), 1)
 }
 
 // Catches the agent's own reply opening an episode: it carries a source, as everything the
@@ -300,7 +406,7 @@ func (s *ChatEpisodesSuite) omniChannel() string {
 	s.Require().Eventually(func() bool {
 		return s.store.DB().QueryRowContext(context.Background(),
 			"SELECT conversation_id FROM contact_map WHERE customer_id = ? AND kind = ? AND address = ?",
-			s.customerID(), store.ContactStreamUser, s.user).Scan(&cid) == nil
+			s.customerID(), store.ContactStreamUser, fmt.Sprintf("%d:%s", suiteStreamApp, s.user)).Scan(&cid) == nil
 	}, settleFor, 10*time.Millisecond, "no contact for %s", s.user)
 	return strings.TrimPrefix(cid, "agent:")
 }
