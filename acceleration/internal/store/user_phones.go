@@ -40,8 +40,10 @@ const userLinkLockSeed = 2701
 // LinkUserPhone links a user to a number, in place of any number the user had, and points the
 // user's and the number's contact map rows of each agent at one omni-channel (joinLinked). The
 // number the user had before keeps none of the user's history: its rows that share the user's
-// omni-channel get one of their own (detachLinked). A number another user of the app holds is
-// ErrPhoneTaken. Linking a pair again changes nothing.
+// omni-channel get one of their own (detachLinked). The new number brings none of its own: its
+// rows that hold episodes are set aside (retireHistory), so the user reads only what it says
+// after the link. A number another user of the app holds is ErrPhoneTaken. Linking a pair
+// again changes nothing.
 func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 	if link.CustomerID == "" || link.UserID == "" || link.Phone == "" {
 		return stack.Wrap(errors.New("store: a customer, a user and a number are required"))
@@ -68,7 +70,13 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 		if err != nil {
 			return stack.Wrap(fmt.Errorf("store: link user phone: %w", err))
 		}
-		if len(had) == 0 || had[0] == link.Phone {
+		if len(had) > 0 && had[0] == link.Phone {
+			return nil
+		}
+		if err := s.retireHistory(ctx, tx, *link); err != nil {
+			return err
+		}
+		if len(had) == 0 {
 			return nil
 		}
 		return s.detachLinked(ctx, tx, *link, had[0])
@@ -250,6 +258,36 @@ WHERE su.customer_id = ?0 AND su.agent_config_id IN (SELECT ac.id FROM agent_con
 		Exec(ctx)
 	if err != nil {
 		return stack.Wrap(fmt.Errorf("store: detach unlinked contacts: %w", err))
+	}
+	return nil
+}
+
+// retiredPrefix starts the address of a number's row a link set aside (retireHistory). No
+// E.164 number starts with it, so no sighting, read or join finds the row by the number again.
+const retiredPrefix = "retired:"
+
+// retireHistory sets aside each row of a number newly linked to a user that holds an episode,
+// under each agent config of the customer with episode_cards on, in the link's app: whoever
+// texted or called from the number before (a former holder, or the user before the customer
+// vouched for them) is not proven to be the user. The row keeps its omni-channel and its
+// episodes, so their cards stay where they were written and are closed there, but its address
+// becomes retired:<row id>, which no lookup by the number matches. The number's next episode
+// makes a row of its own, which joins the user (joinPartner). A row with no episode has nothing
+// to set aside and joins as it is (joinLinked); a config without episode_cards reads no card,
+// and its rows are left as they were. In tx, under the link's lock.
+func (s *Store) retireHistory(ctx context.Context, tx bun.Tx, link UserPhone) error {
+	_, err := tx.NewRaw(`UPDATE contact_map AS cm
+SET address = ?4 || cm.id, updated_at = ?5
+WHERE cm.customer_id = ?0
+	AND cm.agent_config_id IN (SELECT ac.id FROM agent_configs AS ac WHERE ac.customer_id = ?0 AND ac.episode_cards)
+	AND cm.kind = ?1 AND cm.address = ?2
+	AND COALESCE(NULLIF(cm.stream_app_pk, ?3), 0) = ?6
+	AND EXISTS (SELECT 1 FROM episodes AS ep WHERE ep.contact_id = cm.id)`,
+		link.CustomerID, ContactPhone, link.Phone, s.streamPins().deployment(), retiredPrefix, time.Now().UTC(),
+		link.StreamAppPK).
+		Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: retire a linked number's history: %w", err))
 	}
 	return nil
 }

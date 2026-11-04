@@ -43,6 +43,14 @@ func (s *StoreSuite) chatEpisode(row *ContactMapEntry) string {
 	return episode.ID
 }
 
+// smsEpisode opens an SMS episode on a number's row, the history the number brings to a link.
+func (s *StoreSuite) smsEpisode(row *ContactMapEntry) string {
+	episode := &Episode{CustomerID: row.CustomerID, ContactID: row.ID, Source: EpisodeSMS, ThreadChannel: "agent:sms-" + newID()}
+	_, err := s.store.OpenEpisode(s.ctx, episode)
+	s.Require().NoError(err)
+	return episode.ID
+}
+
 // made makes a contact row and returns it as the store holds it.
 func (s *StoreSuite) made(entry *ContactMapEntry) *ContactMapEntry {
 	_, err := s.store.MapContact(s.ctx, entry)
@@ -83,6 +91,47 @@ func (s *StoreSuite) TestALinkPointsTheUsersAndTheNumbersRowsAtTheOlderOmniChann
 	var again string
 	s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT max(updated_at)::text FROM contact_map").Scan(&again))
 	s.Equal(latest, again, "the same link again writes no row")
+}
+
+// Catches a link that joins the number's earlier episodes to the user, under one agent config
+// only; one that sets aside a row with no episode, a row in another app, or a row of a config
+// without episode_cards, which reads no card; and a set-aside row that loses its omni-channel,
+// where its cards are, or a number's next row that does not join.
+func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
+	s.agentConfigs()
+	_, err := s.store.db.ExecContext(s.ctx, "INSERT INTO agent_configs (id, customer_id, name) VALUES ('agent-four', 'acme-app', 'agent-four')")
+	s.Require().NoError(err)
+	_, err = s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true WHERE id <> 'agent-four'")
+	s.Require().NoError(err)
+	chat := s.made(streamUser("anya", "agent:omni-chat"))
+	anyas := s.chatEpisode(chat)
+	sms := s.made(contact("+15550100", "agent:omni-sms"))
+	carls := s.smsEpisode(sms)
+	other := contact("+15550100", "agent:omni-sms-7")
+	other.AgentConfigID, other.StreamAppPK = "agent-two", 7
+	s.smsEpisode(s.made(other))
+	quiet := contact("+15550100", "agent:omni-quiet")
+	quiet.AgentConfigID = "agent-three"
+	s.made(quiet)
+	off := contact("+15550100", "agent:omni-off")
+	off.AgentConfigID = "agent-four"
+	s.smsEpisode(s.made(off))
+
+	s.Require().NoError(s.link("anya", "+15550100"))
+
+	s.Equal([]string{anyas}, ids(s.cardsOf(s.omniOf(chat), CardsQuery{})), "anya reads none of the number's earlier SMS")
+	_, err = s.store.Contact(s.ctx, "acme-app", "agent-one", ContactPhone, "+15550100")
+	s.ErrorIs(err, ErrNoContact, "the number has no row until it is seen again")
+	var aside ContactMapEntry
+	s.Require().NoError(s.store.db.NewSelect().Model(&aside).Where("id = ?", sms.ID).Scan(s.ctx))
+	s.Equal("agent:omni-sms", aside.ConversationID, "where its card is")
+	s.Equal(retiredPrefix+sms.ID, aside.Address)
+	s.Equal([]string{carls}, ids(s.cardsOf("agent:omni-sms", CardsQuery{})))
+	s.Equal("agent:omni-sms-7", s.omniOf(other), "a row of another app")
+	s.Equal("agent:omni-quiet", s.omniOf(quiet), "a row with no episode")
+	s.Equal("agent:omni-off", s.omniOf(off), "a row of a config without episode_cards")
+	next := contact("+15550100", "agent:omni-next")
+	s.Equal(s.omniOf(chat), s.made(next).ConversationID, "the number seen again joins anya")
 }
 
 // Catches a row made after the link that keeps an omni-channel of its own, whichever half of

@@ -32,7 +32,8 @@ type ContactMapEntry struct {
 	CustomerID    string `bun:"customer_id,notnull"`
 	AgentConfigID string `bun:"agent_config_id,notnull"`
 	// Kind is ContactPhone, ContactSlack or ContactStreamUser, and Address the number, the Slack
-	// user or the Stream user in its app.
+	// user or the Stream user in its app; retired:<id> for a number's row a link set aside
+	// (retireHistory).
 	Kind    string `bun:"kind,notnull"`
 	Address string `bun:"address,notnull"`
 	// ConversationID is the omni-channel's cid, agent:omni-<uuid>.

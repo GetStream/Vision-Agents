@@ -64,22 +64,106 @@ func (s *UserPhonesSuite) TestAnSMSFromALinkedNumberReadsTheUsersChatCard() {
 	s.Equal(chat, s.omniChannel(s.person))
 }
 
-// Catches a link that leaves the person on two omni-channels, joins onto the newer one, or
-// reads only the cards of the reader's own omni-channel: the SMS came first, so its
-// omni-channel is the older, and the chat's card stays where it was written.
-func (s *UserPhonesSuite) TestALinkJoinsTheChatOntoTheOlderSMSOmniChannel() {
+// Catches a link that leaves the person on two omni-channels or joins onto the newer one: the
+// number's row is made after the link, by its first SMS, and the user's chat row made after it
+// takes its omni-channel, the older.
+func (s *UserPhonesSuite) TestAChatRowMadeAfterTheLinkJoinsTheOlderSMSOmniChannel() {
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi"), time.Now()))
 	s.NotContains(s.took(1)[0].text, chatSummary)
 	sms := s.omniChannel(s.person)
-	chat := s.chatCard()
+	s.chatCard()
 
-	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
 
 	s.Contains(s.took(2)[1].text, chatSummary)
 	s.Equal(sms, s.omniChannel(s.person))
 	s.Equal(sms, s.chatOmniChannel())
-	s.Len(s.chat.Stored(chat), 1, "the chat's card did not move")
+}
+
+// Catches a link that joins the number's history to the user: the number texted before the
+// link (a former holder, or the user before the customer vouched for them), and the user's app
+// chat would read that SMS card once linked.
+func (s *UserPhonesSuite) TestALinkedUserReadsNoneOfTheNumbersSMSFromBeforeTheLink() {
+	s.textedBeforeTheLink()
+	s.chatCard()
+
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+
+	s.Equal([]string{store.EpisodeChat}, s.chatReads(s.user), "the user's own chat card alone")
+}
+
+// Catches a fix that leaves the number off the user for good: an SMS after the link joins the
+// user's omni-channel, so the user's chat reads its card and the SMS reads the chat's.
+func (s *UserPhonesSuite) TestAnSMSAfterTheLinkReachesTheUsersChat() {
+	s.textedBeforeTheLink()
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
+
+	s.Contains(s.took(2)[1].text, chatSummary)
+	s.Equal([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
+	s.Equal(s.chatOmniChannel(), s.omniChannel(s.person))
+}
+
+// Catches a number given to somebody else that carries its last holder's SMS: anya texted from
+// it while linked, the customer unlinked her and linked bob, and bob's chat would read her SMS
+// card, which the unlink left with the number.
+func (s *UserPhonesSuite) TestAUserLinkedToANumberSomebodyHadBeforeReadsNoneOfTheirSMS() {
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "this is anya"), time.Now()))
+	s.took(1)
+	s.idle()
+	s.Require().Equal([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user), "linked, her SMS is hers")
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": null}`, nil))
+	bob := "bob-" + s.utils.uuid()
+	s.chatCardOf(bob, "Bob asked about his bill.")
+
+	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
+
+	s.Equal([]string{store.EpisodeChat}, s.chatReads(bob), "bob's own chat card alone")
+}
+
+// The control: the same link again leaves everything as it was, the cards of the SMS written
+// since the first included, as the probe of this test at 3b7a53f97 (before this change)
+// answered.
+func (s *UserPhonesSuite) TestTheSameLinkAgainKeepsTheCardsWrittenSinceTheFirst() {
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "first"), time.Now()))
+	s.took(1)
+	s.idle()
+	omni := s.omniChannel(s.person)
+
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+
+	s.Equal([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user))
+	s.Equal(omni, s.omniChannel(s.person))
+	s.Equal(omni, s.chatOmniChannel())
+}
+
+// The control: under a config without episode_cards the channel bridge still writes the SMS's
+// row and episode, and the link leaves them as they were: one row under the number, one
+// episode, and no cards read, as the probe of this test at 3b7a53f97 (before this change)
+// answered.
+func (s *UserPhonesSuite) TestAConfigWithoutCardsLinksAsBefore() {
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi"), time.Now()))
+	s.took(1)
+
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
+
+	s.NotContains(s.took(2)[1].text, "earlier episodes")
+	s.Equal(1, s.episodes())
+	var rows int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM contact_map WHERE customer_id = ?", s.customerID()).Scan(&rows))
+	s.Equal(1, rows)
+	s.Equal([]string{s.person}, s.links())
 }
 
 // The control: without a link the SMS reads no chat card and keeps its own omni-channel, as
@@ -157,6 +241,8 @@ func (s *UserPhonesSuite) TestAnUnlinkedNumberReadsNoneOfTheUsersCards() {
 	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
 	s.NotEqual(anya, s.chatOmniChannelOf(bob), "bob is not on anya's omni-channel")
 	s.Equal(anya, s.chatOmniChannel(), "anya is not on bob's")
+	// A number is given to somebody else long after its last SMS, once its episode closed.
+	s.idle()
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "bob here"), time.Now()))
 	turns = s.took(3)
 	s.NotContains(s.cardsBefore(turns[2].text, "first"), chatSummary, "bob's SMS reads none of anya's cards")
@@ -176,9 +262,9 @@ func (s *UserPhonesSuite) TestAnOldNumberLinkedToAnotherUserJoinsNoneOfTheFirstU
 	s.Require().Equal(http.StatusOK, s.put(bob, `{"phone": "`+s.person+`"}`, nil))
 
 	s.NotEqual(s.chatOmniChannel(), s.chatOmniChannelOf(bob))
-	s.NotEqual(s.chatOmniChannel(), s.omniChannel(s.person))
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "bob here"), time.Now()))
 	s.NotContains(s.took(2)[1].text, chatSummary, "the old number reads none of anya's cards")
+	s.NotEqual(s.chatOmniChannel(), s.omniChannel(s.person))
 }
 
 // Catches a number that is not E.164 stored as a link no SMS could ever match, and a body of
@@ -252,6 +338,42 @@ func (s *UserPhonesSuite) cardsBefore(reply, first string) string {
 	at := strings.Index(reply, "user: "+first+"\n")
 	s.Require().NotEqual(-1, at, "the reply recites the thread's first message")
 	return reply[:at]
+}
+
+// textedBeforeTheLink has the test's number text the agent before any link, and its episode
+// close as idle.
+func (s *UserPhonesSuite) textedBeforeTheLink() {
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi, this is carl"), time.Now()))
+	s.took(1)
+	s.idle()
+}
+
+// idle closes the test customer's open episodes, as the idle sweeper does an hour after their
+// last message, so the next message opens an episode of its own.
+func (s *UserPhonesSuite) idle() {
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE episodes SET status = ?, ended_at = now() WHERE customer_id = ? AND status = 'in_progress'",
+		store.EpisodeEnded, s.customerID())
+	s.Require().NoError(err)
+}
+
+// chatReads are the sources of the cards a session of the user's app chat reads, newest first:
+// their stream_user row and the cards of its omni-channel (omnichannel.Cards.Context), none
+// left out.
+func (s *UserPhonesSuite) chatReads(user string) []string {
+	person, err := omnichannel.StreamUser(s.hookApp(), user)
+	s.Require().NoError(err)
+	contact, err := s.store.Contact(context.Background(), s.customerID(), s.config.ID, store.ContactStreamUser, person.Address)
+	s.Require().NoError(err)
+	cards, err := s.store.EpisodeCards(context.Background(), store.CardsQuery{
+		CustomerID: s.customerID(), AgentConfigID: s.config.ID, ConversationID: contact.ConversationID, Limit: 100,
+	})
+	s.Require().NoError(err)
+	var sources []string
+	for _, card := range cards {
+		sources = append(sources, card.Source)
+	}
+	return sources
 }
 
 // put sends a PUT of the user with the raw body as the app's backend, and decodes the answer.
