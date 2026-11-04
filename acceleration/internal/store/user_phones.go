@@ -189,18 +189,24 @@ func (s *Store) streamUserAddresses(link UserPhone) []string {
 // PUT left. No card moves: a card is read by its message id (omnichannel.summaryOf), and the
 // cards of a person are those of every row pointing at their omni-channel (EpisodeCards). Two
 // joins of one link take turns under its lock, so the second finds the first's rows on one
-// omni-channel already.
+// omni-channel already. Each half of the pair is found for each of the customer's agent
+// configs by the whole of contact_map_address, and born by contact_map_conversation, so a join
+// reads the pair's rows, not every row of the customer: 0.6 ms against 52 ms with one OR'd
+// pair over the customer's range, at 300k rows of one customer among 900k (EXPLAIN ANALYZE,
+// AI-2701 review).
 func (s *Store) joinLinked(ctx context.Context, link UserPhone) error {
 	deployment := s.streamPins().deployment()
 	return s.lockLink(ctx, link, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewRaw(`WITH link AS (
 	SELECT up.phone FROM user_phones AS up WHERE up.customer_id = ?0 AND up.stream_app_pk = ?5 AND up.user_id = ?7
+), configs AS (
+	SELECT ac.id AS agent_config_id FROM agent_configs AS ac WHERE ac.customer_id = ?0
 ), pair AS (
-	SELECT cm.id, cm.agent_config_id, cm.conversation_id, cm.stream_app_pk FROM contact_map AS cm
-	WHERE cm.customer_id = ?0 AND cm.agent_config_id IN (SELECT ac.id FROM agent_configs AS ac WHERE ac.customer_id = ?0)
-		AND ((cm.kind = ?1 AND cm.address IN (?2)) OR (cm.kind = ?3 AND cm.address = (SELECT phone FROM link)))
-		AND COALESCE(NULLIF(cm.stream_app_pk, ?4), 0) = ?5
-		AND EXISTS (SELECT 1 FROM link)
+	SELECT cm.id, cm.agent_config_id, cm.conversation_id, cm.stream_app_pk FROM configs JOIN contact_map AS cm USING (agent_config_id)
+	WHERE cm.customer_id = ?0 AND cm.kind = ?1 AND cm.address IN (?2) AND COALESCE(NULLIF(cm.stream_app_pk, ?4), 0) = ?5
+	UNION ALL
+	SELECT cm.id, cm.agent_config_id, cm.conversation_id, cm.stream_app_pk FROM configs JOIN contact_map AS cm USING (agent_config_id)
+	WHERE cm.customer_id = ?0 AND cm.kind = ?3 AND cm.address = (SELECT phone FROM link) AND COALESCE(NULLIF(cm.stream_app_pk, ?4), 0) = ?5
 ), born AS (
 	SELECT o.agent_config_id, o.conversation_id, min(o.created_at) AS at FROM contact_map AS o
 	WHERE o.customer_id = ?0 AND (o.agent_config_id, o.conversation_id) IN (SELECT agent_config_id, conversation_id FROM pair)
