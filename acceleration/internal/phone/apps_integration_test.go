@@ -1683,6 +1683,28 @@ func (s *AppsSuite) TestAnAdoptedNumberWhoseRuleUpdateFailsIsNotGivenANewRule() 
 	s.Equal(attached.RouteID, s.number().StreamRouteID)
 }
 
+func (s *AppsSuite) TestANumberJoiningAfterALostTrunkTakesAnotherTrunkWithRoom() {
+	s.sealed()
+	first, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+	s.Require().NoError(err)
+	_, err = s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+	s.Require().NoError(err)
+	// The adopted trunk, with one number, is the roomiest of the group's two.
+	stream, attached, _ := s.onItsOwnTrunk()
+	_, err = s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+	s.Require().NoError(stream.DeleteTrunk(s.ctx, attached.TrunkID))
+	third := s.anotherNumber(s.customer, s.vendor.vendor)
+
+	joined, err := s.lineFor(s.customer, third)
+
+	s.Require().NoError(err)
+	s.Equal(first.TrunkID, joined.TrunkID)
+	s.Equal([]string{first.TrunkID}, s.deployment.Trunks(), "no trunk is made while one has room")
+	s.Len(s.deployment.TrunkNumbers(first.TrunkID), 3)
+}
+
 func (s *AppsSuite) TestTwoNumbersJoiningAtOnceMakeOneTrunk() {
 	s.sealed()
 	second := s.anotherNumber(s.customer, s.vendor.vendor)

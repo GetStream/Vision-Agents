@@ -110,13 +110,16 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 
 	var trunk store.StreamTrunk
 	var password string
-	roomiest := -1
-	for i, candidate := range trunks {
-		if len(candidate.Numbers) < trunkCapacity && (roomiest < 0 || len(candidate.Numbers) < len(trunks[roomiest].Numbers)) {
-			roomiest = i
+	for joined.trunkID == "" {
+		roomiest := -1
+		for i, candidate := range trunks {
+			if len(candidate.Numbers) < trunkCapacity && (roomiest < 0 || len(candidate.Numbers) < len(trunks[roomiest].Numbers)) {
+				roomiest = i
+			}
 		}
-	}
-	if roomiest >= 0 {
+		if roomiest < 0 {
+			break
+		}
 		trunk = trunks[roomiest]
 		if password, err = s.trunkPassword(trunk); err != nil {
 			return TrunkLine{}, err
@@ -128,14 +131,15 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 			if err := s.forgetLostTrunk(ctx, stream, tx, held, trunk.ID, err); err != nil {
 				return TrunkLine{}, err
 			}
-			roomiest = -1
+			// The next roomiest takes the number, or a new trunk when none has room.
+			trunks = slices.Delete(slices.Clone(trunks), roomiest, roomiest+1)
 		case err != nil:
 			return TrunkLine{}, err
 		default:
 			joined.trunkID = trunk.ID
 		}
 	}
-	if roomiest < 0 {
+	if joined.trunkID == "" {
 		id, bridge, err := stream.CreateTrunk(ctx, Trunk{Name: name, Numbers: []string{held.E164}, AllowedIPs: allowedIPs})
 		if err != nil {
 			return TrunkLine{}, err
@@ -187,9 +191,9 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 }
 
 // forgetLostTrunk drops the row of a shared trunk Stream no longer has, so the number
-// joining gets a new trunk and each number left on the row, no longer finding it, lines again
-// on its next call. The number must not be routed at Stream some other way. A trunk Stream
-// still lists answered the update with lost, which is returned and drops nothing.
+// joining goes on another trunk and each number left on the row, no longer finding it, lines
+// again on its next call. The number must not be routed at Stream some other way. A trunk
+// Stream still lists answered the update with lost, which is returned and drops nothing.
 func (s *Service) forgetLostTrunk(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, trunkID string, lost error) error {
 	rules, trunks, holds, err := stream.answering(ctx, held.E164, trunkID)
 	if err != nil {
