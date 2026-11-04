@@ -521,7 +521,7 @@ any app manages every limit of its organization (an app seen in no organization 
 | --------- | ---- | ------------ |
 | `listLimits`, `createLimit` | `GET`, `POST /v1/spend/limits` | The organization's limits by id, filtered by subject, level, ids, team, category or interval; a new one, 201 |
 | `getLimit`, `updateLimit`, `deleteLimit` | `GET`, `PATCH`, `DELETE /v1/spend/limits/{limit_id}` | One limit; its amount and note only; 204 |
-| `getLimitUsage` | `GET /v1/spend/limits/usage` | Up to 100 subjects of one kind, in the order asked (repeat `app_id`, `api_key`, `user_id`, `team` or `category`; a list of one goes with every subject): each one's current window in every interval, spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
+| `getLimitUsage` | `GET /v1/spend/limits/usage` | Up to 100 subjects of one kind, in the order asked (repeat `app_id`, `api_key_id`, `user_id`, `team` or `category`; a list of one goes with every subject): each one's current window in every interval, spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
 | `resetLimitUsage` | `POST /v1/spend/limits/usage/reset` | Resets the subject's spend for its limits in the windows named, with a reason |
 
 A team is `subject: team` (or `app_team` with an `app_id`) and `team: finance`, kept as the
@@ -564,13 +564,15 @@ What an organization's own dashboard reads about its money, server-side only:
 | `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
 | `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
 | `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
-| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key_id`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
 
 The first two and `listUsageEvents` read the usage service's customer view with the ingest
 token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
-organization. A server-side caller's `api_key` and `user_id` query parameters are filters there,
-as they are on `getSpend`: the key is the `X-Api-Key` header's, and `user_id` in the query only
-names who a backend acts for, which no account read looks at. `listTeams`
+organization. A server-side caller's `api_key_id` and `user_id` query parameters are filters there,
+as they are on `getSpend`. A key is named `api_key_id` in the query on these reads and on the limits
+and grants lists and usage. `api_key` in the query is the caller's credential, which Stream's proxy
+requires on every call. `user_id` in the query only names who a backend acts for, which no account
+read looks at. `listTeams`
 sums the request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
