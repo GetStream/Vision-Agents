@@ -4,7 +4,9 @@ package store
 
 import (
 	"fmt"
+	"slices"
 	"sync"
+	"time"
 )
 
 // streamUser is a contact map row of the acme-app customer's agent for a Stream user of app
@@ -127,7 +129,7 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	var aside ContactMapEntry
 	s.Require().NoError(s.store.db.NewSelect().Model(&aside).Where("id = ?", sms.ID).Scan(s.ctx))
 	s.Equal("agent:omni-sms", aside.ConversationID, "where its card is")
-	s.Equal(retiredPrefix+sms.ID, aside.Address)
+	s.Equal(retiredPrefix+sms.ID+":+15550100", aside.Address)
 	s.Equal([]string{carls}, ids(s.cardsOf("agent:omni-sms", CardsQuery{})))
 	s.Equal("agent:omni-sms-7", s.omniOf(other), "a row of another app")
 	s.Equal("agent:omni-quiet", s.omniOf(quiet), "a row with no episode")
@@ -135,6 +137,63 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.Equal("agent:omni-another", s.omniOf(another), "another number's row")
 	next := contact("+15550100", "agent:omni-next")
 	s.Equal(s.omniOf(chat), s.made(next).ConversationID, "the number seen again joins anya")
+}
+
+// Catches a set-aside row whose thread, call and cards no longer name the number: a Linq
+// chat's replies would check opt-outs, the sandbox and the limits against retired:<id>
+// (ThreadContact, channelbridge.replyTo), and a call going on at the link would close with no
+// caller its lines are said by (the closed episodes' contact_address, omnichannel.callerOf).
+func (s *StoreSuite) TestASetAsideRowIsStillReachedAtItsNumber() {
+	s.agentConfigs()
+	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true")
+	s.Require().NoError(err)
+	s.made(streamUser("anya", "agent:omni-chat"))
+	sms := s.made(contact("+15550100", "agent:omni-sms"))
+	thread := &Episode{CustomerID: "acme-app", ContactID: sms.ID, Source: EpisodeSMS, ThreadChannel: "agent:thread-" + newID(),
+		StartedAt: time.Now().Add(-2 * time.Hour)}
+	_, err = s.store.OpenEpisode(s.ctx, thread)
+	s.Require().NoError(err)
+	callID := newID()
+	call := &Episode{CustomerID: "acme-app", ContactID: sms.ID, Source: EpisodeCall, ThreadChannel: "agent:" + callID,
+		CallID: callID, SessionID: newID()}
+	_, err = s.store.OpenEpisode(s.ctx, call)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.link("anya", "+15550100"))
+
+	_, err = s.store.Contact(s.ctx, "acme-app", "agent-one", ContactPhone, "+15550100")
+	s.Require().ErrorIs(err, ErrNoContact, "the row was set aside")
+	found, err := s.store.ThreadContact(s.ctx, "acme-app", "agent-one", thread.ThreadChannel)
+	s.Require().NoError(err)
+	s.Equal(sms.ID, found.ID)
+	s.Equal("+15550100", found.Address, "a reply on the thread reaches the number")
+	cards := s.cardsOf("agent:omni-sms", CardsQuery{})
+	s.Require().Len(cards, 2)
+	for _, card := range cards {
+		s.Equal("+15550100", card.ContactAddress, card.Source)
+	}
+	now := time.Now()
+	ended, err := s.store.EndCallEpisodes(s.ctx, AppScope{Unpinned: true}, callID, now, now.Add(-time.Minute))
+	s.Require().NoError(err)
+	s.Require().Len(ended, 1)
+	s.Equal("+15550100", ended[0].ContactAddress, "the call's caller")
+	idle, err := s.store.CloseIdleEpisodes(s.ctx, now.Add(-time.Hour), now, 1000, now.Add(-time.Minute))
+	s.Require().NoError(err)
+	s.Equal(map[string]string{thread.ID: "+15550100"}, s.addressesOf(idle, thread.ID))
+	claimed, err := s.store.ClaimEpisodeSummaries(s.ctx, now, 1000, now.Add(time.Hour))
+	s.Require().NoError(err)
+	s.Equal(map[string]string{thread.ID: "+15550100", call.ID: "+15550100"}, s.addressesOf(claimed, thread.ID, call.ID))
+}
+
+// addressesOf are the contact addresses of the closed episodes named, by id.
+func (s *StoreSuite) addressesOf(closed []ClosedEpisode, named ...string) map[string]string {
+	addresses := map[string]string{}
+	for _, episode := range closed {
+		if slices.Contains(named, episode.ID) {
+			addresses[episode.ID] = episode.ContactAddress
+		}
+	}
+	return addresses
 }
 
 // Catches a row made after the link that keeps an omni-channel of its own, whichever half of

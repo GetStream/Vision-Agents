@@ -262,22 +262,31 @@ WHERE su.customer_id = ?0 AND su.agent_config_id IN (SELECT ac.id FROM agent_con
 	return nil
 }
 
-// retiredPrefix starts the address of a number's row a link set aside (retireHistory). No
-// E.164 number starts with it, so no sighting, read or join finds the row by the number again.
+// retiredPrefix starts the address of a number's row a link set aside (retireHistory),
+// retired:<row id>:<number>. No E.164 number starts with it, so no sighting, read or join
+// finds the row by the number again.
 const retiredPrefix = "retired:"
+
+// reachedAt is a row's address as the person is reached at: the number of a row a link set
+// aside (retireHistory), any other row's address as it is. What still talks to the person on
+// a thread, call or card the row holds reads it (ThreadContact, the closed episodes' and the
+// cards' contact_address), so a reply's opt-out, sandbox and limit checks and a call's caller
+// check name the number. Example: retired:3f2a…:+15550100 is reached at +15550100.
+const reachedAt = `regexp_replace(cm.address, '^` + retiredPrefix + `[^:]*:', '')`
 
 // retireHistory sets aside each row of a number newly linked to a user that holds an episode,
 // under each agent config of the customer with episode_cards on, in the link's app: whoever
 // texted or called from the number before (a former holder, or the user before the customer
 // vouched for them) is not proven to be the user. The row keeps its omni-channel and its
 // episodes, so their cards stay where they were written and are closed there, but its address
-// becomes retired:<row id>, which no lookup by the number matches. The number's next episode
-// makes a row of its own, which joins the user (joinPartner). A row with no episode has nothing
+// becomes retired:<row id>:<number>, which no lookup by the number matches; what talks to the
+// person on its thread, call or cards still reads the number (reachedAt). The number's next
+// episode makes a row of its own, which joins the user (joinPartner). A row with no episode has nothing
 // to set aside and joins as it is (joinLinked); a config without episode_cards reads no card,
 // and its rows are left as they were. In tx, under the link's lock.
 func (s *Store) retireHistory(ctx context.Context, tx bun.Tx, link UserPhone) error {
 	_, err := tx.NewRaw(`UPDATE contact_map AS cm
-SET address = ?4 || cm.id, updated_at = ?5
+SET address = ?4 || cm.id || ':' || cm.address, updated_at = ?5
 WHERE cm.customer_id = ?0
 	AND cm.agent_config_id IN (SELECT ac.id FROM agent_configs AS ac WHERE ac.customer_id = ?0 AND ac.episode_cards)
 	AND cm.kind = ?1 AND cm.address = ?2
