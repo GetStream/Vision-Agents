@@ -7,6 +7,10 @@
 // can match against people it has seen. "workflow" is the caller's own Workflow, named in
 // an overwrite by its workspace and id or sent whole as a specification. A Workflow must
 // output "predictions", and may output "embeddings", one per box in the same order.
+//
+// A hosted model is billed one image a call, and a Workflow one image for every model call
+// Roboflow lists, at the rate of the smallest models. A caller's Workflow that runs larger
+// models, or a vision language model billed by the second, costs Roboflow more than that.
 package roboflow
 
 import (
@@ -198,7 +202,7 @@ func (p *Provider) Detect(ctx context.Context, request detection.Request) (detec
 		return p.baseURL + "/" + p.model + "?" + query.Encode(), []byte(encoded), nil
 	}
 	var answer predictions
-	if err := p.post(ctx, "application/x-www-form-urlencoded", build, &answer); err != nil {
+	if _, err := p.post(ctx, "application/x-www-form-urlencoded", build, &answer); err != nil {
 		return detection.Result{}, err
 	}
 	return boxesOf(answer, nil, request), nil
@@ -218,7 +222,8 @@ func (p *Provider) workflow(ctx context.Context, path string, specification json
 		return p.baseURL + path, payload, err
 	}
 	var answer workflowResponse
-	if err := p.post(ctx, "application/json", build, &answer); err != nil {
+	header, err := p.post(ctx, "application/json", build, &answer)
+	if err != nil {
 		return detection.Result{}, err
 	}
 	if len(answer.Outputs) == 0 || answer.Outputs[0].Predictions == nil {
@@ -230,7 +235,12 @@ func (p *Provider) workflow(ctx context.Context, path string, specification json
 		return detection.Result{}, detection.Fail(detection.UnsupportedOption,
 			fmt.Errorf("roboflow: the Workflow returned %d embeddings for %d boxes", len(output.Embeddings), len(output.Predictions.Predictions)))
 	}
-	return boxesOf(*output.Predictions, output.Embeddings, request), nil
+	result := boxesOf(*output.Predictions, output.Embeddings, request)
+	result.Billed = modelCalls(header)
+	if result.Billed == 0 {
+		result.Billed = 1 + len(output.Embeddings)
+	}
+	return result, nil
 }
 
 // boxesOf turns Roboflow's centre-and-size pixels into fractions of the image.
@@ -254,9 +264,24 @@ func boxesOf(answer predictions, embeddings [][]float32, request detection.Reque
 	return result
 }
 
+// modelCalls is how many images a Workflow's model steps ran over, which is what Roboflow
+// bills a run by: each step's model once for every image it is handed, so the face
+// Workflow is its detector once and CLIP once for each face's crop
+// (https://docs.roboflow.com/deployment/roboflow-cloud/serverless-api/pricing, read
+// 2026-11-04). Roboflow lists the calls in a header, and zero means it did not.
+func modelCalls(header http.Header) int {
+	var calls []struct {
+		Model string `json:"m"`
+	}
+	if json.Unmarshal([]byte(header.Get("X-Remote-Processing-Times")), &calls) != nil {
+		return 0
+	}
+	return len(calls)
+}
+
 // post sends one call, built by build for a key from the pool and again for the next key
-// on a 429, and decodes the answer into out.
-func (p *Provider) post(ctx context.Context, contentType string, build func(key string) (string, []byte, error), out any) error {
+// on a 429, and decodes the answer into out. The answer's headers come back with it.
+func (p *Provider) post(ctx context.Context, contentType string, build func(key string) (string, []byte, error), out any) (http.Header, error) {
 	var used string
 	var buildErr error
 	response, err := p.keys.Send(ctx, func(key string) (*http.Response, error) {
@@ -275,24 +300,24 @@ func (p *Provider) post(ctx context.Context, contentType string, build func(key 
 		return p.client.Do(request)
 	})
 	if buildErr != nil {
-		return detection.Fail(detection.ProviderFailed, buildErr)
+		return nil, detection.Fail(detection.ProviderFailed, buildErr)
 	}
 	if err != nil {
 		// The URL carries the key, and an error from the client repeats the URL.
-		return detection.Fail(detection.CodeOf(err), errors.New("roboflow: "+strings.ReplaceAll(err.Error(), used, "REDACTED")))
+		return nil, detection.Fail(detection.CodeOf(err), errors.New("roboflow: "+strings.ReplaceAll(err.Error(), used, "REDACTED")))
 	}
 	defer response.Body.Close()
 	if response.StatusCode != http.StatusOK {
 		refusal, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return detection.Fail(detection.ProviderFailed,
+		return nil, detection.Fail(detection.ProviderFailed,
 			fmt.Errorf("roboflow: Roboflow answered %d: %s", response.StatusCode, strings.TrimSpace(string(refusal))))
 	}
 	answer, err := io.ReadAll(io.LimitReader(response.Body, responseLimit))
 	if err != nil {
-		return detection.Fail(detection.CodeOf(err), fmt.Errorf("roboflow: reading the answer: %w", err))
+		return nil, detection.Fail(detection.CodeOf(err), fmt.Errorf("roboflow: reading the answer: %w", err))
 	}
 	if err := json.Unmarshal(answer, out); err != nil {
-		return detection.Fail(detection.ProviderFailed, fmt.Errorf("roboflow: the answer is not JSON: %w", err))
+		return nil, detection.Fail(detection.ProviderFailed, fmt.Errorf("roboflow: the answer is not JSON: %w", err))
 	}
-	return nil
+	return response.Header, nil
 }

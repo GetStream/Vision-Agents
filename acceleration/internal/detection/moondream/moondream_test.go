@@ -12,6 +12,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/detection"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 )
 
 //go:embed testdata/two_objects.json
@@ -78,6 +79,16 @@ func (s *MoondreamSuite) TestEachClassIsItsOwnCallAndItsOwnLabel() {
 	s.Equal("moondream3-preview", s.calls[0].Variant)
 	s.Equal("data:image/jpeg;base64,anBlZw==", s.calls[0].ImageURL)
 	s.Equal([]string{"md-key", "md-key"}, s.keys)
+}
+
+func (s *MoondreamSuite) TestALookIsBilledByTheTokensEveryClassesCallReadAndWrote() {
+	found, err := s.provider().Detect(context.Background(), detection.Request{
+		Image: []byte("jpeg"), MediaType: "image/jpeg", Classes: []string{"package", "person"},
+	})
+
+	s.Require().NoError(err)
+	s.Equal(pricing.Quantities{pricing.InputTokens: 1472, pricing.OutputTokens: 14}, found.Used(),
+		"Moondream bills tokens, so the image count is not what it charged")
 }
 
 func (s *MoondreamSuite) TestARequestNamingNothingToLookForIsRefusedWithoutACall() {
