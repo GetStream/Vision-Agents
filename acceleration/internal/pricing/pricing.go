@@ -30,10 +30,12 @@ const (
 	OutputTextTokens       Meter = "output_text_tokens"
 	OutputAudioTokens      Meter = "output_audio_tokens"
 
-	Characters      Meter = "characters"
-	AudioMs         Meter = "audio_ms"
-	Images          Meter = "images"
-	Pixels          Meter = "pixels"
+	Characters Meter = "characters"
+	AudioMs    Meter = "audio_ms"
+	Images     Meter = "images"
+	Pixels     Meter = "pixels"
+	// Pages are the pages of a document a model read, which is how an OCR model bills.
+	Pages           Meter = "pages"
 	Requests        Meter = "requests"
 	Messages        Meter = "messages"
 	MessageSegments Meter = "message_segments"
@@ -60,7 +62,7 @@ var meters = []Meter{
 	InputTextTokens, InputAudioTokens, InputImageTokens,
 	CachedInputTextTokens, CachedInputAudioTokens, CachedInputImageTokens,
 	OutputTextTokens, OutputAudioTokens,
-	Characters, AudioMs, Images, Pixels, Requests, Messages, MessageSegments, MediaMessages, CallSeconds,
+	Characters, AudioMs, Images, Pixels, Pages, Requests, Messages, MessageSegments, MediaMessages, CallSeconds,
 	Seconds, SessionSeconds, VCPUSeconds, MemoryGBSeconds, DiskGBSeconds,
 	BytesWritten, BytesQueried, BytesReturned, Results, ByteHours, Clones,
 }

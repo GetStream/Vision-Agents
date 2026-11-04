@@ -36,6 +36,7 @@ var vendorFacing = []facing{
 	{"internal/search", "Provider"},
 	{"internal/imagegen", "Provider"},
 	{"internal/detection", "Provider"},
+	{"internal/ocr", "Provider"},
 	{"internal/decisionmodel", "Provider"},
 	{"internal/tts/voices", "Cloner"},
 	{"internal/phone", "Provider"},
@@ -69,6 +70,7 @@ var modalities = map[string]string{
 	"internal/search":        "internal/search/searchsuite",
 	"internal/imagegen":      "internal/imagegen/imagegensuite",
 	"internal/detection":     "internal/detection/detectionsuite",
+	"internal/ocr":           "internal/ocr/ocrsuite",
 	"internal/decisionmodel": "internal/decisionmodel/decisionmodelsuite",
 }
 

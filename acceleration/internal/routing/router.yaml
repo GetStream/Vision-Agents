@@ -3573,3 +3573,80 @@ detection:
     multilingual-high-accuracy:
       languages: [en]
       tier: high-quality
+
+ocr:
+  providers:
+    # Mistral OCR 4.1, Mistral's model built for documents: a page in, Markdown out, tables
+    # included, at $4 per 1,000 pages (docs.mistral.ai/models/ocr-4-1, read 2026-11-04). The
+    # pinned id rather than mistral-ocr-latest, which moves to the next model at its price.
+    # API data is not used for training (docs.mistral.ai/admin/monitor-comply/privacy-data-
+    # controls) and is kept 30 rolling days for abuse monitoring unless the organisation has
+    # Zero Data Retention, which covers /v1/ocr (legal.mistral.ai/terms/privacy-policy, both
+    # read 2026-11-04).
+    - provider: mistral
+      model: mistral-ocr-4-1
+      description: "Mistral OCR 4.1. Built for documents: scans, forms, tables and handwriting. Billed by the page."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: high-quality
+      data_policy:
+        trains_on_data: "no"
+        retention: 30d
+
+    # Vision language models asked to transcribe the page, billed by the token at their LLM
+    # rates. A dense page is about 1,500 input and 2,500 output tokens, so a page costs about
+    # $0.0014 on GPT-6 Luna and $0.011 on Gemini 3.8 Flash. Their data terms are the ones
+    # their llm entries give.
+    - provider: openai
+      model: gpt-6-luna
+      description: "GPT-6 Luna asked to transcribe the page. Cheap, and a fallback for Mistral OCR."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
+    - provider: gemini
+      model: gemini-3.8-flash
+      description: "Gemini 3.8 Flash asked to transcribe the page. Strong on small print, dearer than Luna."
+      languages: [ar, de, en, es, fr, hi, id, it, ja, ko, nl, pl, pt, ru, th, tr, vi, zh]
+      realtime: false
+      tier: low-latency
+      input_modalities: [image]
+      data_policy:
+        trains_on_data: "no"
+        retention: unspecified
+
+  aliases:
+    # The default: Mistral OCR, failing over to the two vision models and nothing else, so a
+    # page never goes to a model that cannot read one.
+    ocr-default:
+      title: OCR
+      description: "Mistral OCR, with GPT-6 Luna and Gemini 3.8 Flash as fallbacks."
+      only: [mistral/mistral-ocr-4-1, openai/gpt-6-luna, gemini/gemini-3.8-flash]
+      prefer: mistral/mistral-ocr-4-1
+
+    ocr-vision:
+      title: OCR by a vision model
+      description: "A vision language model transcribes the page, cheapest first."
+      require_input_modalities: [image]
+      prefer: openai/gpt-6-luna
+
+    # The four shortcuts every modality answers to.
+    en-low-latency:
+      languages: [en]
+      tier: low-latency
+
+    multilingual-low-latency:
+      multilingual: true
+      tier: low-latency
+
+    en-high-accuracy:
+      languages: [en]
+      tier: high-quality
+
+    multilingual-high-accuracy:
+      multilingual: true
+      tier: high-quality
