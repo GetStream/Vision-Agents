@@ -94,8 +94,8 @@ func (s *StoreSuite) TestALinkPointsTheUsersAndTheNumbersRowsAtTheOlderOmniChann
 }
 
 // Catches a link that joins the number's earlier episodes to the user, under one agent config
-// only; one that sets aside a row with no episode, a row in another app, or a row of a config
-// without episode_cards, which reads no card; and a set-aside row that loses its omni-channel,
+// only; one that sets aside a row with no episode, a row in another app, another number's row,
+// or a row of a config without episode_cards, which reads no card; and a set-aside row that loses its omni-channel,
 // where its cards are, or a number's next row that does not join.
 func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.agentConfigs()
@@ -116,6 +116,8 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	off := contact("+15550100", "agent:omni-off")
 	off.AgentConfigID = "agent-four"
 	s.smsEpisode(s.made(off))
+	another := s.made(contact("+15550199", "agent:omni-another"))
+	s.smsEpisode(another)
 
 	s.Require().NoError(s.link("anya", "+15550100"))
 
@@ -130,6 +132,7 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.Equal("agent:omni-sms-7", s.omniOf(other), "a row of another app")
 	s.Equal("agent:omni-quiet", s.omniOf(quiet), "a row with no episode")
 	s.Equal("agent:omni-off", s.omniOf(off), "a row of a config without episode_cards")
+	s.Equal("agent:omni-another", s.omniOf(another), "another number's row")
 	next := contact("+15550100", "agent:omni-next")
 	s.Equal(s.omniOf(chat), s.made(next).ConversationID, "the number seen again joins anya")
 }
