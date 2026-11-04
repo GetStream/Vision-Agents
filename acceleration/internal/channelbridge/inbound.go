@@ -299,13 +299,6 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	return nil
 }
 
-// nothingToWrite is whether a message has nothing for the agent once download is done: it names
-// files by id, none of which downloaded, and has no text and no photo at a URL. A message that
-// names no file by id, such as a Linq video alone, is written as before.
-func nothingToWrite(message core.InboundMessage, files []sandbox.File, named int) bool {
-	return named > 0 && len(files) == 0 && message.Text == "" && len(photos(message.Media)) == 0
-}
-
 // forwardUnanswered hands a given-up message's delivery to the customer's event destinations of
 // unhandled events (Options.Unanswered), for store.FailChannelInbound to call: only the first
 // given-up message of a delivery whose forward is queued does, so two of them are one forward.

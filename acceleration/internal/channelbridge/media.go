@@ -85,6 +85,13 @@ func (b *Bridge) download(ctx context.Context, thread store.ChannelThread, messa
 	return files, named, nil
 }
 
+// nothingToWrite is whether a message has nothing for the agent once download is done: it names
+// files by id, none of which downloaded, and has no text and no photo at a URL. A message that
+// names no file by id, such as a Linq video alone, is written as before.
+func nothingToWrite(message core.InboundMessage, files []sandbox.File, named int) bool {
+	return named > 0 && len(files) == 0 && message.Text == "" && len(photos(message.Media)) == 0
+}
+
 // fetchPhoto looks the file id names up, and downloads it from where the answer says, when that
 // is on the lookup's host (core.ResolvedManifest.MediaFile), as an image: the bytes, sniffed as
 // the model's fetch does (api.fetchImages), must be one.
