@@ -157,7 +157,7 @@ type listUsageEventsRequest struct {
 	From     optionalParam[time.Time]  `query:"from" doc:"Only events that happened at or after this, inclusive."`
 	To       optionalParam[time.Time]  `query:"to" doc:"Only events that happened before this, exclusive."`
 	Meter    string                    `query:"meter" maxLength:"255" doc:"Only this kind of work, such as llm or runtime."`
-	ApiKey   string                    `query:"api_key" maxLength:"255" doc:"Only work started with this public API key, or by this origin of work no key started, such as hook:chat."`
+	ApiKeyId string                    `query:"api_key_id" maxLength:"255" doc:"Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call."`
 	UserId   string                    `query:"user_id" maxLength:"255" doc:"Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app."`
 	Team     string                    `query:"team" pattern:"^[A-Za-z0-9_.-]{1,59}$" doc:"Only work for this team: its users' tokens name it in their team claim. Not with category."`
 	Category string                    `query:"category" doc:"Only work carrying this usage category, as the tokens name it. Not with team."`
@@ -207,7 +207,7 @@ func (s *Server) registerAccount(api huma.API) {
 		Description: "Every unit of work recorded for the calling app, or with scope=organization for every app of " +
 			"its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each " +
 			"names who it was for, what it was, how much of it there was and what the organization is charged. " +
-			"Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with " +
+			"Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with " +
 			"cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so " +
 			"the newest may take a moment to appear." + notEnabled + serverSide,
 		Errors: errs,
@@ -330,7 +330,7 @@ func (s *Server) listUsageEvents(ctx context.Context, request *listUsageEventsRe
 	}
 	app, _ := CustomerFrom(ctx)
 	query := usage.UsageQuery{
-		AppID: app, Meter: request.Meter, APIKey: request.ApiKey, UserID: request.UserId, Team: request.Team,
+		AppID: app, Meter: request.Meter, APIKey: request.ApiKeyId, UserID: request.UserId, Team: request.Team,
 		Category: request.Category, Limit: request.Limit, Cursor: request.Cursor,
 	}
 	if scope := request.Scope.ptr(); scope != nil && *scope == spendScopeOrganization {

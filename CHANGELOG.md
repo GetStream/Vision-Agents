@@ -325,6 +325,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### A usage or spend read names a key as `api_key_id`
+
+`listUsageEvents`, `getSpend`, `listLimits`, `listLimitGrants` and `getLimitUsage` (and their `manage*` twins) now name a key in the query as `api_key_id`, where they took `api_key`. Stream's proxy requires `api_key=<app key>` on every call and forwards it, so through the proxy every usage list and spend read was narrowed to the caller's own key. Rows that an origin started (`hook:chat`, `phone:inbound`, `job:<name>`) or that another key of the app started could not be read, and `getLimitUsage` refused every subject but a key. `api_key` in the query is now only the credential. A read that still sends a key as `api_key` gets every key's rows back. Request bodies and response fields keep `api_key`. `plugins/stream` keeps its `api_key=` argument and sends it as `api_key_id` (AI-2684).
+
 ### The router refuses `plugins`, `plugin_events` and `mcp_servers` and serves none of them
 
 Creating, replacing, patching or syncing an agent config with a non-empty `plugins`, `plugin_events` or `mcp_servers` is a 400 that names what replaced it: `plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors` (the same for `plugin_events`), or `mcp_servers is no longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors`. Left out, null or empty, a save is as before. A config read back no longer has the three fields, and a session no longer opens the plugins or MCP servers a stored config still names, nor asks for a plugin login in the conversation; its connector bindings work as before. The plugin operations (`listPlugins`, `listConfigPlugins`, `authorizePlugin`, `disconnectPlugin`, `setPluginClient`, `deletePluginClient`) and the routes `GET /v1/agents/plugins/callback`, `GET /v1/agents/plugins/{plugin_id}/logo` and `POST /v1/agents/plugins/events/{token}` are gone (404), with their methods in every generated client, and plugin events are no longer subscribed to (AI-2538).

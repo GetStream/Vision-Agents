@@ -125,7 +125,7 @@ type LimitGrantPage struct {
 type ListGrantsParams struct {
 	Subject  LimitSubject    `query:"subject"`
 	AppId    string          `query:"app_id"`
-	ApiKey   string          `query:"api_key"`
+	ApiKeyId string          `query:"api_key_id" doc:"Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call."`
 	UserId   string          `query:"user_id"`
 	Team     string          `query:"team"`
 	Category string          `query:"category"`
@@ -293,7 +293,7 @@ func grantOf(grant store.LimitGrant, now time.Time) LimitGrant {
 }
 
 func (s *Server) createGrant(ctx context.Context, organization string, sent LimitGrantInput, audit store.LimitAudit) (*createdGrantResponse, error) {
-	ref, err := usageTarget(sent.LimitTarget, organization)
+	ref, err := usageTarget(sent.LimitTarget, organization, "api_key")
 	if err != nil {
 		return nil, err
 	}
@@ -337,7 +337,7 @@ func (s *Server) listGrants(ctx context.Context, organization string, request *L
 	}
 	now := time.Now()
 	filter := store.GrantFilter{
-		OrganizationID: organization, AppID: request.AppId, APIKey: request.ApiKey, UserID: request.UserId,
+		OrganizationID: organization, AppID: request.AppId, APIKey: request.ApiKeyId, UserID: request.UserId,
 		Category: request.Category, Now: now,
 	}
 	switch request.Subject {
