@@ -44,6 +44,8 @@ android {
 dependencies {
     implementation(libs.vision.agents.core)
     implementation(libs.stream.chat.ai.compose)
+    implementation(libs.stream.chat.ai.openui)
+    implementation(libs.stream.chat.ai.a2ui)
     implementation(libs.okhttp)
     // The connector sign-in opens in an Auth Tab, or a Custom Tab where the browser has none.
     implementation(libs.browser)

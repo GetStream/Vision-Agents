@@ -6,6 +6,8 @@ import io.getstream.chat.android.ai.compose.conversation.AIMessage
 import io.getstream.chat.android.ai.compose.conversation.AIMessageAttachment
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRating
 import io.getstream.chat.android.ai.compose.conversation.AIMessageRole
+import io.getstream.chat.android.ai.compose.generativeui.AIUIAction
+import io.getstream.chat.android.ai.compose.generativeui.AIUIDocument
 import io.getstream.chat.android.ai.compose.parts.AIMessagePart
 import io.getstream.chat.android.ai.compose.parts.AIReasoningPart
 import io.getstream.chat.android.client.ChatClient
@@ -145,6 +147,23 @@ class AgentChat private constructor(
         }
     }
 
+    /**
+     * Answers with what the person did in a reply's generated UI: its label as the text, the
+     * action itself as `ui_action`.
+     */
+    fun answer(action: AIUIAction) {
+        asking.value = null
+        askedAfter.value = messages.value.lastOrNull()?.id.orEmpty()
+        scope.launch {
+            try {
+                session.responses.create(action.label, uiAction = action.json)
+            } catch (e: AgentsException) {
+                asking.value = e.message
+                askedAfter.value = null
+            }
+        }
+    }
+
     /** Loads the messages before the oldest one loaded. */
     suspend fun loadOlderMessages() {
         val cid = state.value?.cid ?: return
@@ -231,6 +250,9 @@ data class AgentMessage(val message: Message, private val reasoning: LiveReasoni
     override val role: AIMessageRole = if (message.isAgentReply) AIMessageRole.Assistant else AIMessageRole.User
     override val text: String = message.text
     override val isGenerating: Boolean = message.isGenerating
+
+    // The reply's generated UI, `custom.ai_ui`, which Stream Chat lifts into extraData.
+    override val uiDocument: AIUIDocument? = AIUIDocument.from(message.extraData)
 
     // Read on every update while a reply streams, so decoded once, when the message is made.
     override val parts: List<AIMessagePart> = message.decodeParts()
