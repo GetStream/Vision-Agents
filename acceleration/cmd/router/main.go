@@ -1565,7 +1565,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1680,10 +1680,11 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, and chat answers a router holds; one without one of them holds none of its work. A
-// turn counts until it ends, also before the session it opens is counted.
+// over, chat answers and the app chat's episode cards a router holds; one without one of them
+// holds none of its work. A turn counts until it ends, also before the session it opens is
+// counted.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker) int {
+	deliveries *chatinbound.Worker, server *api.Server) int {
 	held := 0
 	if sessions != nil {
 		held += sessions.Len()
@@ -1696,6 +1697,9 @@ func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge 
 	}
 	if deliveries != nil {
 		held += deliveries.Running()
+	}
+	if server != nil {
+		held += server.ChatCardsRunning()
 	}
 	return held
 }

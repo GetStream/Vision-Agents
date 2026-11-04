@@ -2,6 +2,10 @@
 
 ## Features
 
+### The app chat writes episode cards to the person's omni-channel
+
+Under an agent config with `episode_cards` on, a person's message in a plain `agent` channel of the app chat now opens an episode, as a call or a Slack thread does. Its card (source `chat`) goes to the person's omni-channel and names the channel the chat is in. The person is the Stream user who wrote, in the Stream app the message came from. One run of messages is one episode and one card; after `episodes.idle_after` without a message, the sweeper closes it and writes its summary. A thread channel, an omni-channel, an incognito session and a call's session open none. A config with `episode_cards` off reads and writes nothing new (AI-2632, #1701).
+
 ### A personal conversation takes a video with a question
 
 `POST /v1/agents/sessions/{id}/responses` takes `videos` with a `request_id`, where it was a 400 ("a request id carries text and images, not videos"), so a session with a user can be shown a clip. The model gets the clip's frames with the question, each with the moment it was taken. The person's message shows only what they typed and their photos. A retry under the same `request_id` does not fetch or sample its videos again and does not reach the model again. Without a `request_id`, a personal conversation still refuses the question, now before any video is fetched. Go's `Responses.Create` now sends a request id with clips when no photos go with them. `VideoSource.url` names the containers it takes: MP4, MOV, 3GP, MKV and WebM (AI-2515, AI-2508).

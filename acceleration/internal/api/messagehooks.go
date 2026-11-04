@@ -342,7 +342,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 
 	// Nothing is running, so this has to be given to a worker, and that needs to know
 	// whose channel it is and which agent answers in it.
-	customerID, configID, found, err := s.ownerOf(ctx, origin, event)
+	customerID, configID, declared, found, err := s.ownerOf(ctx, origin, event)
 	if err != nil {
 		return false
 	}
@@ -387,7 +387,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			return false
 		}
 	}
-	s.chatEpisodeUnopened(ctx, origin, event, customerID, configID, heardFor, recorded)
+	s.chatEpisodeUnopened(ctx, origin, event, declared, heardFor, recorded)
 
 	if answer, settled := s.answerOnce(ctx, origin, event); !answer {
 		return settled
@@ -574,20 +574,21 @@ const ConfigField = "agent_config_id"
 // have been in that app, and a config the channel names has to be the app's own customer's.
 //
 // err is a read that failed, which a later try may get through: the queue's worker tries again.
-func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string, found bool, err error) {
+func (s *Server) ownerOf(ctx context.Context, origin hookOrigin, event messageEvent) (customerID, configID string,
+	declared *store.AgentConfig, found bool, err error) {
 	previous, held, err := s.lastCallOn(ctx, origin, event.ChannelID)
 	if err != nil && !errors.Is(err, store.ErrAmbiguousHook) {
-		return "", "", false, err
+		return "", "", nil, false, err
 	}
 	if held && (origin.deployment || previous.CustomerID == origin.customer) {
-		return previous.CustomerID, previous.ConfigID, true, nil
+		return previous.CustomerID, previous.ConfigID, nil, true, nil
 	}
 
 	config, named, err := s.declaredConfigOf(ctx, origin, event)
 	if err != nil || !named {
-		return "", "", false, err
+		return "", "", nil, false, err
 	}
-	return config.CustomerID, config.ID, true, nil
+	return config.CustomerID, config.ID, &config, true, nil
 }
 
 // declaredConfigOf is the config a channel names, when the store says a customer of the hook's
