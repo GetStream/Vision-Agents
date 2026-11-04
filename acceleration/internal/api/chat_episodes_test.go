@@ -114,6 +114,67 @@ func (s *ChatEpisodesSuite) TestAChatMessageTheWebhookBringsWritesACard() {
 	s.Equal(store.EpisodeChat, custom["source"])
 }
 
+// Catches a card written from a channel that is not the person's alone, whose lines would
+// reach her other sessions though a session reads cards only in such a channel
+// (omnichannel.Between), and a channel taken as hers when what Stream sent says nothing of its
+// members: the message is answered, and opens no episode. Each channel is the event's, as
+// Stream sends it; PERSON is the writer and AGENT the agent's user, the channel's id.
+func (s *ChatEpisodesSuite) TestAMessageInAChannelThatIsNotThePersonsAloneOpensNoEpisode() {
+	for _, c := range []struct{ name, channel string }{
+		{"a third member", `{"members": [{"user_id": "PERSON"}, {"user_id": "carl"}]}`},
+		{"the person, the agent and a third member", `{"members": [{"user_id": "PERSON"}, {"user_id": "AGENT"}, {"user_id": "carl"}]}`},
+		{"the agent alone", `{"members": [{"user_id": "AGENT"}]}`},
+		{"somebody else alone", `{"members": [{"user_id": "carl"}]}`},
+		{"a member with no user id", `{"members": [{"user_id": "PERSON"}, {"user": {"id": "carl"}}]}`},
+		{"no members", `{"members": []}`},
+		{"members null", `{"members": null}`},
+		{"no members field", `{"id": "AGENT", "member_count": 1}`},
+		{"members of another type", `{"members": "PERSON"}`},
+		{"a user id of another type", `{"members": [{"user_id": "PERSON"}, {"user_id": 7}]}`},
+		{"a channel of another type", `"PERSON"`},
+		{"no channel", ``},
+	} {
+		s.Run(c.name, func() {
+			s.channelID = "chat-" + s.utils.uuid()
+			worker := s.worker()
+			config := s.config(true, "llm-flow")
+			channel := strings.NewReplacer("PERSON", s.user, "AGENT", s.channelID).Replace(c.channel)
+
+			s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
+
+			s.True(s.reachesWorker(worker), "the message is answered")
+			s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+		})
+	}
+}
+
+// Catches the agent counted as somebody else: a person's channel the agent is a member of too
+// is hers, and her message writes its card. The person alone is every other test's channel.
+func (s *ChatEpisodesSuite) TestAMessageInThePersonsChannelWithTheAgentWritesACard() {
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+	channel := fmt.Sprintf(`{"members": [{"user_id": %q}, {"user_id": %q}], "member_count": 2}`, s.user, s.channelID)
+
+	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
+
+	s.True(s.reachesWorker(worker), "the message is answered")
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+}
+
+// Catches a session running on the channel passed over by the members rule: its message in a
+// channel with a third member opens nothing, as a worker's does.
+func (s *ChatEpisodesSuite) TestAMessageToARunningSessionInAChannelWithAThirdMemberOpensNoEpisode() {
+	s.worker()
+	config := s.config(true, "en-low-latency")
+	s.serverClient.createSession(CreateSessionRequest{AgentId: &s.channelID, ConfigId: &config.ID})
+	channel := fmt.Sprintf(`{"members": [{"user_id": %q}, {"user_id": "carl"}]}`, s.user)
+
+	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.writtenIn(config.ID, "where is my order?", channel, time.Now()), s.current))
+
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
 // Catches a redelivery that opens a second episode or writes a second card: the queue's worker
 // tries a row again when its lease runs out, after a try that opened the episode.
 func (s *ChatEpisodesSuite) TestAQueuedMessageTriedAgainOpensNoSecondEpisode() {
@@ -254,6 +315,7 @@ func (s *ChatEpisodesSuite) TestOneUserIDInTwoStreamAppsIsTwoPeople() {
 		var event messageEvent
 		event.ChannelType, event.ChannelID = "agent", fmt.Sprintf("chat-%d-%s", app, s.utils.uuid())
 		event.Message.ID, event.Message.Text, event.Message.User.ID = "message-"+s.utils.uuid(), "where is my order?", s.user
+		event.Channel = []byte(fmt.Sprintf(`{"members": [{"user_id": %q}]}`, s.user))
 		s.router.chatEpisode(ctx, hookOrigin{app: app, queued: true}, event, session.FromConfig(config))
 	}
 
@@ -373,34 +435,41 @@ func (s *ChatEpisodesSuite) TestAMessageToACallsSessionOpensNoChatEpisode() {
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond)
 }
 
-// Catches a chat episode the idle sweeper leaves open or cannot summarize: a chat episode has
-// no session, so it closes as idle, and its channel, which the customer's app made with the
-// config it names and none of the router's stamps, is read for the summary. recites answers
-// with what it was handed, so the summary holds the person's line.
-func (s *ChatEpisodesSuite) TestAnIdleChatEpisodeIsClosedAndSummarized() {
+// Catches a chat episode the idle sweeper leaves open or cannot summarize, and one whose
+// summary leaves out the message that opened it: Stream made that message before the router
+// opened its episode, so an episode started at the open reads none of it from its start on. A
+// chat episode has no session, so it closes as idle, here by its last message, its start left
+// as the message made it; its channel, which the customer's app made with the config it names
+// and none of the router's stamps, is read for the summary. recites answers with what it was
+// handed, so the summary holds the person's line.
+func (s *ChatEpisodesSuite) TestAnIdleChatEpisodeIsSummarizedFromTheMessageThatOpenedIt() {
 	ctx := context.Background()
 	s.worker()
 	config := s.config(true, "recites/recites-model")
 	bound, err := s.stream.For(ctx, s.customerID())
 	s.Require().NoError(err)
 	_, err = bound.Client.Chat().GetOrCreateChannel(ctx, "agent", s.channelID, &getstream.GetOrCreateChannelRequest{
-		Data: &getstream.ChannelInput{CreatedByID: &s.user, Custom: map[string]any{ConfigField: config.ID}},
+		Data: &getstream.ChannelInput{CreatedByID: &s.user, Custom: map[string]any{ConfigField: config.ID},
+			Members: []getstream.ChannelMemberRequest{{UserID: s.user}}},
 	})
 	s.Require().NoError(err)
 	text := "I need to move my appointment to Tuesday"
-	_, err = bound.Client.Chat().SendMessage(ctx, "agent", s.channelID, &getstream.SendMessageRequest{
+	sent, err := bound.Client.Chat().SendMessage(ctx, "agent", s.channelID, &getstream.SendMessageRequest{
 		Message: getstream.MessageRequest{Text: &text, UserID: &s.user},
 	})
 	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.writes(config.ID, text))
+	created := sent.Data.Message.CreatedAt.Time
+	s.Require().NotNil(created)
+	s.Require().Equal(http.StatusOK, s.delivers(&s.RouterSuite, s.written(config.ID, text), s.current))
 	omni := s.omniChannel()
 	s.cards(omni, 1)
-	// Idle for two hours, past the closer's hour.
-	_, err = s.store.DB().ExecContext(ctx,
-		"UPDATE episodes SET started_at = now() - interval '2 hours' WHERE customer_id = ?", s.customerID())
-	s.Require().NoError(err)
-	_, err = s.store.DB().ExecContext(ctx, `UPDATE episode_activity SET last_message_at = now() - interval '2 hours'
-WHERE episode_id IN (SELECT id FROM episodes WHERE customer_id = ?)`, s.customerID())
+	var started time.Time
+	s.Require().NoError(s.store.DB().QueryRowContext(ctx, "SELECT started_at FROM episodes WHERE customer_id = ?", s.customerID()).Scan(&started))
+	s.True(started.Equal(created.Truncate(time.Microsecond)), "the episode starts at %s, not when its message was made (%s)", started, created)
+	// Idle for two hours by its last message, past the closer's hour.
+	_, err = s.store.DB().ExecContext(ctx, `INSERT INTO episode_activity (episode_id, last_message_at)
+SELECT id, now() - interval '2 hours' FROM episodes WHERE customer_id = ?
+ON CONFLICT (episode_id) DO UPDATE SET last_message_at = excluded.last_message_at`, s.customerID())
 	s.Require().NoError(err)
 
 	s.Require().NoError(s.episodes.Sweep(ctx))
@@ -627,11 +696,37 @@ func (s *ChatEpisodesSuite) writes(configID, text string) int {
 }
 
 // written is a message.new the test's user wrote in the test's channel, which names the
-// config given, or none for an empty one.
+// config given, or none for an empty one, as Stream sends it: with the channel's members, the
+// ones the fake Chat holds, else the test's user alone, as the customer's app makes a person's
+// chat; and made when the fake Chat stored the last message of that text there, else now.
 func (s *ChatEpisodesSuite) written(configID, text string) string {
+	members := s.chat.Members(s.channelID)
+	if len(members) == 0 {
+		members = []string{s.user}
+	}
+	var listed []string
+	for _, member := range members {
+		listed = append(listed, fmt.Sprintf(`{"user_id": %q, "user": {"id": %q}}`, member, member))
+	}
+	created := time.Now()
+	for _, stored := range s.chat.Stored(s.channelID) {
+		if at, ok := stored["created_at"].(int64); ok && stored["text"] == text {
+			created = time.Unix(0, at)
+		}
+	}
+	return s.writtenIn(configID, text, `{"members": [`+strings.Join(listed, ", ")+`]}`, created)
+}
+
+// writtenIn is written with the channel given, raw, as the event's channel, none for "", and
+// the message made at created.
+func (s *ChatEpisodesSuite) writtenIn(configID, text, channel string, created time.Time) string {
 	custom := fmt.Sprintf("{%q: %q}", ConfigField, configID)
 	if configID == "" {
 		custom = "{}"
+	}
+	sent := ""
+	if channel != "" {
+		sent = fmt.Sprintf(`"channel": %s,`, channel)
 	}
 	return fmt.Sprintf(`{
   "type": "message.new",
@@ -640,9 +735,10 @@ func (s *ChatEpisodesSuite) written(configID, text string) string {
   "channel_type": "agent",
   "created_at": %q,
   "channel_custom": %s,
-  "message": {"id": %q, "text": %q, "user": {"id": %q, "name": "Anya"}}
-}`, suiteStreamApp, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), custom,
-		"message-"+s.utils.uuid(), text, s.user)
+  %s
+  "message": {"id": %q, "text": %q, "created_at": %q, "user": {"id": %q, "name": "Anya"}}
+}`, suiteStreamApp, s.channelID, time.Now().UTC().Format(time.RFC3339Nano), custom, sent,
+		"message-"+s.utils.uuid(), text, created.UTC().Format(time.RFC3339Nano), s.user)
 }
 
 // sessionAnswered leaves the calls row a worker's session answering in the test's channel

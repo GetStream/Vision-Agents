@@ -200,3 +200,20 @@ func (s *ReadSuite) TestOnlyAMessageAnOmniChannelsAgentWroteThereIsACard() {
 	s.False(writtenAsCard(card("messaging:omni-1", "omni-1")), "another channel type")
 	s.False(writtenAsCard(card("", "")))
 }
+
+// Catches a channel taken as one person's when somebody else is a member, or when she is not
+// one, and the agent counted as somebody else. A member with no id is somebody else, also for
+// an agent with none, as a session that names no agent id reads.
+func (s *ReadSuite) TestAChannelIsThePersonsOnlyWhenItsMembersAreHerAloneOrHerAndTheAgent() {
+	s.True(Between([]string{"anya"}, "anya", "agent-1"), "her alone")
+	s.True(Between([]string{"anya", "agent-1"}, "anya", "agent-1"), "her and the agent")
+	s.True(Between([]string{"agent-1", "anya"}, "anya", "agent-1"), "in any order")
+	s.False(Between([]string{"anya", "carl"}, "anya", "agent-1"), "a third member")
+	s.False(Between([]string{"anya", "agent-1", "carl"}, "anya", "agent-1"), "a third member beside the agent")
+	s.False(Between([]string{"agent-1"}, "anya", "agent-1"), "the agent alone")
+	s.False(Between([]string{"carl"}, "anya", "agent-1"), "somebody else alone")
+	s.False(Between(nil, "anya", "agent-1"), "no members")
+	s.False(Between([]string{"anya", ""}, "anya", "agent-1"), "a member with no id")
+	s.False(Between([]string{"anya", ""}, "anya", ""), "a member with no id, for an agent with none")
+	s.False(Between([]string{"anya", "carl"}, "anya", "anya"), "a third member, the agent being her")
+}

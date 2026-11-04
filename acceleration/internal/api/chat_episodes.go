@@ -1,7 +1,6 @@
 package api
 
 import (
-	"cmp"
 	"context"
 	"strings"
 	"sync"
@@ -28,8 +27,9 @@ const chatCardTimeout = 30 * time.Second
 // (store.EpisodeCards, until).
 //
 // The episode is the person's only in a channel whose members are that person alone, or that
-// person and the agent, the Stream user the agent writes its replies as (its agent id, which a
-// worker's session takes from the channel's id): the rule a session reads the cards by
+// person and the agent, the Stream user the agent writes its replies as: its agent id, which is
+// the channel's id for every session a message here reaches (ByAgentWhere) and for the one a
+// worker opens for it (Manager.handedOut). It is the rule a session reads the cards by
 // (omnichannel.Between). The members are the ones Stream sends with the message; none sent is
 // no person, and opens nothing. The episode starts when Stream made the message that opened
 // it, so the summary, which reads the lines from the start on (omnichannel.linesOf), holds it:
@@ -51,7 +51,7 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 			"stream_app", origin.app)
 		return
 	}
-	if !omnichannel.Between(event.members(), event.Message.User.ID, cmp.Or(answering.AgentID, event.ChannelID)) {
+	if !omnichannel.Between(event.members(), event.Message.User.ID, event.ChannelID) {
 		s.logger.Info("no episode card for a message in a channel that is not the person's alone", "channel", event.ChannelID,
 			"stream_app", origin.app)
 		return
