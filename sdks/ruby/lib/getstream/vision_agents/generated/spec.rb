@@ -1280,6 +1280,12 @@ module GetStream
           body: "SessionQuery", body_required: false,
           socket: false, client_accessible: true
         }.freeze,
+        "readPage" => {
+          method: :post, path: "/v1/ocr",
+          path_params: [].freeze, query: [].freeze,
+          body: "OcrRequest", body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "receiveCallMachine" => {
           method: :post, path: "/v1/phone/machine/{token}",
           path_params: %w[token].freeze, query: [].freeze,
@@ -2400,6 +2406,18 @@ module GetStream
         "NumberSearchResult" => {
           properties: %w[numbers skipped].freeze,
           required: %w[numbers skipped].freeze, open: false
+        }.freeze,
+        "OcrOptions" => {
+          properties: %w[data_policy providers target].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "OcrRequest" => {
+          properties: %w[image options tags].freeze,
+          required: %w[image].freeze, open: false
+        }.freeze,
+        "OcrResult" => {
+          properties: %w[cost_micros error error_code id markdown model provider status].freeze,
+          required: %w[cost_micros id markdown status].freeze, open: false
         }.freeze,
         "OfferedTool" => {
           properties: %w[description name parameters tokens].freeze,

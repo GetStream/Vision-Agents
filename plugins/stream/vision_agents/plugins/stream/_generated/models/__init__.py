@@ -304,6 +304,12 @@ from .model_overwrites_thinking import ModelOverwritesThinking
 from .model_overwrites_verbosity import ModelOverwritesVerbosity
 from .model_tokens import ModelTokens
 from .number_search_result import NumberSearchResult
+from .ocr_error_code import OcrErrorCode
+from .ocr_options import OcrOptions
+from .ocr_request import OcrRequest
+from .ocr_request_tags import OcrRequestTags
+from .ocr_result import OcrResult
+from .ocr_status import OcrStatus
 from .offered_tool import OfferedTool
 from .offered_tool_parameters import OfferedToolParameters
 from .offered_tools import OfferedTools
@@ -873,6 +879,12 @@ __all__ = (
     "ModelOverwritesVerbosity",
     "ModelTokens",
     "NumberSearchResult",
+    "OcrErrorCode",
+    "OcrOptions",
+    "OcrRequest",
+    "OcrRequestTags",
+    "OcrResult",
+    "OcrStatus",
     "OfferedTool",
     "OfferedToolParameters",
     "OfferedTools",

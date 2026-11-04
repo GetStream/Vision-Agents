@@ -2754,6 +2754,13 @@ impl Client {
         )
         .await
     }
+    /// Read the text of one page, and return it as Markdown
+    ///
+    /// `POST /v1/ocr` (`readPage`).
+    pub async fn read_page(&self, body: &types::OcrRequest) -> Result<types::OcrResult> {
+        self.send(Method::POST, "/v1/ocr", None::<&()>, Some(body), "readPage")
+            .await
+    }
     /// Make Stream's own app a customer's provider app
     ///
     /// `PUT /v1/ops/customers/{customer_id}/connectors/{id}/provider-app` (`setOperatorProviderApp`).

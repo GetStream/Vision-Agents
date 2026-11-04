@@ -2900,6 +2900,27 @@ export type paths = {
         readonly patch?: never;
         readonly trace?: never;
     };
+    readonly "/v1/ocr": {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly get?: never;
+        readonly put?: never;
+        /**
+         * Read the text of one page, and return it as Markdown
+         * @description Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+         *     A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+         */
+        readonly post: operations["readPage"];
+        readonly delete?: never;
+        readonly options?: never;
+        readonly head?: never;
+        readonly patch?: never;
+        readonly trace?: never;
+    };
     readonly "/v1/phone/business-profile": {
         readonly parameters: {
             readonly query?: never;
@@ -7157,10 +7178,10 @@ export type components = {
         };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
-         * @description What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+         * @description What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
          * @enum {string}
          */
-        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "decision_model" | "image" | "detection" | "memory" | "knowledge" | "phone";
+        readonly Modality: "stt" | "tts" | "llm" | "sts" | "search" | "decision_model" | "image" | "detection" | "ocr" | "memory" | "knowledge" | "phone";
         readonly ModelCallTiming: {
             /**
              * Format: double
@@ -7242,6 +7263,63 @@ export type components = {
             /** @description Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which. */
             readonly skipped: readonly components["schemas"]["SkippedVendor"][];
         };
+        /**
+         * @description Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+         * @enum {string}
+         */
+        readonly OcrErrorCode: "provider_failed" | "timeout" | "cancelled";
+        /** @description Who reads the page, and what may happen to it afterwards. */
+        readonly OcrOptions: {
+            readonly data_policy?: components["schemas"]["DataPolicy"];
+            /** @description A priority list of where to try, in the order given, which wins over target when it holds anything. */
+            readonly providers?: readonly string[];
+            /**
+             * @description A provider/model or a shortcut. Defaults to ocr-default.
+             * @example ocr-vision
+             */
+            readonly target?: string;
+        };
+        readonly OcrRequest: {
+            /**
+             * Format: byte
+             * @description The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+             */
+            readonly image: string;
+            readonly options?: components["schemas"]["OcrOptions"];
+            readonly tags?: {
+                readonly [key: string]: string;
+            };
+        };
+        readonly OcrResult: {
+            /**
+             * Format: int64
+             * @description Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+             */
+            readonly cost_micros: number;
+            /** @description What went wrong, in words. Absent when the page was read. */
+            readonly error?: string;
+            readonly error_code?: components["schemas"]["OcrErrorCode"];
+            /**
+             * @description This response's own id, for logs. Nothing is stored under it.
+             * @example ocr_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+             */
+            readonly id: string;
+            /** @description The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed. */
+            readonly markdown: string;
+            /** @example mistral-ocr-4-1 */
+            readonly model?: string;
+            /**
+             * @description Who read it, or who failed to. Absent when nothing got as far as a provider.
+             * @example mistral
+             */
+            readonly provider?: string;
+            readonly status: components["schemas"]["OcrStatus"];
+        };
+        /**
+         * @description Whether the page was read. A failed reading says why in error_code and error.
+         * @enum {string}
+         */
+        readonly OcrStatus: "completed" | "failed";
         /** @description One tool as the model sees it. */
         readonly OfferedTool: {
             /** @description What the model is told the tool does. */
@@ -17161,6 +17239,41 @@ export interface operations {
                 };
                 content: {
                     readonly "application/json": components["schemas"]["ImageGeneration"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
+            readonly 404: components["responses"]["NotFound"];
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly readPage: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path?: never;
+            readonly cookie?: never;
+        };
+        readonly requestBody: {
+            readonly content: {
+                readonly "application/json": components["schemas"]["OcrRequest"];
+            };
+        };
+        readonly responses: {
+            /** @description What the page says, or why nothing was read */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["OcrResult"];
                 };
             };
             readonly 400: components["responses"]["BadRequest"];
