@@ -109,7 +109,7 @@ func TestSessionCreateSuite(t *testing.T) {
 - Migrations run once per run (`migrated`), not once per suite: they set goose's globals and attach triggers.
 - Fixtures load once behind a lock, so a suite asking for one another suite is loading waits for it.
 - Each suite has its own Redis database, handed out in order, so one suite's keys are not another's.
-- A suite that reads the change feed (`/v1/data/changes`) starts with `suite.Run`, on its own: the feed waits for every transaction open on the Postgres server, in any database, and other suites hold a row lock for seconds.
+- A suite that reads the change feed (`/v1/data/changes`) starts with `suite.Run`, on its own: the feed waits for every transaction open on the Postgres server, in any database, and other suites hold a row lock for seconds. Locally, `go test -tags integration ./...` runs packages in parallel on one server, so run it with `-p 1` for these suites.
 - Nothing may be shared but Postgres and fixtures. No package-level state a test writes, and no fixed ids: another suite is making rows in the same app at the same time.
 - A stub is shared by every test in its suite and keeps what it was asked for. Name your own prompt, state or instructions with a UUID and read back that one, rather than resetting the stub between tests. A stub that has to answer something particular is a provider of its own in `routers`, built fresh per session: `echo` answers with the session's instructions, `tooling` reaches for the caller's tool, `slow` is a while in the writing.
 - Run with `-race` when you touch the harness. Every race report must come from the code under test, never from the suite.
