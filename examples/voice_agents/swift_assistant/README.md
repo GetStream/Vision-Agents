@@ -54,7 +54,7 @@ It listens on `:8098`, beside the Swift demo's on `:8099`.
 Put the `STREAM_API_KEY` the router runs with in `Assistant.streamAPIKey`, in
 `app/SwiftAssistant/Assistant.swift`, then open `app/SwiftAssistant.xcodeproj` in Xcode 27 and
 run it on a simulator. The app
-takes `stream-chat-swift` from its `add/ai-chat` branch, because what it shows is not released
+takes `stream-chat-swift` from its `develop` branch, because what it shows is not released
 yet: `StreamChatAI`'s `AIConversation` and generative UI, and its renderers of A2UI and OpenUI,
 `StreamChatA2UI` and `StreamChatOpenUI`.
 Close `SwiftDemo.xcodeproj` first: it opens the same local package, the repository's root, and Xcode

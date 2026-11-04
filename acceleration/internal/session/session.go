@@ -804,7 +804,7 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 		told += "\n\n" + note
 	}
 	if handedOn {
-		if nothingToAnswer(text, images) {
+		if nothingToAnswer(told, images) {
 			return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
 		}
 		return s.followUp(ctx, id, told, images, asked, true)
