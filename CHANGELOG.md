@@ -363,7 +363,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A repeat copy keeps a connection authorized again where it moved to
 
-`router replicate --once` and `POST /v1/data/import` reset each connector connection to `needs_reauthorization`, even one the owner had authorized again on the destination, whose credentials then no longer opened. A connection that is `connected` on the destination now keeps its state, whatever the source sends for it. A connection not authorized there still arrives needing it, with the source's edits (AI-2656).
+`router replicate --once` and `POST /v1/data/import` reset each connector connection to `needs_reauthorization`, even one the owner had authorized again on the destination, whose credentials then no longer opened. A connection that is `connected` on the destination now keeps its state and credentials: a rename, a disconnect or a soft delete at the source no longer reaches it, while a hard delete still does. A connection not authorized there still arrives needing it, with the source's edits (AI-2656).
 
 ### Pausing a campaign stops its calls on every router
 

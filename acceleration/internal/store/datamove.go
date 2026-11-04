@@ -574,8 +574,12 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	// version, which an import would reset to a connection needing them. The owner authorized it
 	// here, and the source can send nothing it could use instead: not even a newer row, since a
 	// refresh at a source still live during the move rewrites the row there.
+	//
+	// A refresh here checkpoints the row as needing reauthorization before the provider answers,
+	// so the status alone would let an import in during the call and fail the save that follows.
+	// An import writes key version 0 and only a seal here raises it: a row past 0 is one sealed here.
 	if table == "connector_connections" {
-		conflict += fmt.Sprintf(" AND %s.status <> '%s'", spec.name, ConnectionConnected)
+		conflict += fmt.Sprintf(" AND %s.status <> '%s' AND %s.credentials_kek_version = 0", spec.name, ConnectionConnected, spec.name)
 	}
 
 	// Every writer of a log draws its id under its customer's lock (RecordAgentLog), so ids
