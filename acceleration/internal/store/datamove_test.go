@@ -531,6 +531,7 @@ func (s *DataMoveSuite) TestAQuietCustomerWhoseCursorAgedOutIsNotRefused() {
 	s.capture("other")
 	s.seedAgentConfig(s.source, "acme", "one")
 	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "other", "aged out too")
 	s.age()
 	s.prune()
 	s.seedAgentConfig(s.source, "other", "later")

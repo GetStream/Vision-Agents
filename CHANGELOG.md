@@ -361,6 +361,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### An app's first `router replicate --once` is not refused as expired
+
+`GET /v1/data/changes` answered 410 to the cursor of an app's own export when other apps that are moving had changes after it, so the first `--once` stopped with "the source no longer keeps the changes since that cursor" and only a rerun went on. Change numbers are shared by every app, so those numbers are not a sign of pruning. Now a cursor gets 410 only when it is older than the oldest change still kept (AI-2683).
+
 ### Pausing a campaign stops its calls on every router
 
 `POST /v1/agents/campaigns/{id}/pause` stopped the campaign only on the router that answered it. A router behind the same load balancer that was running the campaign went on ringing people, and finished the campaign over the pause when nobody was left. Now no router takes another contact from a campaign that is not running. A router whose loop outlived a pause made elsewhere exits that loop at its next claim and writes no state. A start on that router before then runs the campaign again (AI-2681).
