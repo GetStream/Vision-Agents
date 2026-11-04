@@ -1344,8 +1344,10 @@ func (s *AppsSuite) TestEachNumberHasARuleOfItsOwnThatReadsTheHeader() {
 	s.Equal(first.RouteID, held.StreamRouteID)
 }
 
-func (s *AppsSuite) TestANumberAttachedBeforeSharedTrunksIsAdoptedAsItIs() {
-	s.sealed()
+// onItsOwnTrunk gives the suite's number a trunk and a rule of its own in the deployment's
+// app, attached as a number was before trunks were shared, and answers the app, what was
+// stored and the bridge.
+func (s *AppsSuite) onItsOwnTrunk() (*Stream, store.NumberAttachment, Bridge) {
 	stream, pin, err := s.service.streamFor(s.ctx, s.customer)
 	s.Require().NoError(err)
 	trunkID, bridge, err := stream.CreateTrunk(s.ctx, Trunk{Name: "phone-" + s.e164, Numbers: []string{s.e164}})
@@ -1359,11 +1361,19 @@ func (s *AppsSuite) TestANumberAttachedBeforeSharedTrunksIsAdoptedAsItIs() {
 	s.Require().NoError(err)
 	sealed, err := s.service.sealer.SealWithAAD(bridge.Password, bridgeAAD(s.customer, s.e164))
 	s.Require().NoError(err)
-	s.Require().NoError(s.store.AttachNumber(s.ctx, s.customer, s.e164, store.NumberAttachment{
+	attached := store.NumberAttachment{
 		TrunkID: trunkID, RouteID: routeID, StreamAppPK: pin, CallType: defaultCallType,
 		BridgeURI: bridge.URI, BridgeUsername: bridge.Username,
 		BridgePasswordSealed: sealed, BridgePasswordKEKVersion: s.service.sealer.CurrentVersion(),
-	}))
+	}
+	s.Require().NoError(s.store.AttachNumber(s.ctx, s.customer, s.e164, attached))
+	return stream, attached, bridge
+}
+
+func (s *AppsSuite) TestANumberAttachedBeforeSharedTrunksIsAdoptedAsItIs() {
+	s.sealed()
+	_, attached, bridge := s.onItsOwnTrunk()
+	trunkID, routeID := attached.TrunkID, attached.RouteID
 
 	line, err := s.lineFor(s.customer, s.e164)
 
@@ -1384,6 +1394,189 @@ func (s *AppsSuite) TestANumberAttachedBeforeSharedTrunksIsAdoptedAsItIs() {
 	joined, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
 	s.Require().NoError(err)
 	s.Equal(trunkID, joined.TrunkID, "the adopted trunk takes the customer's next number")
+}
+
+// The requests are the ones the router made before a lost rule or trunk was looked for.
+func (s *AppsSuite) TestAWorkingLineAsksStreamWhatItAskedBefore() {
+	s.sealed()
+	_, attached, _ := s.onItsOwnTrunk()
+	before := len(s.deployment.Requests(s.deployment.Key))
+
+	_, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	_, err = s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+	s.Require().NoError(err)
+
+	var asked []string
+	for _, request := range s.deployment.Requests(s.deployment.Key)[before:] {
+		asked = append(asked, request.Method+" "+request.Path)
+	}
+	s.Equal([]string{
+		"PUT /api/v2/video/sip/inbound_routing_rules/" + attached.RouteID,
+		"PUT /api/v2/video/sip/inbound_trunks/" + attached.TrunkID,
+		"POST /api/v2/video/sip/inbound_routing_rules",
+	}, asked)
+}
+
+func (s *AppsSuite) TestAnAdoptedNumberWhoseRuleStreamLostGetsANewOne() {
+	s.sealed()
+	// Another number's trunk and rule, which a rule made again must not take for the number's.
+	other, err := s.lineFor(s.customer, s.anotherNumber(s.customer, s.vendor.vendor))
+	s.Require().NoError(err)
+	stream, attached, bridge := s.onItsOwnTrunk()
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+
+	line, err := s.lineFor(s.customer, s.e164)
+
+	s.Require().NoError(err)
+	s.Equal(attached.TrunkID, line.TrunkID)
+	s.Equal(bridge, line.Bridge)
+	s.NotEqual(attached.RouteID, line.RouteID)
+	s.ElementsMatch([]string{other.RouteID, line.RouteID}, s.deployment.Rules())
+	rule := s.deployment.Rule(line.RouteID)
+	s.Equal([]any{attached.TrunkID}, rule["trunk_ids"])
+	s.Equal([]any{s.e164}, rule["called_numbers"])
+	s.Equal(lineCallTemplate, rule["direct_routing_configs"].(map[string]any)["call_id"])
+	s.Equal(line.RouteID, s.number().StreamRouteID, "the new rule is stored")
+}
+
+func (s *AppsSuite) TestACallFromANumberWhoseRuleStreamLostPlaces() {
+	s.sealed()
+	stream, attached, _ := s.onItsOwnTrunk()
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+
+	_, err := s.callFrom(s.e164)
+
+	s.Require().NoError(err)
+	held := s.number()
+	s.NotEqual(attached.RouteID, held.StreamRouteID)
+	s.Equal([]string{held.StreamRouteID}, s.deployment.Rules())
+}
+
+func (s *AppsSuite) TestAttachingANumberWhoseRuleStreamLostGivesItANewOne() {
+	s.sealed()
+	stream, attached, _ := s.onItsOwnTrunk()
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal(attached.TrunkID, again.TrunkID)
+	s.Equal([]string{again.RouteID}, s.deployment.Rules())
+	s.NotEqual(attached.RouteID, again.RouteID)
+	s.NotNil(s.number().AttachedAt)
+}
+
+func (s *AppsSuite) TestANumberStreamRoutesThroughAnotherRuleIsNotGivenASecond() {
+	s.sealed()
+	stream, attached, _ := s.onItsOwnTrunk()
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+	theirs, err := stream.CreateRoute(s.ctx, Route{
+		Name: "phone-" + s.e164, TrunkIDs: []string{attached.TrunkID}, CalledNumbers: []string{s.e164}, CallID: "{{uuid}}",
+	})
+	s.Require().NoError(err)
+
+	_, err = s.lineFor(s.customer, s.e164)
+
+	s.ErrorIs(err, errRoutedElsewhere)
+	s.Equal([]string{theirs}, s.deployment.Rules())
+	s.Equal(attached.RouteID, s.number().StreamRouteID, "the row is left as it was")
+}
+
+func (s *AppsSuite) TestANumberAnotherTrunkAtStreamListsIsNotGivenATrunkOrARule() {
+	s.sealed()
+	stream, attached, _ := s.onItsOwnTrunk()
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+	s.Require().NoError(stream.DeleteTrunk(s.ctx, attached.TrunkID))
+	theirs, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "theirs", Numbers: []string{s.e164}})
+	s.Require().NoError(err)
+
+	_, err = s.lineFor(s.customer, s.e164)
+
+	s.ErrorIs(err, errRoutedElsewhere)
+	s.Equal([]string{theirs}, s.deployment.Trunks())
+	s.Empty(s.deployment.Rules())
+	s.Equal(attached.TrunkID, s.number().StreamTrunkID, "the row is left as it was")
+}
+
+func (s *AppsSuite) TestAttachingANumberWhoseOwnTrunkStreamLostPutsItOnASharedOne() {
+	s.sealed()
+	stream, attached, _ := s.onItsOwnTrunk()
+	s.Require().NoError(s.service.Detach(s.ctx, s.customer, s.e164))
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+	s.Require().NoError(stream.DeleteTrunk(s.ctx, attached.TrunkID))
+
+	again, err := s.service.Attach(s.ctx, Attachment{CustomerID: s.customer, E164: s.e164})
+
+	s.Require().NoError(err)
+	s.Equal([]string{again.TrunkID}, s.deployment.Trunks())
+	s.NotEqual(attached.TrunkID, again.TrunkID)
+	s.Equal([]string{s.e164}, s.deployment.TrunkNumbers(again.TrunkID))
+	s.Equal([]string{again.RouteID}, s.deployment.Rules())
+	s.Equal(again.Bridge, s.vendor.inbound.Bridge, "the vendor is told the new trunk")
+	held := s.number()
+	s.Equal(again.TrunkID, held.StreamTrunkID)
+	s.Equal(again.RouteID, held.StreamRouteID)
+}
+
+func (s *AppsSuite) TestANumberJoiningASharedTrunkStreamLostGetsANewOneAndTheTrunksNumbersFollow() {
+	s.sealed()
+	stream, _, err := s.service.streamFor(s.ctx, s.customer)
+	s.Require().NoError(err)
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	s.Require().NoError(stream.DeleteRoute(s.ctx, first.RouteID))
+	s.Require().NoError(stream.DeleteTrunk(s.ctx, first.TrunkID))
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+
+	joined, err := s.lineFor(s.customer, second)
+
+	s.Require().NoError(err)
+	s.NotEqual(first.TrunkID, joined.TrunkID)
+	s.Equal([]string{joined.TrunkID}, s.deployment.Trunks())
+	s.Equal([]string{second}, s.deployment.TrunkNumbers(joined.TrunkID))
+
+	again, err := s.lineFor(s.customer, s.e164)
+
+	s.Require().NoError(err)
+	s.Equal(joined.TrunkID, again.TrunkID, "a number left on the lost trunk joins the new one")
+	s.Equal([]string{second, s.e164}, s.deployment.TrunkNumbers(joined.TrunkID))
+	s.ElementsMatch([]string{joined.RouteID, again.RouteID}, s.deployment.Rules())
+	s.Equal(again.RouteID, s.number().StreamRouteID)
+}
+
+func (s *AppsSuite) TestANumberJoiningALostTrunkWhileStreamRoutesItElsewhereIsRefused() {
+	s.sealed()
+	stream, _, err := s.service.streamFor(s.ctx, s.customer)
+	s.Require().NoError(err)
+	first, err := s.lineFor(s.customer, s.e164)
+	s.Require().NoError(err)
+	s.Require().NoError(stream.DeleteRoute(s.ctx, first.RouteID))
+	s.Require().NoError(stream.DeleteTrunk(s.ctx, first.TrunkID))
+	second := s.anotherNumber(s.customer, s.vendor.vendor)
+	theirs, _, err := stream.CreateTrunk(s.ctx, Trunk{Name: "theirs", Numbers: []string{second}})
+	s.Require().NoError(err)
+
+	_, err = s.lineFor(s.customer, second)
+
+	s.ErrorIs(err, errRoutedElsewhere)
+	s.Equal([]string{theirs}, s.deployment.Trunks())
+	s.Empty(s.deployment.Rules())
+}
+
+func (s *AppsSuite) TestARuleMadeAgainForALineThatThenFailsIsDeleted() {
+	s.sealed()
+	stream, attached, _ := s.onItsOwnTrunk()
+	attached.BridgeURI = "not a sip uri"
+	s.Require().NoError(s.store.AttachNumber(s.ctx, s.customer, s.e164, attached))
+	s.Require().NoError(stream.DeleteRoute(s.ctx, attached.RouteID))
+
+	_, err := s.lineFor(s.customer, s.e164)
+
+	s.Require().ErrorContains(err, "is not a sip uri")
+	s.Empty(s.deployment.Rules())
+	s.Equal(attached.RouteID, s.number().StreamRouteID)
 }
 
 func (s *AppsSuite) TestTwoNumbersJoiningAtOnceMakeOneTrunk() {
