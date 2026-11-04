@@ -401,6 +401,134 @@ describe("sessions", () => {
       (error: unknown) => error instanceof RouterError && error.status === 404,
     );
   });
+
+  it("filters a query by when sessions were made and by their labels, and sorts it", async () => {
+    router.serve("POST", "/v1/agents/sessions/query", {
+      body: { items: [session()], has_more: false },
+    });
+
+    await api.agent("docs").sessions.query({
+      createdSince: new Date("2026-10-01T00:00:00Z"),
+      createdBefore: new Date("2026-11-01T00:00:00Z"),
+      custom: { team: "support" },
+      sort: "updated_at",
+    });
+
+    assert.deepEqual(router.last.body, {
+      filter: {
+        agent: "docs",
+        created_at: { $gte: "2026-10-01T00:00:00.000Z", $lt: "2026-11-01T00:00:00.000Z" },
+        custom: { team: "support" },
+      },
+      sort: [{ field: "updated_at" }],
+    });
+  });
+
+  it("sends one end of a date range alone, and no empty labels", async () => {
+    router.serve("POST", "/v1/agents/sessions/query", {
+      body: { items: [], has_more: false },
+    });
+
+    await api.agent("docs").sessions.search("lisbon", {
+      createdSince: new Date("2026-10-01T00:00:00Z"),
+      custom: {},
+      sort: "relevance",
+    });
+
+    assert.deepEqual(router.last.body, {
+      filter: {
+        agent: "docs",
+        created_at: { $gte: "2026-10-01T00:00:00.000Z" },
+        text: { $q: "lisbon" },
+      },
+      sort: [{ field: "relevance" }],
+    });
+  });
+
+  it("renames, voices, stops and forks a session it is not holding, by its id", async () => {
+    router.serve("PATCH", "/v1/agents/sessions/session-9", { body: session({ id: "session-9", title: "Trip" }) });
+    router.serve("POST", "/v1/agents/sessions/session-9/voice", { body: session({ id: "session-9", call_id: "c" }) });
+    router.serve("DELETE", "/v1/agents/sessions/session-9/voice", { body: session({ id: "session-9" }) });
+    router.serve("POST", "/v1/agents/sessions/session-9/stop", { status: 204 });
+    router.serve("POST", "/v1/agents/sessions/session-9/fork", {
+      status: 201,
+      body: session({ id: "session-10", conversation_id: "agent:session-10" }),
+    });
+    const sessions = api.agent("docs").sessions;
+
+    const renamed = await sessions.update("session-9", { title: "Trip" });
+    await sessions.startVoice("session-9");
+    await sessions.stopVoice("session-9");
+    await sessions.close("session-9");
+    const forking = sessions.fork("session-9", { title: "Trip, again", modelOverwrites: { llm: "openai/gpt-5" } });
+    const connection = await router.socket();
+    const forked = await forking;
+
+    assert.equal(renamed.title, "Trip");
+    assert.deepEqual(router.requestsTo("PATCH", "/v1/agents/sessions/session-9")[0]?.body, { title: "Trip" });
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-9/voice").length, 1);
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/sessions/session-9/voice").length, 1);
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions/session-9/stop").length, 1);
+    assert.deepEqual(router.requestsTo("POST", "/v1/agents/sessions/session-9/fork")[0]?.body, {
+      title: "Trip, again",
+      model_overwrites: { llm: "openai/gpt-5" },
+    });
+    assert.equal(forked.id, "session-10");
+    assert.equal(connection.path, "/v1/agents/sessions/session-10/events");
+    await forked.close();
+  });
+
+  it("remembers for the user a page signed in as, whoever the page names", async () => {
+    const page = new Client({ url: router.url, apiKey: "key" });
+    await page.setUser("jlahey", "user-token");
+    router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+
+    const held = await page.agent("docs").sessions.create({
+      watch: false,
+      memory: { user_id: "someone-else", app_id: "assistant" },
+    });
+
+    const body = router.requestsTo("POST", "/v1/agents/sessions")[0]?.body as Record<string, unknown>;
+    assert.deepEqual(body["memory"], { user_id: "jlahey", app_id: "assistant" });
+    await held.close();
+  });
+
+  it("lets a backend remember for the user it names, or the one it acts for", async () => {
+    router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+
+    const held = await api.agent("docs").sessions.create({ watch: false, memory: { user_id: "ana" } });
+
+    const body = router.requestsTo("POST", "/v1/agents/sessions")[0]?.body as Record<string, unknown>;
+    assert.deepEqual(body["memory"], { user_id: "ana" });
+    await held.close();
+  });
+
+  it("remembers for the user a backend acts for when it names none", async () => {
+    const acting = new Client(api.backend.actingFor("ana"));
+    router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+
+    const held = await acting.agent("docs").sessions.create({ watch: false, memory: {} });
+
+    const body = router.requestsTo("POST", "/v1/agents/sessions")[0]?.body as Record<string, unknown>;
+    assert.deepEqual(body["memory"], { user_id: "ana" });
+    await held.close();
+  });
+
+  it("names where a sign-in goes back to in the spelling the phones use", async () => {
+    router.serve("POST", "/v1/agents/sessions", { status: 201, body: session() });
+
+    const held = await api.agent("docs").sessions.create({ watch: false, returnUrl: "http://localhost:5173/connected.html" });
+
+    const body = router.requestsTo("POST", "/v1/agents/sessions")[0]?.body as Record<string, unknown>;
+    assert.equal(body["return_url"], "http://localhost:5173/connected.html");
+    assert.equal(body["returnUrl"], undefined);
+    await held.close();
+  });
+
+  it("refuses memory for nobody before asking the router", async () => {
+    await assert.rejects(api.agent("docs").sessions.create({ memory: {} }), ConfigurationError);
+    assert.equal(router.requestsTo("POST", "/v1/agents/sessions").length, 0);
+  });
 });
 
 describe("memories", () => {
@@ -602,7 +730,7 @@ describe("responses", () => {
     assert.notEqual(first, second, "two questions are two requests");
   });
 
-  it("names no request for a question with images, which the router refuses one for", async () => {
+  it("names a request for a question with images too, which a conversation in Chat needs", async () => {
     router.serve("POST", "/v1/agents/sessions/session-1/responses", {
       status: 202,
       body: { id: "response-1", session_id: "session-1", status: "running", created_at: new Date().toISOString() },
@@ -612,7 +740,7 @@ describe("responses", () => {
 
     const body = router.last.body as Record<string, unknown>;
     assert.deepEqual(body["images"], [{ url: "https://example.com/a.png" }]);
-    assert.equal(body["request_id"], undefined);
+    assert.match(String(body["request_id"]), /^[0-9a-f-]{36}$/);
   });
 
   it("caps one answer and sets how long it thinks, and sends neither unasked", async () => {
@@ -628,7 +756,7 @@ describe("responses", () => {
 
     assert.equal(tuned["max_output_tokens"], 512);
     assert.equal(tuned["reasoning_effort"], "high");
-    assert.match(String(tuned["request_id"]), /^[0-9a-f-]{36}$/, "still text only");
+    assert.match(String(tuned["request_id"]), /^[0-9a-f-]{36}$/);
     assert.deepEqual(Object.keys(plain).sort(), ["request_id", "text"]);
   });
 
@@ -784,6 +912,96 @@ describe("guest users", () => {
     assert.equal(router.received.length, 0);
   });
 
+  it("remembers the refresh secret a minted guest is handed", async () => {
+    router.serve("POST", "/v1/agents/guests", {
+      status: 201,
+      body: { id: "guest-1", token: "token-for-guest", refresh_secret: "secret-1" },
+    });
+    const store = memory();
+
+    await api.guestUser({}, store);
+
+    assert.equal(JSON.parse(store.value ?? "{}").refresh_secret, "secret-1");
+  });
+
+  it("comes back with the refresh secret once the remembered token has expired", async () => {
+    router.serve("POST", "/v1/agents/guests", {
+      status: 201,
+      body: {
+        id: "guest-7",
+        token: "fresh-token",
+        expires_at: "2999-01-01T00:00:00Z",
+        refresh_secret: "secret-2",
+      },
+    });
+    const store = memory();
+    store.write(
+      JSON.stringify({
+        id: "guest-7",
+        token: "expired-token",
+        expires_at: "2020-01-01T00:00:00Z",
+        refresh_secret: "secret-1",
+      }),
+    );
+
+    const guest = await api.guestUser({}, store);
+
+    assert.deepEqual(router.last.body, { id: "guest-7", refresh_secret: "secret-1" });
+    assert.equal(guest.token, "fresh-token");
+    const stored = JSON.parse(store.value ?? "{}");
+    assert.equal(stored.token, "fresh-token");
+    assert.equal(stored.refresh_secret, "secret-2", "each secret works once, so the next is kept");
+  });
+
+  it("remembers whoever comes back when a spent secret is answered with a new guest", async () => {
+    router.serve("POST", "/v1/agents/guests", {
+      status: 201,
+      body: { id: "guest-8", token: "new-token", refresh_secret: "secret-9" },
+    });
+    const store = memory();
+    store.write(
+      JSON.stringify({
+        id: "guest-7",
+        token: "expired-token",
+        expires_at: "2020-01-01T00:00:00Z",
+        refresh_secret: "spent",
+      }),
+    );
+
+    const guest = await api.guestUser({ name: "Visitor" }, store);
+    const again = await api.guestUser({}, store);
+
+    assert.equal(guest.id, "guest-8");
+    assert.equal(again.id, "guest-8");
+    assert.equal(router.received.length, 1);
+    assert.deepEqual(router.last.body, { id: "guest-7", refresh_secret: "spent", name: "Visitor" });
+    assert.equal(JSON.parse(store.value ?? "{}").refresh_secret, "secret-9");
+  });
+
+  it("mints a new guest for an expired one with no refresh secret, naming no id", async () => {
+    const store = memory();
+    store.write(
+      JSON.stringify({ id: "guest-7", token: "expired-token", expires_at: "2020-01-01T00:00:00Z" }),
+    );
+
+    const guest = await api.guestUser({}, store);
+
+    assert.equal(guest.id, "guest-1");
+    assert.deepEqual(router.last.body, {}, "an id it cannot prove is not sent");
+  });
+
+  it("hands back a remembered guest whose token has not expired without asking", async () => {
+    const store = memory();
+    store.write(
+      JSON.stringify({ id: "guest-7", token: "live-token", expires_at: "2999-01-01T00:00:00Z" }),
+    );
+
+    const guest = await api.guestUser({}, store);
+
+    assert.equal(guest.id, "guest-7");
+    assert.equal(router.received.length, 0);
+  });
+
   it("mints a fresh one when the person says they are not that guest", async () => {
     const store = memory();
     store.write(JSON.stringify({ id: "guest-7", token: "token-for-seven" }));
@@ -857,5 +1075,97 @@ describe("guest users", () => {
 
   it("keeps the guest under one key, so two tabs are one visitor", () => {
     assert.equal(GUEST_STORAGE_KEY, "stream-vision-agents-guest");
+  });
+});
+
+describe("scheduled tasks", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  /** A task as the router describes one, with only the fields a test cares about set. */
+  function task(over: Partial<Schemas["ScheduledTask"]> = {}): Schemas["ScheduledTask"] {
+    return {
+      id: "task-1",
+      title: "Call mum",
+      state: "active",
+      ...over,
+    } as Schemas["ScheduledTask"];
+  }
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  it("lists the user's tasks with the filters set, and leaves out the rest", async () => {
+    router.serve("GET", "/v1/agents/scheduled-tasks", { body: { items: [task()], has_more: false } });
+
+    const page = await api.scheduledTasks.list({ state: "paused", configId: "config-1", limit: 10, cursor: "c2" });
+    assert.equal(page.items[0]?.id, "task-1");
+    assert.equal(router.last.query.get("state"), "paused");
+    assert.equal(router.last.query.get("config_id"), "config-1");
+    assert.equal(router.last.query.get("session_id"), null);
+    assert.equal(router.last.query.get("limit"), "10");
+    assert.equal(router.last.query.get("cursor"), "c2");
+
+    await api.scheduledTasks.list();
+    assert.equal([...router.last.query.keys()].length, 0);
+  });
+
+  it("reads, snoozes, pauses, resumes and cancels a task, and pages its runs", async () => {
+    router.serve("GET", "/v1/agents/scheduled-tasks/task-1", { body: task() });
+    router.serve("PATCH", "/v1/agents/scheduled-tasks/task-1", { body: task() });
+    router.serve("POST", "/v1/agents/scheduled-tasks/task-1/pause", { body: task({ state: "paused" }) });
+    router.serve("POST", "/v1/agents/scheduled-tasks/task-1/resume", { body: task() });
+    router.serve("DELETE", "/v1/agents/scheduled-tasks/task-1", { status: 204 });
+    router.serve("GET", "/v1/agents/scheduled-tasks/task-1/runs", { body: { items: [], has_more: false } });
+
+    await api.scheduledTasks.get("task-1");
+    await api.scheduledTasks.update("task-1", { next: { in: "PT15M" } });
+    const paused = await api.scheduledTasks.pause("task-1");
+    await api.scheduledTasks.resume("task-1");
+    await api.scheduledTasks.runs("task-1", { limit: 5 });
+    assert.equal(router.last.query.get("limit"), "5");
+    await api.scheduledTasks.delete("task-1");
+
+    assert.equal(paused.state, "paused");
+    assert.deepEqual(router.requestsTo("PATCH", "/v1/agents/scheduled-tasks/task-1")[0]?.body, {
+      next: { in: "PT15M" },
+    });
+    assert.equal(router.requestsTo("POST", "/v1/agents/scheduled-tasks/task-1/resume").length, 1);
+    assert.equal(router.requestsTo("DELETE", "/v1/agents/scheduled-tasks/task-1").length, 1);
+  });
+});
+
+describe("search", () => {
+  let router: TestRouter;
+  let api: Client;
+
+  beforeEach(async () => {
+    router = await TestRouter.start();
+    api = new Client({ url: router.url, customerId: "local" });
+  });
+
+  afterEach(async () => {
+    await router.stop();
+  });
+
+  it("searches under a stored config with its cost labels, and sends neither when unset", async () => {
+    router.serve("POST", "/v1/search", { body: { answer: "Prices went up 5%.", results: [] } });
+
+    const answer = await api.router({ config: "healthcare", tags: { team: "web" } }).search("what changed in the pricing page");
+    assert.deepEqual(router.last.body, {
+      query: "what changed in the pricing page",
+      config_id: "healthcare",
+      tags: { team: "web" },
+    });
+    assert.equal((answer as { answer?: string }).answer, "Prices went up 5%.");
+
+    await api.router().search("weather in Lisbon");
+    assert.deepEqual(router.last.body, { query: "weather in Lisbon" });
   });
 });

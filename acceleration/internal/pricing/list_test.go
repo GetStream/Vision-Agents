@@ -223,6 +223,39 @@ func (s *PricingSuite) TestAModalitySplitReplacesTheTotals() {
 	s.Equal(int64(11_608-3_040), quote.OutputCostMicros)
 }
 
+// TestACachedTotalSplitByNoModalityIsSharedOutAtTheCachedRate: a vendor reported 600 of the
+// 1,000 prompt tokens cached and no split of them, so 60% of the 200 text and of the 800 audio
+// is billed at the cached rate, rather than all 1,000 at the fresh ones.
+func (s *PricingSuite) TestACachedTotalSplitByNoModalityIsSharedOutAtTheCachedRate() {
+	list := s.list(realtime)
+	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS}
+
+	quote := list.Quote(item, Quantities{
+		InputTokens: 1_000, CachedInputTokens: 600, InputTextTokens: 200, InputAudioTokens: 800,
+	})
+
+	// 80 fresh text at $4, 320 fresh audio at $32, and 120 + 480 cached at $0.40 a million.
+	s.Equal(int64(320+10_240+240), quote.CostMicros)
+}
+
+// TestACachedTotalIsKeptAtTheFreshRateWithNoCachedRate: Gemini Live publishes no cached rate,
+// so its cached tokens stay in their modality, at its rate: text at text's, never at the input
+// total's, which is audio's.
+func (s *PricingSuite) TestACachedTotalIsKeptAtTheFreshRateWithNoCachedRate() {
+	live := Entry{Modality: "sts", Provider: "gemini", Model: "live", Region: RegionUS, Rates: map[Meter]Rate{
+		InputTokens: perMillion(3), InputTextTokens: perMillion(0.75), InputAudioTokens: perMillion(3),
+		OutputTokens: perMillion(12),
+	}}
+	list := s.list(live)
+	item := Item{Modality: "sts", Provider: "gemini", Model: "live", Region: RegionUS}
+
+	quote := list.Quote(item, Quantities{
+		InputTokens: 2_600, CachedInputTokens: 2_048, InputTextTokens: 2_400, InputAudioTokens: 200,
+	})
+
+	s.Equal(int64(1_800+600), quote.CostMicros)
+}
+
 func (s *PricingSuite) TestAModalityMeterWithNoRateFallsBackToTheGenericOne() {
 	list := s.list(realtime)
 	item := Item{Modality: "sts", Provider: "openai", Model: "gpt-realtime-2.1", Region: RegionUS}

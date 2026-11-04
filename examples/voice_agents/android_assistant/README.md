@@ -2,7 +2,8 @@
 
 The Android half of [swift_assistant](../swift_assistant): Juno, the same agent, talked to by an
 Android app. The agent, its instructions, and the two Go programs that store it and sign the
-phone's Stream token are all swift_assistant's. Only the app is here.
+phone's Stream token are all swift_assistant's. Only the app is here. The web app is
+[react_assistant](../react_assistant).
 
 ```
 settings.gradle.kts   builds the app against sdks/kotlin as it is in this checkout

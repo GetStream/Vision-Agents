@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/llmtest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
@@ -112,6 +113,53 @@ func (s *PersonSuite) TestASlackUserIsKeyedByTheirWorkspace() {
 func (s *PersonSuite) TestASlackUserNeedsAWorkspace() {
 	_, err := SlackUser("", "U0000ALICE")
 	s.ErrorContains(err, "a Slack team and a Slack user are required")
+}
+
+// The app chat's person is the Stream user who wrote, by the id Stream signed, in the app the
+// message came from. Catches a key of the user id alone: the same id in another Stream app of
+// the customer is another person.
+func (s *PersonSuite) TestAStreamUserIsKeyedByTheirAppAndUserID() {
+	person, err := StreamUser(111, "anya_123")
+	s.Require().NoError(err)
+	other, err := StreamUser(222, "anya_123")
+	s.Require().NoError(err)
+
+	s.Equal(Person{Kind: store.ContactStreamUser, Address: "111:anya_123"}, person)
+	s.NotEqual(person, other, "one user id in two apps is two people")
+}
+
+// A message with no user, or from an app not known, names nobody, so it keys no contact map
+// row.
+func (s *PersonSuite) TestAStreamUserNeedsAnAppAndAnID() {
+	_, err := StreamUser(111, "")
+	s.ErrorContains(err, "a Stream app and a Stream user are required")
+	_, err = StreamUser(0, "anya_123")
+	s.ErrorContains(err, "a Stream app and a Stream user are required")
+}
+
+// Catches an omni-channel taken for a channel a person writes in: its id starts omni-.
+func (s *PersonSuite) TestAnOmniChannelIsKnownByItsID() {
+	s.True(IsOmniChannel("omni-01a1a46a-7c54-7651-ae2c-5c382228af38"))
+	s.False(IsOmniChannel("chat-01a1a46a"))
+	s.False(IsOmniChannel("support-omni-1"))
+}
+
+// An app chat's channel carries none of the router's stamps and names the agent config that
+// answers in it; only a chat card of that config may read it. A stamp, where there is one,
+// decides, and a card of any other source reads only a stamped channel.
+func (s *PersonSuite) TestOnlyAChatCardOfTheConfigAChannelNamesReadsAnUnstampedChannel() {
+	chat := store.EpisodeCard{Episode: store.Episode{CustomerID: "acme", Source: store.EpisodeChat}, AgentConfigID: "config-1"}
+	sms := chat
+	sms.Source = store.EpisodeSMS
+
+	s.True(theirs(map[string]any{configField: "config-1"}, chat))
+	s.False(theirs(map[string]any{configField: "config-2"}, chat), "another config's channel")
+	s.False(theirs(map[string]any{}, chat), "a channel naming no config")
+	s.False(theirs(map[string]any{configField: "config-1"}, sms), "an SMS card's channel is the bridge's, which stamps it")
+	s.False(theirs(map[string]any{configField: "config-1", conversation.CustomerField: "globex"}, chat), "another customer's stamp")
+	s.True(theirs(map[string]any{conversation.CustomerField: "acme"}, sms), "the customer's stamp")
+	s.False(theirs(map[string]any{configField: ""}, store.EpisodeCard{Episode: store.Episode{CustomerID: "acme", Source: store.EpisodeChat}}),
+		"a card with no config")
 }
 
 func (s *PersonSuite) TestCardsNeedAStoreAndStreamClients() {

@@ -136,6 +136,9 @@ func row(created *Session) store.Call {
 		Voice:        spec.Voice,
 		Instructions: spec.prompt(),
 	}
+	// The session's row can be deleted while the conversation stays, and this is what then
+	// names the channel the call's transcript is in.
+	call.ConversationID = spec.ConversationID
 	for _, skill := range created.skills.Skills {
 		call.Skills = append(call.Skills, skill.Name)
 	}

@@ -110,9 +110,13 @@ final class VisionAgents {
   ///
   /// Remembered in [store] so coming back is the same guest, with the same conversations,
   /// rather than a second one with an empty history. A remembered guest whose token has
-  /// expired is minted a fresh token under the same id. [fresh] mints a new guest whatever is
-  /// remembered, for a "not me" button: reusing the remembered one would hand the person at
-  /// the keyboard somebody else's conversations.
+  /// expired comes back with their id and the refresh secret kept beside it, which the router
+  /// answers with the same guest and a fresh token. Without the secret, or with one already
+  /// spent, the router mints somebody new, since a guest id is no proof of anything; [name] and
+  /// [custom] go along either way, kept by a returning guest and given to a new one. Whatever
+  /// comes back replaces what was remembered, its next secret included. [fresh] mints a new
+  /// guest whatever is remembered, for a "not me" button: reusing the remembered one would hand
+  /// the person at the keyboard somebody else's conversations.
   ///
   /// With an api key and no token yet it is asked for anonymously, which a router must admit;
   /// one that does not throws a [StateError], and the guest is minted by your backend instead.
@@ -124,17 +128,23 @@ final class VisionAgents {
     bool fresh = false,
   }) async {
     final held = store == null || fresh ? null : await readGuest(store);
-    final expires = held?.expiresAt;
+    final expires = held?.guest.expiresAt;
     if (held != null && (expires == null || expires.isAfter(DateTime.now().add(_leeway)))) {
-      return held;
+      return held.guest;
     }
-    final minted = guestOf(
-      await _operations.createGuestUser(
-        body: api.GuestUserRequest(id: held?.id, name: name, custom: custom),
+    // An id with no secret proves nothing and is ignored, so it is only sent with one.
+    final secret = held?.refreshSecret;
+    final answer = await _operations.createGuestUser(
+      body: api.GuestUserRequest(
+        id: secret == null ? null : held?.guest.id,
+        refreshSecret: secret,
+        name: name,
+        custom: custom,
       ),
     );
+    final minted = guestOf(answer);
     if (store != null) {
-      await writeGuest(store, minted);
+      await writeGuest(store, minted, refreshSecret: answer.refreshSecret);
     }
     return minted;
   }

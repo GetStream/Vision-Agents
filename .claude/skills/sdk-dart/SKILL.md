@@ -146,7 +146,9 @@ Names chosen to not collide with what a Flutter app imports: `SearchRouter` (not
 `Command`; a host importing both hides one.
 
 Guests: `guestUser` reuses what the `GuestStore` holds until a minute before it expires, then
-mints again under the same id. The store is the host's (shared preferences, secure storage);
+asks again with its id and the `refresh_secret` stored beside it (`readGuest` and `writeGuest`
+keep it off the public `GuestUser`). A secret works once, so whatever comes back replaces what was
+stored; one lost or spent gets a new guest. The store is the host's (shared preferences, secure storage);
 `MemoryGuestStore` is for tests and CLIs.
 
 ## Views

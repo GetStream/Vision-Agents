@@ -270,7 +270,9 @@ let guest = try await agents.guestUser(GuestOptions(name: "Ada"), store: store)
 agents.setUser(guest)
 ```
 
-A remembered guest whose token has expired is minted a fresh one under the same id.
+A remembered guest whose token has expired comes back as the same guest with the refresh secret
+the store keeps beside it. It works once, so the store keeps what each answer hands back; one
+lost or already spent gets a new guest.
 `GuestOptions(fresh: true)` is a "not me" button, and `forgetGuest(store:)` is signing out.
 With no user set the guest is asked for anonymously; a router that admits no anonymous callers,
 Stream's hosted one for now, throws `.configuration`, and your backend mints the guest instead.

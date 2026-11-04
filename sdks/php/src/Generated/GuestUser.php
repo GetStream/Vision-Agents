@@ -19,6 +19,8 @@ final readonly class GuestUser
         // When the token stops working. A guest coming back after it asks for another.
         public ?\DateTimeImmutable $expiresAt = null,
         public ?string $name = null,
+        // What this guest sends back, with their id, to be given a fresh token once this one has expired. Keep it whe...
+        public ?string $refreshSecret = null,
     ) {
     }
 
@@ -33,6 +35,7 @@ final readonly class GuestUser
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             expiresAt: array_key_exists('expires_at', $data) && $data['expires_at'] !== null ? Json::date($data, 'expires_at') : null,
             name: array_key_exists('name', $data) && $data['name'] !== null ? Json::string($data, 'name') : null,
+            refreshSecret: array_key_exists('refresh_secret', $data) && $data['refresh_secret'] !== null ? Json::string($data, 'refresh_secret') : null,
         );
     }
 
@@ -54,6 +57,9 @@ final readonly class GuestUser
         }
         if ($this->name !== null) {
             $out['name'] = $this->name;
+        }
+        if ($this->refreshSecret !== null) {
+            $out['refresh_secret'] = $this->refreshSecret;
         }
         return $out;
     }

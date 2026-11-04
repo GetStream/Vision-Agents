@@ -43,6 +43,8 @@ export { AgentHandle } from "./handle.js";
 export { Memories } from "./memories.js";
 
 export { SimulationRuns, Simulations, type SimulationRunQuery } from "./simulations.js";
+export { ScheduledTasks, type ScheduledTaskQuery } from "./scheduled-tasks.js";
+export { Router, type RouterOptions } from "./router.js";
 
 export {
   Sessions,
@@ -93,6 +95,8 @@ export {
 export {
   CallNotHeldError,
   ToolCall,
+  ToolOutput,
+  type ToolOutputPart,
   Tools,
   render,
   type ParameterSchema,
@@ -109,6 +113,7 @@ export {
 export { LiveReasoning } from "./reasoning.js";
 
 export { ConversationState, type AgentState, type ConversationSnapshot } from "./state.js";
+export { Conversation, type ConversationRecord, type Turn } from "./conversation.js";
 
 export { CameraFrames, NoFrames, type CameraFrame } from "./frames.js";
 
@@ -117,7 +122,9 @@ export type { ChatClient, StreamClients, VideoClient } from "./stream.js";
 export {
   Session,
   Voice,
+  connectorScopeRequiredOf,
   eventOf,
+  type ConnectorScopeRequired,
   type ForkOptions,
   type Participant,
   type SessionChat,
@@ -163,7 +170,7 @@ export {
   type User,
 } from "./edge.js";
 
-export { callOf, messageOf, type InboundCall, type InboundMessage } from "./inbound.js";
+export { callOf, messageOf, type InboundCall, type InboundImage, type InboundMessage } from "./inbound.js";
 
 export {
   Dispatch,

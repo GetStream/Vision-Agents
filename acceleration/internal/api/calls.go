@@ -598,10 +598,11 @@ const transcriptSlack = 2 * time.Second
 // call bound to a conversation wrote into that conversation's channel, beside what was
 // typed before and after it, so only the call's own window is read. A call whose session
 // row is gone, as a deleted session's is while its conversation stays in Stream Chat, wrote
-// into the channel a new conversation is named after its session (session.Manager.Create);
-// failing that it read its agent's channel, as a call from before there were session rows
-// still does. The session's row is written behind the call's, so a call that just ended is
-// read once its writer has caught up.
+// into the conversation its call row names (a call from before that column names none),
+// else into the channel a new conversation is named after its session
+// (session.Manager.Create); failing that it read its agent's channel, as a call from before
+// there were session rows still does. The session's row is written behind the call's, so a
+// call that just ended is read once its writer has caught up.
 func (s *Server) transcriptReads(ctx context.Context, customerID string, call store.Call) []chatlog.Read {
 	window := chatlog.Read{
 		Customer: customerID,
@@ -612,6 +613,9 @@ func (s *Server) transcriptReads(ctx context.Context, customerID string, call st
 		window.To = call.EndedAt.Add(transcriptSlack)
 	}
 	channels := []string{call.ID, call.AgentID}
+	if call.ConversationID != "" {
+		channels = slices.Compact([]string{conversationChannel(call.ConversationID), call.ID, call.AgentID})
+	}
 	if stored, err := s.storedSession(ctx, customerID, call.ID); err == nil {
 		channels = []string{transcriptChannel(stored)}
 	}
@@ -1244,7 +1248,7 @@ func (*CallTokens) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.S
 // InputParts What prompts were made of, in tokens. Estimated from each request and scaled to what the provider counted, so the parts sum to the input tokens and only the split between them is a guess. Requests recorded before the split was kept read zero throughout.
 type InputParts struct {
 	Images          int64 `json:"images" doc:"Pictures, attached or returned by a tool."`
-	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and plugin guidance."`
+	Instructions    int64 `json:"instructions" doc:"The system prompt: the agent's instructions, skills and connector guidance."`
 	Messages        int64 `json:"messages" doc:"The conversation's words, from either side."`
 	ToolDefinitions int64 `json:"tool_definitions" doc:"The tools the model was offered: their names, descriptions and schemas."`
 	ToolUse         int64 `json:"tool_use" doc:"The tools the model called, and what they returned."`

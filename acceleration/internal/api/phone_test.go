@@ -452,6 +452,109 @@ func (s *CallStatusSuite) TestATelnyxStatusIsRecorded() {
 	s.Equal("busy", call.VendorStatus)
 }
 
+// postMachine posts form as a vendor's machine report.
+func (s *CallStatusSuite) postMachine(token string, form url.Values) (int, string) {
+	request, err := http.NewRequest(http.MethodPost, s.server.URL+"/v1/phone/machine/"+token, strings.NewReader(form.Encode()))
+	s.Require().NoError(err)
+	request.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	response, err := s.server.Client().Do(request)
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	answered, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	return response.StatusCode, string(answered)
+}
+
+func (s *CallStatusSuite) TestATelnyxMachineReportReachesTheMachineHookWithoutACustomer() {
+	token, callID := s.placed("telnyx")
+	var told []string
+	s.router.phone.OnMachine(func(_ context.Context, customerID, sessionID string, machine phone.Machine) {
+		told = append(told, customerID+" "+sessionID+" "+string(machine))
+	})
+	s.T().Cleanup(func() { s.router.phone.OnMachine(s.router.tellMachine) })
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.Equal([]string{s.customerID() + " " + callID + " greeting_ended"}, told)
+}
+
+func (s *CallStatusSuite) TestAMachineReportForAnUnknownTokenIs404() {
+	status, failure := s.postMachine(s.utils.uuid(), url.Values{"AnsweredBy": {"human"}})
+
+	s.Equal(http.StatusNotFound, status)
+	s.Contains(failure, "that call is not waiting for its status")
+}
+
+func (s *CallStatusSuite) TestAMachineReportThatCannotBeReadIs400() {
+	token, _ := s.placed("telnyx")
+
+	status, failure := s.postMachine(token, url.Values{"CallSid": {"CA1"}})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "AnsweredBy")
+}
+
+// hangsUpOnMachines opens on sessions a placed call's session whose plan is to hang up on an
+// answering machine, with a call kept for it, and returns its id and the call's token.
+func (s *CallStatusSuite) hangsUpOnMachines(sessions *session.Manager) (string, string) {
+	opened, err := sessions.Create(context.Background(), session.Spec{CustomerID: s.customerID(),
+		Phone: &session.PhoneSpec{VendorCallID: "CA1"}, Voicemail: &session.VoicemailPlan{},
+		Attribution: routing.Attribution{APIKey: "key-phone"}})
+	s.Require().NoError(err)
+	token, _ := s.placedFor(opened.ID())
+	return opened.ID(), token
+}
+
+// endsForVoicemail waits for sessions to stop holding id.
+func (s *CallStatusSuite) endsForVoicemail(sessions *session.Manager, id string) {
+	s.Require().Eventually(func() bool { return !sessions.Running(id) }, 10*time.Second, 20*time.Millisecond,
+		"the session was kept on the answering machine")
+}
+
+func (s *CallStatusSuite) TestAMachineReportHangsUpTheSessionHere() {
+	id, token := s.hangsUpOnMachines(s.manager)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.endsForVoicemail(s.manager, id)
+}
+
+func (s *CallStatusSuite) TestAMachineReportHangsUpTheSessionOnTheNodeHoldingIt() {
+	other, _, sessions := s.otherNodeHolding(nil, s.sealer, slog.New(slog.DiscardHandler))
+	s.Require().NotEqual(other.Listener.Addr().String(), s.router.directory.Address())
+	id, token := s.hangsUpOnMachines(sessions)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.endsForVoicemail(sessions, id)
+}
+
+func (s *CallStatusSuite) TestAMachineReportForASessionThatEndedIsTakenAndChangesNothing() {
+	id, token := s.hangsUpOnMachines(s.manager)
+	s.Require().Equal(http.StatusNoContent, func() int {
+		status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+		return status
+	}())
+	s.endsForVoicemail(s.manager, id)
+
+	again, failure := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, again, "body: %s", failure)
+}
+
+func (s *CallStatusSuite) TestAPersonPickingUpKeepsTheSession() {
+	id, token := s.hangsUpOnMachines(s.manager)
+
+	status, _ := s.postMachine(token, url.Values{"AnsweredBy": {"human"}})
+
+	s.Equal(http.StatusNoContent, status)
+	s.Never(func() bool { return !s.manager.Running(id) }, time.Second, 50*time.Millisecond,
+		"the session was ended for a person")
+}
+
 func (s *CallStatusSuite) TestAnUnknownStatusTokenIs404() {
 	status, failure := s.post(s.utils.uuid(), "application/x-www-form-urlencoded", "CallStatus=busy")
 
@@ -828,6 +931,101 @@ func (s *CallStatusSuite) openPhoneSession(id string) (int, ErrorResponse) {
 		s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
 	}
 	return status, answered
+}
+
+// openWithVoicemail opens the session id for a placed call with plan, as an SDK does.
+func (s *CallStatusSuite) openWithVoicemail(id string, plan SessionVoicemail) (int, string) {
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
+		Id: &id, StartVoice: pointerTo(true), Phone: &SessionPhone{Number: s.utils.number(), Voicemail: &plan},
+	})
+	return status, string(payload)
+}
+
+// endedForVoicemail waits for the session id to show it ended for an answering machine.
+func (s *CallStatusSuite) endedForVoicemail(id string) {
+	s.Require().Eventually(func() bool {
+		shown := s.serverClient.getSession(id)
+		return shown.EndReason != nil && *shown.EndReason == "voicemail"
+	}, 10*time.Second, 50*time.Millisecond, "the session never showed it ended for voicemail")
+}
+
+func (s *CallStatusSuite) TestASessionAskedToHangUpOnAMachineDoesWhenOneAnswers() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{Action: VoicemailActionHangUp})
+	s.Require().Equal(http.StatusCreated, status, payload)
+
+	answered, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_silence"}})
+
+	s.Equal(http.StatusNoContent, answered)
+	s.endedForVoicemail(id)
+}
+
+func (s *CallStatusSuite) TestASessionAskedToLeaveAMessageLeavesItWhenAMachineAnswers() {
+	id := s.utils.uuid()
+	token, _ := s.placedFor(id)
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo("Hi Ali, this is Northwind Dental."),
+	})
+	s.Require().Equal(http.StatusCreated, status, payload)
+
+	answered, _ := s.postMachine(token, url.Values{"AnsweredBy": {"machine_end_beep"}})
+
+	s.Equal(http.StatusNoContent, answered)
+	s.endedForVoicemail(id)
+}
+
+func (s *CallStatusSuite) TestAVoicemailPlanWithAnUnknownActionIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{Action: "call_back"})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "action")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageWithNoMessageIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{Action: VoicemailActionLeaveMessage})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageOfOnlySpacesIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo("  \n\t "),
+	})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestLeavingAMessageOnASpeechToSpeechAgentIsRefused() {
+	plan := SessionVoicemail{Action: VoicemailActionLeaveMessage, Message: pointerTo("Hi Ali, this is Northwind Dental.")}
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{
+		Id: pointerTo(s.utils.uuid()), StartVoice: pointerTo(true), Sts: pointerTo("openai/gpt-realtime-2"),
+		Phone: &SessionPhone{Number: s.utils.number(), Voicemail: &plan},
+	})
+
+	s.Equal(http.StatusBadRequest, status, "%s", payload)
+	s.Contains(string(payload), "cannot say a fixed voicemail message")
+}
+
+func (s *CallStatusSuite) TestAVoicemailMessageOver1000CharactersIsRefused() {
+	status, payload := s.openWithVoicemail(s.utils.uuid(), SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo(strings.Repeat("é", 1001)),
+	})
+
+	s.Equal(http.StatusBadRequest, status, payload)
+	s.Contains(payload, "message")
+}
+
+func (s *CallStatusSuite) TestAVoicemailMessageOf1000CharactersIsTaken() {
+	id := s.utils.uuid()
+	status, payload := s.openWithVoicemail(id, SessionVoicemail{
+		Action: VoicemailActionLeaveMessage, Message: pointerTo(strings.Repeat("é", 1000)),
+	})
+	defer s.serverClient.stopSession(id)
+
+	s.Equal(http.StatusCreated, status, payload)
 }
 
 func (s *CallStatusSuite) TestOpeningASessionAfterItsCallWasBusyIsRefused() {

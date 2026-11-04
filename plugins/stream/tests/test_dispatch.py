@@ -1,11 +1,13 @@
 import asyncio
 import json
+import logging
 from typing import Any, AsyncIterator, Optional
 
 import pytest
 from aiohttp import WSCloseCode, WSMsgType, web
 from aiohttp.test_utils import TestServer
 from vision_agents.core import Agent
+from vision_agents.core.llm import ImageContent
 from vision_agents.core.messaging import InboundMessage
 from vision_agents.core.telephony import InboundCall
 from vision_agents.plugins import stream
@@ -691,6 +693,181 @@ class TestDispatch:
         assert message.request_id == "request-4"
         assert message.channel_id == ""
         assert message.text == "where is my order?"
+
+    @pytest.mark.parametrize(
+        "sent, read",
+        [
+            (
+                [
+                    {"url": "https://cdn.example.com/a.jpg", "mime_type": "image/png"},
+                    {"url": "https://cdn.example.com/b.jpg"},
+                ],
+                [
+                    ("https://cdn.example.com/a.jpg", "image/png"),
+                    ("https://cdn.example.com/b.jpg", "image/jpeg"),
+                ],
+            ),
+            (None, []),
+            ([], []),
+            ({"url": "https://cdn.example.com/a.jpg"}, []),
+            ("https://cdn.example.com/a.jpg", []),
+            (["https://cdn.example.com/a.jpg"], []),
+            ([{}, {"mime_type": "image/png"}, {"url": ""}, {"url": 7}], []),
+            (
+                [
+                    {"url": "ftp://cdn.example.com/a.jpg"},
+                    {"url": "https://user:secret@cdn.example.com/a.jpg"},
+                    {"url": "https://cdn.example.com/kept.jpg", "mime_type": 3},
+                    {"url": "https://cdn.example.com/also.jpg", "mime_type": ""},
+                ],
+                [
+                    ("https://cdn.example.com/kept.jpg", "image/jpeg"),
+                    ("https://cdn.example.com/also.jpg", "image/jpeg"),
+                ],
+            ),
+        ],
+        ids=[
+            "two photos",
+            "null",
+            "empty",
+            "an object, not a list",
+            "a string, not a list",
+            "an entry that is not an object",
+            "entries with no url",
+            "urls the model cannot fetch, beside one it can",
+        ],
+    )
+    async def test_the_photos_sent_with_a_message_reach_the_handler(
+        self,
+        router: Router,
+        dispatch: stream.Dispatch,
+        sent: object,
+        read: list[tuple[str, str]],
+    ):
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def handle(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over({**MESSAGE, "images": sent})
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert [(image.url, image.mime) for image in message.images] == read
+        assert message.text == "is my invoice reissuable?"
+
+    async def test_a_refused_photo_url_is_never_logged(
+        self,
+        router: Router,
+        dispatch: stream.Dispatch,
+        caplog: pytest.LogCaptureFixture,
+    ):
+        secret = "s3cret-token"
+        refused = [
+            {"url": f"https://user:{secret}@cdn.example.com/a.jpg"},
+            {"url": f"data:image/png;base64,{secret}"},
+            {"url": f"ftp://cdn.example.com/{secret}.jpg"},
+        ]
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def handle(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            with caplog.at_level(logging.DEBUG):
+                await router.hand_over({**MESSAGE, "images": refused})
+                message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.images == []
+        assert "cannot be fetched" in caplog.text
+        assert secret not in caplog.text
+
+    def test_a_message_built_by_position_keeps_its_older_fields_in_place(self):
+        message = InboundMessage(
+            "chan",
+            "agent",
+            "cfg",
+            {},
+            "hi",
+            "msg-1",
+            "user-1",
+            "Ana",
+            None,
+            "s-1",
+            "r-1",
+        )
+
+        assert (message.message_id, message.user_id, message.user_name) == (
+            "msg-1",
+            "user-1",
+            "Ana",
+        )
+        assert (message.session_id, message.request_id) == ("s-1", "r-1")
+        assert message.images == []
+
+    async def test_a_message_sent_without_photos_has_none(
+        self, router: Router, dispatch: stream.Dispatch
+    ):
+        # A frame from a router that never sends photos reads the same as before.
+        written: asyncio.Queue = asyncio.Queue()
+
+        @dispatch.wait_for_message()
+        async def handle(message: InboundMessage) -> None:
+            await written.put(message)
+
+        running = asyncio.create_task(dispatch.run())
+        try:
+            await router.hand_over(MESSAGE)
+            message = await asyncio.wait_for(written.get(), SETTLE)
+        finally:
+            running.cancel()
+            await asyncio.gather(running, return_exceptions=True)
+
+        assert message.images == []
+
+    @pytest.mark.parametrize("text", ["", "what is this?"])
+    async def test_answering_a_message_with_photos_shows_them_under_its_request(
+        self, router: Router, text: str
+    ):
+        # The router takes a request id beside images, so the answer still lands on the
+        # message it answers.
+        worker = stream.Dispatch(url=router.url, customer_id="acme")
+
+        await worker.answer(
+            InboundMessage(
+                channel_id="",
+                session_id="session-9",
+                request_id="request-4",
+                text=text,
+                images=[
+                    ImageContent(url="https://cdn.example.com/a.jpg", mime="image/png"),
+                    ImageContent(url="https://cdn.example.com/b.jpg"),
+                ],
+                user_id="sam",
+            )
+        )
+
+        [(session_id, body, headers)] = router.responses
+        assert session_id == "session-9"
+        assert body == {
+            "text": text,
+            "images": [
+                {"url": "https://cdn.example.com/a.jpg"},
+                {"url": "https://cdn.example.com/b.jpg"},
+            ],
+            "request_id": "request-4",
+        }
+        assert headers["X-Stream-User-Id"] == "sam"
 
     async def test_answering_a_session_message_asks_the_model_for_its_author(
         self, router: Router

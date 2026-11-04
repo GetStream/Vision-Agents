@@ -28,9 +28,9 @@ type AgentConfigPatch struct {
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string                `json:"skills,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"Deprecated: use connectors, a binding to a connector."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" maxItems:"32" deprecated:"true" doc:"Deprecated: use the events of a fixed binding under connectors."`
-	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" maxItems:"16"`
+	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
 	Keyterms           *[]string                `json:"keyterms,omitempty"`
@@ -125,17 +125,21 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if s.store == nil {
 		return nil, errNoConfigs
 	}
+	patch := request.Body
+	if err := retiredComplaint(patch.Plugins, patch.PluginEvents, patch.McpServers); err != nil {
+		return nil, err
+	}
 	config, err := s.configs.AgentConfig(ctx, customerID, request.ID)
 	if err != nil {
 		return nil, errUnknownConfig
 	}
 	existing := agentConfigOf(config)
 	original := config
-	before := config.MCPServers
 	heard := config.STT
 	was := sandboxOfConfig(config)
+	// The row may still name them from before they were refused; a patch writes none.
+	config.Plugins, config.PluginEvents, config.MCPServers = nil, nil, nil
 
-	patch := request.Body
 	if message, ok := configComplaint(ctx, AgentConfigRequest{
 		Name:           override(config.Name, patch.Name),
 		Mode:           patch.Mode,
@@ -179,17 +183,8 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Guardrail = override(config.Guardrail, patch.Guardrail)
 	config.ReviewInstructions = reviewOf(config.ReviewInstructions, patch.Review)
 	config.Skills = override(config.Skills, patch.Skills)
-	if patch.Plugins != nil {
-		config.Plugins = pluginEntriesOf(*patch.Plugins)
-	}
 	if patch.Connectors != nil {
 		config.Connectors = storedBindings(*patch.Connectors)
-	}
-	if patch.PluginEvents != nil {
-		config.PluginEvents = pluginEventsOf(patch.PluginEvents)
-	}
-	if patch.McpServers != nil {
-		config.MCPServers = mcpServersOf(patch.McpServers)
 	}
 	if patch.Channels != nil {
 		config.Channels = channelsOf(patch.Channels)
@@ -232,20 +227,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	if message, ok := textSubagentComplaint(&config, patch.Subagent); !ok {
 		return nil, invalidRequest(message)
 	}
-	if message, ok := pluginEventsComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := pluginEntriesComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
-	if message, ok := mcpServersComplaint(ctx, config); !ok {
-		return nil, invalidRequest(message)
-	}
-	servers, message, ok := s.describedMCPServers(ctx, config.MCPServers, before)
-	if !ok {
-		return nil, invalidRequest(message)
-	}
-	config.MCPServers = servers
 	if message, ok := s.channelsComplaint(ctx, config); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -257,9 +238,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	// The config no longer matches the directory last synced onto it, so the next sync of
 	// that directory writes it again rather than finding nothing changed.
 	config.SyncHash = ""
-	if message, ok := pluginAliasComplaint(config); !ok {
-		return nil, invalidRequest(message)
-	}
 	if message, ok, err := s.sandboxBindingsComplaint(ctx, customerID, config); err != nil {
 		return nil, err
 	} else if !ok {
@@ -282,29 +260,13 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		return nil, invalidRequest(message)
 	}
 
-	if err := s.writePatched(ctx, &config, patch.Plugins == nil); err != nil {
+	if err := s.configs.UpdateAgentConfig(ctx, &config); err != nil {
 		return nil, storeFailure(err, errAgentNameTaken)
 	}
 	stored := agentConfigOf(config)
-	if patch.Plugins == nil {
-		// The plugins were kept as stored, so a login named since the read is not this patch's change.
-		existing.Plugins = stored.Plugins
-	}
 	s.audit(ctx, auditRecord{
 		ResourceType: store.AuditAgentConfig, ResourceID: config.ID, ResourceName: config.Name,
 		Action: store.AuditUpdated, Changes: auditDiff(existing, stored),
 	})
-	s.pluginEvents.Changed(customerID, config.ID)
-	s.warnPluginsSaved(ctx, config)
 	return &agentConfigResponse{Body: stored}, nil
-}
-
-// writePatched stores a config an update built from an earlier read. One that leaves the
-// plugins out keeps them as they are when it is written, so it does not drop a plugin a login
-// named since the read, and its sensitive rule is checked again on them.
-func (s *Server) writePatched(ctx context.Context, config *store.AgentConfig, keepPlugins bool) error {
-	if keepPlugins {
-		return s.configs.UpdateAgentConfigButPlugins(ctx, config, sensitiveCheck(config.CustomerID))
-	}
-	return s.configs.UpdateAgentConfig(ctx, config)
 }

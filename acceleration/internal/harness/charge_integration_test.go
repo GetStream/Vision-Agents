@@ -35,6 +35,17 @@ func (userSet) Quota(_ context.Context, _, userID string, _ quota.Limits) quota.
 	return quota.Quota{Messages: quota.Limit{PerDay: messagesPerDay, By: quota.Setter{Level: quota.LevelUser, ID: userID}}}
 }
 
+// userSetOrDefault is userSet for a named user, and the deployment's default for a caller
+// known by its address alone, which is the only limit an address answers for.
+type userSetOrDefault struct{}
+
+func (userSetOrDefault) Quota(ctx context.Context, customerID, userID string, defaults quota.Limits) quota.Quota {
+	if userID == "" {
+		return quota.Default(quota.Limits{MessagesPerDay: messagesPerDay})
+	}
+	return userSet{}.Quota(ctx, customerID, userID, defaults)
+}
+
 // HarnessChargeSuite covers whose day delegated work is counted on. It counts in a real
 // Redis, and what it reads back is the user's day as the limiter keeps it.
 type HarnessChargeSuite struct {
@@ -272,7 +283,7 @@ func (s *HarnessChargeSuite) TestWorkAVerifiedUserDelegatesIsCountedOnTheirDayAn
 	// The limiter counts a verified user on the customer's bucket for the user, and any
 	// caller with an address on the address bucket. A sender carried without its Verified
 	// mark or its address is counted in other buckets, and one of the two shows less.
-	limiter, err := quota.New(s.redis, quota.Limits{}, userSet{}, slog.New(slog.DiscardHandler))
+	limiter, err := quota.New(s.redis, quota.Limits{}, userSetOrDefault{}, slog.New(slog.DiscardHandler))
 	s.Require().NoError(err)
 	s.limiter = limiter
 	// An address of its own, as the user has: the address bucket outlives the test.

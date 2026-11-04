@@ -67,6 +67,6 @@ func (s *ConnectorInstructionsSuite) TestAServerWhoseToolsAreAllLeftOutAddsNothi
 func (s *ConnectorInstructionsSuite) told(bindings ...store.ConnectorBinding) string {
 	d, _, _, err := s.attach(s.spec(s.config(bindings...), "", nil))
 	s.Require().NoError(err)
-	spec := Spec{Instructions: "Be brief.", ServerInstructions: serverInstructions(nil, nil, d.said())}
+	spec := Spec{Instructions: "Be brief.", ServerInstructions: serverInstructions(d.said())}
 	return spec.prompt()
 }

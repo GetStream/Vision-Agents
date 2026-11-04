@@ -3,6 +3,7 @@
 package api
 
 import (
+	"encoding/base64"
 	"net/http"
 	"slices"
 	"strconv"
@@ -119,13 +120,7 @@ func (s *CostSuite) TestAFailureSaysNothingOfMoney() {
 }
 
 func (s *CostSuite) TestAnAcceptedTurnSaysNoCost() {
-	// The balance is said once the router has read the organization's account, which it does
-	// in the background after the app is made.
-	s.Require().Eventually(func() bool {
-		response := s.serverClient.raw(http.MethodGet, "/v1/policies/app", nil)
-		_ = response.Body.Close()
-		return response.Header.Get(headerBalanceMicros) != ""
-	}, 10*time.Second, 50*time.Millisecond, "the organization's account is read")
+	s.balanceRead()
 	created := s.serverClient.createSession(textSession(nil))
 
 	response := s.answered(s.serverClient, http.MethodPost, "/v1/agents/sessions/"+created.Id+"/responses",
@@ -134,6 +129,67 @@ func (s *CostSuite) TestAnAcceptedTurnSaysNoCost() {
 	s.Empty(response.Header.Get(headerCostMicros), "it answers before its turn has cost anything")
 	s.Empty(response.Header.Get(headerCostEstimated))
 	s.NotEmpty(response.Header.Get(headerBalanceMicros), "its balance is said all the same")
+}
+
+// A voice note is heard before the turn it asks starts, and either operation that takes one
+// answers before that turn runs: the note's row is the turn's cost, so neither answer says it.
+func (s *CostSuite) TestAVoiceNoteTurnSaysNoCostOnEitherOperation() {
+	s.balanceRead()
+	for name, ask := range map[string]func(opened Session, note *AudioSource) *http.Response{
+		"createResponse": func(opened Session, note *AudioSource) *http.Response {
+			return s.answered(s.serverClient, http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+				CreateResponseRequest{Audio: note}, http.StatusAccepted)
+		},
+		"respond": func(opened Session, note *AudioSource) *http.Response {
+			return s.answered(s.serverClient, http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+				RespondRequest{Audio: note}, http.StatusNoContent)
+		},
+		"respond with a request id": func(opened Session, note *AudioSource) *http.Response {
+			return s.answered(s.serverClient, http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+				RespondRequest{RequestId: pointerTo(s.utils.uuid()), Audio: note}, http.StatusOK)
+		},
+	} {
+		s.Run(name, func() {
+			opened := s.serverClient.createSession(textSession(nil))
+			since := time.Now().UTC()
+			note := &AudioSource{Url: "data:audio/wav;base64," + base64.StdEncoding.EncodeToString(wavOf("the fryer is out "+s.utils.uuid()))}
+
+			response := ask(opened, note)
+
+			s.Empty(response.Header.Get(headerCostMicros), "it answers before its turn has cost anything")
+			s.Empty(response.Header.Get(headerCostEstimated))
+			s.NotEmpty(response.Header.Get(headerBalanceMicros), "its balance is said all the same")
+			rows := s.meteredRows(routing.STT, since, 1)
+			s.Equal(opened.Id, rows[0].SessionID, "the note is still recorded, as the session's")
+		})
+	}
+}
+
+// Text alone on respond records nothing before it answers, so it says no cost, with a request
+// id or without, as before voice notes.
+func (s *CostSuite) TestTextAloneOnRespondSaysNoCost() {
+	s.balanceRead()
+	opened := s.serverClient.createSession(textSession(nil))
+	for name, body := range map[int]RespondRequest{
+		http.StatusNoContent: {Text: "hello"},
+		http.StatusOK:        {Text: "hello again", RequestId: pointerTo(s.utils.uuid())},
+	} {
+		response := s.answered(s.serverClient, http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond", body, name)
+
+		s.Empty(response.Header.Get(headerCostMicros), "%d", name)
+		s.Empty(response.Header.Get(headerCostEstimated), "%d", name)
+		s.NotEmpty(response.Header.Get(headerBalanceMicros), "%d: its balance is said", name)
+	}
+}
+
+// balanceRead waits until the router has read the organization's account, which it does in
+// the background after the app is made: the balance is said only after that.
+func (s *CostSuite) balanceRead() {
+	s.Require().Eventually(func() bool {
+		response := s.serverClient.raw(http.MethodGet, "/v1/policies/app", nil)
+		_ = response.Body.Close()
+		return response.Header.Get(headerBalanceMicros) != ""
+	}, 10*time.Second, 50*time.Millisecond, "the organization's account is read")
 }
 
 // responded opens an LLM socket as the client, asks the model for one response and returns its

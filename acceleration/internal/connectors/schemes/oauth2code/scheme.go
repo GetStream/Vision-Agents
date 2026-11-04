@@ -221,7 +221,7 @@ func (s *Scheme) Begin(ctx context.Context, in core.BeginInput) (core.BeginOutpu
 		// no scope from a challenge, «use all scopes defined in scopes_supported from the
 		// Protected Resource Metadata document, omitting the scope parameter if
 		// scopes_supported is undefined». A custom definition is the general-purpose client
-		// that rule is for, as a URL-named plugin login is (internal/plugins/oauth.go); a
+		// that rule is for, as the removed plugin login of a URL-named server was; a
 		// built-in's scopes are what its manifest lists, so it is left as it is. The
 		// registration below then asks for the same scopes as the authorize request.
 		m.Scopes.List = slices.Clone(server.ScopesSupported)

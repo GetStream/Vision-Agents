@@ -45,7 +45,7 @@ build. Those two ports are also what the standalone `va-pg` and `va-redis` conta
 stop those first if they are running.
 
 `.env` must set `ROUTER_AUTH_KEK` (single-quoted: compose expands a `$` in it) and
-`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no plugin client secret can be
+`ROUTER_PUBLIC_URL=http://localhost:8080`. Without the KEK no connector client secret can be
 saved, and changing it leaves the stored ones unreadable.
 
 Logs: `docker compose logs -f router`.
@@ -159,7 +159,8 @@ A win must be one a real user gets. For Voicebench, the load benchmark and any m
 
 To give an agent a provider's tools (GitHub, Linear, the Slack bot), read the `connectors`
 skill (`.claude/skills/connectors/SKILL.md`). To add a provider to the catalog, read
-`add-connector`. Plugins are deprecated.
+`add-connector`. Plugins were removed: a config naming `plugins`, `plugin_events` or
+`mcp_servers` is refused.
 
 To set up, test or debug an SMS line on a Telnyx number, staging's permanent line included,
 read the `telnyx` skill (`.claude/skills/telnyx/SKILL.md`).

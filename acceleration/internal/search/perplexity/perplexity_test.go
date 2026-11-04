@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/search"
 )
 
@@ -128,6 +129,21 @@ func (s *PerplexitySuite) TestASonarModelAsksTheOneThatWritesTheAnswer() {
 	s.Equal("I-70 is clear through the Eisenhower Tunnel.", found.Answer)
 	s.Require().Len(found.Documents, 1)
 	s.Equal("https://cotrip.org", found.Documents[0].URL)
+	s.Zero(found.VendorCostMicros(), "an answer that says no cost has none")
+}
+
+func (s *PerplexitySuite) TestASonarAnswerKeepsWhatPerplexitySaidItCost() {
+	s.web.respond = `{
+		"choices":[{"message":{"content":"The tunnel is open."}}],
+		"usage":{"prompt_tokens":9,"completion_tokens":90,"total_tokens":99,"search_context_size":"low",
+			"cost":{"input_tokens_cost":0.000027,"output_tokens_cost":0.00135,"request_cost":0.006,"total_cost":0.007377}}
+	}`
+
+	found, err := s.sonar().Search(s.ctx, search.Query{Text: "is the tunnel open"})
+	s.Require().NoError(err)
+
+	s.EqualValues(7_377, found.VendorCostMicros())
+	s.Equal(pricing.Quantities{pricing.Requests: 1}, found.Used(), "the price is still the request's")
 }
 
 func (s *PerplexitySuite) TestAnAnswerWithOnlyCitationsStillSaysWhereItCameFrom() {

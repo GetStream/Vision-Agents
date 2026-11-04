@@ -3,10 +3,12 @@ package session
 import (
 	"context"
 	"sync"
+	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
@@ -51,6 +53,9 @@ func (m *Manager) ender(created *Session, spec Spec, stream streamapp.Bound) age
 // EndCall ends the call and the session once. A call that could not be ended is not
 // marked done, so the model may try again.
 func (h *hangUp) EndCall(ctx context.Context) error {
+	if h.session.holdHangUp(h.later) {
+		return &agent.EndDeferred{Reason: machineChecking}
+	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	if h.done {
@@ -62,6 +67,103 @@ func (h *hangUp) EndCall(ctx context.Context) error {
 		}
 	}
 	h.done = true
-	h.manager.hangUp(h.session)
+	h.manager.hangUp(h.session, EndAgentHangup)
 	return nil
+}
+
+// later carries out a hang-up held while the call was checked for an answering machine. The
+// agent's own context is long gone by then.
+func (h *hangUp) later() {
+	if h.session.closingNow() {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), hangUpTimeout)
+	defer cancel()
+	if err := h.EndCall(ctx); err != nil {
+		h.manager.logger.Warn("could not hang up once the call was checked for an answering machine",
+			"session", h.session.id, "error", err)
+	}
+}
+
+// machineChecking is what the model is told of a hang-up held for the answering machine check.
+const machineChecking = "The call is still being checked for an answering machine, and ends by itself " +
+	"once that is done. Say nothing more. If the caller speaks before then, it stays open: " +
+	"answer them, and call end_call again once they are done."
+
+// machineWait bounds how long the agent's own hang-up is held on a placed call that leaves a
+// voicemail, from when its phone leg answered. A vendor's report on a mobile comes about 30 s
+// after the answer. A variable so tests can shorten it.
+var machineWait = 40 * time.Second
+
+// machineCheck holds the agent's own hang-up on a placed call that leaves a voicemail until
+// the vendor says what picked up. A recording says nothing the agent takes as meant for it,
+// and an agent that hangs up on the silence is gone before the report, leaving no message.
+type machineCheck struct {
+	mu sync.Mutex
+	// over is set once the report came, the caller spoke to the agent or machineWait passed.
+	over bool
+	// held is the hang-up the agent asked for meanwhile.
+	held  func()
+	timer *time.Timer
+	// unreported is what the session does at machineWait with no report: what it does when
+	// the vendor could not tell (Manager.Machine).
+	unreported func()
+}
+
+// holdHangUp keeps hangUp for when the check is over, reporting whether it did: only on a
+// call that leaves a voicemail and is still being checked.
+func (s *Session) holdHangUp(hangUp func()) bool {
+	if s.Spec().Voicemail == nil {
+		return false
+	}
+	s.machine.mu.Lock()
+	defer s.machine.mu.Unlock()
+	if s.machine.over {
+		return false
+	}
+	s.machine.held = hangUp
+	return true
+}
+
+// answered starts the bound on the check once the phone leg picked up.
+func (s *Session) answered() {
+	s.machine.mu.Lock()
+	defer s.machine.mu.Unlock()
+	if s.machine.over || s.machine.timer != nil || s.machine.unreported == nil {
+		return
+	}
+	s.machine.timer = time.AfterFunc(machineWait, s.machine.unreported)
+}
+
+// checked ends the check, reporting whether it was still on. With carryOut a hang-up held
+// meanwhile goes through; without, a machine is being left a message or the caller spoke,
+// and the call carries on.
+func (s *Session) checked(carryOut bool) bool {
+	s.machine.mu.Lock()
+	if s.machine.over {
+		s.machine.mu.Unlock()
+		return false
+	}
+	s.machine.over = true
+	held := s.machine.held
+	s.machine.held = nil
+	if s.machine.timer != nil {
+		s.machine.timer.Stop()
+	}
+	s.machine.mu.Unlock()
+	// Not on s.running: the hang-up closes the session, and closing waits on s.running.
+	// It returns at once on a session that began closing meanwhile.
+	if carryOut && held != nil {
+		go held()
+	}
+	return true
+}
+
+// heardCaller ends the check once the phone caller said something the agent took as meant
+// for it, which no recording does. The agent calls it (agent.Options.OnHeard) before it
+// answers them: consume takes the words later, after a report or a hang-up may have come.
+func (s *Session) heardCaller(heard agent.Heard) {
+	if _, onPhone := phone.CallerNumber(heard.Participant.UserID); onPhone {
+		s.checked(false)
+	}
 }

@@ -1,4 +1,5 @@
-# Gmail's hosted MCP server, moved from the plugin catalog (internal/plugins/plugins.yaml,
+# Gmail's hosted MCP server, moved from the plugin catalog (deleted since; last at
+# https://github.com/GetStream/Vision-Agents/blob/ee92fe19f83c406e07ea792cb0bb4fe387c22dc5/acceleration/internal/plugins/plugins.yaml,
 # entry gmail, «[plugin]» below; T58 in acceleration/docs/connectors/subtasks.md on
 # connectors/planning). Vendor pages, opened October 7, 2026:
 #   [setup] https://developers.google.com/workspace/gmail/api/guides/configure-mcp-server

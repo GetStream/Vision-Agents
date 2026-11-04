@@ -47,6 +47,7 @@ func (s *Store) StartCall(ctx context.Context, call *Call) error {
 	_, err := s.shard.NewInsert().Model(call).
 		On("CONFLICT (id) DO UPDATE").
 		Set("ended_at = NULL").
+		Set("conversation_id = COALESCE(c.conversation_id, EXCLUDED.conversation_id)").
 		Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("store: start call: %w", err)

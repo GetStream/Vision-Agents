@@ -71,8 +71,16 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 	if len(videos) > maxVideos {
 		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
 	}
-	if len(videos) > 0 && value(request.Body.RequestId) != "" {
-		return nil, invalidRequest("a request id carries text and images, not videos")
+	if len(videos) > 0 {
+		sample, err := found.SampleVideos(ctx, value(request.Body.RequestId))
+		if err != nil {
+			return nil, refusedResponse(err)
+		}
+		if !sample {
+			// The retry of a question already taken is answered with its receipt, so its
+			// videos are not fetched again.
+			videos = nil
+		}
 	}
 	for index, sent := range videos {
 		frames, length, err := video.Frames(ctx, sent.Url, value(sent.MaxFrames))
@@ -438,8 +446,8 @@ type AgentResponsePage struct {
 
 // CreateResponseRequest is the CreateResponseRequest schema.
 type CreateResponseRequest struct {
-	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and videos are refused. A retry with the same id, text, images and voice note starts no second turn and returns no id. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Audio           *AudioSource   `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing."`
+	RequestId       *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry of the same question is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, a voice note is uploaded and shown there too, and the frames of videos are shown to the model alone. A retry with the same id, text, images and voice note starts no second turn, returns no id and does not fetch its videos again: videos are not part of what a retry is matched on. On a session a dispatch worker opened for a message handed out from a channel, that message is already there: nothing is written or uploaded for it, and a reused id is answered as a duplicate even with other text or images." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Audio           *AudioSource   `json:"audio,omitempty" doc:"A voice note to answer. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. In a conversation kept in Stream Chat the person's message carries the transcript and shows the voice note. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
 	Images          *[]ImageSource `json:"images,omitempty"`
 	MaxOutputTokens *int           `json:"max_output_tokens,omitempty" doc:"Caps this answer, reasoning included, and the replies that finish it after its tools. Omitted keeps the session's." minimum:"1"`
 	ReasoningEffort *string        `json:"reasoning_effort,omitempty" doc:"How long the model may think before this answer, and the replies that finish it after its tools. One of the efforts the session's model accepts, such as none, minimal, low, medium, high or max; any other is a 400. Omitted keeps the session's."`
