@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:http/http.dart' as http;
@@ -12,25 +13,44 @@ import 'device_tools.dart';
 /// writes drafts but cannot send, so a send goes through the app's backend, which posts to
 /// Gmail's REST API through the router's proxy for the same connection.
 abstract final class Gmail {
-  /// Sends a plain-text email from the person's Gmail, through the backend, and answers with
-  /// the sent message's id.
+  /// How long the backend has to send it.
+  static const _timeout = Duration(seconds: 30);
+
+  /// Sends a plain-text email from the person's Gmail, through the backend.
   ///
   /// Throws a [ToolFailure] with the backend's reason when it could not send, such as when
-  /// Gmail is not connected yet.
-  static Future<String> send({
+  /// Gmail is not connected yet. Once the backend says it sent, nothing more is read from it:
+  /// a failure after that would have the model offer to send it again.
+  static Future<void> send({
     required String to,
     required String subject,
     required String body,
   }) async {
-    final response = await http.post(
-      Assistant.backendUrl.resolve('/gmail/send'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'user_id': Assistant.userId, 'to': to, 'subject': subject, 'body': body}),
-    );
+    final http.Response response;
+    try {
+      response = await http
+          .post(
+            Assistant.backendUrl.resolve('/gmail/send'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({
+              'user_id': Assistant.userId,
+              'to': to,
+              'subject': subject,
+              'body': body,
+            }),
+          )
+          .timeout(_timeout);
+    } on http.ClientException {
+      throw const ToolFailure('The phone could not reach the backend, so nothing was sent.');
+    } on TimeoutException {
+      throw const ToolFailure(
+        'The backend did not answer in time. The email may have been sent: check their Sent '
+        'folder before sending it again.',
+      );
+    }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       final said = response.body.trim();
       throw ToolFailure(said.isEmpty ? 'The backend could not reach Gmail.' : said);
     }
-    return (jsonDecode(response.body) as Map<String, Object?>)['id']! as String;
   }
 }

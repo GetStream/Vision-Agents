@@ -14,17 +14,22 @@ abstract final class Photos {
   /// The longest side a photo is sent at, in pixels.
   static const _longestSide = 1280;
 
-  /// Each of [files] that reads as an image, ready to ask with.
+  /// Each of [files], ready to ask with.
   ///
-  /// One that does not is left out.
+  /// Throws a [PhotoFailure] when one does not read as an image, rather than asking without
+  /// it: the person sees it in their question, and the model would say it sees none.
   static Future<List<AgentImage>> sources(List<XFile> files) async {
     final images = <AgentImage>[];
+    final unread = <String>[];
     for (final file in files) {
       final jpeg = await _jpeg(file);
-      if (jpeg != null) {
+      if (jpeg == null) {
+        unread.add(file.name);
+      } else {
         images.add(AgentImage('data:image/jpeg;base64,${base64Encode(jpeg)}'));
       }
     }
+    if (unread.isNotEmpty) throw PhotoFailure(unread);
     return images;
   }
 
@@ -46,12 +51,27 @@ abstract final class Photos {
     // side's share of the longest side brings the long one to it, whichever way the photo
     // is turned.
     final side = longest <= _longestSide ? shortest : (shortest * _longestSide / longest).round();
-    return FlutterImageCompress.compressWithFile(
-      file.path,
-      minWidth: side,
-      minHeight: side,
-      quality: 70,
-      keepExif: false,
-    );
+    try {
+      return await FlutterImageCompress.compressWithFile(
+        file.path,
+        minWidth: side,
+        minHeight: side,
+        quality: 70,
+        keepExif: false,
+      );
+    } on Exception {
+      return null;
+    }
   }
+}
+
+/// Photos that could not be read, so the question was not asked.
+class PhotoFailure implements Exception {
+  const PhotoFailure(this.names);
+
+  /// The files that did not read as an image.
+  final List<String> names;
+
+  @override
+  String toString() => 'Could not read ${names.join(', ')} as a photo. Remove it and send again.';
 }

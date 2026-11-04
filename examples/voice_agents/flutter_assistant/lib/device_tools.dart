@@ -71,16 +71,19 @@ abstract final class DeviceTools {
       try {
         places = await Geocoding().placemarkFromCoordinates(here.latitude, here.longitude);
       } on Exception {
-        return _noAddress(here);
+        // No network or a rate limit: the place may well have an address.
+        return '${_coordinates(here)}. Their address could not be looked up just now.';
       }
       final place = places.firstOrNull;
-      if (place == null) return _noAddress(here);
       final parts = [
-        place.thoroughfare,
-        place.subLocality,
-        place.locality,
-        place.country,
+        place?.thoroughfare,
+        place?.subLocality,
+        place?.locality,
+        place?.country,
       ].where((part) => part != null && part.isNotEmpty);
+      // A place with no address, such as out at sea, is no place at all on Android and, on
+      // iOS, one with every part empty.
+      if (parts.isEmpty) return '${_coordinates(here)}, which has no address.';
       return 'They are on ${parts.join(', ')}.';
     },
   );
@@ -154,8 +157,11 @@ abstract final class DeviceTools {
     run: (arguments) async {
       final title = '${arguments['title'] ?? ''}';
       if (title.isEmpty) throw const ToolFailure('A reminder needs a title.');
-      final due = parseDue('${arguments['due'] ?? ''}');
-      if (due == null && !Platform.isIOS) {
+      final dueText = '${arguments['due'] ?? ''}';
+      final due = parseDue(dueText);
+      // A due time that was given and does not read is refused rather than left out, or the
+      // reminder would be added with no alert.
+      if (due == null && (dueText.isNotEmpty || !Platform.isIOS)) {
         throw const ToolFailure('A reminder needs a due time, such as 2026-10-16T18:00:00+02:00.');
       }
       if (!await Permissions.allOf([Permission.calendarFullAccess])) {
@@ -218,8 +224,7 @@ abstract final class DeviceTools {
   /// [text] is not one.
   ///
   /// A date alone, or a time with no offset, is not taken as midnight or as the phone's own
-  /// time, which could be hours off where the person is: iOS then adds the reminder with no
-  /// due time, and Android asks for one.
+  /// time, which could be hours off where the person is: the model is asked for one again.
   static DateTime? parseDue(String text) {
     final match = RegExp(
       r'^(\d{4}-\d{2}-\d{2})T([01]\d|2[0-3]):[0-5]\d(:[0-5]\d(\.\d+)?)?(Z|[+-]\d{2}:\d{2})$',
@@ -262,9 +267,8 @@ abstract final class DeviceTools {
     }
   }
 
-  static String _noAddress(Position here) =>
-      'They are at latitude ${here.latitude}, longitude ${here.longitude}, '
-      'which has no address.';
+  static String _coordinates(Position here) =>
+      'They are at latitude ${here.latitude}, longitude ${here.longitude}';
 
   /// Calls the app's calendar code with [method] and [arguments].
   ///

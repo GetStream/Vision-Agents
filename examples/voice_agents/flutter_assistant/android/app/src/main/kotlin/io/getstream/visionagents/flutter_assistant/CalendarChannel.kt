@@ -5,6 +5,7 @@ import android.content.ContentValues
 import android.content.Context
 import android.os.Handler
 import android.os.Looper
+import android.util.Log
 import android.provider.CalendarContract
 import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
@@ -55,7 +56,13 @@ class CalendarChannel(context: Context) {
             } catch (failure: Exception) {
                 // Anything else the calendar provider throws still answers the call, or the
                 // reply would wait on it until the router gives up.
-                main.post { result.error("tool_failure", "The phone could not read its calendar just now.", null) }
+                Log.e(TAG, "calendar ${call.method} failed", failure)
+                val message = if (call.method == "addReminder") {
+                    "The phone could not add to its calendar just now."
+                } else {
+                    "The phone could not read its calendar just now."
+                }
+                main.post { result.error("tool_failure", message, null) }
             }
         }
     }
@@ -89,7 +96,10 @@ class CalendarChannel(context: Context) {
             CalendarContract.Instances.EVENT_LOCATION,
         )
         val lines = mutableListOf<String>()
-        context.contentResolver.query(uri, columns, null, null, "${CalendarContract.Instances.BEGIN} ASC")?.use { rows ->
+        // No cursor is the provider not answering, not an empty day.
+        val found = context.contentResolver.query(uri, columns, null, null, "${CalendarContract.Instances.BEGIN} ASC")
+            ?: throw ToolFailure("The phone could not read its calendar just now.")
+        found.use { rows ->
             while (rows.moveToNext()) {
                 val begin = rows.getLong(1)
                 val finish = rows.getLong(2)
@@ -134,11 +144,22 @@ class CalendarChannel(context: Context) {
             put(CalendarContract.Reminders.MINUTES, 0)
             put(CalendarContract.Reminders.METHOD, CalendarContract.Reminders.METHOD_ALERT)
         }
-        resolver.insert(CalendarContract.Reminders.CONTENT_URI, alert)
+        // A reminder that would never alert is taken back out, so a retry adds no second one.
+        val alerted = try {
+            resolver.insert(CalendarContract.Reminders.CONTENT_URI, alert)
+        } catch (failure: Exception) {
+            Log.e(TAG, "adding the reminder's alert failed", failure)
+            null
+        }
+        if (alerted == null) {
+            resolver.delete(added, null, null)
+            throw ToolFailure("The calendar would not take the reminder's alert, so it was not added.")
+        }
     }
 
     companion object {
         const val NAME = "io.getstream.visionagents.flutterassistant/calendar"
+        private const val TAG = "CalendarChannel"
         private const val REMINDER_MINUTES = 15
         private const val DAY_MILLIS = 24 * 60 * 60 * 1000L
 

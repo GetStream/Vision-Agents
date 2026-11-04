@@ -115,9 +115,9 @@ swift_assistant's `go run ./configure` again, which binds both:
 - **Conversations** are the router's, in the drawer the menu button opens: `sessions.query()`
   lists this user's, `sessions.search` finds them by title, and the router titles each one as it
   goes. They are under Today, Yesterday, This week and then their month, by when they started.
-  Pull the list down to read it again; swipe one away to delete it. A new chat has no session
-  until its first message is written, and one opened but never sent is deleted again on leaving
-  it. One that ended carries on when it is next asked something.
+  Pull the list down to read it again; swipe one away to delete it. A new chat opens its session
+  as its first message is typed, since opening one takes seconds, and one left unsent is deleted
+  again on leaving it. One that ended carries on when it is next asked something.
 - **Chat** is Stream's AI components (`stream_chat_flutter_ai`) over the session's channel.
   `AIConversationView` lays it out in turns: a question moves to the top and shows at once, and
   its reply writes itself out below it, with the model's reasoning as it thinks (reassembled
@@ -185,8 +185,8 @@ app.
 - A conversation opened again from the list, after it was left, runs without the phone's tools
   and on the agent's own model rather than Grok: the router does not keep either with the
   session yet, and the iOS and Android apps have the same gap.
-- The composer floats over the conversation, but the conversation does not know it is there:
-  its scroll-to-latest button sits under the composer. `AIConversationView` has no bottom inset
-  yet.
+- The conversation keeps its messages clear of the composer floating over it, but its
+  scroll-to-latest button sits under the composer: `AIConversationView` places it at a fixed
+  offset.
 - The Think harder chip reads "Think harder" rather than iOS's shorter "Think", since
   `ChatOption` has no short title.

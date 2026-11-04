@@ -15,9 +15,10 @@ import 'voice_screen.dart';
 
 /// One conversation: the messages, the composer, and the way into voice mode.
 ///
-/// A new conversation has no session until its first message, so opening the app or tapping
-/// New chat leaves nothing in the list. A conversation from the list is followed again by its
-/// id, and one that ended carries on when it is next asked something.
+/// A new conversation opens its session as its first message is typed, since opening one takes
+/// seconds, and deletes it again if it is left unsent, so opening the app or tapping New chat
+/// leaves nothing in the list. A conversation from the list is followed again by its id, and
+/// one that ended carries on when it is next asked something.
 class ChatScreen extends StatefulWidget {
   const ChatScreen({super.key, required this.sessionId, required this.onStarted});
 
@@ -153,9 +154,17 @@ class _ChatScreenState extends State<ChatScreen> {
   }
 
   /// Closes [chat], and deletes [unused], a session that was opened but never used.
+  ///
+  /// The delete is tried whether or not the close went through.
   static Future<void> _leave(AgentChat? chat, String? unused) async {
-    await chat?.close();
-    chat?.dispose();
+    if (chat != null) {
+      try {
+        await chat.close();
+      } on Object catch (error) {
+        debugPrint('Closing the conversation failed: $error');
+      }
+      chat.dispose();
+    }
     if (unused == null) return;
     try {
       await Assistant.sessions.delete(unused);
@@ -236,7 +245,12 @@ class _ChatScreenState extends State<ChatScreen> {
   static Future<void> _discard(AgentSession session, {required bool isNew}) async {
     try {
       await session.close();
-      if (isNew) await Assistant.sessions.delete(session.id);
+    } on Object catch (error) {
+      debugPrint('Closing the session failed: $error');
+    }
+    if (!isNew) return;
+    try {
+      await Assistant.sessions.delete(session.id);
     } on Object {
       // Left in the list, where the person can delete it.
     }
@@ -247,7 +261,10 @@ class _ChatScreenState extends State<ChatScreen> {
     setState(() => _asking = asked);
     final chat = await _open();
     if (chat == null) {
-      if (mounted && identical(_asking, asked)) setState(() => _asking = null);
+      if (mounted && identical(_asking, asked)) {
+        setState(() => _asking = null);
+        _restore(text, photos, thinkHarder: thinkHarder);
+      }
       return;
     }
     asked.after = chat.personMessageCount;
@@ -255,7 +272,17 @@ class _ChatScreenState extends State<ChatScreen> {
     await chat.ask(text, photos: photos, thinkHarder: thinkHarder);
     if (mounted && chat.failure != null && identical(_asking, asked)) {
       setState(() => _asking = null);
+      _restore(text, photos, thinkHarder: thinkHarder);
     }
+  }
+
+  /// Puts a question that could not be asked back in the composer, which emptied as it was
+  /// sent, unless something new has been written there since.
+  void _restore(String text, List<XFile> photos, {required bool thinkHarder}) {
+    if (_composer.hasContent) return;
+    _composer.textEditingController.text = text;
+    _composer.addAttachments(photos);
+    if (thinkHarder) _composer.selectChatOption(_thinkHarder);
   }
 
   /// Switches to voice mode on this conversation, starting a session for a new one.

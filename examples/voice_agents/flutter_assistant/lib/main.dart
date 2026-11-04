@@ -1,4 +1,4 @@
-import 'dart:io' show Platform;
+import 'dart:io' show InternetAddress, InternetAddressType, Platform;
 
 import 'package:flutter/material.dart';
 import 'package:stream_core_flutter/core.dart';
@@ -142,8 +142,9 @@ class _RootScreenState extends State<RootScreen> {
 /// A gate that asks for the local network before anything reaches the Mac at its address on
 /// the Wi-Fi, which Android 17 would otherwise let time out rather than fail.
 ///
-/// Through adb reverse the router and the backend are on the phone's own localhost, which
-/// needs no asking, and neither does iOS, which asks by itself.
+/// Through adb reverse the router and the backend are on the phone's own localhost, and a
+/// hosted router is on the internet, neither of which needs asking, and neither does iOS,
+/// which asks by itself.
 class _LocalNetwork extends StatefulWidget {
   const _LocalNetwork({required this.child});
 
@@ -156,32 +157,41 @@ class _LocalNetwork extends StatefulWidget {
 class _LocalNetworkState extends State<_LocalNetwork> {
   static const _channel = MethodChannel('io.getstream.visionagents.flutterassistant/localNetwork');
 
-  static bool get _onLoopback => [
-    Assistant.routerUrl,
-    Assistant.backendUrl,
-  ].every((url) => const {'localhost', '127.0.0.1'}.contains(url.host));
+  /// Whether the router or the backend is on the local network: a private address, or a
+  /// `.local` name. The phone's own localhost and a hosted router need no asking.
+  static bool get _onLocalNetwork =>
+      [Assistant.routerUrl, Assistant.backendUrl].any((url) => isLocalNetwork(url.host));
 
-  late final Future<bool> _allowed = !Platform.isAndroid || _onLoopback
+  late final Future<bool> _allowed = !Platform.isAndroid || !_onLocalNetwork
       ? Future.value(true)
       : _channel.invokeMethod<bool>('ask').then((allowed) => allowed ?? false);
 
   @override
   Widget build(BuildContext context) => FutureBuilder(
     future: _allowed,
-    builder: (context, answer) => switch (answer.data) {
-      true => widget.child,
-      false => Scaffold(
+    builder: (context, answer) => switch (answer) {
+      AsyncSnapshot(hasError: true, :final error) => Scaffold(
+        body: Center(
+          child: Notice(
+            icon: context.streamIcons.lowBandwidthFill,
+            title: 'Could not ask for the local network',
+            message: '$error',
+          ),
+        ),
+      ),
+      AsyncSnapshot(data: true) => widget.child,
+      AsyncSnapshot(data: false) => Scaffold(
         body: Center(
           child: Notice(
             icon: context.streamIcons.lowBandwidthFill,
             title: 'No local network access',
             message:
-                'The router runs on your Mac, which the app reaches over the local network. '
-                "Allow it in the app's settings.",
+                'The router or the backend runs on your Mac, which the app reaches over the '
+                "local network. Allow it in the app's settings.",
           ),
         ),
       ),
-      null => const Scaffold(),
+      _ => const Scaffold(),
     },
   );
 }
@@ -200,4 +210,18 @@ class _NoKey extends StatelessWidget {
       ),
     ),
   );
+}
+
+/// Whether [host] is on the local network, which Android 17 asks the person about: a private
+/// or link-local address, or a `.local` name. Loopback is the phone itself.
+bool isLocalNetwork(String host) {
+  if (host.endsWith('.local')) return true;
+  final address = InternetAddress.tryParse(host);
+  if (address == null || address.isLoopback) return false;
+  if (address.isLinkLocal) return true;
+  final bytes = address.rawAddress;
+  if (address.type == InternetAddressType.IPv6) return bytes[0] & 0xfe == 0xfc;
+  return bytes[0] == 10 ||
+      (bytes[0] == 172 && bytes[1] & 0xf0 == 16) ||
+      (bytes[0] == 192 && bytes[1] == 168);
 }

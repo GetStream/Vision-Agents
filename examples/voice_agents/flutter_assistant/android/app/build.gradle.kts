@@ -15,7 +15,8 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
+        // Also the scheme a sign-in comes back to: each new conversation's return_url, in
+        // lib/assistant.dart, and the callback in AndroidManifest.xml.
         applicationId = "io.getstream.visionagents.flutterassistant"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.

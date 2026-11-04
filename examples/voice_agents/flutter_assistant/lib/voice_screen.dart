@@ -74,6 +74,10 @@ class _VoiceScreenState extends State<VoiceScreen> {
   /// been put on it.
   late final Future<void> _starting;
 
+  /// The last voice mode's hang-up while it is on its way, which starting again waits for, or
+  /// it would take the agent off the new call.
+  static Future<void>? _hangingUp;
+
   @override
   void initState() {
     super.initState();
@@ -88,11 +92,17 @@ class _VoiceScreenState extends State<VoiceScreen> {
     unawaited(_participants?.cancel());
     _meter?.cancel();
     final session = widget.chat.session;
-    unawaited(_starting.whenComplete(() => _hangUp(_voice, session)));
+    final hangingUp = _hangingUp = _starting.whenComplete(() => _hangUp(_voice, session));
+    unawaited(
+      hangingUp.whenComplete(() {
+        if (identical(_hangingUp, hangingUp)) _hangingUp = null;
+      }),
+    );
     super.dispose();
   }
 
   Future<void> _start() async {
+    await _hangingUp;
     if (!await Permissions.allOf([Permission.microphone])) {
       if (mounted) {
         setState(() => _failure = 'Talking to Juno needs the microphone.');
@@ -124,13 +134,19 @@ class _VoiceScreenState extends State<VoiceScreen> {
   ///
   /// Leaving an attached call keeps the session, and so does not closing the call's own
   /// session: closing one ends the session, the chat's included.
+  ///
+  /// Both are sent at once, and neither failing stops the other. Stopping voice when the agent
+  /// has already left succeeds, so a failure here is a real one: the agent may still be on the
+  /// call.
   static Future<void> _hangUp(VoiceSession? voice, AgentSession chat) async {
-    await voice?.leave();
-    try {
-      await chat.stopVoice();
-    } on Object {
-      // The agent has already left.
-    }
+    await Future.wait([
+      if (voice != null)
+        voice.leave().catchError((Object error) => debugPrint('Leaving the call failed: $error')),
+      chat.stopVoice().then<void>(
+        (_) {},
+        onError: (Object error) => debugPrint('Stopping voice failed: $error'),
+      ),
+    ]);
   }
 
   void _voiceChanged(VoiceState state) {

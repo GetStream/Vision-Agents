@@ -61,6 +61,9 @@ class AgentChat extends ChangeNotifier {
   /// what arrives after it is the question and then its reply.
   String? _askedAfter;
 
+  /// Whether [close] was called, after which an answer still on its way changes nothing.
+  var _closed = false;
+
   void _listen() {
     _subscriptions
       ..add(_channel.state!.messagesStream.listen((_) => notifyListeners()))
@@ -123,6 +126,7 @@ class AgentChat extends ChangeNotifier {
     final state = await _channel.query(
       messagesPagination: stream.PaginationParams(lessThan: first.id, limit: _pageSize),
     );
+    if (_closed) return;
     hasOlderMessages = (state.messages?.length ?? 0) >= _pageSize;
     notifyListeners();
   }
@@ -152,6 +156,8 @@ class AgentChat extends ChangeNotifier {
         reasoningEffort: thinkHarder ? 'high' : null,
       );
     } on Object catch (error) {
+      // Left while it was being asked: nothing shows this chat any more.
+      if (_closed) return;
       failure = '$error';
       _askedAfter = null;
       notifyListeners();
@@ -173,6 +179,7 @@ class AgentChat extends ChangeNotifier {
   ///
   /// Call [dispose] once it completes.
   Future<void> close() async {
+    _closed = true;
     for (final subscription in _subscriptions) {
       unawaited(subscription.cancel());
     }

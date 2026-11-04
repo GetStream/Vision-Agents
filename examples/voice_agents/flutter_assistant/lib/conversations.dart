@@ -53,6 +53,8 @@ class Conversations extends ChangeNotifier {
 
   /// Deletes a conversation: its turns, and what it remembered, go with it.
   Future<void> delete(Session session) async {
+    // A read already on its way began before the delete and would bring the row back.
+    _reads += 1;
     items = [
       for (final item in items)
         if (item.id != session.id) item,
@@ -61,8 +63,10 @@ class Conversations extends ChangeNotifier {
     try {
       await Assistant.sessions.delete(session.id);
     } on Object catch (error) {
-      failure = '$error';
+      // The list read back puts the row where it was, and then says why it is still there.
       await reload();
+      failure = 'Could not delete "${session.displayTitle}": $error';
+      notifyListeners();
     }
   }
 
