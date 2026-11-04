@@ -1796,7 +1796,7 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 // team:<name>, which every row the team's users asked for carries.
 func usageFilterOf(request *getSpendRequest) (store.UsageFilter, error) {
 	var who store.UsageFilter
-	if key := request.APIKey.ptr(); key != nil {
+	if key := request.APIKeyID.ptr(); key != nil {
 		who.APIKey = *key
 	}
 	if user := request.UserID.ptr(); user != nil {
@@ -2331,7 +2331,7 @@ type getSpendRequest struct {
 	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
 	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
 	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
-	APIKey      optionalParam[string]      `query:"api_key" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
+	APIKeyID    optionalParam[string]      `query:"api_key_id" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call." maxLength:"255"`
 	UserID      optionalParam[string]      `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
 	Team        optionalParam[string]      `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
 	Category    optionalParam[[]string]    `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`

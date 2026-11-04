@@ -278,7 +278,7 @@ type ListLimitsParams struct {
 	Subject  LimitSubject  `query:"subject" doc:"Only limits on this subject. team lists the teams' limits, category every other category's."`
 	Level    LimitLevel    `query:"level"`
 	AppId    string        `query:"app_id"`
-	ApiKey   string        `query:"api_key"`
+	ApiKeyId string        `query:"api_key_id" doc:"Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call."`
 	UserId   string        `query:"user_id"`
 	Team     string        `query:"team"`
 	Category string        `query:"category"`
@@ -300,7 +300,7 @@ const maxUsageSubjects = 100
 type LimitUsageParams struct {
 	Subject  LimitSubject `query:"subject" required:"true"`
 	AppId    []string     `query:"app_id,explode" maxItems:"100" doc:"The app of each subject, for every subject but organization, category and team. One goes with every subject."`
-	ApiKey   []string     `query:"api_key,explode" maxItems:"100" doc:"The key of each subject, for subject api_key."`
+	ApiKeyId []string     `query:"api_key_id,explode" maxItems:"100" doc:"The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call."`
 	UserId   []string     `query:"user_id,explode" maxItems:"100" doc:"The end user of each subject, for subject user."`
 	Team     []string     `query:"team,explode" maxItems:"100" doc:"The team of each subject, for subject team or app_team."`
 	Category []string     `query:"category,explode" maxItems:"100" doc:"The usage category of each subject, for subject category or app_category."`
@@ -309,7 +309,7 @@ type LimitUsageParams struct {
 // targets are the subjects the params name, in order: every list of more than one names that
 // many subjects, each taking its place's id, and a list of one goes with every subject.
 func (p *LimitUsageParams) targets() ([]LimitTarget, error) {
-	lists := map[string][]string{"app_id": p.AppId, "api_key": p.ApiKey, "user_id": p.UserId, "team": p.Team, "category": p.Category}
+	lists := map[string][]string{"app_id": p.AppId, "api_key_id": p.ApiKeyId, "user_id": p.UserId, "team": p.Team, "category": p.Category}
 	count := 1
 	for _, list := range lists {
 		count = max(count, len(list))
@@ -333,7 +333,7 @@ func (p *LimitUsageParams) targets() ([]LimitTarget, error) {
 	}
 	targets := make([]LimitTarget, count)
 	for i := range targets {
-		targets[i] = LimitTarget{Subject: p.Subject, AppId: at(p.AppId, i), ApiKey: at(p.ApiKey, i), UserId: at(p.UserId, i),
+		targets[i] = LimitTarget{Subject: p.Subject, AppId: at(p.AppId, i), ApiKey: at(p.ApiKeyId, i), UserId: at(p.UserId, i),
 			Team: at(p.Team, i), Category: at(p.Category, i)}
 	}
 	return targets, nil
@@ -496,7 +496,7 @@ func (s *Server) registerLimits(api huma.API) {
 			"effective amount, its baseline since a reset and its room, and for the organization the "+
 			"operator's spend hard limit, which is what admission refuses first, the same on every subject. "+
 			"Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id "+
-			"(app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within "+
+			"(app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within "+
 			"one app or once per subject, so every list has one value or one per subject. One subject "+
 			"answers a list of one. Spend is read from the usage records, so it is what admission counts "+
 			"within a few seconds.")
@@ -749,7 +749,7 @@ func (s *Server) listLimits(ctx context.Context, organization string, request *L
 		return nil, invalidRequest(err.Error())
 	}
 	filter := store.LimitFilter{
-		OrganizationID: organization, Level: store.LimitLevel(request.Level), AppID: request.AppId, APIKey: request.ApiKey,
+		OrganizationID: organization, Level: store.LimitLevel(request.Level), AppID: request.AppId, APIKey: request.ApiKeyId,
 		UserID: request.UserId, Category: request.Category, Interval: usage.Interval(request.Interval),
 	}
 	switch request.Subject {
