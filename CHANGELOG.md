@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router reads a page into Markdown
+
+`POST /v1/ocr` takes a JPEG or PNG of a page, up to 10 MB, and answers with its text as Markdown, its headings, lists and tables kept. `ocr-default` asks Mistral OCR 4.1 first and fails over, after 45 seconds or an error, to gpt-6-luna and then gemini-3.8-flash. It never fails over to a model that cannot see a picture. `options.target` names another shortcut, `ocr-vision` among them, or one model, as the other modalities do, and `options.data_policy` applies the ZDR and region rules. Each page is one usage row with the model that read it: Mistral's is priced by the page at $4 per 1,000, and a vision model's by the tokens it took. A request is checked against the spend limits before the page is sent. A page every model failed is a 200 with `status: failed` and an `error_code`. `GET /v1/ocr/providers` and `GET /v1/ocr/routes` list the models and shortcuts (AI-2611).
+
 ### The app chat writes episode cards to the person's omni-channel
 
 Under an agent config with `episode_cards` on, a person's message in a plain `agent` channel of the app chat now opens an episode, as a call or a Slack thread does. Its card (source `chat`) goes to the person's omni-channel and names the channel the chat is in. The person is the Stream user who wrote, in the Stream app the message came from. One run of messages is one episode and one card; after `episodes.idle_after` without a message, the sweeper closes it and writes its summary. A thread channel, an omni-channel, an incognito session and a call's session open none. A config with `episode_cards` off writes nothing new; a message in a chat a session has answered before reads the config once, as a chat's first message did before (AI-2632, #1701).

@@ -68,6 +68,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory/mem0"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
@@ -1035,6 +1036,27 @@ func run(settings config.Config, logger *slog.Logger) error {
 		defer detecting.Close()
 		routers[routing.Detection] = detecting
 		streams.Detection = detecting
+	}
+
+	// OCR is served the same way. Its vision language models are built the way the LLM
+	// router builds them, so they read the same keys.
+	if section, ok := capabilities[routing.OCR]; ok {
+		reading, err := ocrrouter.New(ocrrouter.Options{
+			Config:   section,
+			Registry: ocrrouter.DefaultRegistry(),
+			Store:    pgStore,
+			Live:     liveClient,
+			Gate:     gate,
+			Pricer:   prices,
+			Writer:   usageWriter,
+			Logger:   logger,
+		})
+		if err != nil {
+			return err
+		}
+		defer reading.Close()
+		routers[routing.OCR] = reading
+		streams.OCR = reading
 	}
 
 	// Every Stream action taken for a customer, a call joined, a line made, a transcript

@@ -391,6 +391,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerRecordings(api)
 	s.registerImages(api)
 	s.registerDetection(api)
+	s.registerOCR(api)
 	documentHandWritten(api)
 	s.registerConfigPatch(api)
 	s.registerSync(api)

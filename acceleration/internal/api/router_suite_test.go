@@ -75,6 +75,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/memory"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/ocrrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/siptrunk"
@@ -655,6 +656,7 @@ func (s *RouterSuite) SetupSuite() {
 		routing.DecisionModel: streams.DecisionModel,
 		routing.Image:         streams.Image,
 		routing.Detection:     streams.Detection,
+		routing.OCR:           streams.OCR,
 	}
 
 	if s.forwardHTTP != nil {
@@ -1320,13 +1322,19 @@ func (s *RouterSuite) routers(limiter *quota.Limiter, gate routing.Gate, logger 
 	s.Require().NoError(err)
 	s.T().Cleanup(detecting.Close)
 
+	reading, err := ocrrouter.New(ocrrouter.Options{
+		Config: ocrConfig(), Registry: ocrRegistry(), Store: s.store, Live: s.live, Gate: gate, Logger: logger,
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(reading.Close)
+
 	conversing, err := stsrouterStub()
 	s.Require().NoError(err)
 	s.T().Cleanup(conversing.Close)
 
 	return &Streams{
 		STT: transcriber, TTS: speaker, LLM: reasoner, STS: conversing,
-		Search: finding, DecisionModel: judging, Image: imaging, Detection: detecting,
+		Search: finding, DecisionModel: judging, Image: imaging, Detection: detecting, OCR: reading,
 		Transcriptions: transcriptions, Speech: recordings,
 	}
 }

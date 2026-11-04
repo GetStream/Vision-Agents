@@ -5486,7 +5486,7 @@ components:
             $ref: '#/components/schemas/ContentPart'
           type: array
     Modality:
-      description: 'What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
+      description: 'What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.'
       enum:
         - stt
         - tts
@@ -5496,6 +5496,7 @@ components:
         - decision_model
         - image
         - detection
+        - ocr
         - memory
         - knowledge
         - phone
@@ -5635,6 +5636,82 @@ components:
         - numbers
         - skipped
       type: object
+    OcrErrorCode:
+      description: Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+      enum:
+        - provider_failed
+        - timeout
+        - cancelled
+      type: string
+    OcrOptions:
+      description: Who reads the page, and what may happen to it afterwards.
+      properties:
+        data_policy:
+          $ref: '#/components/schemas/DataPolicy'
+        providers:
+          description: A priority list of where to try, in the order given, which wins over target when it holds anything.
+          items:
+            type: string
+          type: array
+        target:
+          description: A provider/model or a shortcut. Defaults to ocr-default.
+          example: ocr-vision
+          type: string
+      type: object
+    OcrRequest:
+      properties:
+        image:
+          description: The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+          format: byte
+          type: string
+        options:
+          $ref: '#/components/schemas/OcrOptions'
+        tags:
+          additionalProperties:
+            type: string
+          type: object
+      required:
+        - image
+      type: object
+    OcrResult:
+      properties:
+        cost_micros:
+          description: Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+          format: int64
+          type: integer
+        error:
+          description: What went wrong, in words. Absent when the page was read.
+          type: string
+        error_code:
+          $ref: '#/components/schemas/OcrErrorCode'
+        id:
+          description: This response's own id, for logs. Nothing is stored under it.
+          example: ocr_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+          type: string
+        markdown:
+          description: The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+          type: string
+        model:
+          example: mistral-ocr-4-1
+          type: string
+        provider:
+          description: Who read it, or who failed to. Absent when nothing got as far as a provider.
+          example: mistral
+          type: string
+        status:
+          $ref: '#/components/schemas/OcrStatus'
+      required:
+        - cost_micros
+        - id
+        - markdown
+        - status
+      type: object
+    OcrStatus:
+      description: Whether the page was read. A failed reading says why in error_code and error.
+      enum:
+        - completed
+        - failed
+      type: string
     OfferedTool:
       description: One tool as the model sees it.
       properties:
@@ -20373,6 +20450,49 @@ paths:
       summary: List the organization's teams
       tags:
         - Staff
+  /v1/ocr:
+    post:
+      description: |-
+        Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. Mistral OCR is billed per page and a vision model by the tokens it took.
+        A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+      operationId: readPage
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/OcrRequest'
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/OcrResult'
+          description: What the page says, or why nothing was read
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "404":
+          $ref: '#/components/responses/NotFound'
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Read the text of one page, and return it as Markdown
   /v1/ops/customers/{customer_id}/connectors/{id}/provider-app:
     delete:
       description: |-
