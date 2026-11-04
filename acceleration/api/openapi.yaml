@@ -921,6 +921,31 @@ components:
           description: Offer each tool by the first line of its description, with its arguments' descriptions left out, and have the first call to a tool return its full description and input schema instead of running it. It saves context on an agent with many tools, at the cost of one more model turn for each tool a conversation uses. Off by default. Left out on an update, the stored setting stays.
           type: boolean
       type: object
+    AgentUser:
+      properties:
+        phone:
+          description: The number linked to the user, in E.164; null when none is.
+          example: "+15551234567"
+          nullable: true
+          type: string
+        user_id:
+          description: The Stream user id, as the app's own token signs it.
+          type: string
+      required:
+        - user_id
+        - phone
+      type: object
+    AgentUserRequest:
+      description: 'Who one of the app''s users is, as the app''s backend knows it. phone is required: a number, or null for none.'
+      properties:
+        phone:
+          description: 'The user''s phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent''s episode cards of one are read by the other. null unlinks the number the user had; what was joined before stays joined. A new number takes the place of the old one. A number linked to another user of the app is refused (409 phone_taken).'
+          example: "+15551234567"
+          nullable: true
+          type: string
+      required:
+        - phone
+      type: object
     AnalyzeReviewsRequest:
       properties:
         from:
@@ -18214,6 +18239,62 @@ paths:
         "503":
           $ref: '#/components/responses/Unavailable'
       summary: Store an agent directory's instructions, skills, knowledge, simulations and settings
+  /v1/agents/users/{user_id}:
+    put:
+      description: |-
+        Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+
+        Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+      operationId: updateUser
+      parameters:
+        - description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
+          in: path
+          name: user_id
+          required: true
+          schema:
+            description: 'The Stream user id the app chat knows the user by: the id the app''s own token signs.'
+            minLength: 1
+            type: string
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/AgentUserRequest'
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/AgentUser'
+          description: The user as the router now holds it
+          headers:
+            X-Stream-Balance-Micros:
+              $ref: '#/components/headers/X-Stream-Balance-Micros'
+            X-Stream-Balance-Warning:
+              $ref: '#/components/headers/X-Stream-Balance-Warning'
+            X-Stream-Cost-Estimated:
+              $ref: '#/components/headers/X-Stream-Cost-Estimated'
+            X-Stream-Cost-Micros:
+              $ref: '#/components/headers/X-Stream-Cost-Micros'
+        "400":
+          $ref: '#/components/responses/BadRequest'
+        "401":
+          $ref: '#/components/responses/Unauthorized'
+        "402":
+          $ref: '#/components/responses/PaymentRequired'
+        "403":
+          $ref: '#/components/responses/Forbidden'
+        "409":
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+          description: Conflict
+        "500":
+          $ref: '#/components/responses/InternalError'
+        "503":
+          $ref: '#/components/responses/Unavailable'
+      summary: Link a user to a phone number
   /v1/agents/users/{user_id}/connections:
     delete:
       description: |-
