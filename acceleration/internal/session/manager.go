@@ -225,7 +225,8 @@ type Manager struct {
 	// the recorders open for them (ended).
 	closing int
 	ended   sync.WaitGroup
-	// retiring holds the sessions retired (Retire) until a look at them finds them ended.
+	// retiring holds the sessions retired (Retire) until they are closed (CloseRetired), or a
+	// look at them finds them ended.
 	retiring map[*Session]struct{}
 }
 
@@ -1086,7 +1087,7 @@ const RetireWithin = 2 * time.Minute
 const retirePoll = 50 * time.Millisecond
 
 // Retire marks a session as closing once it has written the replies it owes, which its
-// caller closes it after (api.retire), and reports whether it was not retiring already. A
+// caller closes it after (CloseRetired, from api.retire), and reports whether it was not retiring already. A
 // session opened on its conversation meanwhile waits for it to end (awaitRetiring), its close
 // included: Close takes it off the map before its conversation is let go.
 func (m *Manager) Retire(found *Session) bool {
@@ -1100,6 +1101,17 @@ func (m *Manager) Retire(found *Session) bool {
 	}
 	m.retiring[found] = struct{}{}
 	return true
+}
+
+// CloseRetired closes a session Retire retired and forgets it: Close is synchronous, so once it
+// returns no session opened on its conversation has it to wait for (awaitRetiring).
+func (m *Manager) CloseRetired(found *Session) (bool, error) {
+	defer func() {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		delete(m.retiring, found)
+	}()
+	return m.Close(found.ID(), OwnerOf(found.Spec()))
 }
 
 // awaitRetiring waits for each retiring session holding the persistent conversation cid to

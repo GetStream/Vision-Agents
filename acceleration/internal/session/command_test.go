@@ -752,6 +752,23 @@ func (s *SessionSuite) TestASessionOpenedOnARetiringOnesConversationWaitsForItTo
 	<-closed
 }
 
+// Defect (AI-2632 R3.2): a retired session, once closed, stays referenced by the manager
+// until the next session opened on some persistent conversation of the router looks at it.
+func (s *SessionSuite) TestARetiredSessionIsForgottenOnceClosed() {
+	s.persists()
+	running := s.commands()
+	s.Require().True(s.manager.Retire(running))
+
+	closed, err := s.manager.CloseRetired(running)
+
+	s.Require().NoError(err)
+	s.True(closed)
+	s.Equal(Ended, running.State())
+	s.manager.mu.Lock()
+	defer s.manager.mu.Unlock()
+	s.NotContains(s.manager.retiring, running, "the closed session is still held as retiring")
+}
+
 func (s *SessionSuite) TestStoppingACommandLeavesALaterOneAnsweringItsOwnQuestion() {
 	s.persists()
 	running := s.commands()

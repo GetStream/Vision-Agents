@@ -109,7 +109,7 @@ func (s *Server) retire(found *session.Session) {
 		for (s.owing.owes(found.ID()) || found.Busy()) && found.State() != session.Ended && time.Now().Before(deadline) {
 			time.Sleep(threadTurnPoll)
 		}
-		if _, err := s.sessions.Close(found.ID(), session.OwnerOf(found.Spec())); err != nil {
+		if _, err := s.sessions.CloseRetired(found); err != nil {
 			s.logger.Error("could not close the session holding another person's episode cards",
 				"session", found.ID(), "error", err)
 		}
