@@ -2082,6 +2082,23 @@ impl Client {
         )
         .await
     }
+    /// Link a user to a phone number
+    ///
+    /// `PUT /v1/agents/users/{user_id}` (`updateUser`).
+    pub async fn update_user(
+        &self,
+        user_id: &str,
+        body: &types::AgentUserRequest,
+    ) -> Result<types::AgentUser> {
+        self.send(
+            Method::PUT,
+            &format!("/v1/agents/users/{user_id}", user_id = segment(user_id)),
+            None::<&()>,
+            Some(body),
+            "updateUser",
+        )
+        .await
+    }
     /// Delete every connection of one user
     ///
     /// `DELETE /v1/agents/users/{user_id}/connections` (`deleteUserConnections`).

@@ -151,14 +151,15 @@ func SlackUser(teamID, userID string) (Person, error) {
 // StreamUser is the person a Stream user of the app chat is: the message's user id, which
 // Stream signed through the customer's own token, in the Stream app the message came from.
 // Never a custom field of the user, which a user may set on themselves. A user id is one
-// person in one app only, so the address is the app's pk and the user id: anya_123 of app 111
-// is never anya_123 of app 222. Until a customer links the user to a number, their chat
+// person in one app only, so the address is the app's pk and the user id
+// (store.StreamUserAddress, which a link finds the row by): anya_123 of app 111 is never
+// anya_123 of app 222. Until a customer links the user to a number, their chat
 // episodes go to an omni-channel of their own.
 func StreamUser(appPK int64, userID string) (Person, error) {
 	if appPK <= 0 || userID == "" {
 		return Person{}, stack.Wrap(errors.New("omnichannel: a Stream app and a Stream user are required"))
 	}
-	return Person{Kind: store.ContactStreamUser, Address: fmt.Sprintf("%d:%s", appPK, userID)}, nil
+	return Person{Kind: store.ContactStreamUser, Address: store.StreamUserAddress(appPK, userID)}, nil
 }
 
 // IsOmniChannel is whether an agent channel's id is an omni-channel's, where cards are
