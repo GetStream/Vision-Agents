@@ -83,11 +83,11 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 //   - a text session on a thread channel reads the cards of the person its thread's episode
 //     is with, the thread itself left out, since it reads that word for word;
 //   - a text session a worker opened to answer a message in an app chat's agent channel
-//     (Spec.Dispatched) reads the cards of the one Stream user who wrote there, the channel
-//     itself left out for the same reason. The spec does not name that person: UserID is
-//     who the agent writes as, and Caller is empty, since the worker opens the session with
-//     its own server key (Manager.handedOut). The channel's messages do, as they named the
-//     person whose card the message wrote (api.chatEpisode);
+//     (Spec.Dispatched) reads the cards of the Stream user who wrote the message handed out
+//     (Spec.HandedOutBy), when every person's message in the channel is theirs, the channel
+//     itself left out for the same reason. UserID is who the agent writes as, and Caller is
+//     empty, since the worker opens the session with its own server key (Manager.handedOut),
+//     so neither names that person. person is that user, once cards were read for them;
 //   - a voice session reads the cards of the number on its call (calledParty), its own
 //     call's card left out.
 //
@@ -101,9 +101,9 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 // The whole read, the call included, takes at most omnichannel.ReadTimeout: a slow Stream
 // delays a call's join by that and no more, and the call starts with no cards. A card that
 // cannot be read is logged and left out; the session starts all the same.
-func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound) []llm.Message {
+func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound) (cards []llm.Message, person string) {
 	if c == nil || !spec.EpisodeCards || spec.Incognito || spec.ConfigID == "" || spec.Native() {
-		return nil
+		return nil, ""
 	}
 	ctx, cancel := context.WithTimeout(ctx, omnichannel.ReadTimeout)
 	defer cancel()
@@ -112,26 +112,26 @@ func (c *callCards) read(ctx context.Context, spec Spec, stream streamapp.Bound)
 	case spec.Text && spec.PersistConversation && spec.Shared():
 		reading.Thread = spec.ConversationID
 	case spec.Text && spec.PersistConversation && spec.Dispatched:
-		reading.Chat = spec.ConversationID
+		reading.Chat, reading.ChatUser = spec.ConversationID, spec.HandedOutBy
 	case !spec.Text && spec.CallID != "" && stream.Client != nil:
 		number, err := calledParty(ctx, spec, stream)
 		if err != nil {
 			c.logger.Error("could not read who is on a call for its episode cards", "session", spec.ID, "call", spec.CallID, "error", err)
-			return nil
+			return nil, ""
 		}
 		person, err := omnichannel.Phone(number)
 		if err != nil {
-			return nil
+			return nil, ""
 		}
 		reading.Person, reading.SessionID = person, spec.ID
 	default:
-		return nil
+		return nil, ""
 	}
 	cards, err := c.cards.Context(ctx, reading)
 	if err != nil {
 		c.logger.Error("could not read every episode card", "session", spec.ID, "error", err)
 	}
-	return cards
+	return cards, reading.ChatUser
 }
 
 // Close abandons the cards still being written and waits for them to stop.

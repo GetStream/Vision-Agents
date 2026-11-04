@@ -47,11 +47,17 @@ func (s *EpisodeReadingSuite) chatEpisode(person, cid string, app int64) omnicha
 		StartedAt: s.chatNow(), StreamAppPK: app})
 }
 
-// chatSession is the session a worker opens to answer what was written in an app chat's
+// chatSession is the session a worker opens to answer what by wrote in an app chat's
 // channel, handed out from a hook of app (deployment: signed by the deployment), and the
 // request the model was sent to answer text.
-func (s *EpisodeReadingSuite) chatSession(cid string, app int64, deployment, cards bool, text string) llm.ResponseParams {
-	s.manager.HandOut(s.ctx, s.customerID, cid, app, deployment)
+func (s *EpisodeReadingSuite) chatSession(cid string, app int64, deployment bool, by string, cards bool, text string) llm.ResponseParams {
+	_, params := s.workerSession(cid, app, deployment, by, cards, text)
+	return params
+}
+
+// workerSession is chatSession with the session it opened.
+func (s *EpisodeReadingSuite) workerSession(cid string, app int64, deployment bool, by string, cards bool, text string) (*Session, llm.ResponseParams) {
+	s.manager.HandOut(s.ctx, s.customerID, cid, app, deployment, by)
 	created, err := s.manager.Create(s.ctx, Spec{
 		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: cards,
 		AgentID: strings.TrimPrefix(cid, "agent:"), Text: true, PersistConversation: true, CallerKind: auth.KindServer,
@@ -62,12 +68,12 @@ func (s *EpisodeReadingSuite) chatSession(cid string, app int64, deployment, car
 	s.Require().True(created.Spec().Dispatched, "the worker's session answers in the channel handed out")
 	_, err = created.Respond(s.ctx, text, nil, options.LLM{})
 	s.Require().NoError(err)
-	return s.replyTo(text)
+	return created, s.replyTo(text)
 }
 
 // deploymentChat is chatSession in the deployment's own app, as its hook hands one out.
-func (s *EpisodeReadingSuite) deploymentChat(cid string, cards bool, text string) llm.ResponseParams {
-	return s.chatSession(cid, 0, true, cards, text)
+func (s *EpisodeReadingSuite) deploymentChat(cid, by string, cards bool, text string) llm.ResponseParams {
+	return s.chatSession(cid, 0, true, by, cards, text)
 }
 
 // Defect: a chat session reads no cards, or hands back its own channel's episode, which it
@@ -83,7 +89,7 @@ func (s *EpisodeReadingSuite) TestASecondChatSessionReadsTheFirstChatsCard() {
 	s.write(second, "anya_123", "what time was it again?", nil)
 	s.chatEpisode("anya_123", second, 0)
 
-	handed := s.handed(s.deploymentChat(second, true, "what time was it again?"))
+	handed := s.handed(s.deploymentChat(second, "anya_123", true, "what time was it again?"))
 
 	s.Require().Len(handed, 1, "the first chat's card, and not the one of the chat the session is in")
 	s.Equal(store.EpisodeChat, handed[0]["source"])
@@ -100,13 +106,13 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsTheSMSCardOfThePersonLinkedTo
 	chat := s.chatChannel("anya_123")
 	s.write(chat, "anya_123", "and on Saturday?", nil)
 	s.chatEpisode("anya_123", chat, 0)
-	s.Nil(s.handed(s.deploymentChat(chat, true, "and on Saturday?")), "before the link her chat is a person of its own")
+	s.Nil(s.handed(s.deploymentChat(chat, "anya_123", true, "and on Saturday?")), "before the link her chat is a person of its own")
 	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE contact_map SET conversation_id = ? WHERE customer_id = ? AND kind = ? AND address = ?",
 		sms.Contact.ConversationID, s.customerID, store.ContactStreamUser, "anya_123")
 	s.Require().NoError(err)
 	s.write(chat, "anya_123", "and the dentist's name?", nil)
 
-	handed := s.handed(s.deploymentChat(chat, true, "and the dentist's name?"))
+	handed := s.handed(s.deploymentChat(chat, "anya_123", true, "and the dentist's name?"))
 
 	s.Require().Len(handed, 1)
 	s.Equal("sms", handed[0]["source"])
@@ -128,7 +134,7 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsNoCardsOfAnotherUser() {
 	alone := s.chatChannel("anya_123")
 	s.write(alone, "anya_123", "hello", nil)
 	asked := len(s.requests())
-	s.Require().Len(s.handed(s.deploymentChat(alone, true, "hello")), 1, "Anya alone in her chat is handed her own card")
+	s.Require().Len(s.handed(s.deploymentChat(alone, "anya_123", true, "hello")), 1, "Anya alone in her chat is handed her own card")
 	s.Empty(namingAny(s.requests()[asked:], bobs, bob.Contact.ConversationID, bob.Episode.CardMessageID))
 
 	for name, bobWrites := range map[string]func(cid string){
@@ -140,7 +146,7 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsNoCardsOfAnotherUser() {
 		bobWrites(shared)
 		s.write(shared, "anya_123", "anything new?", nil)
 
-		s.Nil(s.handed(s.deploymentChat(shared, true, "anything new?")), name)
+		s.Nil(s.handed(s.deploymentChat(shared, "anya_123", true, "anything new?")), name)
 	}
 }
 
@@ -186,11 +192,11 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsTheCardsOfTheSameUserInItsOwn
 	chat := s.chatChannel("anya_123")
 	s.write(chat, "anya_123", "hello", nil)
 
-	s.Nil(s.handed(s.deploymentChat(chat, true, "hello")), "app 7's anya_123 is not the deployment app's")
+	s.Nil(s.handed(s.deploymentChat(chat, "anya_123", true, "hello")), "app 7's anya_123 is not the deployment app's")
 
 	s.inApp(other, own)
 	s.write(chat, "anya_123", "hello again", nil)
-	handed := s.handed(s.chatSession(chat, other, false, true, "hello again"))
+	handed := s.handed(s.chatSession(chat, other, false, "anya_123", true, "hello again"))
 	s.Require().Len(handed, 1, "a session in app 7 reads app 7's card")
 	s.Equal("Gave her address in the other app.", handed[0]["summary"])
 
@@ -199,12 +205,12 @@ func (s *EpisodeReadingSuite) TestAChatSessionReadsTheCardsOfTheSameUserInItsOwn
 	s.Require().NoError(err)
 	s.inApp(0, own)
 	s.write(chat, "anya_123", "and now?", nil)
-	handed = s.handed(s.deploymentChat(chat, true, "and now?"))
+	handed = s.handed(s.deploymentChat(chat, "anya_123", true, "and now?"))
 	s.Require().Len(handed, 1, "the deployment app's id and zero are one app")
 
 	s.inApp(3, own)
 	s.write(chat, "anya_123", "and in app 3?", nil)
-	s.Nil(s.handed(s.chatSession(chat, 3, false, true, "and in app 3?")), "the deployment app's card is not app 3's")
+	s.Nil(s.handed(s.chatSession(chat, 3, false, "anya_123", true, "and in app 3?")), "the deployment app's card is not app 3's")
 }
 
 // Defect: a session that is not the router's hand-out reads a chat person's cards. Anya's
@@ -253,7 +259,7 @@ func (s *EpisodeReadingSuite) TestWithTheCardsOffAChatSessionIsAsBefore() {
 	s.write(chat, "anya_123", "can I move it?", nil)
 	asked := len(s.requests())
 
-	off := s.deploymentChat(chat, false, "can I move it?")
+	off := s.deploymentChat(chat, "anya_123", false, "can I move it?")
 
 	s.False(Spec{}.EpisodeCards, "a spec reads no cards unless its config says so")
 	s.Nil(s.handed(off))
@@ -266,4 +272,62 @@ func (s *EpisodeReadingSuite) TestWithTheCardsOffAChatSessionIsAsBefore() {
 		made = append(made, request.Method+" "+strings.ReplaceAll(request.Path, strings.TrimPrefix(chat, "agent:"), "<chat>"))
 	}
 	s.Equal([]string{"POST /api/v2/chat/channels/agent/<chat>/query"}, made)
+}
+
+// writeRecording puts a voice recording with no text into an app chat's channel, as Stream
+// Chat's app sends one: the router hands it out (api.addressed), though it is no line.
+func (s *EpisodeReadingSuite) writeRecording(cid, user string) {
+	kind, url, empty := "voiceRecording", "https://example.com/"+uuid.NewString()+".aac", ""
+	_, err := s.chat.Client.Chat().SendMessage(s.ctx, "agent", strings.TrimPrefix(cid, "agent:"), &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &empty, UserID: &user, Attachments: []getstream.Attachment{{Type: &kind, AssetUrl: &url}}},
+	})
+	s.Require().NoError(err)
+}
+
+// Defect (R1.2): the person is counted from the channel's lines alone, which a message the
+// router hands out need not be. Bob's voice recording alone, handed out, is answered with no
+// card of Anya's; nor is Anya's next message once Bob's recording is in the channel; nor a
+// message of Bob's that is not in the channel's messages, as a reply in a Stream thread is not.
+func (s *EpisodeReadingSuite) TestAChatSessionReadsNoCardsForAMessageByAnotherUserThatIsNoLine() {
+	s.at(-3600)
+	earlier := s.chatChannel("anya_123")
+	s.write(earlier, "anya_123", "my address is 1 Main St", nil)
+	s.summarize(s.chatEpisode("anya_123", earlier, 0), "Gave her address: 1 Main St.")
+	s.at(0)
+	alone := s.chatChannel("anya_123")
+	s.write(alone, "anya_123", "hello", nil)
+	s.Require().Len(s.handed(s.deploymentChat(alone, "anya_123", true, "hello")), 1, "Anya alone reads her card")
+
+	for name, c := range map[string]struct {
+		writes func(cid string)
+		by     string
+		heard  string
+	}{
+		"Bob's recording, handed out": {func(cid string) { s.writeRecording(cid, "bob_456") }, "bob_456", "\n\n[voice note] what is Anya's address?"},
+		"Anya's message after Bob's recording": {func(cid string) {
+			s.writeRecording(cid, "bob_456")
+			s.write(cid, "anya_123", "anything new?", nil)
+		}, "anya_123", "anything new?"},
+		"Bob's message outside the channel's messages": {func(string) {}, "bob_456", "what is Anya's address?"},
+	} {
+		shared := s.chatChannel("anya_123")
+		s.write(shared, "anya_123", "hello", nil)
+		c.writes(shared)
+
+		s.Nil(s.handed(s.deploymentChat(shared, c.by, true, c.heard+" "+uuid.NewString())), name)
+	}
+}
+
+// Defect (R1.4): a hand-out that names nobody, as one a node from before it made, reads the
+// cards of somebody the channel names: its creator, or the one person who wrote there.
+func (s *EpisodeReadingSuite) TestAHandOutNamingNobodyReadsNoCards() {
+	s.at(-3600)
+	earlier := s.chatChannel("anya_123")
+	s.write(earlier, "anya_123", "my address is 1 Main St", nil)
+	s.summarize(s.chatEpisode("anya_123", earlier, 0), "Gave her address: 1 Main St.")
+	s.at(0)
+	chat := s.chatChannel("anya_123")
+	s.write(chat, "anya_123", "hello", nil)
+
+	s.Nil(s.handed(s.deploymentChat(chat, "", true, "hello")))
 }

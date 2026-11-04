@@ -6,6 +6,7 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	getstream "github.com/GetStream/getstream-go/v5"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -245,6 +247,83 @@ func (s *ChatEpisodesSuite) TestStreamRefusingTheCardStillAnswersTheMessage() {
 	omni := s.omniChannel()
 	s.Equal(1, s.episodeCount(), "the episode is open")
 	s.Never(func() bool { return len(s.chat.Stored(omni)) > 0 }, dropped, 20*time.Millisecond)
+}
+
+// Defect (R1.2): the hand-out reaches another node without its author, so the worker's
+// session that node opens, as the load balancer may have it, reads none of Anya's cards.
+func (s *ChatEpisodesSuite) TestAWorkersSessionOnAnotherNodeReadsThePersonsCards() {
+	worker := s.worker()
+	config := s.config(true, "noted/noted-model")
+	s.says(config.ID, "my address is 1 Main St", worker)
+	s.cards(s.omniChannel(), 1)
+	s.channelID = "chat-" + s.utils.uuid()
+	hello := "hello " + s.utils.uuid()
+	handed := s.says(config.ID, hello, worker)
+	elsewhere := s.serverClient.on(s.otherNode())
+
+	opened := elsewhere.createSession(CreateSessionRequest{AgentId: &handed.AgentID, ConfigId: &handed.ConfigID})
+	s.Require().Equal(http.StatusAccepted, elsewhere.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{Text: hello, RequestId: pointerTo(s.utils.uuid())}, nil))
+
+	s.True(carded(s.askedWith(hello)))
+}
+
+// says writes, as the test's user, text in the test's channel, which names the config given,
+// as the customer's app does, and returns what the worker was handed for it.
+func (s *ChatEpisodesSuite) says(configID, text string, worker <-chan dispatch.Message) dispatch.Message {
+	s.Require().Equal(http.StatusOK, s.inChat(configID, text))
+	return s.handedTo(worker)
+}
+
+// inChat writes, as the test's user, text in the test's channel, which names the config given,
+// and delivers it as Stream Chat does.
+func (s *ChatEpisodesSuite) inChat(configID, text string) int {
+	ctx := context.Background()
+	_, err := s.chat.Client.Chat().GetOrCreateChannel(ctx, "agent", s.channelID, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &s.user, Custom: map[string]any{ConfigField: configID}},
+	})
+	s.Require().NoError(err)
+	_, err = s.chat.Client.Chat().SendMessage(ctx, "agent", s.channelID, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &s.user},
+	})
+	s.Require().NoError(err)
+	return s.writes(configID, text)
+}
+
+// ask hands a session text, as the worker does.
+func (s *ChatEpisodesSuite) ask(session, text string) {
+	s.Require().Equal(http.StatusAccepted, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+session+"/responses",
+		CreateResponseRequest{Text: text, RequestId: pointerTo(s.utils.uuid())}, nil))
+}
+
+// askedWith is the request a "noted" model was sent to answer text, once one was.
+func (s *ChatEpisodesSuite) askedWith(text string) llm.ResponseParams {
+	var found llm.ResponseParams
+	s.Require().Eventually(func() bool {
+		s.notedMu.Lock()
+		defer s.notedMu.Unlock()
+		for _, model := range s.noted {
+			model.mu.Lock()
+			asked := slices.Clone(model.asked)
+			model.mu.Unlock()
+			for _, params := range asked {
+				if slices.ContainsFunc(params.Input, func(m llm.Message) bool { return m.Role == llm.User && m.Content == text }) {
+					found = params
+					return true
+				}
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "no model was asked to answer %q", text)
+	return found
+}
+
+// carded reports whether a request holds the person's episode cards, which follow their note
+// (omnichannel.cardsAttribution).
+func carded(params llm.ResponseParams) bool {
+	return slices.ContainsFunc(params.Input, func(m llm.Message) bool {
+		return m.Role == llm.System && strings.HasPrefix(m.Content, "The person's earlier episodes with this agent")
+	})
 }
 
 // writes delivers, as Stream Chat does, a message the test's user wrote in the test's channel,

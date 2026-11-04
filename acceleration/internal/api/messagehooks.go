@@ -388,7 +388,7 @@ func (s *Server) routeArrivingMessage(ctx context.Context, origin hookOrigin, ev
 			message.Text = s.heardText(ctx, heardFor, origin, event)
 		}
 		// Said before the worker has the message, so the session it opens for it finds it said.
-		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID)
+		s.handOut(ctx, origin, customerID, chatlog.ChannelType+":"+event.ChannelID, event.Message.User.ID)
 		worker, err := s.dispatch.AssignMessage(customerID, message)
 		if err != nil {
 			// Somebody has written to an agent that nothing is going to answer, which is the

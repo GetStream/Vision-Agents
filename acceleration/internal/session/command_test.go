@@ -520,7 +520,7 @@ func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessag
 		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
 	})
 	s.Require().NoError(err)
-	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true, "")
 	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
 		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
 	s.Require().NoError(err)

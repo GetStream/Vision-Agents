@@ -731,10 +731,12 @@ func (s *EpisodeReadingSuite) TestANativeSessionReadsNoCards() {
 
 	native := spec
 	native.STSTarget = "sts-native"
-	s.Nil(s.manager.cards.read(s.ctx, native, bound))
+	cards, _ := s.manager.cards.read(s.ctx, native, bound)
+	s.Nil(cards)
 	s.Empty(namingAny(s.requests()[asked:], "/video/call/agent/"+call), "the call is not even read")
 
-	s.NotEmpty(s.manager.cards.read(s.ctx, spec, bound), "the same call cascaded reads the SMS card")
+	cards, _ = s.manager.cards.read(s.ctx, spec, bound)
+	s.NotEmpty(cards, "the same call cascaded reads the SMS card")
 }
 
 // With the cards on, a call whose Stream does not answer who is on it joins within the read's

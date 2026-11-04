@@ -61,10 +61,12 @@ type Reading struct {
 	// Thread is a text session's own thread channel cid. The person is the one its episode
 	// is with, and its episodes are left out: the session reads it word for word.
 	Thread string
-	// Chat is a text session's own agent channel cid in the app chat. The person is the one
-	// Stream user who wrote in it, in the session's app, and its episodes are left out, as a
-	// thread's are.
-	Chat string
+	// Chat is a text session's own agent channel cid in the app chat, and ChatUser the Stream
+	// user who wrote the message the session was opened for. The person is ChatUser, in the
+	// session's app, when every person's message in the channel is theirs; its episodes are
+	// left out, as a thread's are.
+	Chat     string
+	ChatUser string
 	// Person is who is on a voice session's call, and SessionID that session, whose own
 	// episode is left out.
 	Person    Person
@@ -176,27 +178,29 @@ func (c *Cards) alone(ctx context.Context, reading Reading) (bool, error) {
 }
 
 // chatContact is the contact map row of the person an app chat's agent channel is with: the
-// one Stream user every person's message the session reads there is by, message.user.id, as
-// api.chatEpisode keys their cards (StreamUser). The channel is the customer's app's, so who
-// made it says nothing: a channel two people wrote in, or none did, has no person, and
-// Alice's cards are never read for Bob. A row made in another Stream app of the customer is
-// another person (samePin): the same user id there is somebody else's.
+// Stream user who wrote the message the session was opened for (Reading.ChatUser), keyed by
+// message.user.id as api.chatEpisode keys their cards (StreamUser). The channel is the
+// customer's app's, so who made it says nothing. Every person's message the session reads
+// there, and every message with no source, which the router hands out whether it is a line or
+// not (a voice recording alone, api.addressed), must be by that user: a channel somebody else
+// wrote in has no person, and Alice's cards are never read for Bob. A hand-out naming nobody
+// has none either. A row made in another Stream app of the customer is another person
+// (samePin): the same user id there is somebody else's.
 func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.ContactMapEntry, error) {
+	person, err := StreamUser(reading.ChatUser)
+	if err != nil {
+		return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
+	}
 	window, err := c.window(ctx, reading, reading.Chat)
 	if err != nil {
 		return store.ContactMapEntry{}, err
 	}
-	author, wrote := "", false
 	for _, message := range window.Messages {
-		if from, _, _ := lineOf(message); from != fromPerson {
-			continue
-		}
-		if wrote && message.User.ID != author {
+		_, sourced := message.Custom[chatlog.SourceField]
+		if from, _, _ := lineOf(message); (from == fromPerson || !sourced) && message.User.ID != reading.ChatUser {
 			return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
 		}
-		author, wrote = message.User.ID, true
 	}
-	person, err := StreamUser(author)
 	if err != nil {
 		return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
 	}
