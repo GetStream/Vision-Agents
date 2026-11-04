@@ -610,7 +610,7 @@ module GetStream
         }.freeze,
         "getLimitUsage" => {
           method: :get, path: "/v1/spend/limits/usage",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -700,7 +700,7 @@ module GetStream
         }.freeze,
         "getSpend" => {
           method: :get, path: "/v1/stats/spend",
-          path_params: [].freeze, query: %w[group_by limit scope granularity from to tag api_key user_id team category].freeze,
+          path_params: [].freeze, query: %w[group_by limit scope granularity from to tag api_key_id user_id team category].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -934,13 +934,13 @@ module GetStream
         }.freeze,
         "listLimitGrants" => {
           method: :get, path: "/v1/spend/limits/grants",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category state limit cursor].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category state limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "listLimits" => {
           method: :get, path: "/v1/spend/limits",
-          path_params: [].freeze, query: %w[subject level app_id api_key user_id team category interval limit cursor].freeze,
+          path_params: [].freeze, query: %w[subject level app_id api_key_id user_id team category interval limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1054,7 +1054,7 @@ module GetStream
         }.freeze,
         "listUsageEvents" => {
           method: :get, path: "/v1/usage/events",
-          path_params: [].freeze, query: %w[scope app_id from to meter api_key user_id team category limit cursor].freeze,
+          path_params: [].freeze, query: %w[scope app_id from to meter api_key_id user_id team category limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1120,19 +1120,19 @@ module GetStream
         }.freeze,
         "manageGetLimitUsage" => {
           method: :get, path: "/v1/manage/spend/limits/usage",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category organization_id].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category organization_id].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "manageListLimitGrants" => {
           method: :get, path: "/v1/manage/spend/limits/grants",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category state limit cursor organization_id].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category state limit cursor organization_id].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "manageListLimits" => {
           method: :get, path: "/v1/manage/spend/limits",
-          path_params: [].freeze, query: %w[subject level app_id api_key user_id team category interval limit cursor organization_id].freeze,
+          path_params: [].freeze, query: %w[subject level app_id api_key_id user_id team category interval limit cursor organization_id].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
