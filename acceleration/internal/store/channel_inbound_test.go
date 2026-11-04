@@ -104,8 +104,9 @@ func (s *StoreSuite) TestAClaimedInboundMessageHasEverythingItWasQueuedWith() {
 }
 
 // The row keys a file by its own names, not by core.Media's field names, which a rename would
-// change under the rows queued before it. A file named by its id keeps it (AI-2740); one with
-// a URL is stored as before it.
+// change under the rows queued before it. A file named by its id keeps it, with its type under
+// a key of its own and an empty mime_type, so an older build writes no image with an empty
+// image_url for it (AI-2740); one with a URL is stored as before it.
 func (s *StoreSuite) TestAnInboundMessagesMediaIsStoredUnderItsOwnKeys() {
 	files := []core.Media{{URL: "https://files.example.com/a.png", MIMEType: "image/png"}, {ID: "1003383421387256", MIMEType: "image/jpeg"}}
 	s.inbound("thread-one", "1759740000.000100", func(message *ChannelInbound) {
@@ -116,7 +117,8 @@ func (s *StoreSuite) TestAnInboundMessagesMediaIsStoredUnderItsOwnKeys() {
 	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
 		"SELECT media::text FROM channel_thread_inbound WHERE channel_id = 'thread-one'").Scan(&media))
 
-	s.JSONEq(`[{"url": "https://files.example.com/a.png", "mime_type": "image/png"}, {"url": "", "mime_type": "image/jpeg", "id": "1003383421387256"}]`, media)
+	s.JSONEq(`[{"url": "https://files.example.com/a.png", "mime_type": "image/png"},
+		{"url": "", "mime_type": "", "id": "1003383421387256", "id_mime_type": "image/jpeg"}]`, media)
 	s.Equal(files, s.claimedOne(s.base, "1759740000.000100").Message().Media)
 }
 

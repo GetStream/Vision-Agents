@@ -79,23 +79,30 @@ type ChannelInboundForward struct {
 }
 
 // ChannelInboundMedia is a queued message's media. Its JSON, the row's media column, is an
-// array of {"url", "mime_type"}, with "id" for a file named by its id, never null: core.Media
-// has no json tags, and keying the rows by its field names would empty the media of rows
-// queued before a rename of one.
+// array of {"url", "mime_type"}, never null: core.Media has no json tags, and keying the rows
+// by its field names would empty the media of rows queued before a rename of one. A file named
+// by its id is {"url": "", "mime_type": "", "id", "id_mime_type"} (AI-2740): a build from before
+// it (a rollback, or an older router of a rolling deploy) reads the row as a file with no type,
+// which it writes as no photo, instead of an image whose image_url is empty.
 type ChannelInboundMedia []core.Media
 
 // channelInboundFile is one file of ChannelInboundMedia as the row holds it.
 type channelInboundFile struct {
-	URL      string `json:"url"`
-	MIMEType string `json:"mime_type"`
-	ID       string `json:"id,omitempty"`
+	URL        string `json:"url"`
+	MIMEType   string `json:"mime_type"`
+	ID         string `json:"id,omitempty"`
+	IDMIMEType string `json:"id_mime_type,omitempty"`
 }
 
 // MarshalJSON writes the media as the row holds it.
 func (m ChannelInboundMedia) MarshalJSON() ([]byte, error) {
 	files := make([]channelInboundFile, 0, len(m))
 	for _, file := range m {
-		files = append(files, channelInboundFile(file))
+		if file.ID != "" {
+			files = append(files, channelInboundFile{URL: file.URL, ID: file.ID, IDMIMEType: file.MIMEType})
+			continue
+		}
+		files = append(files, channelInboundFile{URL: file.URL, MIMEType: file.MIMEType})
 	}
 	return json.Marshal(files)
 }
@@ -108,7 +115,11 @@ func (m *ChannelInboundMedia) UnmarshalJSON(data []byte) error {
 	}
 	*m = nil
 	for _, file := range files {
-		*m = append(*m, core.Media(file))
+		if file.ID != "" {
+			*m = append(*m, core.Media{URL: file.URL, ID: file.ID, MIMEType: file.IDMIMEType})
+			continue
+		}
+		*m = append(*m, core.Media{URL: file.URL, MIMEType: file.MIMEType})
 	}
 	return nil
 }
