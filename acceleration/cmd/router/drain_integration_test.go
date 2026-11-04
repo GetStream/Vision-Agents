@@ -257,7 +257,7 @@ func (s *DrainSuite) TestARouterDrainsAChatCardInFlight() {
 	})
 	s.Require().Eventually(func() bool { return serving(settings.Addr) }, 15*time.Second, 10*time.Millisecond)
 	body := fmt.Sprintf(`{"type":"message.new","app_id":1,"channel_id":%q,"channel_type":"agent","created_at":%q,
-"channel_custom":{"agent_config_id":%q},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
+"channel_custom":{"agent_config_id":%q},"channel":{"members":[{"user_id":"anya_123"}]},"message":{"id":%q,"text":"where is my order?","user":{"id":"anya_123","name":"Anya"}}}`,
 		"chat-"+uuid.NewString(), time.Now().UTC().Format(time.RFC3339Nano), agent.ID, "message-"+uuid.NewString())
 	mac := hmac.New(sha256.New, []byte(settings.Stream.APISecret))
 	mac.Write([]byte(body))

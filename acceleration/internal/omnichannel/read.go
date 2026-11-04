@@ -206,7 +206,15 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 	if err != nil {
 		return store.ContactMapEntry{}, err
 	}
-	if !between(window.Members, reading.ChatUser, reading.ChatAgent) {
+	members := make([]string, 0, len(window.Members))
+	for _, member := range window.Members {
+		id := ""
+		if member.UserID != nil {
+			id = *member.UserID
+		}
+		members = append(members, id)
+	}
+	if !Between(members, reading.ChatUser, reading.ChatAgent) {
 		return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
 	}
 	for _, message := range window.Messages {
@@ -225,18 +233,20 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 	return contact, nil
 }
 
-// between reports whether a channel's members are person alone, or person and agent, and
-// nobody else: with agent equal to person, any other member is one.
-func between(members []getstream.ChannelMemberResponse, person, agent string) bool {
-	is := func(id string) func(getstream.ChannelMemberResponse) bool {
-		return func(member getstream.ChannelMemberResponse) bool { return member.UserID != nil && *member.UserID == id }
-	}
+// Between reports whether a channel's members, by user id, are person alone, or person and
+// agent, and nobody else: with agent equal to person, any other member is one, and so is a
+// member with no id. An app chat's cards are written (api.chatEpisode) and read (chatContact)
+// only in such a channel, so a channel's lines reach the cards of one of its people
+// only while that person is the only one there (a member added later is an open case, see
+// AGENTS.md). Example: Anya's channel with the agent is hers;
+// her team's channel with the agent, which Carl is a member of, is nobody's.
+func Between(members []string, person, agent string) bool {
 	for _, member := range members {
-		if !is(person)(member) && !is(agent)(member) {
+		if member == "" || (member != person && member != agent) {
 			return false
 		}
 	}
-	return slices.ContainsFunc(members, is(person))
+	return slices.Contains(members, person)
 }
 
 // samePin reports whether two pins name one Stream app. The deployment's own app is pinned as
