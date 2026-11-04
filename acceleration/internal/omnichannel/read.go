@@ -206,9 +206,6 @@ func (c *Cards) chatContact(ctx context.Context, reading Reading) (store.Contact
 			return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
 		}
 	}
-	if err != nil {
-		return store.ContactMapEntry{}, stack.Wrap(store.ErrNoContact)
-	}
 	contact, err := c.store.Contact(ctx, reading.CustomerID, reading.AgentConfigID, person.Kind, person.Address)
 	if err != nil {
 		return store.ContactMapEntry{}, err
