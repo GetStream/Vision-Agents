@@ -59,6 +59,7 @@ export {
   Responses,
   type CreateResponseOptions,
   type ImageSource,
+  type UIAction,
 } from "./responses.js";
 
 export {
