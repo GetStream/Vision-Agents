@@ -357,7 +357,8 @@ type Agent struct {
 	// ReplyHedge is how long a reply may say nothing, neither text nor a tool call, before the same
 	// request is asked of another candidate of its target as well. Whichever says something first is
 	// kept and the other is cancelled. It only applies to a target with more than one candidate.
-	// 1.2s by default; 0 turns it off.
+	// 1.5s by default, since Gemini 3.8 Flash, which llm-fast prefers, thinks before it says
+	// anything and often took past 1.2s, losing most replies to the hedge; 0 turns it off.
 	ReplyHedge time.Duration `koanf:"reply_hedge"`
 	// FlowHedge is ReplyHedge for the flow controller's decisions. A decision is a few tokens
 	// the caller is waiting in silence for, and one that has said nothing after this is
@@ -606,7 +607,7 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond},
+		Agent:     Agent{ReplyHedge: 1500 * time.Millisecond, FlowHedge: 400 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes:    Episodes{IdleAfter: time.Hour},
