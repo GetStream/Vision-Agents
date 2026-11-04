@@ -63,10 +63,10 @@ func (s *EpisodeReadingSuite) deviceSession(by opener, conversation string, card
 }
 
 // deviceCall opens a voice session as by on a call the person's app joined, with no phone on
-// it, and has it answer text.
-func (s *EpisodeReadingSuite) deviceCall(by opener, text string) (*Session, llm.ResponseParams) {
+// it unless on names who else is, and has it answer text.
+func (s *EpisodeReadingSuite) deviceCall(by opener, text string, on ...string) (*Session, llm.ResponseParams) {
 	call := "call-" + uuid.NewString()
-	s.chat.PutCall("agent", call, by.caller.UserID)
+	s.chat.PutCall("agent", call, append([]string{by.caller.UserID}, on...)...)
 	created, err := s.manager.Create(s.ctx, Spec{
 		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: true, CallID: call,
 		Caller: by.caller, CallerKind: by.kind,
@@ -100,6 +100,22 @@ func (s *EpisodeReadingSuite) TestASessionThePersonsOwnDeviceOpensReadsTheirChat
 	s.Require().Len(handed, 1, "her call from the app")
 	s.Equal("Her appointment is Friday at 3.", handed[0]["summary"])
 	s.Equal("anya_123", call.CardsFor())
+}
+
+// Defect: a call with a phone on it is taken for the device's that placed it. Anya's app
+// ringing a number reads that number's cards, as any call with a phone on it does, not hers.
+func (s *EpisodeReadingSuite) TestACallWithAPhoneOnItReadsTheNumbersCardsWhoeverOpenedIt() {
+	s.anyasCard()
+	s.at(-30)
+	s.smsThread("+15550100100", "sms-author", "is the clinic open on Sunday?")
+	s.at(0)
+
+	call, params := s.deviceCall(signedIn("anya_123"), "hello", "sip-+15550100100")
+
+	handed := s.handed(params)
+	s.Require().Len(handed, 1)
+	s.Equal("sms", handed[0]["source"])
+	s.Empty(call.CardsFor())
 }
 
 // Defect: a session reads Anya's cards for a caller whose name nobody vouched for as hers.
