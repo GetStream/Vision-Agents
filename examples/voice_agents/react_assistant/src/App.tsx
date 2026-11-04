@@ -11,6 +11,7 @@ import { ChatView } from "./ChatView";
 import { ConversationList, SidebarRail } from "./ConversationList";
 import { Conversations, displayTitle, type SessionRow } from "./conversations";
 import { messageOf } from "./errors";
+import { ReplyFormatMenu } from "./ReplyFormatMenu";
 import { deviceTools } from "./deviceTools";
 import { MenuIcon, NewChatIcon } from "./icons";
 import { useMediaQuery, useStoredFlag, useTheme, WIDE } from "./layout";
@@ -217,6 +218,7 @@ function Assistant_() {
               <NewChatIcon />
             </button>
           )}
+          <ReplyFormatMenu />
         </header>
         <main className="content">
           <ChatView key={String(screenKey(screen))} screen={screen} />

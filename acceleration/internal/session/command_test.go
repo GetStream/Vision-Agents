@@ -542,6 +542,53 @@ func (s *SessionSuite) TestPhotosWithoutTextAreUploadedOnlyWhereThePersonsMessag
 	s.Empty(chat.Uploads())
 }
 
+// A worker's session answers what the person wrote in the channel it was handed, so it writes
+// nothing of theirs, but the model still has to be told what they did in a reply's UI: without
+// it, "Update the plan" is all the model hears, and it cannot know what to update it to.
+func (s *SessionSuite) TestAHandedOnCommandTellsTheModelWhatThePersonDidInTheUI() {
+	chat := chattest.NewServer(s.T())
+	service := persistent.NewForChat(chat.Client)
+	s.T().Cleanup(service.Close)
+	s.conversations = service
+	s.apps = streamapp.NewClients(streamapp.NewDeployment(streamapp.DeploymentOptions{
+		APIKey: "deploy-key", Secret: "deploy-secret", BaseURL: chat.URL,
+	}), streamapp.ClientsOptions{})
+	s.manages()
+	creator := "worker-agent"
+	_, err := chat.Client.Chat().GetOrCreateChannel(s.ctx, "agent", "worker-agent", &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &creator, Custom: map[string]any{persistent.CustomerField: "acme", "support_agent_id": "worker-agent"}},
+	})
+	s.Require().NoError(err)
+	s.manager.HandOut(s.ctx, "acme", "agent:worker-agent", 0, true, "")
+	worker, err := s.manager.Create(s.ctx, Spec{CustomerID: "acme", AgentID: "worker-agent", Text: true, PersistConversation: true,
+		LLMTarget: "en-low-latency", CallerKind: auth.KindServer})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = worker.Close() })
+	s.Require().True(worker.Spec().Dispatched, "the session a worker opens in the channel handed out")
+	action := map[string]any{
+		"v": 1, "message_id": "reply-1", "format": "a2ui", "name": "update_plan",
+		"payload": map[string]any{"context": map[string]any{"pace": []any{"packed"}}},
+	}
+
+	_, _, err = worker.RespondCommandWithAction(s.ctx, "command-w", "Update the plan", "", nil, options.LLM{}, action)
+	s.Require().NoError(err)
+
+	s.eventually(func() bool {
+		s.model.mu.Lock()
+		defer s.model.mu.Unlock()
+		for _, params := range s.model.asked {
+			for _, message := range params.Input {
+				if message.Role == llm.User && strings.HasPrefix(message.Content, "Update the plan\n\n") &&
+					strings.Contains(message.Content, `update_plan, with {"context":{"pace":["packed"]}}`) {
+					return true
+				}
+			}
+		}
+		return false
+	}, "the model was never told what the person did in the reply's UI")
+	s.Empty(chat.Uploads(), "the person's message is already in the channel")
+}
+
 func (s *SessionSuite) TestACommandsVoiceNoteIsShownOnThePersonsMessageOnce() {
 	chat := chattest.NewServer(s.T())
 	service := persistent.NewForChat(chat.Client)

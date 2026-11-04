@@ -1,5 +1,6 @@
 import { createRoot } from "react-dom/client";
 import "stream-chat-react/css/index.css";
+import "@openuidev/react-ui/components.css";
 import "stream-chat-react/css/ai-components.css";
 
 import { App } from "./App";

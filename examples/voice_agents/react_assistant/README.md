@@ -48,7 +48,8 @@ connector's sign-in comes back only to the origin a conversation named, and the 
 
 The AI components it uses (`AIConversation`, the reply's steps, the approval and sign-in cards,
 suggestions, reply actions and the composer's chat options) come from
-`stream-chat-react/ai-components`, released in 14.15.0.
+`stream-chat-react/ai-components`, and the generated UI it shows from `stream-chat-react/a2ui`
+and `stream-chat-react/openui`, released in 14.16.0.
 
 The chat asks for `xai/grok-4.7`, a model that streams its reasoning, so the router needs
 `XAI_API_KEY`, and `GOOGLE_API_KEY`, `DEEPGRAM_API_KEY` and `INWORLD_API_KEY` for a call. Web
@@ -82,6 +83,21 @@ npm run build     # types, then the bundle
   can copy, share and rate it; ratings stay in the page, as the router takes none yet. The
   composer floats over the bottom of the conversation, which fades away under it, and its
   options offer Think harder, which asks with a higher `reasoning_effort`.
+- **Interactive replies**: the gear in the top bar picks how Juno answers, as the iOS app's
+  settings do: in text, or with interactive UI written in [A2UI](https://a2ui.org) or
+  [OpenUI](https://openui.com). It is the
+  agent's instructions, kept by swift_assistant's backend (`GET`/`PUT /reply-format`), so every
+  app answers the same way, from the next conversation on. "Plan a weekend in Ohrid" then
+  answers with a card in place of the reply's words: a map of the places with their pins
+  dropping in, Juno's calendar for those days, a tab per day of place cards with their Wikipedia
+  photos, and a form to change the plan. The map, the place cards and the calendar are the
+  page's own components (`tripComponents.tsx`), described once for every platform in
+  swift_assistant's `UIComponents.json`; the rest is the format's own: A2UI's basic catalog,
+  drawn by `stream-chat-react/a2ui` on the official `@a2ui/web_core` and `@a2ui/react`, or
+  OpenUI's chat library, drawn by `stream-chat-react/openui` on the official `@openuidev`
+  packages. Tapping a place or sending the form is the person's next question, in their words,
+  with what they did as its `uiAction`, so the agent answers with a new plan. One done while
+  Juno is still answering isn't sent, and the line over the composer says so.
 - **Photos** from the composer's button go with the question, shrunk to 1280 pixels across and
   inline as JPEG data URIs (`photos.ts`), turned the way the camera held them. The question shows
   them at once; the router uploads them to the conversation's channel and writes them on the
