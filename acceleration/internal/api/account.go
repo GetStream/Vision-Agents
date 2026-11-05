@@ -154,20 +154,21 @@ type listCreditsRequest struct {
 type creditPageResponse struct{ Body CreditPage }
 
 type listUsageEventsRequest struct {
-	Scope  optionalParam[SpendScope] `query:"scope" doc:"Whose events: app, the default, or organization."`
-	AppId  string                    `query:"app_id" maxLength:"255" doc:"With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused."`
-	From   optionalParam[time.Time]  `query:"from" doc:"Only events that happened at or after this, inclusive."`
-	To     optionalParam[time.Time]  `query:"to" doc:"Only events that happened before this, exclusive."`
-	Meter  string                    `query:"meter" maxLength:"255" doc:"Only this kind of work, such as llm or runtime."`
-	Origin string                    `query:"origin" maxLength:"255" doc:"Only work started with this public API key, or by this origin of work no key started, such as hook:chat."`
+	Scope    optionalParam[SpendScope] `query:"scope" doc:"Whose events: app, the default, or organization."`
+	AppId    string                    `query:"app_id" maxLength:"255" doc:"With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused."`
+	From     optionalParam[time.Time]  `query:"from" doc:"Only events that happened at or after this, inclusive."`
+	To       optionalParam[time.Time]  `query:"to" doc:"Only events that happened before this, exclusive."`
+	Meter    string                    `query:"meter" maxLength:"255" doc:"Only this kind of work, such as llm or runtime."`
+	Origin   string                    `query:"origin" maxLength:"255" doc:"Only work started with this public API key, or by this origin of work no key started, such as hook:chat."`
+	UserId   string                    `query:"user_id" maxLength:"255" doc:"Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app."`
+	Team     string                    `query:"team" pattern:"^[A-Za-z0-9_.-]{1,59}$" doc:"Only work for this team: its users' tokens name it in their team claim. Not with category."`
+	Category string                    `query:"category" doc:"Only work carrying this usage category, as the tokens name it. Not with team."`
+	Limit    int                       `query:"limit" minimum:"1" maximum:"200" default:"50" doc:"The most events one page holds."`
+	Cursor   string                    `query:"cursor" doc:"The next_cursor of the previous page, sent with the same filters."`
+
 	// ApiKeyId is origin's old name, refused rather than ignored: a caller still sending it
 	// would otherwise read every key's events as if they were one key's.
 	ApiKeyId string `query:"api_key_id" hidden:"true"`
-	UserId   string `query:"user_id" maxLength:"255" doc:"Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app."`
-	Team     string `query:"team" pattern:"^[A-Za-z0-9_.-]{1,59}$" doc:"Only work for this team: its users' tokens name it in their team claim. Not with category."`
-	Category string `query:"category" doc:"Only work carrying this usage category, as the tokens name it. Not with team."`
-	Limit    int    `query:"limit" minimum:"1" maximum:"200" default:"50" doc:"The most events one page holds."`
-	Cursor   string `query:"cursor" doc:"The next_cursor of the previous page, sent with the same filters."`
 }
 
 type usageEventPageResponse struct{ Body UsageEventPage }

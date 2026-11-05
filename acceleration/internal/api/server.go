@@ -2345,12 +2345,13 @@ type getSpendRequest struct {
 	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
 	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
 	Origin      optionalParam[string]      `query:"origin" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
+	UserID      optionalParam[string]      `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
+	Team        optionalParam[string]      `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
+	Category    optionalParam[[]string]    `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`
+
 	// APIKeyID is origin's old name, refused rather than ignored: a caller still sending it
 	// would otherwise read every key's spend as if it were one key's.
-	APIKeyID string                  `query:"api_key_id" hidden:"true"`
-	UserID   optionalParam[string]   `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
-	Team     optionalParam[string]   `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
-	Category optionalParam[[]string] `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`
+	APIKeyID string `query:"api_key_id" hidden:"true"`
 }
 
 type getSpendResponse struct {
