@@ -598,7 +598,7 @@ func (s *CallStatusSuite) placedFor(session string) (string, outcome.Key) {
 // path also ends the session, and one ended a moment ago is not found until its row is written.
 func (s *CallStatusSuite) busy(session string) {
 	token, _ := s.placedFor(session)
-	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Busy, "busy")
+	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Report{Outcome: outcome.Busy, Word: "busy"})
 	s.Require().NoError(err)
 }
 
@@ -815,7 +815,7 @@ func (s *CallStatusSuite) TestAPeersAskForACallSomebodyAnsweredIsRefused() {
 	other, sessions, id := s.peerHolding(logged)
 	token, key := s.placedFor(id)
 	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, time.Now()))
-	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Busy, "busy")
+	_, err := s.router.phone.Outcomes().Reported(context.Background(), token, outcome.Report{Outcome: outcome.Busy, Word: "busy"})
 	s.Require().NoError(err)
 
 	s.refusesToEnd(s.askPeerToEnd(other, s.askedFor(s.customerID(), id)), logged, sessions, id)

@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"strconv"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -134,13 +135,22 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 		ended = func(phone.CallStatus) {}
 	}
 
+	// The bridge tells the delay on whichever goroutine reads the INVITE's responses.
+	var postDialDelay atomic.Int64
+	config.Call.Responded = func(d time.Duration) { postDialDelay.Store(int64(d)) }
+	report := func(err error) {
+		status := statusOf(err)
+		status.PostDialDelay = time.Duration(postDialDelay.Load())
+		ended(status)
+	}
+
 	bridged, err := p.dial(p.ctx, config)
 	if err != nil {
 		log.Warn("call through a customer's sip trunk did not connect", "error", err)
-		ended(statusOf(err))
+		report(err)
 		return
 	}
-	defer ended(statusOf(nil))
+	defer report(nil)
 	p.mu.Lock()
 	p.calls[id] = bridged
 	p.mu.Unlock()
@@ -178,18 +188,19 @@ func (p *Provider) run(id string, config sipbridge.Config, connected func(sipbri
 // context.Canceled is the node stopping, or Stream hanging up while the customer rang.
 func statusOf(err error) phone.CallStatus {
 	if err == nil {
-		return phone.CallStatus{Result: phone.CallCompleted, Word: "bye"}
+		// The answer was a 2xx, and RFC 3261 §21.2 defines no 2xx but 200 OK.
+		return phone.CallStatus{Result: phone.CallCompleted, Word: "bye", SIPCode: 200}
 	}
 	if u, ok := errors.AsType[*sipbridge.Unanswered](err); ok {
 		switch u.Code {
 		case 0:
 			return phone.CallStatus{Result: phone.CallNoAnswer, Word: "ring timeout"}
 		case 486, 603:
-			return phone.CallStatus{Result: phone.CallBusy, Word: strconv.Itoa(u.Code)}
+			return phone.CallStatus{Result: phone.CallBusy, Word: strconv.Itoa(u.Code), SIPCode: u.Code}
 		case 408, 480:
-			return phone.CallStatus{Result: phone.CallNoAnswer, Word: strconv.Itoa(u.Code)}
+			return phone.CallStatus{Result: phone.CallNoAnswer, Word: strconv.Itoa(u.Code), SIPCode: u.Code}
 		}
-		return phone.CallStatus{Result: phone.CallFailed, Word: strconv.Itoa(u.Code)}
+		return phone.CallStatus{Result: phone.CallFailed, Word: strconv.Itoa(u.Code), SIPCode: u.Code}
 	}
 	if errors.Is(err, context.Canceled) {
 		return phone.CallStatus{Result: phone.CallCanceled, Word: "canceled"}

@@ -568,6 +568,29 @@ func (s *TwilioSuite) TestARingingStatusDecidesNothing() {
 	s.Equal(phone.CallStatus{Word: "ringing"}, status)
 }
 
+// twilioNoAnswer is the StatusCallback of a call nobody answered before its Timeout, with the
+// parameters Twilio's call resource lists (https://www.twilio.com/docs/voice/api/call-resource)
+// and SipResponseCode as given.
+func twilioNoAnswer(sipResponseCode string) []byte {
+	return []byte("CallSid=CA1&AccountSid=AC1&Direction=outbound-api&ApiVersion=2010-04-01&CallStatus=no-answer" +
+		"&CallDuration=0&Timestamp=Sun%2C+01+Mar+2026+10%3A00%3A30+%2B0000&CallbackSource=call-progress-events" +
+		"&SequenceNumber=0&SipResponseCode=" + sipResponseCode)
+}
+
+func (s *TwilioSuite) TestAFinalStatusCarriesItsSIPCode() {
+	status, err := s.provider.ReadStatus(formType, twilioNoAnswer("487"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "no-answer", SIPCode: 487}, status)
+}
+
+func (s *TwilioSuite) TestASIPCodeThatIsNoNumberLeavesTheStatusAsItIs() {
+	status, err := s.provider.ReadStatus(formType, twilioNoAnswer("busy"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallNoAnswer, Word: "no-answer"}, status)
+}
+
 func (s *TwilioSuite) TestAStatusWithoutACallStatusIsRefused() {
 	_, err := s.provider.ReadStatus(formType, []byte("CallSid=CA1"))
 

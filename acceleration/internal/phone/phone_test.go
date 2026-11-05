@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"slices"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -654,7 +655,8 @@ func (s *stub) SendDigits(_ context.Context, vendorCallID, digits string) error 
 	return s.err
 }
 
-// ReadStatus reads a form's result and word, as a vendor's status post would carry them.
+// ReadStatus reads a form's result and word, as a vendor's status post would carry them, and
+// its sip code, ringing and post-dial delay (pdd), as some vendors' do.
 func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
 	form, err := url.ParseQuery(string(body))
 	if err != nil {
@@ -663,7 +665,12 @@ func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {
 	if !form.Has("word") {
 		return CallStatus{}, errors.New("stub: a status needs a word")
 	}
-	return CallStatus{Result: CallResult(form.Get("result")), Word: form.Get("word")}, nil
+	code, _ := strconv.Atoi(form.Get("sip"))
+	delay, _ := time.ParseDuration(cmp.Or(form.Get("pdd"), "0s"))
+	return CallStatus{
+		Result: CallResult(form.Get("result")), Word: form.Get("word"), SIPCode: code, Ringing: form.Has("ringing"),
+		PostDialDelay: delay,
+	}, nil
 }
 
 // ReadMachine reads a form's machine, as a vendor's machine post would carry it.
