@@ -105,6 +105,33 @@ func (s *PausesSuite) TestAPauseIsOneRequestAndItsWordsTheFinal() {
 	s.Equal(1, decisions, "an ended utterance is asked about no more")
 }
 
+// A turn a check ended is over whatever comes next. Speech that resumes before its words are
+// written, the caller going on or somebody else in the room, is the next utterance's: the
+// final goes out with the words when they come, rather than being thrown away with the pause
+// as if the model had never ruled, which left a turn open for as long as the room talked.
+func (s *PausesSuite) TestATurnACheckEndedIsOverThoughSpeechResumesBeforeItsWords() {
+	s.server.mu.Lock()
+	s.server.wordsAfter = 300 * time.Millisecond
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(220, false)
+	s.answered()
+	s.say(200, true)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance)
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	s.Len(s.agent.rulings(), 1, "the ruling handed over")
+
+	s.say(800, true)
+	s.say(220, false)
+	again := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, again.Mode)
+	s.Equal(int64(2), again.Utterance, "the speech that resumed is the next utterance")
+	decisions, withWords, _ := s.counts()
+	s.Equal([2]int{2, 2}, [2]int{decisions, withWords})
+}
+
 // A pause the model waits on is asked about again every interval, for the decision alone,
 // and the turn it ends goes out with the first check's words.
 func (s *PausesSuite) TestAPauseTheModelWaitsOnIsAskedAgainForTheDecisionAlone() {

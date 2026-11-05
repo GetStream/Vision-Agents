@@ -178,11 +178,15 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 	return true
 }
 
-// resumed is speech in the utterance: a pause that had been asked about is over.
+// resumed is speech in the utterance: a pause that had been asked about is over, unless a
+// check has ended the turn on it. That turn is over whatever comes next, the caller going on
+// or somebody else in the room: its words go out as its final when they are written, and
+// the speech is the next utterance's (endedOnCheck). A pause whose words failed falls to the
+// words alone, and the next pause is asked about afresh.
 func (t *Transcriber) resumed() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.pause.checks > 0 && !t.pause.done {
+	if t.pause.checks > 0 && !t.pause.done && (t.pause.ended == nil || t.pause.failed) {
 		t.pause = pause{epoch: t.pause.epoch + 1}
 	}
 }
