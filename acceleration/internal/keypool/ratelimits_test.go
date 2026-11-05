@@ -482,3 +482,38 @@ func (s *VendorRateLimitSuite) TestKeysReadFromTwoVariablesKeepTheFirst() {
 	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
 	s.Empty(s.limited(second))
 }
+
+// Providers are built, and send, on many goroutines over one pool: run under -race.
+func (s *VendorRateLimitSuite) TestRequestsSentWhileTheProviderIsBuiltAgainAreEachCounted() {
+	p := s.pool("concurrent")
+	for _, key := range p.keys {
+		s.answer(key, answer{status: http.StatusTooManyRequests, header: http.Header{"X-Ratelimit-Remaining-Requests": {"0"}}})
+	}
+	const senders = 8
+	client := p.WrapClient(nil, Bearer)
+	errs := make(chan error, senders)
+	var wg sync.WaitGroup
+	for range senders {
+		wg.Go(func() {
+			FromEnv("", p.keyVars[0])
+			request, err := http.NewRequest(http.MethodPost, s.server.URL, strings.NewReader("body"))
+			if err == nil {
+				request.Header.Set("Authorization", "Bearer placeholder")
+				var response *http.Response
+				if response, err = client.Do(request); err == nil {
+					_ = response.Body.Close()
+				}
+			}
+			errs <- err
+		})
+	}
+	wg.Wait()
+	close(errs)
+	for err := range errs {
+		s.Require().NoError(err)
+	}
+
+	limited := s.limited(p.keyVars[0])
+	s.Equal(float64(senders*len(p.keys)), limited["0"]+limited["1"])
+	s.Equal(map[string]float64{"0/x-ratelimit-remaining-requests": 0, "1/x-ratelimit-remaining-requests": 0}, s.remaining(p.keyVars[0]))
+}
