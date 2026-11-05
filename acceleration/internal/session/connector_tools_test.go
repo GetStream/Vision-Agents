@@ -4,6 +4,7 @@ package session
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"log/slog"
 	"strings"
@@ -86,6 +87,23 @@ func (s *AttachConnectorsSuite) TestAConnectorDeletedBeforeThePinnedReadLeavesTh
 	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableConnection}}, unavailable)
 	s.ErrorContains(refused, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableConnection))
 	s.NotErrorIs(refused, store.ErrNoConnectorDefinition)
+}
+
+// TestAStoreFailureOtherThanNotFoundOnThePinnedReadStillFailsTheOpen: only a missing connector
+// maps to "no access". A pinned revision that cannot be read for any other reason (here its
+// manifest is not a list) fails the open and leaves the binding out of the unavailable list.
+func (s *AttachConnectorsSuite) TestAStoreFailureOtherThanNotFoundOnThePinnedReadStillFailsTheOpen() {
+	id := s.connection("", "primary")
+	optional := s.config(s.fixed("crm", id, "whoami"))
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE connector_definitions SET manifest = '[]'::jsonb WHERE customer_id = ? AND id = ?",
+		s.customerID, s.connectorID)
+	s.Require().NoError(err)
+
+	_, _, unavailable, err := s.attach(s.spec(optional, "", nil))
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, store.ErrNoConnectorDefinition)
+	s.Empty(unavailable)
 }
 
 // TestAnAnonymousCallerOrAGuestChoosesNoConnection: the prototype's second case. Either may go

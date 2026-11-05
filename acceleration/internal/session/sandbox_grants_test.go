@@ -450,6 +450,22 @@ func (s *SandboxGrantsSuite) TestAConnectorDeletedAfterThePinnedReadGivesTheSand
 	s.Contains(s.logs.String(), "its connector was deleted")
 }
 
+// TestAStoreFailureOtherThanNotFoundOnTheLatestReadStillFailsTheOpen: only a missing connector
+// maps to "no access". Any other failure of the latest read (here a cancelled context) is
+// returned as an error, with no unavailable reason.
+func (s *SandboxGrantsSuite) TestAStoreFailureOtherThanNotFoundOnTheLatestReadStillFailsTheOpen() {
+	connection, manifest := s.pinnedRead()
+	ctx, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	reason, err := s.manager.sandboxGrant(ctx, sandboxed(s.fixed("crm", connection.ID, "whoami")), connection, manifest,
+		s.registry.Schemes[bearer.Name], &dispatcher{})
+
+	s.Require().Error(err)
+	s.NotErrorIs(err, store.ErrNoConnectorDefinition)
+	s.Empty(reason)
+}
+
 // TestAConnectorKeptAfterThePinnedReadGivesItsGrant is the control: the same reads with the
 // connector still there grant the sandbox the pinned revision's env var and hosts.
 func (s *SandboxGrantsSuite) TestAConnectorKeptAfterThePinnedReadGivesItsGrant() {
