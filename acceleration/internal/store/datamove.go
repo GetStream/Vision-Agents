@@ -288,6 +288,9 @@ WHERE locktype = 'transactionid' AND transactionid::text = ANY(?)`,
 // at or below it, Changes would read a number rolled back right after it as a change
 // pruned, and refuse the cursor.
 //
+// Call it after StartDataCapture and WaitForOpenWrites, in that order: on its own it still misses
+// a write that was open when the capture started and commits after the snapshot.
+//
 // What is not here: the audio behind a voice sample and a call recording, which live in
 // an object bucket rather than in Postgres. The rows naming them come across, and copying
 // the bucket is a copy between two object stores that neither deployment should be in the

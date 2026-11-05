@@ -22,10 +22,10 @@ const (
 )
 
 // exportWritesWait bounds how long an export waits for the writes open when it started
-// (Store.WaitForOpenWrites): twice shippingIdle (internal/store/shipping.go), the longest the
-// router lets a write transaction of its own sit idle. Postgres cannot say whose a transaction
-// still open past that is, and an export is a rare call whose caller can come back, so it is
-// told to rather than held.
+// (Store.WaitForOpenWrites): twice shippingIdle (internal/store/shipping.go), the idle limit
+// shipping sets on its own transaction, a write transaction of the router that is not
+// meant to sit open. Postgres cannot say whose a transaction still open past that is, and
+// an export is a rare call whose caller can come back, so it is told to rather than held.
 const exportWritesWait = 30 * time.Second
 
 // dataLine is one line of an export.
