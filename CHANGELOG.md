@@ -385,7 +385,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A router with shards refuses to be a move's source
 
-A router whose calls, sessions, responses, requests and stats are kept in shard databases recorded no changes to them after an export, so `router replicate` from it lost those writes and said nothing. `GET /v1/data/export` and `GET /v1/data/changes` on such a router now answer 503 and say that moving off a router with shards is not supported yet. An unsharded router moves as before, and a router with shards can still be a move's target (AI-2813).
+A router whose calls, sessions, responses, requests and stats are kept in shard databases recorded no changes to them after an export, so `router replicate` from it lost those writes and said nothing. `GET /v1/data/export` and `GET /v1/data/changes` on such a router now answer 400 `not_configured` and say that moving off a router with shards is not supported yet. An unsharded router moves as before, and a router with shards can still be a move's target (AI-2813).
 
 ### An export no longer misses a write that was in progress when it started
 

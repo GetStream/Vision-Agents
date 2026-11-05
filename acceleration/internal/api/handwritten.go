@@ -865,6 +865,7 @@ func documentHandWritten(api huma.API) {
 			"so an imported plugin connection has to be authorized again. The audio behind a voice " +
 			"sample and a call recording lives in an object bucket rather than in this database; the " +
 			"rows naming those objects are here, and copying the bucket is yours to do.\n" +
+			"A router with shards cannot be the source of a move and answers 400 `not_configured`.\n" +
 			"Server-side only, and refused entirely when the router runs with " +
 			"ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.",
 		Responses: map[string]*huma.Response{
@@ -872,7 +873,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to export from, has shards, whose changes cannot be followed yet, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment has no database to export from, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{
@@ -956,6 +957,7 @@ func documentHandWritten(api huma.API) {
 			"Changes are only recorded for an app that has exported, and only for as long as the " +
 			"deployment's retention window. A cursor older than what is still kept is answered 410, " +
 			"which means export again.\n" +
+			"A router with shards cannot be the source of a move and answers 400 `not_configured`.\n" +
 			"Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.",
 		Parameters: []*huma.Param{
 			{Name: "after", In: "query", Description: "The cursor the last page ended at.", Schema: &huma.Schema{Type: huma.TypeInteger, Format: "int64"}},
@@ -967,7 +969,7 @@ func documentHandWritten(api huma.API) {
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
 			"410": {Description: "The changes since that cursor are no longer kept, so export again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
-			"503": {Description: "This deployment has no database to read changes from, or has shards, whose changes cannot be followed yet.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment has no database to read changes from.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 }

@@ -32,7 +32,7 @@ const exportWritesWait = 30 * time.Second
 // bridges, recordings, sessions, responses, requests and their stats) record no changes
 // (watchDataChanges), so a write to one after the export would be lost by a move that says
 // it lost nothing.
-var errShardedSource = unavailable("moving a customer off a router with shards is not supported yet: " +
+var errShardedSource = notConfigured("moving a customer off a router with shards is not supported yet: " +
 	"changes to the shards' calls, sessions, responses, requests and stats after an export cannot be followed")
 
 // dataLine is one line of an export.

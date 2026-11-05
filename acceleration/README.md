@@ -1575,7 +1575,7 @@ one's. Empty shard settings fall back to the global ones, which is the single-no
 Percentiles merged from several shards' rollups are approximate: they are weighted by request
 count rather than recomputed. A router with shards cannot be a move's source: its shards'
 tables record no changes after an export, so `GET /v1/data/export` and `GET /v1/data/changes`
-answer 503 there (see [Moving a customer](#moving-a-customer)). It can be a move's target.
+answer 400 `not_configured` there (see [Moving a customer](#moving-a-customer)). It can be a move's target.
 
 ## Agents that are configured rather than spelled out
 
@@ -2392,7 +2392,7 @@ export answer 503: run it again.
 The source must be a router without shards. A shard's tables (calls, call bridges, recordings,
 sessions, responses, requests and their stats) record no changes, so a router with a shard database
 of its own, or with other shards' databases listed in `postgres.shards`, answers the export and the
-changes 503 before it records anything: moving off it is not supported yet. Any router can be the
+changes 400 `not_configured` before it records anything: moving off it is not supported yet. Any router can be the
 target.
 
 ```bash
