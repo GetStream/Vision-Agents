@@ -449,6 +449,8 @@ func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 		{"a channel after its kind and name", `{"messages":"Channel: #help (C0HELP002)\nhello"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a channel after its kind, name and the word ID", `{"messages":"Channel: #help (ID: C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a channel named by several words after its label", `{"messages":"Channel: Group DM (ID: C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a tool line naming a channel by several words after its label", `{"messages":"Channel: Team ops-room west (ID: C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel named by several words after a date and its label", `{"messages":"Created (today) Channel: Group DM (ID: C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a kind of two words named by several words after its label", `{"results":"Phone number: Main line (ID: P0NUM001)"}`, `{"phone_number_id":"P0NUM001"}`, false},
 		{"a channel mentioned in the text", `{"messages":"see channel <#C0HELP002|help>"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a person bracketed after another label", `{"results":"1. #help (C0HELP002) - public_channel - Creator: Ana Lind (<@U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},

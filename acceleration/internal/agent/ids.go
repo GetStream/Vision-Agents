@@ -918,7 +918,7 @@ func labelledName(line, wanted, kind string) bool {
 			continue
 		}
 		field := strings.ToLower(line[:found[0]])
-		if cut := strings.LastIndexAny(field, "()\n"); cut >= 0 {
+		if cut := strings.LastIndexAny(field, "()"); cut >= 0 {
 			field = field[cut+1:]
 		}
 		if cut := strings.LastIndex(field, " - "); cut >= 0 {
