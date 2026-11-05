@@ -72,6 +72,15 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
 	}
 	if len(videos) > 0 {
+		if request.Body.Audio != nil {
+			// With a voice note the question is checked as it is before the note is heard
+			// (withHeardNote), the agent's refusal first, so the order of refusals is the same
+			// whether or not videos go with it.
+			asked := options.LLM{MaxOutputTokens: request.Body.MaxOutputTokens, ReasoningEffort: value(request.Body.ReasoningEffort)}
+			if _, err := found.CheckRespond(ctx, value(request.Body.RequestId), request.Body.Text, true, asked); err != nil {
+				return nil, refusedResponse(err)
+			}
+		}
 		sample, err := found.SampleVideos(ctx, value(request.Body.RequestId), request.Body.Text)
 		if err != nil {
 			return nil, refusedResponse(err)
