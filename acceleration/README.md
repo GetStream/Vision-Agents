@@ -718,6 +718,19 @@ keeps the last snapshot, and a model no read has reached within the health windo
 as with no Redis at all. The metrics are `router_health_reads_total` (by `kind`: `refresh` or
 `miss`), `router_health_refresh_errors_total` and `router_health_snapshot_age_seconds`.
 
+`router_failovers_total` counts each time the router moved work off a provider that failed, by
+`modality`, the `provider` that failed, `stage` and `reason`; `router_requests_total` tells a
+provider's models apart. It is counted once another candidate has been started in its place: the
+last candidate failing, or a walk the caller left, is no failover. `stage` is `start` (a
+candidate the walk could not start), `use` (one that started and failed in the walk's use, as a
+recording whose vendor failed it) or `session` (one that failed after its session started and
+another took over: an STT session the vendor refused, a voice the agent lost mid-call to another
+provider or key, an LLM response the session's model or a fallback before the one that answered
+failed). `reason` is `request` for a setting the provider refused, `customer_key` for work on
+the customer's own key or their own `custom` model, `cancelled` for a candidate that failed once
+the caller's context had ended, and `vendor` otherwise, which is the one an alert on a degrading
+vendor reads.
+
 ### The default groups
 
 These are the shortcuts offered as a choice, for the caller who wants the models we would
