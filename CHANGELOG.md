@@ -383,6 +383,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A custom connector deleted while a session opens no longer fails it with a 500
+
+When a custom connector was force-deleted while a session that binds it was opening, the session failed with a 500. Now an optional binding is left out, or opens with no sandbox access, and a required one is refused with `connection_unavailable`. A delete a moment earlier already got these answers. (#1765)
+
 ### An export no longer misses a write that was in progress when it started
 
 A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).
