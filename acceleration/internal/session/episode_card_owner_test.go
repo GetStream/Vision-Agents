@@ -247,6 +247,28 @@ func (s *EpisodeReadingSuite) TestACallPlacedUnderAnotherVendorCallNamesNobodyOn
 	s.Nil(cards)
 }
 
+// Defect: a call still being dialled (or whose vendor call id failed to save) has no vendor call
+// id yet, so it is not the call a session naming a vendor call is on; its callee is nobody on it.
+func (s *EpisodeReadingSuite) TestADialingCallWithNoVendorCallIDYetNamesNobodyOnTheSessionsCall() {
+	s.at(-30)
+	s.smsThread(callee, "sms-author", "is the clinic open on Sunday?")
+	call := uuid.NewString()
+	_, err := outcome.NewKeeper(s.store, time.Now).Placed(s.ctx, outcome.Call{
+		Key:    outcome.Key{CustomerID: s.customerID, CallType: "agent", CallID: call, Local: line, Remote: callee},
+		Vendor: "twilio",
+	})
+	s.Require().NoError(err)
+	s.chat.PutCall("agent", call, "sip-"+line)
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	spec := s.placedSpec(call, true)
+	spec.CallID, spec.CallType = call, "agent"
+
+	cards, _ := s.manager.cards.read(s.ctx, spec, bound)
+
+	s.Nil(cards)
+}
+
 // Defect: a backend whose SDK sends no vendor call id would find nobody the call it placed
 // rang, so its card went to nobody.
 func (s *EpisodeReadingSuite) TestAPlacedCallsSessionNamingNoVendorCallReadsWhoItRang() {
