@@ -130,7 +130,8 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.Require().NoError(s.store.db.NewSelect().Model(&aside).Where("id = ?", sms.ID).Scan(s.ctx))
 	s.Equal("agent:omni-sms", aside.ConversationID, "where its card is")
 	s.Equal(retiredPrefix+sms.ID+":+15550100", aside.Address)
-	s.Equal([]string{carls}, ids(s.cardsOf("agent:omni-sms", CardsQuery{})))
+	s.Equal(1, s.rows("SELECT count(*) FROM episodes WHERE id = '"+carls+"' AND contact_id = '"+sms.ID+"'"), "its episode stays with it")
+	s.Empty(s.cardsOf("agent:omni-sms", CardsQuery{}), "and no session reads it: it started before the link")
 	s.Equal("agent:omni-sms-7", s.omniOf(other), "a row of another app")
 	s.Equal("agent:omni-quiet", s.omniOf(quiet), "a row with no episode")
 	s.Equal("agent:omni-off", s.omniOf(off), "a row of a config without episode_cards")
@@ -167,11 +168,7 @@ func (s *StoreSuite) TestASetAsideRowIsStillReachedAtItsNumber() {
 	s.Require().NoError(err)
 	s.Equal(sms.ID, found.ID)
 	s.Equal("+15550100", found.Address, "a reply on the thread reaches the number")
-	cards := s.cardsOf("agent:omni-sms", CardsQuery{})
-	s.Require().Len(cards, 2)
-	for _, card := range cards {
-		s.Equal("+15550100", card.ContactAddress, card.Source)
-	}
+	s.Empty(s.cardsOf("agent:omni-sms", CardsQuery{}), "both started before the link")
 	now := time.Now()
 	ended, err := s.store.EndCallEpisodes(s.ctx, AppScope{Unpinned: true}, callID, now, now.Add(-time.Minute))
 	s.Require().NoError(err)
@@ -555,10 +552,15 @@ func (s *StoreSuite) smsAt(row *ContactMapEntry, at time.Time) string {
 	return episode.ID
 }
 
-// linkDated links a user to a number as LinkUserPhone does, dated at linkedAt.
+// linkDated links a user to a number as LinkUserPhone does, dated at linkedAt: its boundary too,
+// when the link is bounded at its own time.
 func (s *StoreSuite) linkDated(link *UserPhone) {
 	s.Require().NoError(s.store.LinkUserPhone(s.ctx, link))
-	_, err := s.store.db.ExecContext(s.ctx, "UPDATE user_phones SET updated_at = ? WHERE customer_id = ? AND user_id = ?",
+	_, err := s.store.db.ExecContext(s.ctx, `UPDATE user_phone_history AS h SET since = ? FROM user_phones AS up
+WHERE up.customer_id = h.customer_id AND up.stream_app_pk = h.stream_app_pk AND up.user_id = h.user_id
+	AND h.since = up.updated_at AND up.customer_id = ? AND up.user_id = ?`, linkedAt, link.CustomerID, link.UserID)
+	s.Require().NoError(err)
+	_, err = s.store.db.ExecContext(s.ctx, "UPDATE user_phones SET updated_at = ? WHERE customer_id = ? AND user_id = ?",
 		linkedAt, link.CustomerID, link.UserID)
 	s.Require().NoError(err)
 }

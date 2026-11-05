@@ -172,8 +172,10 @@ WHERE up.customer_id = ? AND up.stream_app_pk = ? AND up.user_id = ?`, customerI
 // first. ok is false when every message is: no such episode, no such link, or a link that gives
 // the user all of the number's past. A row a link set aside is read as its number (reachedAt).
 func (s *Store) ThreadHistorySince(ctx context.Context, customerID, threadChannel string) (time.Time, bool, error) {
-	var since []*time.Time
-	err := s.db.NewRaw(`SELECT `+historyBoundary+` FROM episodes AS ep
+	var since []struct {
+		At *time.Time `bun:"since"`
+	}
+	err := s.db.NewRaw(`SELECT `+historyBoundary+` AS since FROM episodes AS ep
 JOIN contact_map AS cm ON cm.id = ep.contact_id
 JOIN user_phones AS up ON up.customer_id = cm.customer_id AND up.phone = `+reachedAt+`
 	AND up.stream_app_pk = COALESCE(NULLIF(cm.stream_app_pk, ?), 0)
@@ -183,10 +185,10 @@ ORDER BY ep.started_at DESC LIMIT 1`, s.streamPins().deployment(), customerID, t
 	if err != nil {
 		return time.Time{}, false, stack.Wrap(fmt.Errorf("store: thread history since: %w", err))
 	}
-	if len(since) == 0 || since[0] == nil {
+	if len(since) == 0 || since[0].At == nil {
 		return time.Time{}, false, nil
 	}
-	return *since[0], true, nil
+	return *since[0].At, true, nil
 }
 
 // UnlinkUserPhone removes the user's link to a number, if any. The number keeps none of the
