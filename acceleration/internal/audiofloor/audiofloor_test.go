@@ -32,7 +32,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-const testInfo = `{"template":"t","end_of_turn":{"first_check_ms":200,"first_bar":0.7,"later_bar":0.2,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500}}`
+const testInfo = `{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}}}}`
 
 // fakeServer answers as an audio floor server does, with what a test sets.
 type fakeServer struct {
@@ -197,9 +197,18 @@ func (s *ClientSuite) TestAServerWithoutAPolicyIsUnsupported() {
 	s.server.refuse = http.StatusNotImplemented
 	_, err := s.client.Decide(context.Background(), booking, Turn{}, some, false)
 	s.ErrorIs(err, ErrUnsupported)
-	s.server.info = `{"template":"t","end_of_turn":{}}`
-	_, err = s.client.Policy(context.Background())
-	s.ErrorIs(err, ErrUnsupported)
+	const times = `"first_check_ms":200,"interval_ms":300,"cap_ms":2500`
+	for _, info := range []string{
+		`{"end_of_turn":{}}`,
+		`{"end_of_turn":{` + times + `,"default":"b","presets":{"a":{"bars":[{"from_ms":0,"bar":0.9}]}}}}`,
+		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":{"bars":[{"from_ms":500,"bar":0.9}]}}}}`,
+		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":{"bars":[{"from_ms":0,"bar":0.9}]},"b":{"bars":[{"from_ms":0,"bar":0.9},{"from_ms":0,"bar":0.2}]}}}}`,
+		`{"end_of_turn":{` + times + `,"first_bar":0.7,"later_bar":0.2}}`,
+	} {
+		s.server.info = info
+		_, err = s.client.Policy(context.Background())
+		s.ErrorIs(err, ErrUnsupported, info)
+	}
 }
 
 func (s *ClientSuite) TestTheTranscriptIsTheAnswersSecondLine() {
@@ -234,16 +243,23 @@ func (s *ClientSuite) TestNoAudioIsNotAsked() {
 	s.Zero(s.server.requests())
 }
 
-func TestTheBarIsRaisedOnATurnsFirstPause(t *testing.T) {
+// The bar is the default preset's last to have begun by the check's time into the pause,
+// raised on the turn's first pause.
+func TestTheBarIsTheOneBegunByTheCheck(t *testing.T) {
 	var info struct {
 		EndOfTurn Policy `json:"end_of_turn"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(testInfo), &info))
 	p := info.EndOfTurn
-	require.InDelta(t, 0.70, p.Bar(true, false), 1e-9)
-	require.InDelta(t, 0.20, p.Bar(false, false), 1e-9)
-	require.InDelta(t, 0.794, p.Bar(true, true), 1e-3)
-	require.InDelta(t, 0.292, p.Bar(false, true), 1e-3)
+	for _, c := range []struct {
+		paused time.Duration
+		want   float64
+	}{{200 * time.Millisecond, 0.995}, {800 * time.Millisecond, 0.995}, {1099 * time.Millisecond, 0.995},
+		{1100 * time.Millisecond, 0.20}, {2 * time.Second, 0.20}} {
+		require.InDelta(t, c.want, p.Bar(c.paused, false), 1e-9, "%v into the pause", c.paused)
+	}
+	require.InDelta(t, 0.292, p.Bar(1100*time.Millisecond, true), 1e-3)
+	require.InDelta(t, 0.997, p.Bar(800*time.Millisecond, true), 1e-3)
 }
 
 // HearerSuite reads the model's answers as the flow controller's rulings.
@@ -265,16 +281,18 @@ func (s *HearerSuite) answering(pEOT float64, ruling string) {
 	s.server.decision = fmt.Sprintf(`{"answer":"wait","answer_probability":%v,"p_eot":%v,"options":[],"decide_ms":1,"ruling":%s}`, 1-pEOT, pEOT, ruling)
 }
 
-// p_eot of 0.6 doesn't end a turn at a pause's first check, where the bar is 0.7, and ends
-// it at the next, where the bar is 0.2, as a ruling the server read past wait.
+// p_eot of 0.6 doesn't end a turn at a check 800 ms into the pause, where the bar is 0.995,
+// and ends it at one 1.1 s in, where the bar is 0.2, as a ruling the server read past wait.
 func (s *HearerSuite) TestATurnHasEndedWhenPEndReachesTheBar() {
 	s.answering(0.6, `{"disposition":"respond","floor":"continue","tool":"book"}`)
-	first, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Paused: 350 * time.Millisecond})
+	first, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Waited: true, Paused: 800 * time.Millisecond})
 	s.Require().NoError(err)
 	s.False(first.Ended)
+	s.InDelta(0.995, first.Bar, 1e-9)
+	s.Equal("safe", first.Preset)
 	s.Equal(harness.Decided{Disposition: harness.Wait, Floor: harness.Continue, Again: 300 * time.Millisecond}, first.Ruling)
 
-	later, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Waited: true, Paused: time.Second})
+	later, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Waited: true, Paused: 1100 * time.Millisecond})
 	s.Require().NoError(err)
 	s.True(later.Ended)
 	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Continue, Tool: "book"}, later.Ruling)

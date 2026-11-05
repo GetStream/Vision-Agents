@@ -84,28 +84,63 @@ const (
 
 // Policy is when a turn with the floor free has ended, fitted to the server's model. A
 // pause is checked FirstCheckMs into it and every IntervalMs after, and the turn has ended
-// at the first check where p_eot reaches the bar: FirstBar at the pause's first check and
-// LaterBar after it, each raised by FirstPauseLogit in log-odds on the turn's first pause.
-// At CapMs of pause it has ended whatever the model says.
+// at the first check where p_eot reaches the bar of the last of the preset's bars to have
+// begun by then, raised by FirstPauseLogit in log-odds on the turn's first pause. At CapMs
+// of pause it has ended whatever the model says. The presets are how eager turn-taking is,
+// by name, and the server names its Default.
 type Policy struct {
-	FirstCheckMs    int     `json:"first_check_ms"`
-	FirstBar        float64 `json:"first_bar"`
-	LaterBar        float64 `json:"later_bar"`
-	FirstPauseLogit float64 `json:"first_pause_logit"`
-	IntervalMs      int     `json:"interval_ms"`
-	CapMs           int     `json:"cap_ms"`
+	FirstCheckMs    int               `json:"first_check_ms"`
+	FirstPauseLogit float64           `json:"first_pause_logit"`
+	IntervalMs      int               `json:"interval_ms"`
+	CapMs           int               `json:"cap_ms"`
+	Default         string            `json:"default"`
+	Presets         map[string]Preset `json:"presets"`
 }
 
-// Bar is what p_eot must reach at a check for the turn to have ended.
-func (p Policy) Bar(firstCheck, firstPause bool) float64 {
-	bar := p.LaterBar
-	if firstCheck {
-		bar = p.FirstBar
+// Preset is one choice of bars, each from a time into the pause on.
+type Preset struct {
+	Bars []PolicyBar `json:"bars"`
+}
+
+// PolicyBar is the bar p_eot must reach at a check from FromMs into the pause on.
+type PolicyBar struct {
+	FromMs int     `json:"from_ms"`
+	Bar    float64 `json:"bar"`
+}
+
+// Bar is what p_eot must reach, by the default preset, at a check paused into the pause for
+// the turn to have ended.
+func (p Policy) Bar(paused time.Duration, firstPause bool) float64 {
+	var bar float64
+	for _, b := range p.Presets[p.Default].Bars {
+		if paused >= time.Duration(b.FromMs)*time.Millisecond {
+			bar = b.Bar
+		}
 	}
 	if firstPause {
 		bar = 1 / (1 + math.Exp(-(math.Log(bar/(1-bar)) + p.FirstPauseLogit)))
 	}
 	return bar
+}
+
+// valid says the policy has its times and a default preset, and that every preset has a
+// bar for every check, each a probability.
+func (p Policy) valid() bool {
+	if _, ok := p.Presets[p.Default]; !ok || p.FirstCheckMs <= 0 || p.IntervalMs <= 0 || p.CapMs <= 0 {
+		return false
+	}
+	for _, preset := range p.Presets {
+		bars := preset.Bars
+		if len(bars) == 0 || bars[0].FromMs != 0 {
+			return false
+		}
+		for i, b := range bars {
+			if b.Bar <= 0 || b.Bar >= 1 || (i > 0 && b.FromMs <= bars[i-1].FromMs) {
+				return false
+			}
+		}
+	}
+	return true
 }
 
 // FirstCheck, Interval and Cap are the policy's times.
@@ -206,7 +241,7 @@ func (c *Client) Policy(ctx context.Context) (Policy, error) {
 	if _, err := c.do(req, &info, nil); err != nil {
 		return Policy{}, err
 	}
-	if p := info.EndOfTurn; p.FirstBar <= 0 || p.LaterBar <= 0 || p.FirstCheckMs <= 0 || p.IntervalMs <= 0 || p.CapMs <= 0 {
+	if !info.EndOfTurn.valid() {
 		return Policy{}, stack.Wrap(fmt.Errorf("%w: its end_of_turn is incomplete", ErrUnsupported))
 	}
 	c.mu.Lock()

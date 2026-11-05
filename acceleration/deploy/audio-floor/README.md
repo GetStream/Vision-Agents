@@ -33,19 +33,25 @@ router. A server without one answers 501, and the router never acts on it.
 
 ## Wire protocol
 
-`GET /v1/info`: what the server serves. This example was served with a test policy fitted
-to an earlier checkpoint:
+`GET /v1/info`: what the server serves, here with each preset's `measured` left out:
 
 ```
-{"template":"v3.5","conversation_on_free_floor":false,"end_of_turn":{"first_check_ms":200,"first_bar":0.7,"later_bar":0.2,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500},"max_tools":21,"sample_rate":16000,"window_samples":256000}
+{"template":"v3.5","conversation_on_free_floor":false,"end_of_turn":{"first_check_ms":200,"first_pause_logit":0,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}],"measured":{...}},"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"measured":{...}}}},"max_tools":21,"sample_rate":16000,"window_samples":256000}
 ```
 
 `end_of_turn` is fitted to the server's model. A pause is checked `first_check_ms` into it
 and every `interval_ms` after, and the turn has ended at the first check where `p_eot`
-reaches the bar: `first_bar` at the pause's first check and `later_bar` after, each raised
-by `first_pause_logit` in log-odds on the turn's first pause. At `cap_ms` of pause it has
-ended whatever the model says. These values belong to one checkpoint, and another one
-comes with its own.
+reaches the bar of the last of a preset's `bars` to have begun by then, `from_ms` into the
+pause, raised by `first_pause_logit` in log-odds on the turn's first pause. At `cap_ms` of
+pause it has ended whatever the model says. The presets are how eager turn-taking is, and
+the router applies the one the server names as its `default`. These values belong to one
+checkpoint, and another one comes with its own. The presets of the current one, on held-out
+calls:
+
+| Preset | Bars | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts |
+| --- | --- | --- | --- | --- | --- |
+| `safe` (default) | 0.995 from 0 ms, 0.20 from 1,100 ms | 4.5% | 1,100 ms, 1,100 ms | 12.6% | none of 9 cut |
+| `fast` | 0.8 from 0 ms, 0.3 from 500 ms | 14.5% | 500 ms, 800 ms | within the limit | one cut after "One" |
 
 `POST /v1/agents`: an agent, by what it was told and its customer tools. The router's own
 tools (ending or transferring the call, pressing keys, the knowledge and web lookups,
@@ -102,7 +108,7 @@ changed.
 
 | Model | `Decided.Disposition` | `Decided.Floor` | Also |
 | --- | --- | --- | --- |
-| floor free, `p_eot` under the bar and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
+| floor free, `p_eot` under the preset's bar and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
 | `respond`, `clarify`, `ignore` | as said | `continue` | |
 | `cannot` | `respond` | `continue` | `Cannot` |
 | a tool | `respond` | `continue` | `Tool` |
@@ -122,7 +128,8 @@ approval is untouched. Acting, a decision's `Ruler` is `heard`.
   turn the flow controller decided.
 - **Shadow.** One question at a time, none waited for: a slow server costs a call nothing.
   `router_agent_audio_floor_compared_total` counts both rulings by disposition and floor,
-  and a debug log line carries `p_end`, the bar, the pause, first check and first pause.
+  and the preset, and a debug log line carries `p_end`, the preset and its bar, the pause,
+  first check and first pause.
 - **Transcripts.** A server that is down when the session starts, or that fails a
   request, is a fatal error, which hands the call to the next transcriber the target names.
   The words since the last ones written are lost. A target that names this transcriber

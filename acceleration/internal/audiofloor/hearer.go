@@ -55,11 +55,12 @@ func NewHearer(client *Client) *Hearer { return &Hearer{client: client} }
 type Check struct {
 	Ruling harness.Decided
 	Answer Answer
-	// Bar is what p_eot had to reach for a turn with the floor free to have ended, and
-	// Ended whether it had. Over the agent there is no bar, and the words' end is the
-	// transcriber's to say.
-	Bar   float64
-	Ended bool
+	// Bar is what p_eot had to reach, by Preset, for a turn with the floor free to have
+	// ended, and Ended whether it had. Over the agent there is no bar, and the words' end
+	// is the transcriber's to say.
+	Bar    float64
+	Preset string
+	Ended  bool
 }
 
 // Hear is the ruling of Check.
@@ -103,7 +104,7 @@ func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	if answer.PEOT == nil {
 		return Check{}, stack.Wrap(errors.New("audiofloor: no p_eot with the floor free"))
 	}
-	check.Bar = policy.Bar(!turn.Waited, turn.FirstPause)
+	check.Bar, check.Preset = policy.Bar(turn.Paused, turn.FirstPause), policy.Default
 	check.Ended = *answer.PEOT >= check.Bar || turn.Paused >= policy.Cap()
 	if !check.Ended {
 		check.Ruling = harness.Decided{Disposition: harness.Wait, Floor: harness.Continue, Again: policy.Interval()}

@@ -17,7 +17,7 @@ import (
 // too, and the flow controller asks it as the mode says.
 func TestTheAudioFloorIsTheRoutersSettings(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"end_of_turn":{"first_check_ms":200,"first_bar":0.7,"later_bar":0.2,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500}}`))
+		_, _ = w.Write([]byte(`{"end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}}}}`))
 	}))
 	t.Cleanup(srv.Close)
 	for _, name := range []string{postgresEnvVar, redisEnvVar, configEnvVar} {

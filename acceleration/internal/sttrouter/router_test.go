@@ -668,7 +668,7 @@ func (s *STTRouterSuite) TestTheMockIsStreamedAtByNameAndReachedByNoShortcut() {
 // at, and no shortcut reaches it.
 func (s *STTRouterSuite) TestTheAudioFloorIsStreamedAtByNameAndReachedByNoShortcut() {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"template":"t","end_of_turn":{"first_check_ms":200,"first_bar":0.7,"later_bar":0.2,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500}}`))
+		_, _ = w.Write([]byte(`{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}}}}`))
 	}))
 	s.T().Cleanup(srv.Close)
 	config, err := routing.DefaultConfig()
