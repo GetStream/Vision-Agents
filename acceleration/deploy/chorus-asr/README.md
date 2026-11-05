@@ -353,7 +353,13 @@ where the agent acts on nothing the model says.
 Before this the transcriber ended an utterance at a pause of 2.5 s, the policy's cap, and
 a pipeline that answered quickly had its own reply, heard back on the line, written into
 the caller's utterance: "Will it rain in Porto this weekend? Tomorrow in Lisbon it will be
-sunny…" as one final, 3.5 s after the caller stopped.
+sunny…" as one final, 3.5 s after the caller stopped. On the replay against the TPU server,
+transcribing alone under the `safe` default, the weather question reached a `p_eot` of
+0.9955 at its first check and was a final 320 ms after the voice; the rain question sat at
+0.965 to 0.975 over its first four checks, under the point's 0.995 bar, and ended at its
+1,100 ms bar, a final 1.17 s after the voice, with the reply's echo a final of its own. An
+agent's own prompt tells the model more: acting, the same question reaches 0.995 at the
+first check ([What a choice does to a call](#what-a-choice-does-to-a-call)).
 
 Decisions never hold the words up. A pause the server does not rule on, because the check
 failed or none ended the pause within 1 s past `cap_ms`, falls to the words alone: the
