@@ -165,6 +165,33 @@ func TestTheTwoRulingsAreComparedInEitherOrder(t *testing.T) {
 	require.Zero(t, pending())
 }
 
+// A participant who has left is let go of: their audio and its encoder, and any ruling on
+// their words still waiting. One who comes back is heard afresh.
+func TestADepartedParticipantIsLetGoOf(t *testing.T) {
+	v := newAudioFloor(audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
+	defer v.close()
+	frame := InboundAudio{Participant: stt.Participant{ID: "p"}, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}}
+	v.heard(frame)
+	v.heard(frame)
+	v.keep("p", audiofloor.Ruled{Check: audiofloor.Check{Ended: true}, Words: "Bye."})
+	v.keep("q", audiofloor.Ruled{Check: audiofloor.Check{Ended: true}, Words: "Hello."})
+	kept := func() (streams, checked int) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return len(v.streams), len(v.checked)
+	}
+	streams, checked := kept()
+	require.Equal(t, [2]int{1, 2}, [2]int{streams, checked})
+
+	v.forget("p")
+	streams, checked = kept()
+	require.Equal(t, [2]int{0, 1}, [2]int{streams, checked}, "p's audio and ruling are gone, q's ruling stays")
+	(*audioFloor)(nil).forget("p")
+
+	v.heard(frame)
+	require.EqualValues(t, 1, v.stream("p").Frames(), "heard afresh")
+}
+
 // Audio of another rate is not what the model hears, and isn't kept.
 func TestOnly16kMonoIsKept(t *testing.T) {
 	v := newAudioFloor(audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Shadow, audiofloor.EndOfTurn{}, quietLogger())

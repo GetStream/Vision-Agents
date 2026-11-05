@@ -181,6 +181,19 @@ func (v *audioFloor) stream(participant string) *audiofloor.Stream {
 	return stream
 }
 
+// forget lets go of what was kept for a participant who has left: their audio and its
+// encoder, and any ruling on their words still waiting for the flow controller. A call that
+// people come and go from would otherwise keep every one of them until it ended.
+func (v *audioFloor) forget(participant string) {
+	if v == nil {
+		return
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	delete(v.streams, participant)
+	v.checked = slices.DeleteFunc(v.checked, func(r ruledWords) bool { return r.participant == participant })
+}
+
 // listen gives turn what the model hears: the participant's last 16 s, and the customer's
 // tools, and finds the ruling a pause check made on its words, if one did.
 func (v *audioFloor) listen(turn *harness.FlowTurn, participant string, tools []harness.Tool) {

@@ -1556,6 +1556,7 @@ func (a *Agent) attend(attendance Attendance) {
 		return
 	}
 	a.unbind(attendance.Participant)
+	a.audioFloor.forget(attendance.Participant.ID)
 	a.mu.Lock()
 	a.departed[attendance.Participant.ID] = time.Time{}
 	listener := a.listeners[attendance.Participant.ID]
