@@ -114,7 +114,7 @@ sources:
         needs_scopes: [agent:delivery:write]
     # The tools that only read: each tool [tools] (opened again 2026-11-05) marks
     # «Read-only.», which are the ones that need agent:content:read or agent:query:run. The
-    # other 11 it marks «Can overwrite or delete existing data or content.» or «Creates or
+    # other 12 it marks «Can overwrite or delete existing data or content.» or «Creates or
     # changes content.», and the source above does not offer them. The model writes no SQL
     # here: execute_query takes «A fresh structured query ... never SQL», and
     # run_saved_question runs a question a person saved. visualize_query and
