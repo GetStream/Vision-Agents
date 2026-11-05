@@ -2,6 +2,10 @@
 
 ## Features
 
+### Vendor rate limits per key: refusals and headroom
+
+`router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #1781).
+
 ### The router counts each vendor failover
 
 `router_failovers_total` counts each time the router moved work off a provider that failed, by `modality`, the `provider` that failed, `stage` (`start` and `use` at request start in the walk, `session` for an STT session, a voice or an LLM response another candidate took over mid-session) and `reason` (`vendor`, or `request`, `customer_key` (the customer's own key or `custom` model) and `cancelled` for failures that are not the vendor's). A failure nothing replaced is no failover (AI-2781, #1785).
