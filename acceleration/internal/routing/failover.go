@@ -9,7 +9,7 @@ import (
 
 // The stages a failover is counted at: in Walk, a candidate that failed to start, or one
 // that started and failed in its use; and a provider that failed after its session had
-// started, which the router asks another candidate to take over from.
+// started, which another candidate took over from.
 const (
 	failoverStart   = "start"
 	failoverUse     = "use"
@@ -31,7 +31,7 @@ const (
 var failovers = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "failovers_total",
-	Help:      "Times the router moved work off a provider that failed, by the provider and model that failed. In Walk, stage start is a candidate that failed to start and use one that started and failed in its use, counted when the next candidate is started: the last candidate failing, or a walk the caller left, is no failover. Stage session is a provider that failed after its session started (an STT session the vendor refused, a voice lost mid-call, an LLM response that failed), counted when another candidate is asked to take it over, whether or not one does. By reason: request for a setting the provider refused, customer_key for work on the customer's own key, cancelled once the caller's context had ended, otherwise vendor",
+	Help:      "Times the router moved work off a provider that failed, by the provider and model that failed, counted once another candidate has been started in its place: a failure nothing replaced (the last candidate, a walk the caller left) is no failover. Stage start is a candidate Walk could not start, use one that started and failed in Walk's use, session one that failed after its session started and another took over (an STT session the vendor refused, a voice lost mid-call, an LLM response that failed). By reason: request for a setting the provider refused, customer_key for work on the customer's own key, cancelled once the caller's context had ended, otherwise vendor",
 }, []string{"modality", "provider", "model", "stage", "reason"})
 
 // failover is a candidate the walk moved past on a failure.
@@ -42,7 +42,7 @@ type failover struct {
 }
 
 // CountHandover counts a provider that failed after its session started, err being what it
-// said, as the router asks another candidate to take the work over.
+// said, once another candidate has taken the work over.
 func CountHandover(modality Modality, config ProviderConfig, err error) {
 	countFailover(modality, failover{config: config, stage: failoverSession, reason: failoverReason(config, err, false)})
 }

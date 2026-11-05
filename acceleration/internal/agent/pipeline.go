@@ -743,7 +743,6 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 	if !replace {
 		return
 	}
-	routing.CountHandover(routing.TTS, lost.Config(), nil)
 
 	// The new voice is consumed under this pipeline like the one it replaces, so it is
 	// counted before this one's consumer can return.
@@ -776,6 +775,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		a.mu.Unlock()
 		a.logger.Warn("the voice was lost, speaking in another",
 			"lost", failed[len(failed)-1], "provider", next.Provider(), "model", next.Model())
+		routing.CountHandover(routing.TTS, lost.Config(), nil)
 		if err := lost.Close(); err != nil {
 			a.logger.Debug("closing the lost voice", "error", err)
 		}
