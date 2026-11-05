@@ -340,6 +340,28 @@ func (s *ResponsesAskedSuite) TestAVideoQuestionWithAVoiceNoteToAnAgentThatCanno
 	s.NotContains(string(body), "video:", "refused before the clip is read")
 }
 
+// Without a voice note the agent that cannot see images is not asked first: a question with
+// videos and an answer still running is refused for the answer, as the question is without a
+// note, whose check for the agent's refusal comes only with a note.
+func (s *ResponsesAskedSuite) TestAVideoQuestionWithoutAVoiceNoteToAnAgentThatCannotSeeIsRefusedForTheAnswerRunning() {
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+	path := "/v1/agents/sessions/" + opened.Id + "/responses"
+	s.notedMu.Lock()
+	model := s.noted[len(s.noted)-1]
+	s.notedMu.Unlock()
+	model.holds()
+	defer model.answers()
+	status, body := s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: "Is the fryer fixed?"})
+	s.Require().Less(status, 300, string(body))
+
+	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: "What is in this clip?",
+		Videos: &[]VideoSource{{Url: "http://127.0.0.1:9/clip.mp4"}}})
+	s.Equal(http.StatusBadRequest, status, string(body))
+	s.Contains(string(body), "a response is already running")
+	s.NotContains(string(body), `"code":"not_configured"`)
+	s.NotContains(string(body), "video:", "refused before the clip is read")
+}
+
 // A text past the limit of a command is refused before the video sent with it is fetched. Only
 // a question with a voice note may be that big, as the body is held to 1 MiB without one.
 func (s *ResponsesAskedSuite) TestAVideoQuestionWithATextPastTheLimitOfACommandIsRefusedBeforeItsVideoIsFetched() {
