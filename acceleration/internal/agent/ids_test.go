@@ -338,6 +338,16 @@ func TestAnIDAJSONResultEchoesOrWritesBesideAnotherWordIsNotPassedOn(t *testing.
 			`{"case_id":"KTR583027"}`,
 		},
 		{
+			"a search joining words of its query the tool writes back apart",
+			answered(`{"query":"C0FAKE01-general"}`, `{"results":"Channels matching C0FAKE01 general"}`),
+			`{"channel_id":"C0FAKE01"}`,
+		},
+		{
+			"a search whose query spaces the ID the tool writes back whole",
+			answered(`{"query":"C0 FAKE 01"}`, `{"results":"Channels for C0FAKE01"}`),
+			`{"channel_id":"C0FAKE01"}`,
+		},
+		{
 			"a channel on a line that names none, under one that does",
 			answered(`{}`, `{"results":"## Channels (0 results)\nRequested by U0ASKER1"}`),
 			`{"channel_id":"U0ASKER1"}`,

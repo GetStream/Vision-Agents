@@ -128,7 +128,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		// the call it answers was not sent: "No bookings found for Ana at 7pm" does not
 		// return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
 		returned = returned || slices.ContainsFunc(lines, func(written line) bool {
-			return holdsValue(written.text, wanted) && !holdsValue(written.sent, wanted) &&
+			return holdsValue(written.text, wanted) && !strings.Contains(alphanumeric(written.sent), wanted) &&
 				strings.Contains(strings.ToLower(written.text), entityOf(name))
 		})
 		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
