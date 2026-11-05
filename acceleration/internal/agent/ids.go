@@ -120,12 +120,12 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		if wanted == "" {
 			return name, text, collectIDs(results), true
 		}
-		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) ||
+		if strings.Contains(heard, wanted) && holdsKind(lineWords(said.String()), entityOf(name), strings.Contains) ||
 			slices.Contains(pasted, wanted) || slices.Contains(linked, wanted) {
 			continue
 		}
 		if slices.ContainsFunc(answers, func(given answer) bool {
-			return strings.Contains(given.question, entityOf(name)) && strings.Contains(given.said, wanted)
+			return holdsKind(lineWords(given.question), entityOf(name), strings.Contains) && strings.Contains(given.said, wanted)
 		}) || holdsValue(told, wanted) {
 			continue
 		}
@@ -909,12 +909,16 @@ func besideKind(line, wanted, kind string) bool {
 				continue
 			}
 			var between []string
+			limit := 1
 			if at < start {
-				between = words[at+1 : start]
+				// An ID before the kind is the one the line lists, "#help (C0…) - public_channel":
+				// nothing stands between them. Any word does, as in "U0… joined channel #help",
+				// where U0… joined the channel.
+				between, limit = words[at+1:start], 0
 			} else if at >= start+size {
 				between = words[start+size : at]
 			}
-			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= 1 {
+			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= limit {
 				return true
 			}
 		}

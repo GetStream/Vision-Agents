@@ -86,6 +86,26 @@ func TestAnIDTheCallerWasAskedForOrTheOperatorGaveIsPassedOn(t *testing.T) {
 	assert.True(t, unfound, "only an ID the instructions give whole")
 }
 
+func TestAKindWordInsideAnotherWordIsNotTheCallerNamingTheID(t *testing.T) {
+	tools := []string{"open_case", "get_case"}
+	call := llm.ToolCall{Name: "get_case", Arguments: `{"case_id":"6631"}`}
+	for _, c := range []struct {
+		name    string
+		history []llm.Message
+		unfound bool
+	}{
+		{"said beside its kind", []llm.Message{{Role: llm.User, Content: "My case number is 6631."}}, false},
+		{"said beside its plural", []llm.Message{{Role: llm.User, Content: "Cases 6631 and 6632."}}, false},
+		{"said beside a word that holds its kind", []llm.Message{{Role: llm.User, Content: "The showcase number is 6631."}}, true},
+		{"said beside a word that begins with its kind", []llm.Message{{Role: llm.User, Content: "My casework is 6631."}}, true},
+		{"answered to its kind asked", []llm.Message{{Role: llm.Assistant, Content: "What's your case number?"}, {Role: llm.User, Content: "6631"}}, false},
+		{"answered to a word that holds its kind asked", []llm.Message{{Role: llm.Assistant, Content: "What's your suitcase number?"}, {Role: llm.User, Content: "6631"}}, true},
+	} {
+		_, _, _, unfound := unfoundID(c.history, call, tools, "")
+		assert.Equal(t, c.unfound, unfound, c.name)
+	}
+}
+
 func TestANumberNobodyGaveIsNotSent(t *testing.T) {
 	history := []llm.Message{
 		{Role: llm.User, Content: "PIN two seven four five, last four, six three zero five, fourteen Birch Road."},
@@ -460,6 +480,8 @@ func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 		{"a creator at the end of a listed channel", `{"results":"1. #help (C0HELP002) - public_channel - created by U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a channel's name and a person's ID after it", `{"messages":"Channel #help Ana U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"the word ID and a person's ID after a name", `{"messages":"Channel #help by ID U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person who joined a channel", `{"messages":"U0ANA001 joined channel #help"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person who joined a channel, the word ID between", `{"messages":"U0ANA001 id joined channel #help"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a person before a channel's name and kind", `{"messages":"U0ANA001 wrote in the #help channel"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a channel beside the plural of its kind", `{"results":"Channels: #help (C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a channel beside its key", `{"results":"Posted. channel_id: C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
