@@ -1256,9 +1256,11 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	// them, so a gap before this customer's first change is the other customers' changes,
 	// not a pruned one: only a cursor older than the oldest change kept has lost any. With
 	// none of theirs kept, a quiet customer and one whose every change aged out look the
-	// same, and the follower that is only waiting is not refused. Pruning stops at the mark,
-	// which never goes down, so the gap right after a cursor at or above it is a change
-	// still in flight rather than a pruned one.
+	// same, and the follower that is only waiting is not refused. Pruning drops only numbers
+	// at or below the mark it read, so the gap right after a cursor at or above this mark is
+	// a change still in flight rather than a pruned one. The mark can go down: the trigger
+	// reads the sequence and takes its lock in two statements, and a mark read between them
+	// is above that lock. A prune in that window can drop a change this check then misses.
 	var kept sql.NullInt64
 	var theirs bool
 	if err := s.db.QueryRowContext(ctx,
