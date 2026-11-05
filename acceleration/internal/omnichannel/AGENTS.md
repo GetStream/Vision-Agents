@@ -6,7 +6,8 @@ The contact map and the episode cards (T43 and T41, AI-883), and closing and sum
 
 ```
 channel bridge, a thread's message        session manager, a call's session joined
-  Person: SlackUser(team, user)             Person: Phone(SIP caller | PhoneSpec.To)
+  Person: SlackUser(team, user)             Person: Phone(PhoneSpec.To | who a placed call
+                                              rang | SIP caller, waited for), never the line
   source slack, thread agent:thread-<id>    source call, thread agent:<agent id>
               \                               /
               |   api.chatEpisode, an app chat's message
@@ -14,6 +15,8 @@ channel bridge, a thread's message        session manager, a call's session join
               |     config: the running session's spec, else ownerOf's; episode_cards on
               |     not a thread channel or an omni-channel, an incognito or a call's session
               |     members as the event's channel lists them: Between(person, channel id)
+              |     Stream says the hook's app checks tokens (streamapp.Clients.ChecksTokens,
+              |     the app as the customer acts in it, at most ReadTimeout), else none
               |     Person: StreamUser(origin.app, message.user.id); source chat, thread agent:<channel id>
               |     started_at: message.created_at
               |  /
@@ -76,7 +79,7 @@ session.Manager.Create, before the history is restored       callCards.read
                |    and the agent (Between)
                |    -> StreamUser(session's app, Caller.UserID) -> store.Contact
                |  app chat and device only: Stream says the app checks tokens
-               |  (checksTokens, Readiness.AuthChecksOff false), else none
+               |  (streamapp.Clients.ChecksTokens, Readiness.AuthChecksOff false), else none
                Cards.Context
                  store.EpisodeCards   same customer, same agent, same omni-channel;
                                       own thread, own chat channel, own conversation
@@ -98,14 +101,17 @@ Closing (T55, AI-884), `Closer`:
 ```
 idle sweeper, every minute                     call.session_ended hook (api.endCallEpisodes)
   Closer.Start, from cmd/router                  Closer.EndCall(scope, call id)
-  only with connectors on or a config            any call; one with no episode
-  with episode_cards on (startEpisodeSweeper)    matches no row and reaches no Stream
+  only with connectors on, a config with         any call; one with no episode
+  episode_cards on, or an episode left to        matches no row and reaches no Stream
+  close or summarize (startEpisodeSweeper)
               |                                           |
   store.CloseIdleEpisodes                        store.EndCallEpisodes
     thread and chat episodes, last message         call episodes of the call in the
     older than episodes.idle_after                 event's app, still in progress
               \                                          /
                status ended, ended_at, summary lease (5 min): one router wins each row
+               card read once (authorOf)               its author: every update is made as it
+                 unreadable: row summary_failed, no LLM response
                card: status ended                      partial update, no new message
                summary                                 config's own LLM (default llm-fast)
                  linesOf(the episode's own window, last 100, 60,000 runes)
@@ -160,7 +166,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **A person's cards are their omni-channel's.** `store.EpisodeCards` takes the contact rows of the same customer and agent that point at the omni-channel, so a linked Slack row and a phone row are one person, and the same number under another agent or customer is another. Example: `+15550100199`'s cards are never read for `+15550100100`.
 - **An app chat's session reads the cards of the one person who wrote there.** Only the text session a worker opens to answer a message the router handed out (`Spec.Dispatched`) reads them: the spec names no person (`UserID` is who the agent joins a call as, `Caller` is empty for the worker's server key), so the person is the Stream user who wrote the message handed out (`session.Manager.HandOut`, `Spec.HandedOutBy`), as `api.chatEpisode` keyed the card, and only in a channel whose members are that user alone, or that user and the agent, and while every message in the channel's last 100 that is a person's line or has no source is theirs: a voice recording alone is handed out though it is no line. The agent is the Stream user the session writes its replies as, its agent id (`conversation.sendWith` writes as `ledger.Agent`), which a worker's session takes from the channel's id (`Manager.handedOut`). The members are read from the channel's state, the same read as the messages, so the check costs no request of its own; a channel with a third member, two members of whom one is not the agent, or members the state does not list reads none, as with `episode_cards` off. A hand-out that names nobody, as a node from before made, reads none. Its own channel's episodes are left out, as a thread's own thread is: the session reads it word for word. Example: Anya's second chat starts with the summary of her first; her team's channel with the agent, which Carl is a member of, reads none of her cards though only she wrote there; Bob writes in her chat, sends a photo or a voice recording there, or replies in a Stream thread of it, and the session opened for that reads none of her cards.
 - **The person's own device reads their cards.** A text or voice session opened with an end user's token signed for that user (`CallerKind` `authenticated`: by the app's secret in `api_key` mode, `auth.keyed`; by Stream behind the gateway, `auth.proxied`) reads the cards of that Stream user in the session's app, as the app chat keys them (`deviceContact`, `StreamUser`, `samePin`), the conversation it carries on left out, since it reads that word for word, while nobody else reads the answers: the conversation it carries on is not open to its members (`support_access` `members`, `conversation.Shared`) and its members are that user alone, or that user and the agent (`Reading.OwnAgent`), and a call with no number on it has as members and participants that user alone, or that user and the user the agent joins as (`Spec.UserID`), by `Between` as the app chat's members are checked. A call with a number on it reads the number's cards, whoever opened it. A guest (a temporary account the app does not know), an anonymous caller (any name), a backend naming a user, a scheduled task's session and the worker's (`Caller.ServerSide`) read none. Example: Anya chats «my appointment is Friday at 3»; later she taps «Talk to assistant» and the session her token opens starts with that card; a session opened with Bob's token reads none of hers, and neither does her session on a conversation Carl is a member of, nor her call Bob is on.
-- **A Stream user's word needs an app that checks tokens.** The app chat's and the device's sessions read cards only when Stream says the session's app checks the tokens it is sent (`checksTokens`, `streamapp.Readiness`, kept a minute): with auth checks off a client may sign in, or write in the app chat, as anybody. An app Stream could not be asked about reads none. Example: a dev app with auth checks off; Bob's client writes as `anya_123` and reads none of her cards.
+- **A Stream user's word needs an app that checks tokens.** The app chat's and the device's sessions read cards only when Stream says the session's app checks the tokens it is sent, and an app chat's message opens an episode and writes its card only when Stream says so of the app the message came from (`streamapp.Clients.ChecksTokens`, one rule for both, `streamapp.Readiness`, kept a minute): with auth checks off a client may sign in, or write in the app chat, as anybody. An app Stream could not be asked about, or not within `ReadTimeout`, reads and writes none; the message is answered all the same. Example: a dev app with auth checks off; Bob's client writes as `anya_123`, reads none of her cards, and writes none into her omni-channel.
 - **A session holding a person's cards answers that person alone.** It names whose they are (`Session.CardsFor`); a message by anybody else in its channel is handed out anew, and the session retires (`api.routeArrivingMessage`, `session.Manager.Retire`): it takes no new message, anybody's, and closes once the reply it is writing and the follow-ups handed to it before are written (`api.retire`), at most `session.RetireWithin` (2 min) on. A session the worker opens on the channel on the same router waits for it to end (`Manager.awaitRetiring`) rather than taking the conversation over. A session that read none answers whoever writes, as before. Example: Anya's session read her card and is answering her two questions; Bob writes in her chat; both her answers are written, her session closes, and the session the worker opens for Bob reads none of her cards.
 - **A Stream user is a person of one Stream app.** A `stream_user` row read for a chat session must be pinned to the session's app (`samePin`: the deployment's own app is zero for a session and its id for a hook it signed). Example: `anya_123`'s card from app 7 is not read in the deployment's app.
 - **A shared thread reads no cards.** A thread's cards are of the one who started it. Example: Bob writes in Alice's Slack thread; the session reads none of Alice's cards.
@@ -169,11 +175,16 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **The last lines whatever Stream's order.** The query is bounded by the window's end only, as Stream's documented backward pagination is; the start is applied in Go, and the lines are sorted by `created_at` before the tail is taken.
 - **No cards for a native speech-to-speech session.** Its history goes into its instructions as a transcript (`agent.openSpeech`), which drops the system note, so the cards would lose the note that they are not authority. A cascaded session that started with cards is refused a move onto one (`session.ErrCardedToNative`; the API answers `carded_session_to_native`, 400, from `setSessionSettings` and `updateSession`); a session without cards moves as before.
 - **A call card names where its transcript is.** Its `thread_channel` is the channel the transcript is written into (`Session.transcribedInto`), read as the transcript factory reads it (`Spec.TranscriptChannel`, `Spec.ConversationChannel`). A device's call under a thread channel's agent id writes none there (`persistent.BarThread`), so it has no episode.
+- **A call the router placed is filed under who it rang.** A session opened on a call placed through `POST /v1/phone/calls` names no `PhoneSpec.To`, and the phone that joins such a call is the vendor's leg, which can come in under the line's own number (`store.ConnectCallLeg` matches it by `local_number`). So a phone session (`PhoneSpec` set) a backend opened (`auth.KindServer`) reads who the call rang from the router's record of it (`phone_calls.remote_number`, `outcome.Keeper.Read`, `callCards.rung`): the call id and type its own, in its own Stream app (`stream_app_pk`), and the vendor's call id its own (`PhoneSpec.VendorCallID`) when it names one. An end user's device and a session with no phone never do: either may name the id of a call it was never meant to be on. Example: a backend rings `+15550100160` from `+15550100150`; the card goes to `+15550100160`'s omni-channel.
+- **The line is never the person.** A phone on the call whose number is the session's own (`PhoneSpec.Number`, `ownLine`) is the line, so it is neither read off the call nor waited for. Example: a placed call the router kept no record of, its vendor's leg `sip-+15550100150` on it, gets no card rather than one every person the line rang shares.
+- **A caller who joins after the agent still gets a card.** The call is read once; a phone session (`PhoneSpec` set) with no number on it then waits for the session to hear its first phone caller join (`Session.awaitCaller`, from the edge's `ParticipantJoined`; a second caller does not replace the first), as long as the session waits for anybody (`startTimeout`) and no longer than the session runs (`Session.close`). A call no phone session is on waits for nobody, as before. Example: Stream's `call.session_started` names no caller yet; the caller's leg joins two seconds after the agent and the card goes to their omni-channel.
 - **The budget covers the call read.** `callCards.read` puts `calledParty` under `ReadTimeout` too, so a slow Stream delays a call's join by at most 5 s.
 - **A card with nothing to say is skipped, not a stop.** `render` passes over a card with neither a summary nor a line, so the older cards are still read. Example: a call in a named channel at -60 s does not hide an SMS at -120 s.
 - **An episode closes once, whatever the number of routers.** Each close is one transaction whose row lock one router wins (`FOR UPDATE SKIP LOCKED`, then the status and the last message checked again), and the winner holds the summary for `summaryLease`. Example: two routers sweep at the same second; each idle thread gets one summary.
 - **A message keeps its thread open.** `store.OpenEpisode` sets `episode_activity.last_message_at` with each message, in the statement that finds the episode open and holds it against a close; a message that arrives after the close opens the next episode and card.
+- **An episode closes whatever its config says now.** Turning `episode_cards` off opens no new call or app chat episode (a connector thread's episode is opened by the channel bridge whatever the flag, `channelbridge.Bridge.episode`), but an episode already open closes and is summarized as any other: the sweeper starts for a thread or chat episode still in progress, or a summary lease still held, though no config has the cards on (`store.AnyEpisodeToSweep`, AI-2771), and a call's hook closes a call's whatever the config. Example: Anya's chat episode is open when the config turns the cards off and the router restarts; it closes an hour after her last message and its card holds the summary.
 - **A call ends with its call, never as idle.** The sweeper closes thread and chat episodes only (`session_id IS NULL`): a chat episode has no session, so it closes after `episodes.idle_after` as a thread's does.
+- **A card is updated as its author.** The closer reads each card once (`Closer.authorOf`, by its message id) and makes every update as the message's user: the agent of the omni-channel it was written in. Not the omni-channel the person's row points at now: an unlink points a number's row at a new omni-channel whose agent user is made only with its first card, and Stream refuses an update by a user it does not have («the user omni-… does not exist», staging, AI-2771). Example: Anya's number is linked, she texts, the number is unlinked; the card in her omni-channel still ends summarized.
 - **A failed summary keeps the raw text.** `summary_failed` changes the card's status only; the thread channel is never written. A call in a channel its session named gives no lines (`linesOf`), so its summary fails rather than mix in another caller's words.
 - **The summary is the config's own LLM**, the agent config's `llm`, or `llm-fast` (a session's default) when it names none. It is not written to memory (follow-up: memory's `Scope.UserID` is «the customer», not the person from the contact map).
 - **Card text is data.** The cards come as one user message, behind `cardsAttribution`, as restored shared history comes behind conversation's note.
@@ -186,6 +197,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 | Lines of a card without a summary | the last 20 | a choice |
 | Characters handed over, note included | 15,000 | `conversation.MaxHistoryRunes / 4` |
 | Time for the whole read, the call's `GetCall` included | 5 s (`ReadTimeout`) | a choice; past it, the cards read so far |
+| Time a phone call's card waits for its caller to join | 30 s inbound, 90 s outbound (`startTimeout`) | the session's own start timeout (`presence.go`), past which a phone session nobody joined ends |
 | Idle period of a text episode | 1 h (`episodes.idle_after`), under 24 h | Kanat, 2026-10-07 (D4), `unverified` against traffic; 24 h is WhatsApp's window (AI-884) |
 | Sweep interval, and episodes per sweep | 1 min, 10 | a choice |
 | Summary lease | 5 min | a choice: longer than the 1 min a summary may take |
@@ -197,7 +209,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - T62 moves `channel_identities` onto `contact_map`.
 - The summary is not written to memory: it would change what `memory.Scope.UserID` means (`internal/memory/memory.go:31-32`).
 - A call whose `call.session_ended` arrives before its card's episode is opened (the card is written off the session's start) stays in progress: the sweeper closes thread episodes only.
-- The sweeper's gate is read once, at start: a config that turns `episode_cards` on later has its calls closed by the hook, and its expired summary leases taken from the next start.
+- The sweeper's gate is read once, at start: with connectors off, a config that turns `episode_cards` on later has its calls closed by the hook, and its app chat episodes and expired summary leases taken from the next start.
 - A text session on an agent channel that neither a worker nor the person's own device opened reads no chat person's cards; cards are read once, when a session opens.
 - A backend naming the user it acts for (`KindServer` with a user) and a scheduled task's session read none of that user's cards: no device of theirs opened them.
 - A device session writes no card of its own: only its call, when a number is on it, or the app chat's messages do.
@@ -207,10 +219,11 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - An SMS episode still open when its number is linked goes on as the number's: its next messages keep it open (`episodes_open_thread`) and read the set-aside row's cards, not the user's, until it closes as idle; the next episode joins the user. A call from the number reads no cards until an episode of the number makes its new row (`store.Contact` makes none).
 - A config that had `episode_cards` off when a number was linked joined the number's rows as they were; turning it on later reads the number's earlier cards for the user.
 - A data move carries no link (`store.dataTables`): the contact rows it joins stay behind too, so the customer links again where it moved to.
-- A card written before a link or an unlink and still in progress is closed as the omni-channel its row points at now (`Closer.mark` names that channel's agent as the author of the partial update); that a server-side partial update by another user is accepted is unverified against Stream.
 - A message nothing runs for, in a channel whose last call ran under another config than the one the channel names, or a channel naming none, opens no chat episode unless it holds a voice recording: `heldConfigOf` reads no config there.
 - A session a caller opens on a thread channel through the API and keeps open is checked for a shared thread once, when it opens; the Router's own sessions open for each turn (`api.answerThread`).
 - The message that opens a chat's next episode is also the last line of the one before when a session reads that card: the earlier card's lines end at the next episode's start (`Until`) and include a line made at that very time (`linesOf`, `After`). The summary is not affected; it ends at the episode's own end.
+- An outbound call's card may give no lines and no summary: `linesOf` takes a person's line only from `sip-<the card's number>` (`callerOf`), and the vendor's leg of a placed call can speak under the line's own number. Which number each vendor's leg comes in under is unverified.
+- A phone caller who joins after the agent gets a card but the session reads none of their cards: they are read once, before the agent joins.
 - A member who joins a person's channel while its episode is open is seen only by the next messages, which open and keep open nothing. The open episode's card and its summary still read the channel's lines until it closes as idle, the new member's included. Example: Anya's chat episode is open; Carl is added and writes; the summary of her episode holds Carl's line.
 
 ## Tests
