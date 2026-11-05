@@ -6,6 +6,10 @@
 
 `/metrics` serves `router_phone_call_outcomes_total{vendor, direction, outcome}`: each inbound and placed call once, when its leg first ends, under its stored outcome or as `dropped`, an answered call whose agent left it on the line (stopped, failed, or the router shut down) before the caller hung up. A network or vendor cut is not told apart from the caller hanging up. What a dropped call is, and what is not detected, is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2780, #1783).
 
+### The router counts carrier KPIs per phone vendor
+
+`/metrics` serves `router_phone_call_sip_responses_total{vendor, direction, code}`, each placed call's final SIP response where the vendor reports one (Twilio, Vonage, Bandwidth rejections, a customer's own SIP trunk), `router_phone_post_dial_delay_seconds{vendor, direction}` (Vonage's ringing event and the router's own SIP bridge), and `router_phone_short_calls_total{vendor, direction}`, answered calls under 6 s. A dial the vendor refuses is counted `refused` in `router_phone_call_outcomes_total`. What each vendor reports is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2830, AI-2905, #1793).
+
 ### The router counts its sessions and how they end
 
 `/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed}`, each session end once: its stored end reason, or `closed`, `shutdown`, `create_failed`, `agent_failed` or `model_failed`; `failed` is `true` for `start`, `create_failed`, `agent_failed` and `model_failed` (AI-2779, #1782).

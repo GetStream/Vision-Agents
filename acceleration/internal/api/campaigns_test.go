@@ -173,7 +173,7 @@ func (s *CampaignsSuite) TestAContactShowsHowItsCallEnded() {
 		Reports: true,
 	})
 	s.Require().NoError(err)
-	_, err = s.router.phone.Outcomes().Reported(ctx, token, outcome.NoAnswer, "no-answer")
+	_, err = s.router.phone.Outcomes().Reported(ctx, token, outcome.Report{Outcome: outcome.NoAnswer, Word: "no-answer"})
 	s.Require().NoError(err)
 	s.Require().NoError(s.store.FinishContact(ctx, store.Contact{ID: rung.ID, State: store.Done, CallID: callID}))
 

@@ -688,7 +688,7 @@ func (s *ScheduledTasksSuite) TestACallBusyBeforeItsSessionOpensIsNotAnswered() 
 	reported := make(chan error, 1)
 	s.sink.mu.Lock()
 	s.sink.dialled = func(statusURL string) {
-		_, err := s.router.phone.Outcomes().Reported(context.Background(), path.Base(statusURL), outcome.Busy, "busy")
+		_, err := s.router.phone.Outcomes().Reported(context.Background(), path.Base(statusURL), outcome.Report{Outcome: outcome.Busy, Word: "busy"})
 		reported <- err
 	}
 	s.sink.mu.Unlock()
