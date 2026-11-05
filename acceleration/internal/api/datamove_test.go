@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // DataMoveSuite covers the three ways a customer's data goes in or out: the snapshot, the
@@ -301,6 +304,55 @@ func (s *DataMoveSuite) TestAnExportGivesUpOnAWriteThatStaysOpen() {
 
 	s.Require().NoError(stranger.tx.Rollback())
 	s.export()
+}
+
+// A shard's tables record no changes, so a write to one after the export would never reach the
+// changes: a router with a shard of its own refuses to be the source, before it records anything.
+func (s *DataMoveSuite) TestARouterWithAShardOfItsOwnRefusesToBeTheSource() {
+	s.refusesToBeTheSource(store.Options{DSN: s.sharedDSN(), ShardDSN: s.shardDSN()})
+}
+
+// A router writing its calls in the shared database still reads the other shards' calls, whose
+// writes no change records either.
+func (s *DataMoveSuite) TestARouterReadingOtherShardsRefusesToBeTheSource() {
+	shared := s.sharedDSN()
+	s.refusesToBeTheSource(store.Options{DSN: shared, Shards: map[string]string{"here": shared, "there": s.shardDSN()}})
+}
+
+// refusesToBeTheSource asserts a router on the databases options names refuses the export and the
+// changes, and starts no recording for the caller.
+func (s *DataMoveSuite) refusesToBeTheSource(options store.Options) {
+	served, err := store.OpenShards(options)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.NoError(served.Close()) })
+	other, _, _ := s.otherNodeServingFrom(served, nil, s.sealer, slog.New(slog.DiscardHandler))
+	source := s.serverClient.on(other)
+
+	for _, path := range []string{"/v1/data/export", "/v1/data/changes?after=0"} {
+		status, failure := source.failure(http.MethodGet, path, nil)
+
+		s.Equal(http.StatusServiceUnavailable, status, path)
+		s.Contains(failure, "with shards is not supported yet", path)
+	}
+	var capturing bool
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM data_change_capture WHERE customer_id = ?)", s.customerID()).Scan(&capturing))
+	s.False(capturing, "a refused move started recording the app's changes")
+}
+
+// sharedDSN is the suite's database, which a router of shards shares.
+func (s *DataMoveSuite) sharedDSN() string {
+	return testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN"))
+}
+
+// shardDSN is a migrated database of this suite's own, for one shard's tables.
+func (s *DataMoveSuite) shardDSN() string {
+	dsn := testenv.Database(s.sharedDSN(), "moveshard")
+	shard, err := store.Open(dsn)
+	s.Require().NoError(err)
+	defer shard.Close()
+	s.Require().NoError(migrate(context.Background(), shard, dsn))
+	return dsn
 }
 
 // openWrite writes an agent config of a customer in a transaction the test ends.
