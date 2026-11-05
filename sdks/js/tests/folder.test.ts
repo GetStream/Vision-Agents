@@ -309,6 +309,65 @@ describe("loadFolder", () => {
     );
   });
 
+  it("reads end_of_turn as written, and nothing when it says nothing", async () => {
+    for (const [declared, chosen] of [
+      ["end_of_turn:\n  max_wait_ms: 900 # a p90 wait\n", { max_wait_ms: 900 }],
+      ["end_of_turn: {preset: 'fast'}\n", { preset: "fast" }],
+      [
+        "end_of_turn:\n  bars:\n  - {from_ms: 0, bar: 0.97}\n  - from_ms: 900\n    bar: .25\n",
+        { bars: [{ from_ms: 0, bar: 0.97 }, { from_ms: 900, bar: 0.25 }] },
+      ],
+      ["end_of_turn: {}\n", {}],
+    ] as const) {
+      const folder = await loadFolder(await agentDir({ "agent.yaml": `name: concierge\n${declared}` }));
+
+      assert.deepEqual(folder.settings?.endOfTurn, chosen, declared);
+    }
+    for (const declared of ["", "end_of_turn:\n", "end_of_turn: ~\n", "end_of_turn:\n  # later\n"]) {
+      const folder = await loadFolder(await agentDir({ "agent.yaml": `name: concierge\n${declared}` }));
+
+      assert.deepEqual(folder.settings, { name: "concierge" }, declared);
+    }
+  });
+
+  it("refuses an end_of_turn it would otherwise have to guess at, leaving what it means to the router", async () => {
+    for (const [declaration, reason] of [
+      ["end_of_turn:\n  max_wait: 900\n", /unknown end_of_turn setting "max_wait"/],
+      ["end_of_turn: {max_wait: 900}\n", /unknown end_of_turn setting "max_wait"/],
+      ["end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n", /unknown end_of_turn\.bars setting "from"/],
+      ["end_of_turn:\n  bars:\n    - from: 0\n      bar: 0.9\n", /unknown end_of_turn\.bars setting "from"/],
+      ["end_of_turn: fast\n", /end_of_turn should be a mapping/],
+      ["end_of_turn:\n  - fast\n", /belongs to no end_of_turn setting/],
+      ["end_of_turn:\n  max_wait_ms: soon\n", /end_of_turn\.max_wait_ms must be a whole number/],
+      ["end_of_turn:\n  max_wait_ms: 900.5\n", /end_of_turn\.max_wait_ms must be a whole number/],
+      ["end_of_turn:\n  preset: [fast]\n", /end_of_turn\.preset is one value, not a list/],
+      ["end_of_turn:\n  bars: 0.9\n", /end_of_turn\.bars should be a list/],
+      ["end_of_turn:\n  bars: [0.9]\n", /end_of_turn\.bars\[0\] should be a mapping of from_ms and bar/],
+      ["end_of_turn:\n  bars:\n    - {bar: 0.9}\n", /end_of_turn\.bars\[0\] needs both from_ms and bar/],
+      ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.9}\n    - from_ms: 900\n", /end_of_turn\.bars\[1\] needs both/],
+      ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: ~}\n", /end_of_turn\.bars\[0\] needs both/],
+      ["end_of_turn:\n  bars:\n    -\n", /end_of_turn\.bars\[0\] needs both/],
+      ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n", /end_of_turn\.bars\[0\]\.bar must be a number/],
+      ["end_of_turn:\n  bars:\n    - {from_ms: soon, bar: 0.9}\n", /end_of_turn\.bars\[0\]\.from_ms must be a whole number/],
+      ["end_of_turn: {bars: [{from_ms: 0, bar: 0.9}\n", /end_of_turn cannot be read from/],
+    ] as const) {
+      await assert.rejects(
+        async () => loadFolder(await agentDir({ "agent.yaml": declaration })),
+        reason,
+        declaration,
+      );
+    }
+
+    // What the choice means is not read here: the router refuses it, naming why.
+    const folder = await loadFolder(
+      await agentDir({ "agent.yaml": "end_of_turn:\n  preset: nobody-publishes-this\n  bars: [{from_ms: 900, bar: 1.5}]\n" }),
+    );
+    assert.deepEqual(folder.settings?.endOfTurn, {
+      preset: "nobody-publishes-this",
+      bars: [{ from_ms: 900, bar: 1.5 }],
+    });
+  });
+
   it("tells channels that say nothing from ones that are empty", async () => {
     const without = await loadFolder(await agentDir({ "agent.yaml": "name: concierge\n" }));
     const nothing = await loadFolder(

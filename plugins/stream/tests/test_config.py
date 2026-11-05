@@ -730,6 +730,47 @@ class TestSyncAgent:
 
         assert "channels" not in router.configs[result.config.id]
 
+    @pytest.mark.parametrize(
+        "declared, sent",
+        [
+            ("end_of_turn:\n  max_wait_ms: 900\n", {"max_wait_ms": 900}),
+            ("end_of_turn:\n  preset: fast\n", {"preset": "fast"}),
+            (
+                "end_of_turn:\n  bars:\n"
+                "    - {from_ms: 0, bar: 0.97}\n"
+                "    - {from_ms: 900, bar: 0.25}\n",
+                {"bars": [{"from_ms": 0, "bar": 0.97}, {"from_ms": 900, "bar": 0.25}]},
+            ),
+            ("end_of_turn: {}\n", {}),
+            # Sent rather than dropped, which would be the server's default: the router
+            # refuses them.
+            ("end_of_turn:\n  max_wait_ms: 0\n", {"max_wait_ms": 0}),
+            ('end_of_turn:\n  preset: ""\n', {"preset": ""}),
+        ],
+    )
+    async def test_the_end_of_turn_the_agent_declares_is_sent_as_written(
+        self, router: Router, support_dir, declared: str, sent: dict[str, Any]
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\n" + declared)
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.bodies[-1]["end_of_turn"] == sent
+
+    @pytest.mark.parametrize("declared", ["llm: llm-fast\n", "end_of_turn:\n"])
+    async def test_a_file_naming_no_end_of_turn_sends_none_so_the_stored_one_stays(
+        self, router: Router, support_dir, declared: str
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\n" + declared)
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert "end_of_turn" not in router.bodies[-1]
+
     @pytest.mark.parametrize("key", ["plugins", "plugin_events"])
     async def test_a_directory_naming_plugins_is_refused_and_nothing_is_sent(
         self, router: Router, support_dir, key: str

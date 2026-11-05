@@ -31,6 +31,8 @@ from ._generated.models import (
     ChannelLineRequest,
     ConnectionOwnerType,
     DispatchSetting,
+    EndOfTurn,
+    EndOfTurnBar,
     ErrorResponse,
     Greeting,
     GreetingMode,
@@ -409,6 +411,18 @@ async def _declare_settings(
         if settings.scheduling.default_timezone:
             scheduling.default_timezone = settings.scheduling.default_timezone
         body.scheduling = scheduling
+    if settings.end_of_turn is not None:
+        end_of_turn = EndOfTurn()
+        if settings.end_of_turn.max_wait_ms is not None:
+            end_of_turn.max_wait_ms = settings.end_of_turn.max_wait_ms
+        if settings.end_of_turn.preset is not None:
+            end_of_turn.preset = settings.end_of_turn.preset
+        if settings.end_of_turn.bars is not None:
+            end_of_turn.bars = [
+                EndOfTurnBar(from_ms=bar.from_ms, bar=bar.bar)
+                for bar in settings.end_of_turn.bars
+            ]
+        body.end_of_turn = end_of_turn
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

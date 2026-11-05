@@ -378,6 +378,9 @@ base and its sandbox are there and nowhere else. Left out, the stored region sta
 agent is in `us`. The router refuses a sync naming a model with no instance in the region,
 naming each, and one whose knowledge base is already kept in another region.
 
+`end_of_turn` is how eager chorus-asr's turn-taking is: one of `max_wait_ms: 900`, `preset: fast`
+or `bars` of its own, sent as written; `end_of_turn: {}` is the server's default again.
+
 Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
 `variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
 `simulations/` directory the config's simulations become exactly what it declares, so an

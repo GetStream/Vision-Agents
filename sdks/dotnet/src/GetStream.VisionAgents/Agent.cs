@@ -833,6 +833,8 @@ public sealed class Agent : IAsyncDisposable
         request.Dispatch = declared.Dispatch is { } dispatch
             ? new AgentDispatch { IncomingCall = VisionAgentsClient.Blank(dispatch.IncomingCall), Text = VisionAgentsClient.Blank(dispatch.Text) }
             : null;
+        // As written, an empty one ({}) included: that is the server's default.
+        request.EndOfTurn = declared.EndOfTurn;
     }
 
     /// <summary>

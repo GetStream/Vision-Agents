@@ -161,6 +161,10 @@ pub struct Settings {
     /// What the agent leaves to this application's own dispatch worker. With `text`
     /// enabled the model does not answer what end users write; a worker is handed it.
     pub dispatch: Option<types::AgentDispatch>,
+    /// How eager chorus-asr's turn-taking is: one of `max_wait_ms`, `preset` and `bars`, sent
+    /// as written. `None` leaves the stored choice; an empty mapping (`{}`) is the server's
+    /// default. The router checks the choice itself.
+    pub end_of_turn: Option<types::EndOfTurn>,
 }
 
 /// An agent written down as a directory.
@@ -486,6 +490,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "tags" => settings.tags = mapping(&value, &key)?,
             "video" => settings.video = video(&value)?,
             "dispatch" => settings.dispatch = dispatch(&value)?,
+            "end_of_turn" => settings.end_of_turn = end_of_turn(&value)?,
             _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
         }
     }
@@ -676,6 +681,106 @@ fn dispatch(value: &Yaml) -> std::result::Result<Option<types::AgentDispatch>, S
         *setting = named(&text, "dispatch setting; enabled or disabled is")?;
     }
     Ok(Some(dispatch))
+}
+
+/// The end_of_turn mapping as written. Only its shape is read here: the router refuses one
+/// that names more than one choice, bars that do not begin at 0 and rise, or a preset or wait
+/// chorus-asr does not publish.
+fn end_of_turn(value: &Yaml) -> std::result::Result<Option<types::EndOfTurn>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("end_of_turn is a mapping of max_wait_ms, preset or bars".into())
+        };
+    };
+    let mut end_of_turn = types::EndOfTurn::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        match key.as_str() {
+            "max_wait_ms" => {
+                end_of_turn.max_wait_ms = match value {
+                    Yaml::Integer(wait) => Some(*wait),
+                    Yaml::Null => None,
+                    _ => return Err("end_of_turn.max_wait_ms must be a whole number".into()),
+                }
+            }
+            "preset" => {
+                end_of_turn.preset = match value {
+                    Yaml::Null => None,
+                    _ => Some(scalar(value).ok_or("end_of_turn.preset is a string")?),
+                }
+            }
+            "bars" => {
+                end_of_turn.bars = match value {
+                    Yaml::Null => None,
+                    Yaml::Array(items) => Some(
+                        items
+                            .iter()
+                            .enumerate()
+                            .map(|(index, item)| end_of_turn_bar(index, item))
+                            .collect::<std::result::Result<_, _>>()?,
+                    ),
+                    _ => return Err("end_of_turn.bars is a list of from_ms and bar".into()),
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not an end_of_turn setting; max_wait_ms, preset and bars are"
+                ));
+            }
+        }
+    }
+    Ok(Some(end_of_turn))
+}
+
+/// One of end_of_turn's bars, which names both where it begins and what it asks.
+fn end_of_turn_bar(index: usize, item: &Yaml) -> std::result::Result<types::EndOfTurnBar, String> {
+    let Yaml::Hash(fields) = item else {
+        return Err(format!(
+            "end_of_turn.bars[{index}] is a mapping of from_ms and bar"
+        ));
+    };
+    let (mut from_ms, mut bar) = (None, None);
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        match key.as_str() {
+            "from_ms" => {
+                from_ms = match value {
+                    Yaml::Integer(from) => Some(*from),
+                    Yaml::Null => None,
+                    _ => {
+                        return Err(format!(
+                            "end_of_turn.bars[{index}].from_ms must be a whole number"
+                        ));
+                    }
+                }
+            }
+            "bar" => {
+                bar = match value {
+                    Yaml::Integer(reach) => Some(*reach as f64),
+                    Yaml::Null => None,
+                    // A Real is the only other number, and as_f64 reads only a Real.
+                    _ => Some(
+                        value
+                            .as_f64()
+                            .ok_or(format!("end_of_turn.bars[{index}].bar is a number"))?,
+                    ),
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not an end_of_turn bar setting; from_ms and bar are"
+                ));
+            }
+        }
+    }
+    match (from_ms, bar) {
+        (Some(from_ms), Some(bar)) => Ok(types::EndOfTurnBar { bar, from_ms }),
+        _ => Err(format!(
+            "end_of_turn.bars[{index}] names both from_ms and bar"
+        )),
+    }
 }
 
 fn sandbox_options(value: &Yaml) -> std::result::Result<Option<types::SandboxOptions>, String> {

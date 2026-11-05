@@ -836,6 +836,38 @@ public sealed class AgentTests : IDisposable
             synced["sandbox_options"]!.ToJsonString());
     }
 
+    /// <summary>agent.yaml's end_of_turn goes as written, an empty one as {}.</summary>
+    [Theory]
+    [InlineData("end_of_turn:\n  max_wait_ms: 900\n", """{"max_wait_ms":900}""")]
+    [InlineData("end_of_turn:\n  preset: fast\n", """{"preset":"fast"}""")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n",
+        """{"bars":[{"bar":0.97,"from_ms":0},{"bar":0.25,"from_ms":900}]}""")]
+    [InlineData("end_of_turn: {}\n", "{}")]
+    [InlineData("end_of_turn:\n  max_wait_ms: 0\n", """{"max_wait_ms":0}""")]
+    [InlineData("end_of_turn:\n  preset: \"\"\n", """{"preset":""}""")]
+    public async Task SyncSendsTheEndOfTurnTheAgentDeclared(string declaration, string sent)
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router, declaration);
+
+        Assert.Equal(sent, synced["end_of_turn"]!.ToJsonString());
+    }
+
+    /// <summary>A file that names no end_of_turn sends none, so the stored choice stays.</summary>
+    [Theory]
+    [InlineData("llm: openai/gpt-5.6\n")]
+    [InlineData("end_of_turn:\n")]
+    [InlineData("end_of_turn: ~\n")]
+    public async Task SyncSendsNoEndOfTurnWhenAgentYamlNamesNone(string declaration)
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router, declaration);
+
+        Assert.False(synced.AsObject().ContainsKey("end_of_turn"));
+    }
+
     private async Task<JsonNode> SyncDeclaringAsync(TestRouter router, string declaration)
     {
         var root = Path.Combine(_workspace, "agents", "jean");

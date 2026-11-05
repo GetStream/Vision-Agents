@@ -186,6 +186,13 @@ public sealed record Declaration
 
     /// <summary>What is left to dispatch, null when agent.yaml has no <c>dispatch:</c> block.</summary>
     public DispatchDeclaration? Dispatch { get; init; }
+
+    /// <summary>
+    /// How eager chorus-asr's turn-taking is: one of max_wait_ms, preset and bars, as written.
+    /// Null when agent.yaml says nothing, which leaves the stored choice; empty for the server's
+    /// default. Which one, and whether the bars rise, is the router's to judge.
+    /// </summary>
+    public EndOfTurn? EndOfTurn { get; init; }
 }
 
 /// <summary>
@@ -576,6 +583,7 @@ public sealed class Folder
             throw new ConfigurationException($"{path}: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors");
         }
         var connectors = read.Connectors?.Items?.Select(entry => ConnectorOf(entry, path)).ToList();
+        var endOfTurn = read.EndOfTurn is { } turn ? EndOfTurnOf(turn, path) : null;
         return new Declaration
         {
             Name = read.Name ?? "",
@@ -597,8 +605,23 @@ public sealed class Folder
             Tags = read.Tags ?? [],
             Video = video,
             Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
+            EndOfTurn = endOfTurn,
         };
     }
+
+    /// <summary>
+    /// end_of_turn as the sync sends it: whatever the file names, as written, a wait of 0 or an
+    /// empty preset included, so a value the router refuses is refused there rather than
+    /// dropped here. Each bar names both from_ms and bar.
+    /// </summary>
+    private static EndOfTurn EndOfTurnOf(WrittenEndOfTurn written, string path) => new()
+    {
+        MaxWaitMs = written.MaxWaitMs,
+        Preset = written.Preset,
+        Bars = written.Bars?.Select((bar, index) => bar is { FromMs: { } from, Bar: { } reached }
+            ? new EndOfTurnBar { FromMs = from, Bar = reached }
+            : throw new ConfigurationException($"{path}: end_of_turn.bars[{index}] names both from_ms and bar")).ToList(),
+    };
 
     private static SandboxDeclaration SandboxOf(WrittenSandboxOptions written, string path)
     {
@@ -1086,6 +1109,7 @@ public sealed class Folder
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
         [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
+        [YamlMember(Alias = "end_of_turn")] public WrittenEndOfTurn? EndOfTurn { get; set; }
     }
 
     /// <summary>
@@ -1173,6 +1197,19 @@ public sealed class Folder
     {
         [YamlMember(Alias = "incoming_call")] public string? IncomingCall { get; set; }
         [YamlMember(Alias = "text")] public string? Text { get; set; }
+    }
+
+    private sealed class WrittenEndOfTurn
+    {
+        [YamlMember(Alias = "max_wait_ms")] public long? MaxWaitMs { get; set; }
+        [YamlMember(Alias = "preset")] public string? Preset { get; set; }
+        [YamlMember(Alias = "bars")] public List<WrittenEndOfTurnBar?>? Bars { get; set; }
+    }
+
+    private sealed class WrittenEndOfTurnBar
+    {
+        [YamlMember(Alias = "from_ms")] public long? FromMs { get; set; }
+        [YamlMember(Alias = "bar")] public double? Bar { get; set; }
     }
 
     private sealed class WrittenSandboxOptions

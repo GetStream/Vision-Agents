@@ -609,6 +609,23 @@ class TestAgent < LocalRouterTest
     end
   end
 
+  # agent.yaml's end_of_turn goes as written, and a file that names none sends none, so the
+  # stored choice stays.
+  def test_sync_sends_the_end_of_turn_the_agent_declared
+    { "end_of_turn:\n  max_wait_ms: 900\n" => { "max_wait_ms" => 900 },
+      "end_of_turn:\n  preset: fast\n" => { "preset" => "fast" },
+      "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n" =>
+        { "bars" => [{ "from_ms" => 0, "bar" => 0.97 }, { "from_ms" => 900, "bar" => 0.25 }] },
+      "end_of_turn: {}\n" => {},
+      "end_of_turn:\n  max_wait_ms: 0\n" => { "max_wait_ms" => 0 },
+      "end_of_turn:\n  preset: \"\"\n" => { "preset" => "" } }.each do |declared, want|
+      assert_equal want, sync_declaring(declared)["end_of_turn"], declared
+    end
+    ["end_of_turn:\n", "llm: openai/gpt-5.6\n"].each do |declared|
+      refute sync_declaring(declared).key?("end_of_turn"), declared
+    end
+  end
+
   def test_sync_without_connectors_sends_none_and_leaves_the_fingerprint_alone
     request = sync_declaring("")
 

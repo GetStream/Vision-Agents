@@ -204,6 +204,10 @@ unchanged directory is only read back. A key `agent.yaml` does not know is refus
 syncs first. Each file in `simulations/` is a list of `{name, scenario, assertion, mode, ...}`;
 a directory with the folder replaces the agent's simulations, and no directory leaves them alone.
 
+`end_of_turn:` is how eager chorus-asr's turn-taking is: `{max_wait_ms: 900}`, `{preset: fast}`
+or `{bars: [{from_ms: 0, bar: 0.97}, ...]}`. `{}` is the server's default; left out, the stored
+choice stays.
+
 ## Simulations
 
 ```csharp
