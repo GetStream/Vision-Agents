@@ -1196,7 +1196,7 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	// The vendor bills the call from when the person answers, which is when their phone joins
 	// the Stream call: the leg rings until then, and one never answered is not billed.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
-		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor,
+		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor, VendorCallID: dialed.VendorCallID,
 		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	}, false)
 	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
@@ -1860,7 +1860,8 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	// they answer.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
 		StreamAppPK: request.StreamApp, CallType: callType, CallID: request.CallID, Vendor: held.Vendor,
-		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
+		VendorCallID: placed.VendorCallID,
+		Direction:    store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	}, false)
 	if !shared {
 		if err := s.store.RecordCallResource(ctx, resource); err != nil {
@@ -1891,7 +1892,7 @@ func (s *Service) SendDigits(ctx context.Context, customerID, vendor, vendorCall
 	if s.store == nil {
 		return stack.Wrap(errors.New("phone: pressing digits needs a database"))
 	}
-	placed, err := s.store.PlacedPhoneCall(ctx, customerID, vendor, vendorCallID)
+	placed, err := s.store.PlacedCallLeg(ctx, customerID, vendor, vendorCallID)
 	if err != nil {
 		return err
 	}

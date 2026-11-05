@@ -113,28 +113,6 @@ func (s *Store) PhoneCallByToken(ctx context.Context, token string) (PhoneCall, 
 	return call, nil
 }
 
-// PlacedPhoneCall reports whether customerID placed the call vendor knows as vendorCallID,
-// on whichever shard holds it.
-func (s *Store) PlacedPhoneCall(ctx context.Context, customerID, vendor, vendorCallID string) (bool, error) {
-	_, err := whicheverShard(ctx, s, func(ctx context.Context, db bun.IDB) (int64, error) {
-		var id int64
-		err := db.NewSelect().Model((*PhoneCall)(nil)).Column("pc.id").
-			Where("pc.customer_id = ?", customerID).
-			Where("pc.vendor = ?", vendor).
-			Where("pc.vendor_call_id = ?", vendorCallID).
-			Limit(1).
-			Scan(ctx, &id)
-		return id, err
-	})
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: placed phone call: %w", err))
-	}
-	return true, nil
-}
-
 // PhoneCalls returns the customer's newest phone call for each of callIDs, from every shard.
 // A call id with none is left out.
 func (s *Store) PhoneCalls(ctx context.Context, customerID string, callIDs []string) ([]PhoneCall, error) {

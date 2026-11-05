@@ -11,9 +11,9 @@ import (
 	"testing"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vendors"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 // PhoneDigitsSuite is pressing digits on a placed call. Telnyx is the real provider, pointed
@@ -58,20 +58,15 @@ func (s *PhoneDigitsSuite) SetupTest() {
 	s.useFixture("standard")
 }
 
-// placedBy keeps a Telnyx call placed by customerID and returns its vendor call id.
+// placedBy opens the leg of a Telnyx call customerID placed and returns its vendor call id.
 func (s *PhoneDigitsSuite) placedBy(customerID string) string {
-	keeper := s.router.phone.Outcomes()
-	token, err := keeper.Placed(context.Background(), outcome.Call{
-		Key: outcome.Key{
-			CustomerID: customerID, CallType: "default", CallID: s.utils.uuid(),
-			Local: s.utils.number(), Remote: s.utils.number(),
-		},
-		Vendor:  "telnyx",
-		Reports: true,
+	vendorCallID := "v3:" + s.utils.uuid()
+	_, err := s.store.OpenCallLeg(context.Background(), &store.CallLeg{
+		CustomerID: customerID, CallType: "default", CallID: s.utils.uuid(),
+		Vendor: "telnyx", VendorCallID: vendorCallID, Direction: store.Outbound,
+		LocalNumber: s.utils.number(), RemoteNumber: s.utils.number(),
 	})
 	s.Require().NoError(err)
-	vendorCallID := "v3:" + s.utils.uuid()
-	s.Require().NoError(keeper.Dialed(context.Background(), token, vendorCallID))
 	return vendorCallID
 }
 
