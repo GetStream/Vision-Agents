@@ -32,7 +32,27 @@ type UserPhone struct {
 	// UpdatedAt is when the user was linked to Phone: the same number again leaves it, so what
 	// the number said since the link stays the user's (EpisodeCards).
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
+	// History is how much of the number's past a link request gives the user. Nil keeps what the
+	// same number had, and gives a new number's link its own time (user_phone_history).
+	History *PhoneHistory `bun:"-"`
 }
+
+// PhoneHistory is how much of a linked number's past its user reads: everything it ever said
+// (All), or what it said from Since on. Neither is from the link request on.
+type PhoneHistory struct {
+	All   bool
+	Since time.Time
+}
+
+// historyJoin joins user_phone_history as h to a link up; historyBoundary is then the time
+// before which the number's past is not the user's, NULL for none. A link with no row, or a
+// row of another number, which a router that knows no such row leaves when it moves the link to
+// a new number, is bounded by the link's time.
+const (
+	historyJoin = `LEFT JOIN user_phone_history AS h ON h.customer_id = up.customer_id
+	AND h.stream_app_pk = up.stream_app_pk AND h.user_id = up.user_id`
+	historyBoundary = `CASE WHEN h.phone IS DISTINCT FROM up.phone THEN up.updated_at ELSE h.since END`
+)
 
 // userLinkLockSeed is the second argument to hashtextextended for the lock a user's link is
 // changed and joined under (lockLink), as definitionLockSeed is a revision's. 2701 is this
@@ -44,8 +64,9 @@ const userLinkLockSeed = 2701
 // number the user had before keeps none of the user's history: its rows that share the user's
 // omni-channel get one of their own (detachLinked). The new number brings none of its own: its
 // rows that hold episodes are set aside (retireHistory), so the user reads only what it says
-// after the link. A number another user of the app holds is ErrPhoneTaken. Linking a pair
-// again changes nothing.
+// after the link, unless the link's History gives the user more of it (writeHistory, joinLinked).
+// A number another user of the app holds is ErrPhoneTaken. Linking a pair again with no History
+// changes nothing.
 func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 	if link.CustomerID == "" || link.UserID == "" || link.Phone == "" {
 		return stack.Wrap(errors.New("store: a customer, a user and a number are required"))
@@ -75,7 +96,11 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 		if err != nil {
 			return stack.Wrap(fmt.Errorf("store: link user phone: %w", err))
 		}
-		if len(had) > 0 && had[0] == link.Phone {
+		same := len(had) > 0 && had[0] == link.Phone
+		if err := writeHistory(ctx, tx, *link, same); err != nil {
+			return err
+		}
+		if same {
 			return nil
 		}
 		if err := s.retireHistory(ctx, tx, *link); err != nil {
@@ -93,6 +118,75 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 	// same time either is committed before this reads it, or reads the link itself once it is
 	// made (MapContact), so no row is left out of the pair.
 	return s.joinLinked(ctx, *link)
+}
+
+// writeHistory stores the boundary a link request gives the number's past: none for All, Since,
+// or the request's own time, which on a new number is the link's. The same number with no word
+// on its history keeps the boundary it had. In tx, under the link's lock, after the link is
+// written.
+func writeHistory(ctx context.Context, tx bun.Tx, link UserPhone, same bool) error {
+	if link.History == nil && same {
+		return nil
+	}
+	var since any = bun.Safe("up.updated_at")
+	switch {
+	case link.History == nil:
+	case link.History.All:
+		since = nil
+	case !link.History.Since.IsZero():
+		since = link.History.Since
+	case same:
+		since = bun.Safe("statement_timestamp()")
+	}
+	_, err := tx.NewRaw(`INSERT INTO user_phone_history (customer_id, stream_app_pk, user_id, phone, since)
+SELECT up.customer_id, up.stream_app_pk, up.user_id, up.phone, ?::timestamptz FROM user_phones AS up
+WHERE up.customer_id = ? AND up.stream_app_pk = ? AND up.user_id = ?
+ON CONFLICT (customer_id, stream_app_pk, user_id) DO UPDATE SET phone = EXCLUDED.phone, since = EXCLUDED.since`,
+		since, link.CustomerID, link.StreamAppPK, link.UserID).Exec(ctx)
+	if err != nil {
+		return stack.Wrap(fmt.Errorf("store: link user phone: history: %w", err))
+	}
+	return nil
+}
+
+// LinkedPhone is a user's link as stored: the number, and from when on its past is the user's,
+// nil for all of it. A user with no link has none.
+func (s *Store) LinkedPhone(ctx context.Context, customerID string, app int64, userID string) (string, *time.Time, bool, error) {
+	var rows []struct {
+		Phone string     `bun:"phone"`
+		Since *time.Time `bun:"since"`
+	}
+	err := s.db.NewRaw(`SELECT up.phone, `+historyBoundary+` AS since FROM user_phones AS up `+historyJoin+`
+WHERE up.customer_id = ? AND up.stream_app_pk = ? AND up.user_id = ?`, customerID, s.linkApp(app), userID).Scan(ctx, &rows)
+	if err != nil {
+		return "", nil, false, stack.Wrap(fmt.Errorf("store: linked phone: %w", err))
+	}
+	if len(rows) == 0 {
+		return "", nil, false, nil
+	}
+	return rows[0].Phone, rows[0].Since, true, nil
+}
+
+// ThreadHistorySince is the time before which a thread channel's messages are not restored to a
+// session: the boundary of the link of a number an episode of the thread is with, the newest
+// first. ok is false when every message is: no such episode, no such link, or a link that gives
+// the user all of the number's past. A row a link set aside is read as its number (reachedAt).
+func (s *Store) ThreadHistorySince(ctx context.Context, customerID, threadChannel string) (time.Time, bool, error) {
+	var since []*time.Time
+	err := s.db.NewRaw(`SELECT `+historyBoundary+` FROM episodes AS ep
+JOIN contact_map AS cm ON cm.id = ep.contact_id
+JOIN user_phones AS up ON up.customer_id = cm.customer_id AND up.phone = `+reachedAt+`
+	AND up.stream_app_pk = COALESCE(NULLIF(cm.stream_app_pk, ?), 0)
+`+historyJoin+`
+WHERE ep.customer_id = ? AND ep.thread_channel = ? AND ep.session_id IS NULL AND cm.customer_id = ? AND cm.kind = ?
+ORDER BY ep.started_at DESC LIMIT 1`, s.streamPins().deployment(), customerID, threadChannel, customerID, ContactPhone).Scan(ctx, &since)
+	if err != nil {
+		return time.Time{}, false, stack.Wrap(fmt.Errorf("store: thread history since: %w", err))
+	}
+	if len(since) == 0 || since[0] == nil {
+		return time.Time{}, false, nil
+	}
+	return *since[0], true, nil
 }
 
 // UnlinkUserPhone removes the user's link to a number, if any. The number keeps none of the
@@ -197,7 +291,9 @@ func (s *Store) streamUserAddresses(link UserPhone) []string {
 
 // joinLinked points the Stream user's row and the number's row of the user's link at one
 // omni-channel, for each agent config of the customer: the older one, whose oldest row was
-// made first, and its pin with it. The number is the link as stored, read under the link's
+// made first, and its pin with it. A link whose boundary is before its own time (all of the
+// number's past, or from an earlier time on) joins the number's rows a link set aside too
+// (retireHistory), found by contact_map_retired: EpisodeCards reads them up to the boundary. The number is the link as stored, read under the link's
 // lock, not link.Phone: a join that comes after another PUT of the user joins the number that
 // PUT left. No card moves: a card is read by its message id (omnichannel.summaryOf), and the
 // cards of a person are those of every row pointing at their omni-channel (EpisodeCards). Two
@@ -211,7 +307,8 @@ func (s *Store) joinLinked(ctx context.Context, link UserPhone) error {
 	deployment := s.streamPins().deployment()
 	return s.lockLink(ctx, link, func(ctx context.Context, tx bun.Tx) error {
 		_, err := tx.NewRaw(`WITH link AS (
-	SELECT up.phone FROM user_phones AS up WHERE up.customer_id = ?0 AND up.stream_app_pk = ?5 AND up.user_id = ?7
+	SELECT up.phone, COALESCE(h.phone = up.phone AND (h.since IS NULL OR h.since < up.updated_at), false) AS earlier
+	FROM user_phones AS up `+historyJoin+` WHERE up.customer_id = ?0 AND up.stream_app_pk = ?5 AND up.user_id = ?7
 ), configs AS (
 	SELECT ac.id AS agent_config_id FROM agent_configs AS ac WHERE ac.customer_id = ?0
 ), pair AS (
@@ -220,6 +317,10 @@ func (s *Store) joinLinked(ctx context.Context, link UserPhone) error {
 	UNION ALL
 	SELECT cm.id, cm.agent_config_id, cm.conversation_id, cm.stream_app_pk FROM configs JOIN contact_map AS cm USING (agent_config_id)
 	WHERE cm.customer_id = ?0 AND cm.kind = ?3 AND cm.address = (SELECT phone FROM link) AND COALESCE(NULLIF(cm.stream_app_pk, ?4), 0) = ?5
+	UNION ALL
+	SELECT cm.id, cm.agent_config_id, cm.conversation_id, cm.stream_app_pk FROM configs JOIN contact_map AS cm USING (agent_config_id)
+	WHERE cm.customer_id = ?0 AND cm.kind = ?3 AND cm.address LIKE '`+retiredPrefix+`%'
+	AND `+reachedAt+` = (SELECT phone FROM link WHERE earlier) AND COALESCE(NULLIF(cm.stream_app_pk, ?4), 0) = ?5
 ), born AS (
 	SELECT o.agent_config_id, o.conversation_id, min(o.created_at) AS at FROM contact_map AS o
 	WHERE o.customer_id = ?0 AND (o.agent_config_id, o.conversation_id) IN (SELECT agent_config_id, conversation_id FROM pair)
@@ -245,7 +346,8 @@ WHERE cm.id = pair.id AND cm.conversation_id <> oldest.conversation_id`,
 
 // detachLinked points each row of the number a user is no longer linked to that shares the
 // user's omni-channel, under each agent config, at a new omni-channel of its own, in its own
-// pin's app: the number keeps no history of the user. Its episodes go with it (episodes.contact_id),
+// pin's app: the number keeps no history of the user. So does each row of the number a link set
+// aside that joined the user (joinLinked, a boundary before the link). Its episodes go with it (episodes.contact_id),
 // so the number keeps its own cards, read by their message id where they were written
 // (omnichannel.summaryOf); the user keeps theirs. The id is omnichannel.Open's form,
 // agent:omni-<uuid>. In tx, under the link's lock.
@@ -255,7 +357,8 @@ SET conversation_id = 'agent:omni-' || gen_random_uuid(), updated_at = ?6
 FROM contact_map AS su
 WHERE su.customer_id = ?0 AND su.agent_config_id IN (SELECT ac.id FROM agent_configs AS ac WHERE ac.customer_id = ?0)
 	AND su.kind = ?1 AND su.address IN (?2)
-	AND cm.customer_id = ?0 AND cm.agent_config_id = su.agent_config_id AND cm.kind = ?3 AND cm.address = ?4
+	AND cm.customer_id = ?0 AND cm.agent_config_id = su.agent_config_id AND cm.kind = ?3
+	AND (cm.address = ?4 OR cm.address LIKE '`+retiredPrefix+`%' AND `+reachedAt+` = ?4)
 	AND COALESCE(NULLIF(cm.stream_app_pk, ?5), 0) = ?7
 	AND cm.conversation_id = su.conversation_id`,
 		link.CustomerID, ContactStreamUser, bun.In(s.streamUserAddresses(link)), ContactPhone, phone,

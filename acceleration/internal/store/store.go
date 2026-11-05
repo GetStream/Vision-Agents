@@ -209,6 +209,9 @@ var usageIndexes = []struct{ name, create string }{
 		"WHERE source_id IS NOT NULL"},
 	// What a link's join finds one omni-channel's rows of an agent by (20261212100000_user_phones.sql).
 	{"contact_map_conversation", "CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_conversation ON contact_map (customer_id, agent_config_id, conversation_id)"},
+	// The rows a link set aside, by their number (20261217100000_user_phone_history.sql).
+	{"contact_map_retired", "CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_retired ON contact_map " +
+		"(customer_id, (regexp_replace(address, '^retired:[^:]*:', ''))) WHERE address LIKE 'retired:%'"},
 	// The leg digits are pressed on (20261215120000_call_legs_vendor_call_id.sql).
 	{"call_legs_vendor_call_idx", "CREATE INDEX CONCURRENTLY IF NOT EXISTS call_legs_vendor_call_idx ON call_legs (vendor_call_id) " +
 		"WHERE vendor_call_id IS NOT NULL"},
