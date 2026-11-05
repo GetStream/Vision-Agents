@@ -16,7 +16,7 @@
 
 ### Session end reasons say whose fault it was and at which stage
 
-Every session end reason now has a fault (`none`, `caller`, `router`, `vendor`, `carrier`, `customer_config`, `customer_credit`) and a stage (`starting`, `ringing`, `conversation`), listed in `session.EndReasons` (`acceleration/internal/session/timeout.go`). `router_session_ends_total` gains the `fault` and `stage` labels, still one series per reason. A session's record gains `end_fault` and `end_stage`, and a session stopped through the API, ended by a shutdown or failed now keeps `closed`, `shutdown`, `agent_failed`, `model_failed`, `model_config_refused` or `model_no_credit` where it kept nothing; the six reasons kept before keep their values. A session that failed to open counts as `create_failed`, `create_vendor_failed`, `create_config_refused` or `create_no_credit` (AI-2831, #PR).
+Every session end reason now has a fault (`none`, `caller`, `router`, `vendor`, `carrier`, `customer_config`, `customer_credit`) and a stage (`starting`, `ringing`, `conversation`), listed in `session.EndReasons` (`acceleration/internal/session/timeout.go`). `router_session_ends_total` gains the `fault` and `stage` labels, still one series per reason. A session's record gains `end_fault` and `end_stage`, and a session stopped through the API, ended by a shutdown or failed now keeps `closed`, `shutdown`, `agent_failed`, `model_failed`, `model_config_refused` or `model_no_credit` where it kept nothing; the six reasons kept before keep their values. A session that failed to open counts as `create_failed`, `create_vendor_failed`, `create_config_refused` or `create_no_credit` (AI-2831, #1796).
 
 ### Vendor rate limits per key: refusals and headroom
 
