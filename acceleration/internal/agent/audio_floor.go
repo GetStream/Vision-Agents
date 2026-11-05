@@ -132,13 +132,16 @@ func (v *audioFloor) keep(participant string, ruled audiofloor.Ruled) {
 }
 
 // findRuled finds the pause check's ruling on turn's words, if one made one: the
-// participant's, as the agent was when it was asked, on words the turn's end with.
+// participant's, on words the turn's end with. A check over the agent ended the turn at its
+// pause, and its ruling stands once the agent has gone quiet, as asking again with the floor
+// free would wait for the turn's end a second time; a check with the floor free heard nothing
+// of the agent's speech, so with the agent talking since there is none.
 func (v *audioFloor) findRuled(turn harness.FlowTurn, participant string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	said := strings.ToLower(words(turn.Text))
 	for i, r := range v.checked {
-		if r.participant != participant || r.ruled.Speaking != turn.Speaking || time.Since(r.at) > ruledFor {
+		if r.participant != participant || (turn.Speaking && !r.ruled.Speaking) || time.Since(r.at) > ruledFor {
 			continue
 		}
 		if heard := strings.ToLower(words(r.ruled.Words)); heard == "" || !strings.HasSuffix(said, heard) {

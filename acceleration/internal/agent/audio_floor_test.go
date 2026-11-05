@@ -270,6 +270,48 @@ func TestAPauseChecksRulingIsTheFlowControllers(t *testing.T) {
 
 }
 
+// A pause check over the agent ends the caller's turn at its pause with no bar, the floor not
+// being free: its ruling stands if the agent has gone quiet before the turn is put. Asked again
+// with the floor free, the model's end-of-turn bars started over on words it had ended, and
+// the caller waited for them a second time: 1.3 s, a retry each interval, on a live call. A
+// ruling made with the floor free is no ruling on the agent's speech, which it never heard, so
+// the agent talking since has the model asked.
+func TestARulingOverTheAgentStandsOnceItIsQuiet(t *testing.T) {
+	asked := atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/info":
+			_, _ = w.Write([]byte(floorInfo))
+		case "/v1/agents":
+			_, _ = w.Write([]byte(`{"agent":"a"}`))
+		default:
+			asked.Add(1)
+			_, _ = w.Write([]byte(`{"answer":"wait","p_eot":0.1,"options":[],"ruling":{"disposition":"respond","floor":"continue"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	v := newAudioFloor(audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
+	defer v.close()
+	v.heard(InboundAudio{Participant: stt.Participant{ID: "p"}, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
+	over := harness.Decided{Disposition: harness.Respond, Floor: harness.Stop}
+	v.keep("p", audiofloor.Ruled{Check: audiofloor.Check{Ruling: over, Ended: true}, Words: "No, Porto.", Speaking: true})
+
+	quiet := harness.FlowTurn{ID: "c1", Text: "No, Porto."}
+	v.listen(&quiet, "p", nil)
+	got, err := v.acting().Hear(context.Background(), quiet)
+	require.NoError(t, err)
+	require.Equal(t, over, got, "the ruling over the agent, which has since gone quiet")
+	require.Zero(t, asked.Load(), "the model was not asked again")
+
+	free := harness.Decided{Disposition: harness.Respond, Floor: harness.Continue}
+	v.keep("p", audiofloor.Ruled{Check: audiofloor.Check{Ruling: free, Ended: true}, Words: "And Porto?"})
+	talking := harness.FlowTurn{ID: "c2", Text: "And Porto?", Speaking: true}
+	v.listen(&talking, "p", nil)
+	_, err = v.acting().Hear(context.Background(), talking)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), asked.Load(), "the agent talking since, the model is asked about its speech")
+}
+
 // A pause check's ruling is kept on the words as the conversation will see them: with the
 // agent's own voice heard back dropped from their end, as consumeSTT drops it from the final
 // before the cadence settles on it. Kept whole, the ruling matched no turn and the model was
