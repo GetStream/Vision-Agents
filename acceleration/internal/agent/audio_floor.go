@@ -243,9 +243,47 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 func (p pauseAsker) Hearer() *audiofloor.Hearer { return p.a.audioFloor.hearer }
 
 // Ruled keeps a pause check's ruling for the flow controller, which asks about its words
-// once the transcriber has sent them.
+// once the transcriber has sent them: the words as the conversation will see them, the
+// agent's own voice heard back dropped from their end as it is from the final (consumeSTT),
+// which is what the turn's words are matched against (findRuled).
 func (p pauseAsker) Ruled(participant stt.Participant, ruled audiofloor.Ruled) {
+	ruled.Words, _ = p.a.withoutEcho(transcriptOf(participant, ruled))
 	p.a.audioFloor.keep(participant.ID, ruled)
+}
+
+// transcriptOf is a check's words as a transcript of them: what the agent tells its own
+// echo from the caller by.
+func transcriptOf(participant stt.Participant, ruled audiofloor.Ruled) stt.Transcript {
+	return stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: ruled.Words, Provider: audiofloor.ProviderName,
+		ProcessingTimeMs: ruled.WordsMs, AudioDurationMs: ruled.AudioMs}
+}
+
+// Speaking says the agent is talking, as Moment tells the model.
+func (p pauseAsker) Speaking() bool {
+	a := p.a
+	a.mu.Lock()
+	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
+	a.mu.Unlock()
+	return speaking || a.speechPending()
+}
+
+// Overheard acts at once on a check's ruling to stop or shorten over the agent, asked while
+// the caller talked on, as the agent does on a provisional ruling about a revision's words
+// (overlapRuled): its own voice heard back on the caller's line is dropped from the words
+// first, as from any chorus-asr transcript, and an echo alone, or a murmur, is no reason to
+// stop.
+func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) {
+	a := p.a
+	left, ok := a.droppingEcho(transcriptOf(participant, ruled), "a check over the agent")
+	if !ok {
+		return
+	}
+	if !takesFloor(left) {
+		a.logger.Debug("a check over the agent ruled on a murmur, which is no reason to stop",
+			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
+		return
+	}
+	a.act(a.converse.Overheard(ruled.Ruling, participant, left, a.floor()))
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's

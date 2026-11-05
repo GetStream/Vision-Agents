@@ -22,6 +22,7 @@ def _get_kwargs(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -57,6 +58,8 @@ def _get_kwargs(
         json_tag = tag
 
     params["tag"] = json_tag
+
+    params["origin"] = origin
 
     params["api_key_id"] = api_key_id
 
@@ -151,6 +154,7 @@ def sync_detailed(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -159,11 +163,13 @@ def sync_detailed(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
-    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
-    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
-    token named, work with none under the empty value; "who:category" by the other usage categories, and
-    a request carrying several counts once in each, so those rows add up to more than the total.
+    "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the
+    key the work was started with, or the origin of work no key started, such as hook:chat;
+    "who:api_key" is its old name, still read for one release. A label key holds no ':', so a label
+    named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named,
+    work with none under the empty value; "who:category" by the other usage categories, and a request
+    carrying several counts once in each, so those rows add up to more than the total.
     scope=organization counts every app of the caller's organization rather than the caller's app alone;
     grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
     its app.
@@ -183,9 +189,10 @@ def sync_detailed(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key_id (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
-            query is the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only count usage started with this public API key, or by this origin
+            of work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -208,6 +215,7 @@ def sync_detailed(
         from_=from_,
         to=to,
         tag=tag,
+        origin=origin,
         api_key_id=api_key_id,
         user_id=user_id,
         team=team,
@@ -231,6 +239,7 @@ def sync(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -239,11 +248,13 @@ def sync(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
-    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
-    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
-    token named, work with none under the empty value; "who:category" by the other usage categories, and
-    a request carrying several counts once in each, so those rows add up to more than the total.
+    "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the
+    key the work was started with, or the origin of work no key started, such as hook:chat;
+    "who:api_key" is its old name, still read for one release. A label key holds no ':', so a label
+    named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named,
+    work with none under the empty value; "who:category" by the other usage categories, and a request
+    carrying several counts once in each, so those rows add up to more than the total.
     scope=organization counts every app of the caller's organization rather than the caller's app alone;
     grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
     its app.
@@ -263,9 +274,10 @@ def sync(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key_id (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
-            query is the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only count usage started with this public API key, or by this origin
+            of work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -289,6 +301,7 @@ def sync(
         from_=from_,
         to=to,
         tag=tag,
+        origin=origin,
         api_key_id=api_key_id,
         user_id=user_id,
         team=team,
@@ -306,6 +319,7 @@ async def asyncio_detailed(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -314,11 +328,13 @@ async def asyncio_detailed(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
-    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
-    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
-    token named, work with none under the empty value; "who:category" by the other usage categories, and
-    a request carrying several counts once in each, so those rows add up to more than the total.
+    "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the
+    key the work was started with, or the origin of work no key started, such as hook:chat;
+    "who:api_key" is its old name, still read for one release. A label key holds no ':', so a label
+    named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named,
+    work with none under the empty value; "who:category" by the other usage categories, and a request
+    carrying several counts once in each, so those rows add up to more than the total.
     scope=organization counts every app of the caller's organization rather than the caller's app alone;
     grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
     its app.
@@ -338,9 +354,10 @@ async def asyncio_detailed(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key_id (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
-            query is the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only count usage started with this public API key, or by this origin
+            of work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -363,6 +380,7 @@ async def asyncio_detailed(
         from_=from_,
         to=to,
         tag=tag,
+        origin=origin,
         api_key_id=api_key_id,
         user_id=user_id,
         team=team,
@@ -384,6 +402,7 @@ async def asyncio(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -392,11 +411,13 @@ async def asyncio(
     """What the calling customer spent, grouped
 
      Spend across every modality at once, which is what a bill is. group_by decides what the series are:
-    "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user",
-    "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':',
-    so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's
-    token named, work with none under the empty value; "who:category" by the other usage categories, and
-    a request carrying several counts once in each, so those rows add up to more than the total.
+    "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user",
+    "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the
+    key the work was started with, or the origin of work no key started, such as hook:chat;
+    "who:api_key" is its old name, still read for one release. A label key holds no ':', so a label
+    named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named,
+    work with none under the empty value; "who:category" by the other usage categories, and a request
+    carrying several counts once in each, so those rows add up to more than the total.
     scope=organization counts every app of the caller's organization rather than the caller's app alone;
     grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within
     its app.
@@ -416,9 +437,10 @@ async def asyncio(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key_id (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
-            query is the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only count usage started with this public API key, or by this origin
+            of work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -443,6 +465,7 @@ async def asyncio(
             from_=from_,
             to=to,
             tag=tag,
+            origin=origin,
             api_key_id=api_key_id,
             user_id=user_id,
             team=team,

@@ -29,6 +29,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -69,7 +70,11 @@ type EpisodeReadingSuite struct {
 	model   *recordingLLM
 
 	customerID, configID string
-	now                  time.Time
+	// edge is the edge every session joins on when a test sets one, else a quiet edge each,
+	// and telephony what a session with a number acts through, when a test sets it.
+	edge      agent.Edge
+	telephony *phone.Service
+	now       time.Time
 	// dated is the time the suite's Stream Chat dates messages by: now until at sets another.
 	dated time.Time
 }
@@ -103,6 +108,7 @@ func (s *EpisodeReadingSuite) SetupTest() {
 	s.now = time.Now().UTC().Truncate(time.Second)
 	s.dated = s.now
 	s.model = &recordingLLM{}
+	s.edge, s.telephony = nil, nil
 	s.manager = s.managerOver()
 }
 
@@ -137,10 +143,13 @@ func (s *EpisodeReadingSuite) managerOver() *Manager {
 	s.T().Cleanup(conversing.Close)
 
 	manager, err := NewManager(ManagerOptions{
-		LLM: reasoner, STT: transcriber, TTS: speaker, STS: conversing, Store: s.store, Stream: s.apps,
+		LLM: reasoner, STT: transcriber, TTS: speaker, STS: conversing, Store: s.store, Stream: s.apps, Phone: s.telephony,
 		Conversations: persistent.NewForChats(persistent.StreamApps(s.apps)),
 		Logger:        logger,
 		Edge: func(context.Context, Spec, streamapp.Bound, *slog.Logger) (agent.Edge, error) {
+			if s.edge != nil {
+				return s.edge, nil
+			}
 			return newQuietEdge(), nil
 		},
 	})

@@ -2,6 +2,7 @@ package audiofloor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -30,6 +31,7 @@ import (
 	"github.com/thesyncim/gopus/container/ogg"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -60,20 +62,29 @@ type fakeServer struct {
 	types      []string
 	languages  []string
 	// refuse is the status /v1/agents answers an agent with tools, fail has /v1/decide
-	// answer 500, and info is /v1/info's body.
-	refuse int
-	fail   bool
-	info   string
+	// answer 500, info is /v1/info's body, and noPolicy has /v1/info answer 501, as a
+	// server started without a policy for its model does.
+	refuse   int
+	fail     bool
+	info     string
+	noPolicy bool
 	// failing is how many transcription requests to answer failWith, before answering,
-	// failDecide has every decision fail, and failingDecides the next that many.
+	// busy how many to answer without words, every lane busy, failDecide has every decision
+	// fail, and failingDecides the next that many.
 	failing        int
 	failWith       int
+	busy           int
 	failDecide     bool
 	failingDecides int
-	// transcribeGate, when set, holds every transcription request until it is closed, and
-	// held counts the requests waiting at it.
+	// transcribeGate, when set, holds every transcription request until it is closed, or
+	// with holdOne the next one alone, and held counts the requests waiting at it.
 	transcribeGate chan struct{}
+	holdOne        bool
 	held           int
+	// language is the language the server says it heard words in, English unless set, and
+	// noise, when set, has it answer transcriptions with no words and that as the reason.
+	language string
+	noise    string
 	// decideAfter is how long a decision takes, and wordsAfter how long its words take after
 	// it.
 	decideAfter time.Duration
@@ -99,6 +110,11 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/v1/info":
 		f.infos++
+		if f.noPolicy {
+			w.WriteHeader(http.StatusNotImplemented)
+			_, _ = w.Write([]byte(`{"error":"no policy for this model"}`))
+			return
+		}
 		_, _ = w.Write([]byte(f.info))
 	case "/v1/agents":
 		var spec agentJSON
@@ -124,16 +140,28 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"error":"every lane is busy"}`))
 			return
 		}
+		if f.busy > 0 {
+			f.busy--
+			_, _ = w.Write([]byte(`{"transcript_error":"busy"}` + "\n"))
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		f.audio, f.types = append(f.audio, raw), append(f.types, r.Header.Get("Content-Type"))
 		f.languages = append(f.languages, r.URL.Query().Get("languages"))
 		if gate := f.transcribeGate; gate != nil {
 			f.held++
+			if f.holdOne {
+				f.transcribeGate = nil
+			}
 			f.mu.Unlock()
 			<-gate
 			f.mu.Lock()
 		}
-		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q}}`+"\n", f.words)
+		if f.noise != "" {
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":"","language":%q,"noise":%q}}`+"\n", f.spoken(), f.noise)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q}}`+"\n", f.words, f.spoken())
 	case "/v1/decide":
 		if f.fail || f.failDecide || f.failingDecides > 0 {
 			if f.failingDecides > 0 {
@@ -179,10 +207,13 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				time.Sleep(f.wordsAfter)
 				f.mu.Lock()
 			}
-			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q},"transcript_ms":3}`+"\n", f.words)
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q},"transcript_ms":3}`+"\n", f.words, f.spoken())
 		}
 	}
 }
+
+// spoken is the language the server says it heard. The caller holds the lock.
+func (f *fakeServer) spoken() string { return cmp.Or(f.language, "English") }
 
 // serverSuite is a Client of a fake server.
 type serverSuite struct {
@@ -223,6 +254,19 @@ func (s *ClientSuite) TestAnAgentIsRegisteredOnceAndTheMomentGoesInTheBody() {
 	s.Equal("Votre traversée à 8 h", s.server.turns[0].Said)
 	s.Equal([]byte{1, 0, 0xff, 0xff}, s.server.audio[0])
 	s.Equal("audio/pcm;rate=16000;channels=1;format=s16le", s.server.types[0])
+}
+
+// The settings open a client whose transcribers write the words so far while the caller
+// talks unless they say off.
+func TestTheSettingsSayWhetherTheWordsAreWrittenWhileTheCallerTalks(t *testing.T) {
+	for setting, interims := range map[string]bool{"": true, "on": true, "off": false} {
+		client, mode := Open(config.Agent{AudioFloorURL: "http://floor:8080", AudioFloorMode: "act", AudioFloorInterims: setting})
+		require.NotNil(t, client, setting)
+		require.Equal(t, Act, mode)
+		require.Equal(t, interims, NewTranscriber(client, "", nil, slog.New(slog.DiscardHandler)).interims, "interims %q", setting)
+	}
+	client, _ := Open(config.Agent{})
+	require.Nil(t, client)
 }
 
 func (s *ClientSuite) TestAChangedAgentIsRegisteredAgain() {
@@ -368,7 +412,8 @@ func (s *ClientSuite) TestTheWordsAloneAreAskedForAlone() {
 	s.server.words = "What time is the last ferry?"
 	got, err := s.client.Transcribe(context.Background(), some, []string{"en", "pt-BR"})
 	s.Require().NoError(err)
-	s.Equal("What time is the last ferry?", got)
+	s.Equal("What time is the last ferry?", got.Text)
+	s.Equal("English", got.Language, "the language the server heard, by its name for it")
 	s.Equal([]string{"en,pt-BR"}, s.server.languages)
 	s.Equal([][]byte{some.Data}, s.server.audio)
 	s.Equal([]string{pcmType}, s.server.types)
@@ -482,13 +527,21 @@ func (s *HearerSuite) TestATurnIsSaidInTheModelsTerms() {
 	s.Equal(Turn{Speaker: anotherVoice, Conversation: []Line{{Text: "hi"}, {Agent: true, Text: "hello"}}}, s.server.turns[0])
 }
 
-// TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet.
+// TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet, asking
+// about no pauses: the words alone, which is how a session ends up once the server has said
+// it can't rule on them, and what any pause falls to when a check of it fails.
 type TranscriberSuite struct{ transcribing }
 
 // transcribing is a transcriber of a fake server, and the frames it is sent.
 type transcribing struct {
 	serverSuite
 	transcriber *Transcriber
+	// wordsAlone opens each transcriber asking about no pauses (AskOnPauses(nil)), interims
+	// has it write the words so far while the caller talks, which the suites that count each
+	// request leave off, and languages are the callers' it is opened for.
+	wordsAlone bool
+	interims   bool
+	languages  []string
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -501,10 +554,16 @@ func TestTranscriberSuite(t *testing.T) {
 	suite.Run(t, new(TranscriberSuite))
 }
 
+func (s *TranscriberSuite) SetupTest() {
+	s.wordsAlone, s.interims = true, false
+	s.transcribing.SetupTest()
+}
+
 func (s *transcribing) SetupTest() {
 	s.serverSuite.SetupTest()
 	s.server.words = "Two tickets to Bilbao, please."
 	s.client.format = Opus
+	s.languages = []string{"en", "pt-BR"}
 	s.floor = 16 // about -66 dBFS
 	// The voice and the noise start over, so that a test hears the same line whatever ran
 	// before it: over noise near voiceLevel, which frames the detector takes for speech
@@ -524,8 +583,12 @@ func (s *transcribing) reopen(now func() time.Time) {
 }
 
 func (s *transcribing) openReading(now func() time.Time) {
-	s.transcriber = NewTranscriber(s.client, "", []string{"en", "pt-BR"}, slog.New(slog.DiscardHandler))
+	s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
 	s.transcriber.now = now
+	if s.wordsAlone {
+		s.transcriber.AskOnPauses(nil)
+	}
+	s.transcriber.interims = s.interims
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })
@@ -574,6 +637,22 @@ func (s *transcribing) say(ms int, voiced bool) {
 
 func (s *transcribing) send(frame []int16) {
 	s.Require().NoError(s.transcriber.ProcessAudio(audio.PcmData{Samples: frame, SampleRate: SampleRate, Channels: 1}, stt.Participant{ID: "p"}))
+}
+
+// transcribed is how many requests for words alone (POST /v1/transcribe) the server has had.
+func (s *transcribing) transcribed() int {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	return len(s.server.audio) - len(s.server.turns)
+}
+
+// answered waits for the check asked to have answered.
+func (s *transcribing) answered() {
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return !s.transcriber.pause.inFlight
+	}, 5*time.Second, time.Millisecond)
 }
 
 // next is the next event of type E.
@@ -634,6 +713,57 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal(int64(1), end.Utterance)
 	s.Len(s.requests(), 2, "a final with no speech since the last words asks for none")
+}
+
+// An interim of the next utterance waits for the last one's final, which a slow server is
+// still writing: asked meanwhile, it would go out first and the final behind it would be
+// dropped as words of an utterance that is over, or arrive after the next utterance's words.
+func (s *TranscriberSuite) TestAnInterimOfTheNextUtteranceWaitsForTheLastFinal() {
+	s.interims = true
+	s.reopen(time.Now)
+	s.say(1000, true)
+	first := next[stt.Transcript](&s.transcribing)
+	s.True(first.Interim)
+	s.Equal(int64(1), first.Utterance)
+
+	gate := make(chan struct{})
+	s.T().Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
+	s.server.mu.Lock()
+	s.server.transcribeGate, s.server.holdOne = gate, true
+	s.server.mu.Unlock()
+	s.say(int(endAfter/time.Millisecond)+40, false)
+	s.Eventually(func() bool {
+		s.server.mu.Lock()
+		defer s.server.mu.Unlock()
+		return s.server.held == 1
+	}, 5*time.Second, time.Millisecond, "the pause's words, which the final is asked for on, are held")
+	s.say(1200, true)
+	s.none()
+	s.Equal(2, s.transcribed(), "no interim of the next utterance while the last one's final is still to come")
+
+	close(gate)
+	written := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeReplacement, written.Mode, "the pause's words")
+	s.False(written.Interim)
+	s.Equal(int64(1), written.Utterance)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance)
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	s.server.mu.Lock()
+	s.server.words = "Is the ferry running tomorrow?"
+	s.server.mu.Unlock()
+	s.say(40, true)
+	again := next[stt.Transcript](&s.transcribing)
+	s.True(again.Interim)
+	s.Equal(int64(2), again.Utterance)
+	s.Equal("Is the ferry running tomorrow?", again.Text)
 }
 
 // Silence after a final writes nothing more: the utterance is over, and the next waits for

@@ -78,6 +78,11 @@ func (s *ServerSuite) TestARefusalSaysHowLongItTookToRefuse() {
 }
 
 func (s *ServerSuite) TestAnAnswerThatIsNotOneDocumentIsOnlyStamped() {
+	// The export is the one answer of this kind, and a router with shards refuses to give it.
+	if s.store.Sharded() {
+		s.T().Skip("a router with shards refuses to be a move's source")
+	}
+
 	_, response, body := s.timed(http.MethodGet, "/v1/data/export")
 	s.Require().Equal(http.StatusOK, response.StatusCode)
 
@@ -466,6 +471,21 @@ func (s *ServerSuite) TestSpendByUserAcrossTheOrganization() {
 	s.Equal(map[string]int64{s.customerID(): 1_000, sibling: 6_000}, spentBy(s.spend("group_by=who%3Aapp&granularity=daily&scope=organization")))
 	s.Equal(map[string]int64{"key-" + s.customerID(): 1_000, "key-" + sibling: 6_000},
 		spentBy(s.spend("group_by=who%3Aapi_key&granularity=daily&scope=organization")))
+}
+
+// who:origin groups by the key or origin that started the work; who:api_key is its old name
+// (AI-2811).
+func (s *ServerSuite) TestSpendByOrigin() {
+	organization := s.app.organization.ID
+	s.recordWho(s.customerID(), organization, 1_000, "")
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &store.Request{
+		Modality: "stt", CustomerID: s.customerID(), OrganizationID: organization, APIKey: "hook:chat",
+		Provider: "stub", Model: "stub-stt", StartedAt: s.base.Add(5 * time.Minute), CostMicros: 2_000, Billable: true, Success: true,
+	}))
+
+	want := map[string]int64{"key-" + s.customerID(): 1_000, "hook:chat": 2_000}
+	s.Equal(want, spentBy(s.spend("group_by=who%3Aorigin&granularity=daily")))
+	s.Equal(want, spentBy(s.spend("group_by=who%3Aapi_key&granularity=daily")))
 }
 
 func (s *ServerSuite) TestSpendByCategoryCountsARowInEach() {

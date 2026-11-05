@@ -604,6 +604,8 @@ type stub struct {
 	stopped []string
 	// leg is how this vendor's leg reaches Stream: per call unless a test says otherwise.
 	leg StreamLeg
+	// pressed is every vendorCallID:digits this vendor was asked to press.
+	pressed []string
 }
 
 func (s *stub) StreamLeg() StreamLeg { return s.leg }
@@ -647,7 +649,10 @@ func (s *stub) Dial(_ context.Context, outbound Outbound) (Dialed, error) {
 	return Dialed{VendorCallID: s.vendor + "-call", Status: "dialing"}, nil
 }
 
-func (s *stub) SendDigits(context.Context, string, string) error { return s.err }
+func (s *stub) SendDigits(_ context.Context, vendorCallID, digits string) error {
+	s.pressed = append(s.pressed, vendorCallID+":"+digits)
+	return s.err
+}
 
 // ReadStatus reads a form's result and word, as a vendor's status post would carry them.
 func (s *stub) ReadStatus(_ string, body []byte) (CallStatus, error) {

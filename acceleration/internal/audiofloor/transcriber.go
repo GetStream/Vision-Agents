@@ -40,7 +40,11 @@ const (
 	speechScore    = 0.5
 	detectorWarmup = 10
 	// writeAfter is the pause at which the utterance so far is written, and endAfter the
-	// pause that ends it: the end-of-turn policies' first check and cap.
+	// pause that ends it, when its words are asked for alone, with no check ruling on the
+	// pause: the end-of-turn policies' first check and cap. The cap stands as the fallback
+	// as it is: with no model to say otherwise, a shorter silence would cut the pauses a
+	// caller leaves inside a number or a spelled name, which the policy's points were fitted
+	// to leave alone, and what a check decides it decides sooner than the cap anyway.
 	writeAfter = 200 * time.Millisecond
 	endAfter   = 2500 * time.Millisecond
 	// preroll is the audio kept ahead of an utterance's first voiced frame, so that a gate
@@ -72,14 +76,30 @@ var transcribeFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 }, []string{"reason"})
 
 // Transcriber writes what a participant says with the chorus-asr server's model, so a call
-// needs no other speech-to-text provider. It is an stt.STT that writes the whole utterance
-// so far at each of its pauses, once the pause reaches writeAfter, as a replacement of the
-// words before, and ends the utterance at a pause of endAfter with one final transcript.
-// It asks for an utterance's words only when speech has come since it last did, so audio
-// is never written twice, and the next utterance begins after the last one ended. When to
-// answer is the flow controller's to say, as it is with any transcriber. It asks the
-// server for the words alone (POST /v1/transcribe): no agent, decision or policy. The
-// server writes nothing of noise, and empty words are nothing heard.
+// needs no other speech-to-text provider. It is an stt.STT that ends each utterance when the
+// model says the turn has ended, checking each pause from the voice's last frame at the
+// server's policy's times (Pauses): on behalf of the agent that acts on the model, when one
+// asks (AskOnPauses), and otherwise on its own, under an agent of its own with no tools
+// (neutralAgent) and the server's default preset. The first check of a pause asks for the
+// decision and the words of the whole utterance in one request, and a turn that ended goes
+// out as one final. When to answer is the flow controller's to say, as it is with any
+// transcriber. The server writes nothing of noise, and empty words are nothing heard.
+//
+// Decisions never hold the words up. A pause no check could rule on, because the server did
+// not answer or no check ended it within checkGrace of the policy's cap, falls to the words
+// alone: the whole utterance so far is written once the pause reaches writeAfter, as a
+// replacement of the words before, asked for alone (POST /v1/transcribe), and the utterance
+// ends at a pause of endAfter with one final. A server that can't rule at all, with no
+// policy for its model, is asked once a session and the words come alone from then on. The
+// transcriber asks for an utterance's words only when speech has come since it last did, so
+// audio is never written twice, and the next utterance begins after the last one ended.
+//
+// While the caller talks the words so far are shown, as interims (stt.Transcript.Interim):
+// the words of a pause the model waits on, written with its first check anyway, and about
+// once a second of speech with no pause in it, asked for alone, one at a time and never
+// again when the server is busy (interims.go). They hold up no check and no final, which
+// has the last word: an interim answered after it is dropped. The final and the turn's end
+// are as they are without them.
 //
 // A server that is busy, restarting or slow costs a request, not the session: its words are
 // asked for again at the utterance's next pause, or at its end. A misconfigured one, which
@@ -120,17 +140,26 @@ type Transcriber struct {
 	// retrying has its audio asked for again at its end, or once more speech has come.
 	missed   atomic.Int64
 	retrying bool
-	// endedByCheck is the last utterance a pause check ended (finish), whose words went out
-	// as its final: words of it asked for alone, at a pause no check could rule on, are of an
-	// utterance that is over.
-	endedByCheck atomic.Int64
+	// interims says the words so far are written while the caller talks (interim), the
+	// client's setting; spoken is the speech since the utterance's words were last asked
+	// for, in frames, talked the speech in the utterance so far, and interimOut says an
+	// interim is out, at most one at a time.
+	interims   bool
+	spoken     int64
+	talked     int64
+	interimOut atomic.Bool
+	// sent is the last words of the utterance to have gone out, which every transcript is
+	// held to (send): none after the final, and none that go back on words already out.
+	sent sentWords
 
-	// With an agent asking (AskOnPauses), its checks of the pause going on, each run on a
-	// goroutine of its own, and how many of the utterance's pauses were asked about.
+	// The checks of the pause going on, asked for asker, the agent's (AskOnPauses) or the
+	// transcriber's own, each run on a goroutine of its own, and how many of the utterance's
+	// pauses were asked about. Nil asks about none.
 	mu      sync.Mutex
 	asker   Asker
 	pause   pause
 	pauses  int
+	over    overChecks
 	running sync.WaitGroup
 }
 
@@ -150,6 +179,7 @@ func NewTranscriber(client *Client, model string, languages []string, logger *sl
 		model = DefaultModel
 	}
 	return &Transcriber{client: client, model: model, languages: languages, logger: logger, now: time.Now,
+		asker: neutralAgent{hearer: NewHearer(client, EndOfTurn{}, logger)}, interims: client.interims,
 		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
 
@@ -198,15 +228,18 @@ func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant)
 }
 
 // step reads one frame, speech or not, and asks for the utterance's words: at a pause after
-// speech that came since they were last asked for, and once more at its end.
+// speech that came since they were last asked for, once more at its end, and while the
+// caller talks on (interim).
 func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	if at, ok := t.endedOnCheck(); ok {
 		// A pause check ended the utterance on its words: the next begins after its audio.
 		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet = at, at, false, false, false, 0
+		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken, t.talked = at, at, false, false, false, 0, 0, 0
 	}
 	if speech {
 		t.voiced, t.fresh, t.retrying, t.quiet = true, true, false, 0
+		t.spoken++
+		t.talked++
 		t.resumed()
 	} else {
 		t.quiet += frame
@@ -233,13 +266,16 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		}
 		t.ask(end)
 		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet = heard, heard, false, false, false, 0
+		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken, t.talked = heard, heard, false, false, false, 0, 0, 0
 		t.mu.Lock()
 		t.newUtteranceLocked()
 		t.mu.Unlock()
 	case t.quiet >= writeAfter && t.fresh && !t.retrying:
 		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
-		t.fresh = false
+		t.fresh, t.spoken = false, 0
+	}
+	if speech && !t.checksOver(participant, heard) {
+		t.interim(participant, heard)
 	}
 }
 
@@ -247,15 +283,19 @@ func (t *Transcriber) ask(r request) {
 	select {
 	case t.requests <- r:
 	default:
-		t.logger.Warn("dropped a request for words, the chorus-asr server is behind", "participant", r.participant.ID)
+		t.logger.Warn("dropped a request for words, the chorus-asr server is behind", "participant", r.participant.ID, "final", r.final)
+		if r.final {
+			// The utterance is over with its final lost, and nothing more of it is to come.
+			t.sent.ended(r.utterance)
+		}
 	}
 }
 
 // transcribe asks for words one request at a time, so that they arrive in the order said.
 // Words that come back empty write nothing, and an utterance ends on the last words of its
-// own that didn't. Words of an utterance a pause check has ended since they were asked for
-// are dropped, asked or answered: its final has gone out, and words after it would be taken
-// for the next utterance's.
+// own that didn't. Words of an utterance that is over since they were asked for, its final
+// gone out on a pause check's words, are dropped, asked or answered: words after a final
+// would be taken for the next utterance's.
 func (t *Transcriber) transcribe() {
 	defer close(t.done)
 	var last string
@@ -271,7 +311,7 @@ func (t *Transcriber) transcribe() {
 		case <-t.ctx.Done():
 			return
 		}
-		if t.overByCheck(r.utterance) {
+		if t.sent.over(r.utterance) {
 			continue
 		}
 		if r.utterance != lastOf {
@@ -288,7 +328,7 @@ func (t *Transcriber) transcribe() {
 			if t.ctx.Err() != nil {
 				return
 			}
-			if t.overByCheck(r.utterance) {
+			if t.sent.over(r.utterance) {
 				continue
 			}
 			switch {
@@ -315,20 +355,27 @@ func (t *Transcriber) transcribe() {
 				}
 			default:
 				failed = 0
-				words = strings.TrimSpace(said)
+				words = strings.TrimSpace(said.Text)
+				if words != "" {
+					t.sent.establish(r.utterance, said.Language)
+				}
 			}
 		}
 		if words != "" {
 			last = words
 		}
 		if last == "" || (words == "" && !r.final) {
+			if r.final {
+				// Over with nothing heard, or its final lost: nothing more of it is to come.
+				t.sent.ended(r.utterance)
+			}
 			continue
 		}
 		mode := stt.ModeReplacement
 		if r.final {
 			mode = stt.ModeFinal
 		}
-		t.emitter.Send(stt.Transcript{
+		t.send(stt.Transcript{
 			Participant:      r.participant,
 			Mode:             mode,
 			Utterance:        r.utterance,
@@ -343,9 +390,6 @@ func (t *Transcriber) transcribe() {
 		}
 	}
 }
-
-// overByCheck says a pause check ended utterance, and its words have gone out.
-func (t *Transcriber) overByCheck(utterance int64) bool { return utterance <= t.endedByCheck.Load() }
 
 // Events carries the transcripts back.
 func (t *Transcriber) Events() <-chan stt.Event { return t.emitter.Events() }

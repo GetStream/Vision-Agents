@@ -131,6 +131,7 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
+| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
 | `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user's devices may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
@@ -570,23 +571,28 @@ What an organization's own dashboard reads about its money, server-side only:
 | `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
 | `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
 | `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
-| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key_id`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `origin`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
 
 The first two and `listUsageEvents` read the usage service's customer view with the ingest
 token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
-organization. A server-side caller's `api_key_id` and `user_id` query parameters are filters there,
-as they are on `getSpend`. A key is named `api_key_id` in the query on these reads and on the limits
-and grants lists and usage. `api_key` in the query is the caller's credential, which Stream's proxy
-requires on every call. `user_id` in the query only names who a backend acts for, which no account
+organization. A server-side caller's `origin` and `user_id` query parameters are filters there,
+as they are on `getSpend`. `origin` is who started the work: a public API key, or the origin of
+work no key started (`hook:chat`, `phone:inbound`, `job:<name>`); each `UsageEvent` names it as
+`origin`. Its old names, the query's `api_key_id` and the event's `api_key`, are still read and
+answered for one release; given beside `origin`, `api_key_id` must name the same one, else 400.
+A key that is only ever a key is named `api_key_id` in the query on the limits and grants lists
+and usage. `api_key` in the query is the caller's credential, which Stream's proxy requires on
+every call. `user_id` in the query only names who a backend acts for, which no account
 read looks at. `listTeams`
 sums the request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
-`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:api_key`,
-`who:user`, `who:team` (work with no team under the empty value) or `who:category` (the team
-left out, and a request counted once in each of its categories). A cost label key holds no
-`:`, so a label named `app` is still `group_by=app`. `scope=organization` counts every app of
-the caller's organization, and there a user is `<app_id>/<user_id>`.
+`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:origin`
+(`who:api_key` is its old name, still read for one release), `who:user`, `who:team` (work with no
+team under the empty value) or `who:category` (the team left out, and a request counted once in each
+of its categories). A cost label key holds no `:`, so a label named `app` is still `group_by=app`.
+`scope=organization` counts every app of the caller's organization, and there a user is
+`<app_id>/<user_id>`.
 
 ### Admission
 
@@ -1577,9 +1583,10 @@ still one session. Migrations run on every database. A socket for a session held
 another shard is proxied to the node holding it, since that shard's relay is not this
 one's. Empty shard settings fall back to the global ones, which is the single-node setup.
 
-Two things are approximate across shards: percentiles merged from several shards' rollups
-are weighted by request count rather than recomputed, and a data move replicates the
-changes of the global tables only, so a customer's calls and sessions are moved by export.
+Percentiles merged from several shards' rollups are approximate: they are weighted by request
+count rather than recomputed. A router with shards cannot be a move's source: its shards'
+tables record no changes after an export, so `GET /v1/data/export` and `GET /v1/data/changes`
+answer 400 `not_configured` there (see [Moving a customer](#moving-a-customer)). It can be a move's target.
 
 ## Agents that are configured rather than spelled out
 
@@ -2390,9 +2397,14 @@ the copy, which is what makes the switchover free of a window where writes are l
 An export starts recording the app's changes, then waits until every write transaction open in
 the source's shared database when recording started has ended, and only then reads its snapshot.
 So every write of the app to a table the export carries is in the export or in the changes after its cursor,
-including one that was in progress when the export started. A shard's tables record no changes:
-their rows come across as the export read them. A transaction still open after 30 seconds makes the
+including one that was in progress when the export started. A transaction still open after 30 seconds makes the
 export answer 503: run it again.
+
+The source must be a router without shards. A shard's tables (calls, call bridges, recordings,
+sessions, responses, requests and their stats) record no changes, so a router with a shard database
+of its own, or with other shards' databases listed in `postgres.shards`, answers the export and the
+changes 400 `not_configured` before it records anything: moving off it is not supported yet. Any router can be the
+target.
 
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \

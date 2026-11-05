@@ -644,13 +644,39 @@ func (e *Enforcer) spendable(ctx context.Context, owner routing.Owner, decided d
 
 // seen is what a refusal's log line says of the account, taken under m.mu.
 type seen struct {
-	why           string
+	why, tier     string
 	balance, held int64
 	read          time.Time
 }
 
 func seenOf(acct *account) seen {
-	return seen{why: acct.standing.StatusReason, balance: acct.standing.BalanceMicros, held: acct.held, read: acct.read}
+	return seen{why: acct.standing.StatusReason, tier: acct.standing.OrganizationTier,
+		balance: acct.standing.BalanceMicros, held: acct.held, read: acct.read}
+}
+
+// limitKind is the kind of money limit a refusal's reason is, for Settings.LimitHit, or ""
+// for a refusal that is not of one.
+func limitKind(reason string) string {
+	switch {
+	case reason == reasonNoCredit:
+		return store.LimitNoCredit
+	case strings.HasSuffix(reason, "spend_hard_limit"):
+		return store.LimitSpendHardLimit
+	case reason == reasonLimit:
+		return store.LimitSpendLimit
+	}
+	return ""
+}
+
+// limitHit tells Settings.LimitHit of a refusal at a money limit of a billed organization.
+func (e *Enforcer) limitHit(organization, appID, tier, reason string, enforced bool, refusal error) {
+	kind := limitKind(reason)
+	if e.settings.LimitHit == nil || kind == "" || refusal == nil || !billed(organization) {
+		return
+	}
+	e.settings.LimitHit(LimitHit{
+		OrganizationID: organization, AppID: appID, Tier: tier, Kind: kind, Enforced: enforced, Message: refusal.Error(),
+	})
 }
 
 // answer is what an admission returns of a refusal worked out for the account: the refusal
@@ -661,11 +687,13 @@ func (e *Enforcer) answer(organization, appID string, refusal, spend error, reas
 	if reason == "" {
 		return refusal, spend
 	}
+	enforced := m.settings.Mode != config.LimitsShadow
+	e.limitHit(organization, appID, seen.tier, reason, enforced, errors.Join(refusal, spend))
 	args := who(organization)
 	if billed(organization) {
 		args = append(args, "app", appID)
 	}
-	if m.settings.Mode != config.LimitsShadow {
+	if enforced {
 		if reason == reasonSuspended && seen.why != "" && m.refusals.Due(organization+"\x00suspended_reason", logEvery) {
 			e.logger.Info("refused a suspended organization", append(args, "status_reason", seen.why)...)
 		}

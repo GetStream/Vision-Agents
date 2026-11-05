@@ -17,6 +17,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -267,4 +268,45 @@ func TestAPauseChecksRulingIsTheFlowControllers(t *testing.T) {
 	require.False(t, shadow.asksOnPauses(), "in shadow the transcriber writes the words alone")
 	require.False(t, (*audioFloor)(nil).asksOnPauses())
 
+}
+
+// A pause check's ruling is kept on the words as the conversation will see them: with the
+// agent's own voice heard back dropped from their end, as consumeSTT drops it from the final
+// before the cadence settles on it. Kept whole, the ruling matched no turn and the model was
+// asked again about words it had ruled on.
+func TestAPauseChecksRulingIsKeptWithoutTheAgentsEcho(t *testing.T) {
+	asked := atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/info":
+			_, _ = w.Write([]byte(floorInfo))
+		case "/v1/agents":
+			_, _ = w.Write([]byte(`{"agent":"a"}`))
+		default:
+			asked.Add(1)
+			_, _ = w.Write([]byte(`{"answer":"wait","p_eot":0.1,"options":[],"ruling":{"disposition":"respond","floor":"stop"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	v := newAudioFloor(audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
+	defer v.close()
+	a := &Agent{audioFloor: v, logger: quietLogger(), history: []llm.Message{{Role: llm.Assistant, Content: echoReply}},
+		spokeFrom: time.Now().Add(-3 * time.Second), lastSpokeAt: time.Now().Add(-100 * time.Millisecond)}
+	participant := stt.Participant{ID: "p"}
+	ruling := harness.Decided{Disposition: harness.Ignore, Floor: harness.Continue}
+	ruled := audiofloor.Ruled{Check: audiofloor.Check{Ruling: ruling, Ended: true}, Words: "Uh huh. sunny and warm, with a high of", Speaking: true, AudioMs: 2000, WordsMs: 100}
+	pauseAsker{a}.Ruled(participant, ruled)
+
+	heard := stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Provider: audiofloor.ProviderName, Text: ruled.Words,
+		AudioDurationMs: ruled.AudioMs, ProcessingTimeMs: ruled.WordsMs}
+	left, echo := a.withoutEcho(heard)
+	require.Equal(t, 7, echo)
+	require.Equal(t, "Uh huh.", left, "what the conversation sees of the final")
+	v.heard(InboundAudio{Participant: participant, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
+	turn := harness.FlowTurn{ID: "c1", Text: left, Speaking: true}
+	v.listen(&turn, "p", nil)
+	got, err := v.acting().Hear(context.Background(), turn)
+	require.NoError(t, err)
+	require.Equal(t, ruling, got, "the check's ruling, on the words the conversation saw")
+	require.Zero(t, asked.Load(), "the model was not asked again")
 }

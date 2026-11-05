@@ -162,6 +162,12 @@ const (
 type Limits struct {
 	// Mode is enforce, shadow or off. Empty is enforce.
 	Mode LimitsMode `koanf:"mode"`
+	// SlackToken and SlackChannel are where the operator is told the first time each
+	// organization is refused at its credit, the spend hard limit or its own spend limits: a
+	// bot token holding chat:write, and the id of a channel the bot is a member of. Either
+	// empty tells nobody.
+	SlackToken   string `koanf:"slack_token"`
+	SlackChannel string `koanf:"slack_channel"`
 }
 
 // Usage is the usage service the router ships the rows it writes to. An empty URL is none:
@@ -375,10 +381,14 @@ type Agent struct {
 	// says what the flow controller does with its rulings: off (the default), shadow (asks
 	// it beside the flow controller and acts on nothing it says) or act (asks it first, and
 	// the flow controller decides the turns it doesn't answer in time). AudioFloorAudio is
-	// how the audio is sent: opus (the default) or pcm, for debugging.
-	AudioFloorURL   string `koanf:"chorus_asr_url"`
-	AudioFloorMode  string `koanf:"chorus_asr_mode"`
-	AudioFloorAudio string `koanf:"chorus_asr_audio"`
+	// how the audio is sent: opus (the default) or pcm, for debugging. AudioFloorInterims
+	// says whether its transcriber writes the words so far while the caller talks: on (the
+	// default) or off, for a server short of transcription lanes, where the words come at
+	// the turn's end.
+	AudioFloorURL      string `koanf:"chorus_asr_url"`
+	AudioFloorMode     string `koanf:"chorus_asr_mode"`
+	AudioFloorAudio    string `koanf:"chorus_asr_audio"`
+	AudioFloorInterims string `koanf:"chorus_asr_interims"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -559,6 +569,7 @@ var variables = map[string]string{
 	"agent.chorus_asr_url":      "ROUTER_CHORUS_ASR_URL",
 	"agent.chorus_asr_mode":     "ROUTER_CHORUS_ASR_MODE",
 	"agent.chorus_asr_audio":    "ROUTER_CHORUS_ASR_AUDIO",
+	"agent.chorus_asr_interims": "ROUTER_CHORUS_ASR_INTERIMS",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -593,7 +604,9 @@ var variables = map[string]string{
 	"usage.manage_key": "ROUTER_USAGE_MANAGE_KEY",
 	"usage.redis_url":  "ROUTER_USAGE_REDIS_URL",
 
-	"limits.mode": "ROUTER_LIMITS_MODE",
+	"limits.mode":          "ROUTER_LIMITS_MODE",
+	"limits.slack_token":   "ROUTER_LIMITS_SLACK_TOKEN",
+	"limits.slack_channel": "ROUTER_LIMITS_SLACK_CHANNEL",
 
 	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
 	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
@@ -798,6 +811,11 @@ func (c Config) validate() error {
 	case "", "opus", "pcm":
 	default:
 		return fmt.Errorf("config: agent.chorus_asr_audio (ROUTER_CHORUS_ASR_AUDIO) is opus or pcm, got %q", c.Agent.AudioFloorAudio)
+	}
+	switch c.Agent.AudioFloorInterims {
+	case "", "on", "off":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_interims (ROUTER_CHORUS_ASR_INTERIMS) is on or off, got %q", c.Agent.AudioFloorInterims)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:
@@ -1138,7 +1156,9 @@ func (c Config) export() error {
 		"usage.manage_key": c.Usage.ManageKey,
 		"usage.redis_url":  c.Usage.RedisURL,
 
-		"limits.mode": string(c.Limits.Mode),
+		"limits.mode":          string(c.Limits.Mode),
+		"limits.slack_token":   c.Limits.SlackToken,
+		"limits.slack_channel": c.Limits.SlackChannel,
 
 		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
 		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),

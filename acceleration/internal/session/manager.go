@@ -290,7 +290,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 	}
 	manager.titles = newTitler(options.LLM, written, options.Logger)
-	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
+	manager.cards = newCallCards(options.Store, manager.outcomes, options.Stream, options.Logger)
 	switch {
 	case options.Writer != nil:
 		manager.runtime = routing.NewRecorderOn(routing.Runtime, options.Writer, options.Pricer, options.Logger)

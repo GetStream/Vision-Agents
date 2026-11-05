@@ -6178,3 +6178,89 @@ func knows(params llm.ResponseParams, text string) bool {
 		return harness.IsNote(message) && strings.Contains(message.Content, text)
 	})
 }
+
+// A transcriber that ends turns itself sends the words of a turn still going on as interims
+// (stt.Transcript.Interim), for a watcher to see the words appear as the caller talks. The
+// agent shows them under the line the turn is going into and acts on nothing: they are no
+// sign the caller has paused, so the flow controller is not asked until the final, which is
+// answered as any final is, under the same line.
+func (s *AgentSuite) TestAnInterimIsShownAndNotActedOn() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	hearings := func() []Hearing {
+		var out []Hearing
+		for _, event := range s.events.seen() {
+			if typed, ok := event.(Hearing); ok {
+				out = append(out, typed)
+			}
+		}
+		return out
+	}
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Interim: true, Utterance: 1, Text: "one two", Language: "en"})
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Interim: true, Utterance: 1, Text: "one two three", Language: "en"})
+	s.eventually(func() bool { return len(hearings()) == 2 }, "the words were not shown as they arrived")
+	time.Sleep(3 * defaultCadenceGap)
+	s.Empty(s.flow.requests(), "an interim is no sign the caller has paused")
+	s.Empty(s.model.requests(), "nothing was answered")
+
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 1, Text: "one two three four", Language: "en", Confidence: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the final was never answered")
+	s.Equal("one two three four", harness.WithoutNotes(s.model.requests()[0].Input)[0].Content)
+	shown := hearings()
+	s.Require().GreaterOrEqual(len(shown), 3)
+	s.Equal("one two three", shown[1].Text)
+	s.Equal(shown[0].LineID, shown[len(shown)-1].LineID, "one line, from the first interim to the final")
+	var heard []Heard
+	for _, event := range s.events.seen() {
+		if typed, ok := event.(Heard); ok {
+			heard = append(heard, typed)
+		}
+	}
+	if s.Len(heard, 1) {
+		s.Equal(shown[0].LineID, heard[0].LineID, "heard under the line it was shown in")
+	}
+}
+
+// A check the chorus-asr transcriber asked over the agent while the caller talked on, with
+// no pause for the flow controller to be asked at, is acted on at once as a provisional
+// ruling is (Overheard): a stop interrupts the reply before the caller's words settle, and
+// answers nothing. The agent's own voice heard back on the caller's line is dropped from the
+// words first, and an echo alone stops nothing; nor does a murmur.
+func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon tomorrow")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	s.agent.mu.Lock()
+	s.agent.history = append(s.agent.history, llm.Message{Role: llm.Assistant, Content: "Tomorrow in Lisbon it will be sunny and warm with a high of twenty four degrees"})
+	s.agent.mu.Unlock()
+	asker := pauseAsker{s.agent}
+	s.True(asker.Speaking())
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Speaking: true, Overheard: true, AudioMs: 1200, WordsMs: 100}
+
+	echo := stop
+	echo.Words = "Tomorrow in Lisbon it will be sunny"
+	asker.Overheard(participant, echo)
+	murmur := stop
+	murmur.Words = "uh-huh"
+	asker.Overheard(participant, murmur)
+	time.Sleep(50 * time.Millisecond)
+	s.Zero(countOf[Interrupted](s.reported()), "an echo alone or a murmur stops nothing")
+	s.Zero(s.voice.interrupted())
+
+	words := stop
+	words.Words = "no no stop that's not what I"
+	asker.Overheard(participant, words)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on at once")
+	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept talking")
+	overlap, _ := firstOf[OverlapDecided](s.reported())
+	s.Equal(string(harness.Stop), overlap.Action)
+	s.Len(s.model.requests(), 1, "nothing answered: the caller's turn has not ended")
+}
