@@ -14,6 +14,7 @@ import io.getstream.chat.android.ai.compose.generativeui.AIUIHost
 import io.getstream.chat.android.ai.openui.generativeui.OpenUIRenderer
 import io.getstream.visionagents.android.core.AgentsException
 import io.getstream.visionagents.android.core.Conversation
+import io.getstream.visionagents.android.core.ModelOverwrites
 import io.getstream.visionagents.android.core.SessionOptions
 import io.getstream.visionagents.android.core.VoiceSession
 import kotlinx.coroutines.CoroutineScope
@@ -375,7 +376,7 @@ class ChatViewModel(application: Application) : AndroidViewModel(application) {
         failed.value = null
         return try {
             val session = openedFor?.let { Assistant.agents.attach(it, tools) } ?: Assistant.agents.agent(Assistant.AGENT_NAME).chat(
-                SessionOptions(llm = Assistant.CHAT_MODEL, tools = tools, returnUrl = Assistant.RETURN_URL),
+                SessionOptions(modelOverwrites = ModelOverwrites(llm = Assistant.CHAT_MODEL), tools = tools, returnUrl = Assistant.RETURN_URL),
             )
             AgentChat.open(getApplication(), session, screenScope).also { opened.value = it }
         } catch (e: AgentsException) {
