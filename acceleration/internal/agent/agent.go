@@ -1721,16 +1721,11 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode)
 				continue
 			}
-			if left, echo := a.withoutEcho(typed); echo > 0 {
-				a.logger.Debug("the transcriber heard the agent's own voice on the caller's line",
-					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode,
-					"text", typed.Text, "echo_words", echo, "left", left)
-				echoes.WithLabelValues(strconv.FormatBool(strings.TrimSpace(left) != "")).Inc()
-				if strings.TrimSpace(left) == "" {
-					continue
-				}
-				typed.Text = left
+			left, ok := a.droppingEcho(typed, "the transcriber")
+			if !ok {
+				continue
 			}
+			typed.Text = left
 			tally.heardWords(typed, partials, finals)
 			a.logger.Debug("transcribed",
 				"provider", typed.Provider, "model", typed.Model,

@@ -2,6 +2,7 @@ package agent
 
 import (
 	"math"
+	"strconv"
 	"strings"
 	"time"
 
@@ -57,6 +58,22 @@ func (a *Agent) withoutEcho(transcript stt.Transcript) (string, int) {
 		return transcript.Text, 0
 	}
 	return echoed(transcript.Text, said)
+}
+
+// droppingEcho is transcript's words without the agent's own voice heard back at their end
+// (withoutEcho), logged and counted as who heard them, and whether any of the caller's are
+// left: an echo alone is nothing heard.
+func (a *Agent) droppingEcho(transcript stt.Transcript, who string) (string, bool) {
+	left, echo := a.withoutEcho(transcript)
+	if echo == 0 {
+		return transcript.Text, true
+	}
+	a.logger.Debug(who+" heard the agent's own voice on the caller's line",
+		"provider", transcript.Provider, "participant", transcript.Participant.ID, "mode", transcript.Mode,
+		"text", transcript.Text, "echo_words", echo, "left", left)
+	heard := strings.TrimSpace(left) != ""
+	echoes.WithLabelValues(strconv.FormatBool(heard)).Inc()
+	return left, heard
 }
 
 // echoed is text without the agent's words heard back in it, and how many of them there

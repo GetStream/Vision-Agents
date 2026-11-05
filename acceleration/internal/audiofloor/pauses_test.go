@@ -121,6 +121,8 @@ func (s *PausesSuite) TestAPauseIsOneRequestAndItsWordsTheFinal() {
 	s.Equal("Two tickets to Bilbao, please.", rulings[0].Words)
 	s.InDelta(float64(200), float64(rulings[0].Paused.Milliseconds()), 40, "asked 200 ms after the voice")
 	s.True(rulings[0].Ended)
+	s.InDelta(end.AudioDurationMs, rulings[0].AudioMs, 1, "the ruling says what audio its words are of, as the final does")
+	s.Equal(end.ProcessingTimeMs, rulings[0].WordsMs)
 	decisions, withWords, transcripts := s.counts()
 	s.Equal([3]int{1, 1, 0}, [3]int{decisions, withWords, transcripts})
 	s.InDelta(float64(300+1000+200)*SampleRate/1000-104, float64(s.requests()[0]), float64(2*frameSamples), "the whole utterance")

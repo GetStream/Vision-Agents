@@ -45,15 +45,16 @@ type Asker interface {
 type Ruled struct {
 	Check
 	Words string
+	// AudioMs and WordsMs are how much audio the words are of and how long they took, as the
+	// transcript of them says, by which the agent tells its own echo from the caller.
+	AudioMs, WordsMs float64
 	// Speaking says the agent was talking when the check was asked, and Paused how far into
 	// the pause it was, from the voice's last frame.
 	Speaking bool
 	Paused   time.Duration
 	// Overheard says the check was asked over the agent without a pause, to be acted on at
-	// once, and AudioMs and WordsMs are how much audio its words are of and how long they
-	// took, by which the agent tells its own echo.
-	Overheard        bool
-	AudioMs, WordsMs float64
+	// once.
+	Overheard bool
 }
 
 // Pauses is a transcriber an agent can have ask about each pause.
@@ -571,8 +572,7 @@ func (t *Transcriber) finish(epoch int64) {
 	}
 	p.done = true
 	ruled, asker, participant, utterance := *p.ended, t.asker, p.participant, p.utterance
-	ruled.Words = *p.words
-	audioMs, wordsMs := p.audioMs, p.wordsMs
+	ruled.Words, ruled.AudioMs, ruled.WordsMs = *p.words, p.audioMs, p.wordsMs
 	t.mu.Unlock()
 	if ruled.Words == "" {
 		t.sent.ended(utterance)
@@ -586,7 +586,7 @@ func (t *Transcriber) finish(epoch int64) {
 		Text:             ruled.Words,
 		Provider:         ProviderName,
 		Model:            t.model,
-		ProcessingTimeMs: wordsMs,
-		AudioDurationMs:  audioMs,
+		ProcessingTimeMs: ruled.WordsMs,
+		AudioDurationMs:  ruled.AudioMs,
 	})
 }

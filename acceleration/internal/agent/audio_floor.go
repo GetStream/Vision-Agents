@@ -4,7 +4,6 @@ import (
 	"context"
 	"log/slog"
 	"slices"
-	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -244,9 +243,19 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 func (p pauseAsker) Hearer() *audiofloor.Hearer { return p.a.audioFloor.hearer }
 
 // Ruled keeps a pause check's ruling for the flow controller, which asks about its words
-// once the transcriber has sent them.
+// once the transcriber has sent them: the words as the conversation will see them, the
+// agent's own voice heard back dropped from their end as it is from the final (consumeSTT),
+// which is what the turn's words are matched against (findRuled).
 func (p pauseAsker) Ruled(participant stt.Participant, ruled audiofloor.Ruled) {
+	ruled.Words, _ = p.a.withoutEcho(transcriptOf(participant, ruled))
 	p.a.audioFloor.keep(participant.ID, ruled)
+}
+
+// transcriptOf is a check's words as a transcript of them: what the agent tells its own
+// echo from the caller by.
+func transcriptOf(participant stt.Participant, ruled audiofloor.Ruled) stt.Transcript {
+	return stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: ruled.Words, Provider: audiofloor.ProviderName,
+		ProcessingTimeMs: ruled.WordsMs, AudioDurationMs: ruled.AudioMs}
 }
 
 // Speaking says the agent is talking, as Moment tells the model.
@@ -265,16 +274,9 @@ func (p pauseAsker) Speaking() bool {
 // stop.
 func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) {
 	a := p.a
-	heard := stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: ruled.Words, Provider: audiofloor.ProviderName,
-		ProcessingTimeMs: ruled.WordsMs, AudioDurationMs: ruled.AudioMs}
-	left, echo := a.withoutEcho(heard)
-	if echo > 0 {
-		a.logger.Debug("a check over the agent heard the agent's own voice on the caller's line",
-			"participant", participant.ID, "text", ruled.Words, "echo_words", echo, "left", left)
-		echoes.WithLabelValues(strconv.FormatBool(strings.TrimSpace(left) != "")).Inc()
-		if strings.TrimSpace(left) == "" {
-			return
-		}
+	left, ok := a.droppingEcho(transcriptOf(participant, ruled), "a check over the agent")
+	if !ok {
+		return
 	}
 	if !takesFloor(left) {
 		a.logger.Debug("a check over the agent ruled on a murmur, which is no reason to stop",
