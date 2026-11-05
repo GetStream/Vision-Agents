@@ -29,6 +29,8 @@ type UserPhone struct {
 	// Phone is the number in E.164.
 	Phone     string    `bun:"phone,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
+	// UpdatedAt is when the user was linked to Phone: the same number again leaves it, so what
+	// the number said since the link stays the user's (EpisodeCards).
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
 
@@ -61,7 +63,7 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 		_, err := tx.NewInsert().Model(link).
 			On("CONFLICT (customer_id, stream_app_pk, user_id) DO UPDATE").
 			Set("phone = EXCLUDED.phone").
-			Set("updated_at = EXCLUDED.updated_at").
+			Set("updated_at = CASE WHEN up.phone = EXCLUDED.phone THEN up.updated_at ELSE EXCLUDED.updated_at END").
 			Returning("*").
 			Exec(ctx)
 		if isViolation(err, uniqueViolation) {
