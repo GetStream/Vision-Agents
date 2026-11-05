@@ -71,8 +71,11 @@ the session frame is spelled; Gemini Live is its own package under `internal/sts
 
 ## Build prerequisites
 
-Everything builds without cgo. `cmd/say` needs `ffplay` at runtime (part of ffmpeg)
-to play audio, or `-out` to write a file instead.
+Everything builds without cgo. Build with Go's SIMD experiment, `GOEXPERIMENT=simd`, as
+`Dockerfile` and CI do: it compiles the vector kernels of the Opus codec every call's audio
+passes through, on amd64 and arm64, and other platforms build the same code without them.
+The commands below assume `export GOEXPERIMENT=simd`. `cmd/say` needs `ffplay` at runtime
+(part of ffmpeg) to play audio, or `-out` to write a file instead.
 
 ## Configuration
 
