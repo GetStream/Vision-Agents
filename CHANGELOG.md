@@ -385,7 +385,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A video question that would be refused is refused before its videos are fetched
 
-A response with videos that its conversation would refuse to begin, because an answer is still running, the conversation is not open or the text is past 1 MiB, was refused only after up to two videos of 50 MB each were fetched and sampled. It is now refused first, with the same error (AI-2657, #PR).
+A response with videos that its conversation would refuse to begin, because an answer is still running, the conversation is not open or the text is past 1 MiB, was refused only after up to two videos of 50 MB each were fetched and sampled. It is now refused first, with the same error (AI-2657, #1764).
 
 ### An export no longer misses a write that was in progress when it started
 
