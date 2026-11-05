@@ -19276,7 +19276,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: 'This deployment has no database to export from, or a write that was open when the export started is still open after 30 seconds: try again.'
+          description: 'This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again.'
       summary: Everything this app has, as newline-delimited JSON
   /v1/data/import:
     post:

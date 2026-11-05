@@ -872,7 +872,7 @@ func documentHandWritten(api huma.API) {
 			"400": {Ref: "#/components/responses/BadRequest"},
 			"401": {Ref: "#/components/responses/Unauthorized"},
 			"403": {Ref: "#/components/responses/Forbidden"},
-			"503": {Description: "This deployment has no database to export from, or a write that was open when the export started is still open after 30 seconds: try again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
+			"503": {Description: "This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again.", Content: map[string]*huma.MediaType{"application/json": {Schema: registry.Schema(reflect.TypeFor[ErrorResponse](), true, "")}}},
 		},
 	})
 	document.AddOperation(&huma.Operation{

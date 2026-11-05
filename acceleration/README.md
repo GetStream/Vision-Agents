@@ -2383,7 +2383,7 @@ the copy, which is what makes the switchover free of a window where writes are l
 
 An export starts recording the app's changes, then waits until every write transaction open in
 the source's shared database when recording started has ended, and only then reads its snapshot.
-So every write of the app to a shared table is in the export or in the changes after its cursor,
+So every write of the app to a table the export carries is in the export or in the changes after its cursor,
 including one that was in progress when the export started. A shard's tables record no changes:
 their rows come across as the export read them. A transaction still open after 30 seconds makes the
 export answer 503: run it again.
