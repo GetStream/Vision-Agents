@@ -413,7 +413,7 @@ A link's own host and path no longer name what kind of thing its ID is: `see htt
 
 ### What the agent wrote is no source when a tool reads it back
 
-A tool that reads back what the agent said or posted no longer gives the number, transfer number or stand-in name the agent wrote. A near miss of the caller's number, a number to put the caller through to, or a name such as `John Doe` that the agent made up and a tool then read back is refused as before the read-back. Each line of a result is checked alone, so a number a tool listed on another line, or one it returned before the agent wrote it, still counts, in any of its written forms. A read-back message also gives no channel through a field of its own, as `"channel_id"` in its blocks, when its text is the agent's line with that ID; a field of any other result still does (AI-2886, AI-2883, #PR).
+A tool that reads back what the agent said or posted no longer gives the number, transfer number or stand-in name the agent wrote. A near miss of the caller's number, a number to put the caller through to, or a name such as `John Doe` that the agent made up and a tool then read back is refused as before the read-back. Each line of a result is checked alone, so a number a tool listed on another line, or one it returned before the agent wrote it, still counts, in any of its written forms. A read-back message also gives no channel through a field of its own, as `"channel_id"` in its blocks, when its text is the agent's line with that ID; a field of any other result still does (AI-2886, AI-2883, #1795).
 
 ### A short video is sampled into the frames it has
 
