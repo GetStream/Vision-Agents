@@ -586,10 +586,13 @@ func (s *DataMoveSuite) TestAChangeOfATransactionThatCommitsLateIsNotSteppedOver
 	s.Equal([]string{late, second}, rest)
 }
 
-// Right after an export nothing older is kept, so the number in flight is the only gap.
+// With every change up to the cursor pruned, nothing older is kept, so the number in flight
+// right after the cursor is the only gap.
 func (s *DataMoveSuite) TestAChangeInFlightRightAfterTheCursorDoesNotExpireIt() {
 	s.capture("acme")
-	cursor := s.export("acme").cursor
+	s.ageChange(s.seedAgentConfig(s.source, "acme", "aged out"))
+	_, cursor := s.follow("acme", 0)
+	s.prune()
 	inFlight := s.begin()
 	late := s.writeIn(inFlight, "acme", "in flight")
 	committed := s.seedAgentConfig(s.source, "acme", "committed")
@@ -600,6 +603,23 @@ func (s *DataMoveSuite) TestAChangeInFlightRightAfterTheCursorDoesNotExpireIt() 
 	rest, _ := s.follow("acme", next)
 
 	s.Equal([]string{late, committed}, rest)
+}
+
+// A number handed out and rolled back is never a change. Right after an export onto a
+// table with no change kept, it is not one pruned either.
+func (s *DataMoveSuite) TestANumberRolledBackRightAfterAnExportCursorIsNotAPrunedChange() {
+	s.capture("acme")
+	_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval('data_changes_seq_seq', 1000, true)")
+	s.Require().NoError(err)
+	cursor := s.export("acme").cursor
+	rolledBack := s.begin()
+	s.writeIn(rolledBack, "acme", "rolled back")
+	s.Require().NoError(rolledBack.Rollback())
+	committed := s.seedAgentConfig(s.source, "acme", "committed")
+
+	handed, _ := s.follow("acme", cursor)
+
+	s.Equal([]string{committed}, handed)
 }
 
 func (s *DataMoveSuite) TestAQuietFeedHandsOutEveryChangeUpToTheNewest() {

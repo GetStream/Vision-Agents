@@ -228,10 +228,13 @@ ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
 // changes carry on from.
 //
 // The rows are read in one repeatable-read transaction, so what comes out is the customer
-// as they were at one moment rather than a stitch of several. The cursor is taken right
-// before that transaction and is deliberately conservative: a change at or below it is already
-// in these rows, and one above it may or may not be, which is safe because applying a
-// change twice lands in the same place as applying it once.
+// as they were at one moment rather than a stitch of several. The cursor is the newest
+// change kept at or below the watermark taken right before that transaction, 0 with none,
+// and is deliberately conservative: a change at or below it is already in these rows, and
+// one above it may or may not be, which is safe because applying a change twice lands in
+// the same place as applying it once. It is not the watermark itself: with no change kept
+// at or below it, Changes would read a number rolled back right after it as a change
+// pruned, and refuse the cursor.
 //
 // What is not here: the audio behind a voice sample and a call recording, which live in
 // an object bucket rather than in Postgres. The rows naming them come across, and copying
@@ -243,8 +246,8 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 	}
 
 	// Before the transaction, whose snapshot is taken at its first statement: every change at
-	// or below the cursor has then ended before the snapshot and is in it.
-	cursor, err := s.changeWatermark(ctx)
+	// or below the mark has then ended before the snapshot and is in it.
+	mark, err := s.changeWatermark(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -253,6 +256,12 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 		return 0, fmt.Errorf("store: export: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
+
+	var cursor int64
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(seq), 0) FROM data_changes WHERE seq <= ?", mark).Scan(&cursor); err != nil {
+		return 0, fmt.Errorf("store: export cursor: %w", err)
+	}
 
 	if !s.Sharded() && len(s.peers) == 0 {
 		for _, table := range dataTables {
