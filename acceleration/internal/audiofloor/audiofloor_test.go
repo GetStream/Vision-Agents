@@ -68,8 +68,10 @@ type fakeServer struct {
 	failing    int
 	failWith   int
 	failDecide bool
-	// wordsAfter is how long the words of a decision take, after it.
-	wordsAfter time.Duration
+	// decideAfter is how long a decision takes, and wordsAfter how long its words take after
+	// it.
+	decideAfter time.Duration
+	wordsAfter  time.Duration
 	// withWords counts the decisions asked for their words too, and agents the agents each
 	// decision was about.
 	withWords int
@@ -148,6 +150,11 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.turns = append(f.turns, turn)
 		f.agents = append(f.agents, r.URL.Query().Get("agent"))
+		if f.decideAfter > 0 {
+			f.mu.Unlock()
+			time.Sleep(f.decideAfter)
+			f.mu.Lock()
+		}
 		_, _ = w.Write([]byte(f.decision + "\n"))
 		if r.URL.Query().Get("transcript") == "true" {
 			f.withWords++

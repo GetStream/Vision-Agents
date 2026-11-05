@@ -274,17 +274,19 @@ type run struct {
 
 // count records a check paused into a participant's pause, and whether it reached its bar,
 // and is how many checks in a row have, this one included. The first check of a pause starts
-// again, which is what the caller speaking does, and so does a check that is not the one after
-// the last counted, being more than half an interval late: a check not asked about, or not
-// answered, is not one that reached its bar.
-func (r *runs) count(participant string, first bool, paused, interval time.Duration, reached bool) int {
+// again, which is what the caller speaking does, and so does one no further into the pause
+// than the last. A check later than the interval is still the one after the last: a
+// transcriber asks the next check once the one before has answered, so a slow answer makes
+// the next late, and the caller has been quiet the while. Holding that against the run would
+// have a point of two checks end turns at the cap whenever the server was slow.
+func (r *runs) count(participant string, first bool, paused time.Duration, reached bool) int {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if r.of == nil {
 		r.of = map[string]run{}
 	}
 	last := r.of[participant]
-	if first || paused <= last.paused || paused-last.paused > interval+interval/2 {
+	if first || paused <= last.paused {
 		last.reached = 0
 	}
 	last.paused = paused

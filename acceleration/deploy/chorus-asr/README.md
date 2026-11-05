@@ -104,8 +104,9 @@ callers read out numbers or IDs, or spell names, wants a point that passes.
 - **What it replaces.** A point brings its bars and its checks in a row; bars of your own end a
   turn at the first check that reaches its bar. When a pause is checked, how much more a turn's
   first pause asks, and the cap stay the server's, which are fitted to its model. A run of checks
-  is one pause's, one after another: the caller speaking, a check not asked about or not
-  answered, or one under its bar starts it again.
+  is one pause's, one after another: the caller speaking, or a check under its bar, starts it
+  again. A check is asked once the one before has answered, so a slow answer makes the next
+  check late; it still counts, as the caller was quiet the while.
 - **When it is read.** At each check, against the policy of the model the server runs then.
   A preset or wait that model no longer publishes, as after a new checkpoint, ends the
   session's turns by its default, and a warning says so once per session.

@@ -238,8 +238,8 @@ func (s *EndOfTurnSuite) TestTwoChecksInARowEndATurn() {
 	s.Equal(harness.Respond, twice.Ruling.Disposition)
 }
 
-// The caller speaking starts the count again, and so does a check that isn't the one after the
-// last, or one under the bar.
+// The caller speaking starts the count again, and so does a check under the bar. A check
+// later than the interval, as the one after a slow answer is, is still the one after the last.
 func (s *EndOfTurnSuite) TestARunIsOfOnePausesChecksOneAfterAnother() {
 	s.answering(0.999)
 	h := s.hearer(EndOfTurn{MaxWaitMs: 1400})
@@ -250,12 +250,12 @@ func (s *EndOfTurnSuite) TestARunIsOfOnePausesChecksOneAfterAnother() {
 	s.False(again.Ended)
 	s.True(s.checkAt(h, 500*time.Millisecond, true).Ended)
 
-	// 500 ms, then 1100 ms: the 800 ms check between them was not asked about, or not answered.
-	skipped := s.hearer(EndOfTurn{MaxWaitMs: 1400})
-	s.Equal(1, s.checkAt(skipped, 500*time.Millisecond, false).InARow)
-	late := s.checkAt(skipped, 1100*time.Millisecond, true)
-	s.Equal(1, late.InARow)
-	s.False(late.Ended)
+	// 500 ms, then 1100 ms: the first answered late, and the caller was quiet the while.
+	late := s.hearer(EndOfTurn{MaxWaitMs: 1400})
+	s.Equal(1, s.checkAt(late, 500*time.Millisecond, false).InARow)
+	second := s.checkAt(late, 1100*time.Millisecond, true)
+	s.Equal(2, second.InARow)
+	s.True(second.Ended, "two in a row, however late the second")
 
 	s.answering(0.6)
 	under := s.hearer(EndOfTurn{MaxWaitMs: 1400})

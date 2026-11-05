@@ -153,6 +153,31 @@ func (s *PausesSuite) TestTheSessionsPointReadsEachCheck() {
 	s.Equal([2]int{2, 1}, [2]int{decisions, withWords})
 }
 
+// A check is asked once the one before has answered, so a slow answer makes the next check
+// late. It is still the one after the last: a point of two checks in a row ends the turn on
+// it, rather than at the cap.
+func (s *PausesSuite) TestACheckAfterASlowAnswerIsStillTheNextInTheRow() {
+	s.agent.hearer = NewHearer(s.client, EndOfTurn{MaxWaitMs: 1400}, slog.New(slog.DiscardHandler))
+	s.server.mu.Lock()
+	s.server.decideAfter = 300 * time.Millisecond
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(220, false)
+	// The caller stays quiet for twice the interval while the first check is answered.
+	s.say(600, false)
+	s.answered()
+	s.server.mu.Lock()
+	s.server.decideAfter = 0
+	s.server.mu.Unlock()
+	s.say(40, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	ruled := s.agent.rulings()[0]
+	s.Equal(2, ruled.InARow)
+	s.True(ruled.Ended)
+	s.InDelta(860, float64(ruled.Paused.Milliseconds()), 40, "the second check, as soon as the first had answered")
+}
+
 // Speech after a pause the model waited on begins another pause, whose first check writes
 // the whole utterance again; the check of the pause before answers no one.
 func (s *PausesSuite) TestSpeechAfterAPauseBeginsAnother() {

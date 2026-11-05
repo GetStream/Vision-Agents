@@ -129,7 +129,7 @@ func (h *Hearer) rule(policy Policy, turn harness.FlowTurn, answer Answer) (Chec
 	}
 	check.Ending = h.ending(policy)
 	check.Bar = policy.Bar(check.Ending.Bars, turn.Paused, turn.FirstPause)
-	check.InARow = h.inARow.count(turn.Participant, !turn.Waited, turn.Paused, policy.Interval(), *answer.PEOT >= check.Bar)
+	check.InARow = h.inARow.count(turn.Participant, !turn.Waited, turn.Paused, *answer.PEOT >= check.Bar)
 	check.Ended = check.InARow >= check.Ending.ChecksInARow || turn.Paused >= policy.Cap()
 	if !check.Ended {
 		check.Ruling = harness.Decided{Disposition: harness.Wait, Floor: harness.Continue, Again: policy.Interval()}
