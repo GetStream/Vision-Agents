@@ -105,7 +105,7 @@ func (s *ReplicateIDsSuite) replicateWith(reservation *store.IDReservation, expo
 	source := &deployment{url: server.URL, key: sourceKey, secret: sourceSecret, authType: auth.AuthTypeServer, client: server.Client()}
 	logger := slog.New(slog.DiscardHandler)
 
-	customerID, cursor, err := copyEverything(s.ctx, source, s.target, reservation, "", logger)
+	customerID, cursor, err := copyEverything(s.ctx, source, s.target, reservation, "", false, time.Hour, logger)
 	if err != nil {
 		return err
 	}
