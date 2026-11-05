@@ -146,7 +146,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		// not return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
 		// An ID is the ID of one thing, so no line gives it where a line labels it as another
 		// (labelledAs): after "From: Ana Lind (ID: U0…)", "Channel: Ana Lind (ID: U0…)" names
-		// the sender, not a channel, as "Channel: Group DM (ID: C0…)" does not.
+		// the sender, not a channel. "Channel: Group DM (ID: C0…)" still gives one, where no
+		// line labels C0… as anything else.
 		other := slices.ContainsFunc(lines, func(written line) bool {
 			return slices.ContainsFunc(labelledAs(written.text, wanted), func(label []string) bool { return !labelNames(label, entityOf(name)) })
 		})
@@ -889,9 +890,9 @@ func idWords(text string) []string {
 // "Channel: Group DM (ID: C0…)" the label "Channel:" opens a field whose value is the name
 // and the ID in brackets, so a name of any length stands between them (labelledAs).
 //
-// The word for the kind is a word of its own (holdsKind), and not the ID's: "#ops-channel"
-// names a channel, it is not the word "channel", and "public_channel" listed as a channel's
-// type is no channel's ID.
+// The word for the kind is a word of its own (holdsKind), and not the ID's: "#ops-channel" is
+// a channel's name, not the word "channel", and "public_channel" listed as a channel's type
+// is no channel's ID.
 func besideKind(line, wanted, kind string) bool {
 	if slices.ContainsFunc(labelledAs(line, wanted), func(label []string) bool { return labelNames(label, kind) }) {
 		return true
@@ -933,12 +934,12 @@ func lineWords(line string) []string {
 	return words
 }
 
-// holdsKind reports whether words hold the word for kind, or its plural, as at reads it
-// (strings.Contains or strings.HasSuffix) in the words joined with a space on each side. A
+// holdsKind reports whether words hold the word for kind, or its plural: find (strings.Contains
+// or strings.HasSuffix) looks for it in the words joined with a space on each side. A
 // key is split into its words where _ joins them: "public_channel" and "channel_id" each hold
 // "channel". A name marked with #, "#team_channel", is one word, as it is when - joins it,
 // "#ops-channel".
-func holdsKind(words []string, kind string, at func(text, word string) bool) bool {
+func holdsKind(words []string, kind string, find func(text, word string) bool) bool {
 	split := make([]string, len(words))
 	for i, word := range words {
 		split[i] = word
@@ -947,7 +948,7 @@ func holdsKind(words []string, kind string, at func(text, word string) bool) boo
 		}
 	}
 	joined := " " + strings.Join(split, " ") + " "
-	return at(joined, " "+kind+" ") || at(joined, " "+kind+"s ")
+	return find(joined, " "+kind+" ") || find(joined, " "+kind+"s ")
 }
 
 // labelNames reports whether a field's label names kind: its last words are the word for it,
