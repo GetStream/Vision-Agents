@@ -41,12 +41,22 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	var answers []answer
 	// pasted are the parts of the links the caller wrote.
 	var pasted []string
+	// sent are the arguments of each call, by its ID: a result that writes one of them back
+	// echoes the model, it does not return it.
+	sent := map[string]string{}
+	// lines are the lines a JSON result writes out for people, with the arguments of the
+	// call it answers.
+	type line struct{ text, sent string }
+	var lines []line
 	var question string
 	for _, message := range history {
 		switch message.Role {
 		case llm.Assistant:
 			if strings.TrimSpace(message.Content) != "" {
 				question = message.Content
+			}
+			for _, made := range message.ToolCalls {
+				sent[made.ID] = made.Arguments
 			}
 		case llm.User:
 			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
@@ -70,7 +80,11 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				results = append(results, result)
 				// A result may write its answer out under a key of its own: a list of channels
 				// as "1. #general (C0123) - public_channel".
-				texts = append(texts, prose(result)...)
+				for _, text := range prose(result) {
+					for _, written := range strings.Split(text, "\n") {
+						lines = append(lines, line{written, sent[message.ToolCallID]})
+					}
+				}
 			}
 		}
 	}
@@ -110,6 +124,13 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				}
 			})
 		}
+		// A line written out gives an ID only beside the word for what it is, and only one
+		// the call it answers was not sent: "No bookings found for Ana at 7pm" does not
+		// return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
+		returned = returned || slices.ContainsFunc(lines, func(written line) bool {
+			return holdsValue(written.text, wanted) && !holdsValue(written.sent, wanted) &&
+				strings.Contains(strings.ToLower(written.text), entityOf(name))
+		})
 		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
 			return name, text, ids, true
 		}

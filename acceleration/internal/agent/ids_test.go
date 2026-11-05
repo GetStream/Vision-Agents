@@ -281,6 +281,63 @@ func TestAnIDAJSONResultWritesOutIsPassedOn(t *testing.T) {
 	assert.True(t, unfound, "a failure quoting the ID does not make it returned")
 }
 
+func TestAnIDAJSONResultEchoesOrWritesBesideAnotherWordIsNotPassedOn(t *testing.T) {
+	// A result's text writes back what the model asked for, or a value of another kind: the
+	// model must not take either as an ID a tool returned.
+	tools := []string{"search_channels", "read_channel", "find_booking", "open_case"}
+	answered := func(arguments, result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.User, Content: "Can you help?"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "look_up", Arguments: arguments}}},
+			{Role: llm.ToolResult, ToolCallID: "c1", Content: result},
+		}
+	}
+	call := func(arguments string) llm.ToolCall { return llm.ToolCall{Name: "some_tool", Arguments: arguments} }
+	cases := []struct {
+		name      string
+		history   []llm.Message
+		arguments string
+	}{
+		{
+			"a search writing back its query under a heading for channels",
+			answered(`{"query":"C0FAKE01"}`, `{"results":"# Channels for: C0FAKE01\n\n## Channels (0 results)","pagination_info":"no more results"}`),
+			`{"channel_id":"C0FAKE01"}`,
+		},
+		{
+			"a search writing back its query in a sentence about channels",
+			answered(`{"query":"C0FAKE01"}`, `{"results":"No channels match C0FAKE01"}`),
+			`{"channel_id":"C0FAKE01"}`,
+		},
+		{
+			"a lookup writing back the time it was asked about",
+			answered(`{"name":"Ana","time":"7pm"}`, `{"bookings":[],"message":"No bookings found for Ana at 7pm"}`),
+			`{"booking_id":"7pm"}`,
+		},
+		{
+			"an error code in a sentence that names no case",
+			answered(`{}`, `{"status":"declined","detail":"processor answered with code 720 today"}`),
+			`{"case_id":"720"}`,
+		},
+		{
+			"a card in a note that names no case",
+			answered(`{}`, `{"profile":{"note":"Card KTR583027 on file"}}`),
+			`{"case_id":"KTR583027"}`,
+		},
+		{
+			"a channel on a line that names none, under one that does",
+			answered(`{}`, `{"results":"## Channels (0 results)\nRequested by U0ASKER1"}`),
+			`{"channel_id":"U0ASKER1"}`,
+		},
+	}
+	for _, c := range cases {
+		_, _, _, unfound := unfoundID(c.history, call(c.arguments), tools, "")
+		assert.True(t, unfound, c.name)
+	}
+
+	_, _, _, unfound := unfoundID(answered(`{"query":"help"}`, `{"results":"1. #help (C0HELP002) - public_channel"}`), call(`{"channel_id":"C0HELP002"}`), tools, "")
+	assert.False(t, unfound, "a channel the search was not sent and lists as one is returned")
+}
+
 func TestAnIDListedUnderAPluralKeyIsPassedOn(t *testing.T) {
 	// A profile lists a person's orders and reservations as bare IDs under "orders" and
 	// "reservations", with no order_id or reservation_id key beside them.
