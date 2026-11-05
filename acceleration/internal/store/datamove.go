@@ -1260,10 +1260,23 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	// at or below the mark it read, so the gap right after a cursor at or above this mark is
 	// a change still in flight rather than a pruned one. The mark can go down: the trigger
 	// reads the sequence and takes its lock in two statements, and a mark read between them
-	// is above that lock. A prune in that window can drop a change this check then misses.
+	// is above that lock. A prune in that window can drop an aged-out change before this
+	// check sees it, so the follower is refused (ErrChangesExpired) on a later read, not
+	// handed a gap.
+	//
+	// This check and the rows are one snapshot: a prune between two statements would drop
+	// rows after the cursor, and the rows read would then start above them with the check
+	// already passed. The mark is read before the transaction, as in an export, so every
+	// change at or below it has ended before the snapshot is taken.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: changes: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
+
 	var kept sql.NullInt64
 	var theirs bool
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		"SELECT (SELECT MIN(seq) FROM data_changes), EXISTS (SELECT 1 FROM data_changes WHERE customer_id = ?)",
 		customerID).Scan(&kept, &theirs); err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
@@ -1272,7 +1285,7 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		return nil, 0, ErrChangesExpired
 	}
 
-	rows, err := s.db.QueryContext(ctx, `
+	rows, err := tx.QueryContext(ctx, `
 SELECT seq, table_name, op, key, payload, at
 FROM data_changes
 WHERE customer_id = ? AND seq > ? AND seq <= ?

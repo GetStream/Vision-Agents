@@ -523,6 +523,56 @@ func (s *DataMoveSuite) TestACursorRightBeforeTheOldestChangeKeptIsAnswered() {
 	s.Contains(string(changes[0].Key), next)
 }
 
+// afterQuery runs a function once, after the first query mentioning a phrase.
+type afterQuery struct {
+	mu     sync.Mutex
+	phrase string
+	run    func()
+}
+
+func (*afterQuery) BeforeQuery(ctx context.Context, _ *bun.QueryEvent) context.Context { return ctx }
+
+func (a *afterQuery) AfterQuery(_ context.Context, event *bun.QueryEvent) {
+	a.mu.Lock()
+	run := a.run
+	if run != nil && strings.Contains(event.Query, a.phrase) {
+		a.run = nil
+	} else {
+		run = nil
+	}
+	a.mu.Unlock()
+	if run != nil {
+		run()
+	}
+}
+
+// A prune between the read of what is kept and the read of the rows drops the rows right
+// after a cursor. Read apart, the rows start above them and the follower jumps over them
+// with no refusal; read in one snapshot, it is handed them.
+func (s *DataMoveSuite) TestAPruneBetweenTheTwoReadsOfAFeedDoesNotLoseRowsAfterTheCursor() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	first := s.seedAgentConfig(s.source, "acme", "first after the cursor")
+	second := s.seedAgentConfig(s.source, "acme", "second after the cursor")
+	s.age()
+	young := s.seedAgentConfig(s.source, "acme", "young")
+	s.source.DB().AddQueryHook(&afterQuery{phrase: "MIN(seq) FROM data_changes", run: func() {
+		removed, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
+		s.NoError(err)
+		s.Positive(removed)
+	}})
+
+	changes, next, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 3)
+	s.Contains(string(changes[0].Key), first)
+	s.Contains(string(changes[1].Key), second)
+	s.Contains(string(changes[2].Key), young)
+	s.Equal(changes[2].Seq, next)
+}
+
 // A customer with nothing kept may have had nothing to record: a follower waiting out a quiet
 // spell longer than the retention gets an empty page, as it did before the numbers were read
 // across customers.
