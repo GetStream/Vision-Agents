@@ -7,7 +7,7 @@ it. What each is and what the router needs is in
 
 | Program | Pick it when | Router | What it names |
 | --- | --- | --- | --- |
-| [`decide_and_transcribe`](decide_and_transcribe/main.go) | One model should hear the caller for both the words and the turn | `ROUTER_CHORUS_ASR_URL`, `ROUTER_CHORUS_ASR_MODE=act` | [`agents/ferry-concierge`](agents/ferry-concierge/agent.yaml): `stt: stream/chorus-asr`, its own `llm` and `tts` |
+| [`decide_and_transcribe`](decide_and_transcribe/main.go) | One model should hear the caller for both the words and the turn | `ROUTER_CHORUS_ASR_URL`, `ROUTER_CHORUS_ASR_MODE=act` | [`agents/ferry-concierge`](agents/ferry-concierge/agent.yaml): `stt: stream/chorus-asr`, its own `llm` and `tts`, `end_of_turn: {max_wait_ms: 1100}` |
 | [`decide_only`](decide_only/main.go) | You keep your transcriber, and take the turn-taking from the audio | `ROUTER_CHORUS_ASR_URL`, `ROUTER_CHORUS_ASR_MODE=act` | [`agents/clinic-front-desk`](agents/clinic-front-desk/agent.yaml): `stt: deepgram/flux-general-en`, the server's default `end_of_turn` |
 | [`transcribe_only`](transcribe_only/main.go) | You want the words alone, and your own pipeline decides when to answer | `ROUTER_CHORUS_ASR_URL` (the mode stays `off`) | [`routers/chorus-asr.yaml`](routers/chorus-asr.yaml): `stream/chorus-asr` as the router config's one STT provider |
 
@@ -37,11 +37,9 @@ realtime STT example's clip through it.
 
 ## Choosing how eager turn-taking is
 
-The two agents end their turns by the server's default. An agent chooses otherwise with
-`end_of_turn` on its config (`POST /v1/agents/sync`, `PATCH /v1/agents/configs/{id}`), or a
-server-side `createSession` for one session: one of `max_wait_ms` (the measured point with the
-fewest cut-ins that answers within it at p90), `preset` (one of the server's, such as `safe`
-or `fast`) or `bars` of your own. A wait under the quickest point's p90 is refused, and one
-whose point fails the dictation guard is kept with a warning saying what it does to callers
-reading out numbers. The trade-off each point makes is in
+`end_of_turn` in `agent.yaml` takes one of `max_wait_ms` (the measured point with the fewest
+cut-ins that answers within it at p90), `preset` (one of the server's, such as `safe` or
+`fast`) or `bars` of your own; the ferry agent waits at most 1.1 s. A wait under the quickest
+point's p90 is refused, and one whose point fails the dictation guard is kept with a warning
+saying what it does to callers reading out numbers. The trade-off each point makes is in
 [acceleration/deploy/chorus-asr](../../../acceleration/deploy/chorus-asr/README.md#how-eager-turn-taking-is-end_of_turn).
