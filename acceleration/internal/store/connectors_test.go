@@ -106,7 +106,8 @@ func (s *StoreSuite) seedingANewBuiltInLeavesTheOthersAsTheyWere(id string) {
 // TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored: revision 2 names the
 // tools that need a scope revision 1 never asks for (AI-1394). testdata/metabase-revision-1.yaml
 // is the file a database already holds. Revision 1 stays, unmarked, for the connections pinned
-// to it until they consent again, and every other built-in stays.
+// to it until they consent again, and every other built-in stays. Revision 3 keeps the tools and
+// lists the ones that only read (AI-2777).
 func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored() {
 	one, err := os.ReadFile("testdata/metabase-revision-1.yaml")
 	s.Require().NoError(err)
@@ -135,7 +136,7 @@ func (s *StoreSuite) TestMetabaseRevisionTwoSeedsOverTheRevisionOneTheBuildBefor
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
 
 	now := latest()
-	s.Equal(2, now["metabase"])
+	s.Equal(3, now["metabase"])
 	delete(was, "metabase")
 	delete(now, "metabase")
 	s.Equal(was, now)
