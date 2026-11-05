@@ -341,6 +341,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### `episode_cards` is `off`, `record` or `on`
+
+An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #PR).
+
 ### Usage reads drop the old names of `origin`
 
 `listUsageEvents` and `getSpend` refuse `api_key_id` with a 400 that names `origin`, rather than ignoring it and answering every key's events or spend; `getSpend` refuses `group_by=who:api_key` the same way, naming `who:origin`. Each `UsageEvent` answers `origin` alone, no longer `api_key`. On the usage service, `listUsage` and `readAccountUsage` no longer read `api_key_id` or `api_key` (ignored, as any undeclared parameter) and their events answer `origin` alone. `api_key` in the query is still the caller's credential, and limits and grants keep `api_key_id`. The generated clients lose those parameters and the field; `plugins/stream`'s `usage.spend(api_key=...)` now sends it as `origin` (AI-2851).
