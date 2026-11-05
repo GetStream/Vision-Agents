@@ -410,15 +410,20 @@ func (s *Server) endCallEpisodes(r *http.Request, origin hookOrigin, event callE
 //
 // It is empty when the caller has not been added to the session yet, which is normal: the
 // call is dispatched the moment it starts, and the agent joining it will see the participant
-// whether or not this did. A number written with 00 for the plus is handed over in E.164, as
-// every other number in the API is; one that does not say it is international is handed over
-// as it came, since its country cannot be told.
+// whether or not this did.
 func callerOf(event callEvent) string {
-	number := phoneCallerOf(event).number
-	if person, err := omnichannel.Phone(number); err == nil {
-		return person.Address
+	return phoneCallerOf(event).number
+}
+
+// phoneNumberOf is phone.CallerNumber in E.164, as every other number in the API is, when the
+// carrier wrote it with 00 for the plus. One that does not say it is international is kept as
+// it came, since its country cannot be told.
+func phoneNumberOf(participantID string) (string, bool) {
+	number, ok := phone.CallerNumber(participantID)
+	if person, err := omnichannel.Phone(number); ok && err == nil {
+		return person.Address, true
 	}
-	return number
+	return number, ok
 }
 
 // phoneCaller is the phone in a call, and its user session there.
@@ -433,7 +438,7 @@ func phoneCallerOf(event callEvent) phoneCaller {
 		return phoneCaller{}
 	}
 	for _, participant := range event.Call.Session.Participants {
-		if caller, ok := phone.CallerNumber(participant.User.ID); ok {
+		if caller, ok := phoneNumberOf(participant.User.ID); ok {
 			return phoneCaller{number: caller, UserSessionID: participant.UserSessionID}
 		}
 	}
@@ -464,7 +469,7 @@ func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType
 	participant := event.Participant.UserSessionID
 	var err error
 	if eventType == getstream.EventTypeCallSessionParticipantJoined {
-		number, _ := phone.CallerNumber(event.Participant.User.ID)
+		number, _ := phoneNumberOf(event.Participant.User.ID)
 		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant, number,
 			eventTime(event.CreatedAt))
 	} else {
