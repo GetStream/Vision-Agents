@@ -555,7 +555,7 @@ func TestTranscriberSuite(t *testing.T) {
 }
 
 func (s *TranscriberSuite) SetupTest() {
-	s.wordsAlone = true
+	s.wordsAlone, s.interims = true, false
 	s.transcribing.SetupTest()
 }
 
@@ -713,6 +713,57 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal(int64(1), end.Utterance)
 	s.Len(s.requests(), 2, "a final with no speech since the last words asks for none")
+}
+
+// An interim of the next utterance waits for the last one's final, which a slow server is
+// still writing: asked meanwhile, it would go out first and the final behind it would be
+// dropped as words of an utterance that is over, or arrive after the next utterance's words.
+func (s *TranscriberSuite) TestAnInterimOfTheNextUtteranceWaitsForTheLastFinal() {
+	s.interims = true
+	s.reopen(time.Now)
+	s.say(1000, true)
+	first := next[stt.Transcript](&s.transcribing)
+	s.True(first.Interim)
+	s.Equal(int64(1), first.Utterance)
+
+	gate := make(chan struct{})
+	s.T().Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
+	s.server.mu.Lock()
+	s.server.transcribeGate, s.server.holdOne = gate, true
+	s.server.mu.Unlock()
+	s.say(int(endAfter/time.Millisecond)+40, false)
+	s.Eventually(func() bool {
+		s.server.mu.Lock()
+		defer s.server.mu.Unlock()
+		return s.server.held == 1
+	}, 5*time.Second, time.Millisecond, "the pause's words, which the final is asked for on, are held")
+	s.say(1200, true)
+	s.none()
+	s.Equal(2, s.transcribed(), "no interim of the next utterance while the last one's final is still to come")
+
+	close(gate)
+	written := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeReplacement, written.Mode, "the pause's words")
+	s.False(written.Interim)
+	s.Equal(int64(1), written.Utterance)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance)
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	s.server.mu.Lock()
+	s.server.words = "Is the ferry running tomorrow?"
+	s.server.mu.Unlock()
+	s.say(40, true)
+	again := next[stt.Transcript](&s.transcribing)
+	s.True(again.Interim)
+	s.Equal(int64(2), again.Utterance)
+	s.Equal("Is the ferry running tomorrow?", again.Text)
 }
 
 // Silence after a final writes nothing more: the utterance is over, and the next waits for

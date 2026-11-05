@@ -282,7 +282,11 @@ func (t *Transcriber) ask(r request) {
 	select {
 	case t.requests <- r:
 	default:
-		t.logger.Warn("dropped a request for words, the chorus-asr server is behind", "participant", r.participant.ID)
+		t.logger.Warn("dropped a request for words, the chorus-asr server is behind", "participant", r.participant.ID, "final", r.final)
+		if r.final {
+			// The utterance is over with its final lost, and nothing more of it is to come.
+			t.sent.ended(r.utterance)
+		}
 	}
 }
 
@@ -360,6 +364,10 @@ func (t *Transcriber) transcribe() {
 			last = words
 		}
 		if last == "" || (words == "" && !r.final) {
+			if r.final {
+				// Over with nothing heard, or its final lost: nothing more of it is to come.
+				t.sent.ended(r.utterance)
+			}
 			continue
 		}
 		mode := stt.ModeReplacement

@@ -332,8 +332,9 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	}
 	// The utterance's first words at a pause say what language it is spoken in, which its
 	// interims are held to: a pause's words in another are kept for the final, not shown.
+	// Nor are they shown before the utterance before has had its final.
 	spoken := t.sent.establish(utterance, words.Language)
-	if waiting && t.interims && (words.Language == "" || words.Language == spoken) {
+	if waiting && t.interims && (words.Language == "" || words.Language == spoken) && t.sent.over(utterance-1) {
 		t.send(stt.Transcript{
 			Participant:      c.participant,
 			Mode:             stt.ModeReplacement,

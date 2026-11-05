@@ -42,13 +42,17 @@ var interims = promauto.NewCounterVec(prometheus.CounterOpts{
 type sentWords struct {
 	mu sync.Mutex
 	// utterance is the newest utterance words have gone out of, upTo how much of its audio
-	// the last of them were of, text what they said, stable whether they carried on the
-	// words before them, and done whether they were its final.
+	// the last of them were of, text what they said, and stable whether they carried on the
+	// words before them.
 	utterance int64
 	upTo      time.Duration
 	text      string
 	stable    bool
-	done      bool
+	// final is the newest utterance whose final has gone out, or that ended with nothing
+	// heard or its final lost: words of it, or of one before it, still to come are of an
+	// utterance that is over. It is the utterance's own final that ends it, never newer
+	// words of the next, which an interim of the next utterance is.
+	final int64
 	// language is the language of utterance spokenOf's first words at a pause, as the
 	// server named it (Words.Language).
 	language string
@@ -56,11 +60,11 @@ type sentWords struct {
 }
 
 // send sends transcript unless words of its utterance that supersede it have gone out, and
-// says what became of it: written, or why not. An interim is held to the words shown as
-// well: never in a script they are not in, and once they are stable, carried on by the
-// words after them, only words that carry them on in turn (carriesOn). Words shown once and
-// never carried on may be anything, the agent's echo or the room, and the next words
-// replace them.
+// says what became of it: written, or why not. A final goes whatever went out before it,
+// and ends its utterance. An interim is held to the words shown as well: never in a script
+// they are not in, and once they are stable, carried on by the words after them, only words
+// that carry them on in turn (carriesOn). Words shown once and never carried on may be
+// anything, the agent's echo or the room, and the next words replace them.
 func (t *Transcriber) send(transcript stt.Transcript) string {
 	s := &t.sent
 	s.mu.Lock()
@@ -68,29 +72,35 @@ func (t *Transcriber) send(transcript stt.Transcript) string {
 	upTo := time.Duration(transcript.AudioDurationMs * float64(time.Millisecond))
 	same := transcript.Utterance == s.utterance
 	switch {
-	case transcript.Utterance < s.utterance:
+	case transcript.Utterance <= s.final:
+		// After its final, or of an utterance before one that has ended.
 		return "late"
-	case same && (s.done || (!transcript.Final() && upTo <= s.upTo)):
+	case transcript.Final():
+	case transcript.Utterance < s.utterance || (same && upTo <= s.upTo):
 		return "late"
 	case transcript.Interim && same && scripts(transcript.Text)&^scripts(s.text) != 0:
 		return "unstable"
 	case transcript.Interim && same && s.stable && !carriesOn(s.text, transcript.Text):
 		return "unstable"
 	}
-	s.stable = same && !transcript.Final() && carriesOn(s.text, transcript.Text)
-	s.utterance, s.upTo, s.text, s.done = transcript.Utterance, upTo, transcript.Text, transcript.Final()
+	if transcript.Final() {
+		s.final = transcript.Utterance
+	}
+	if transcript.Utterance >= s.utterance {
+		s.stable = same && !transcript.Final() && carriesOn(s.text, transcript.Text)
+		s.utterance, s.upTo, s.text = transcript.Utterance, upTo, transcript.Text
+	}
 	t.emitter.Send(transcript)
 	return "written"
 }
 
-// ended records that utterance is over with nothing more to send: a check ended it on words
-// that came back empty, so nothing was heard, and words of it asked for alone are dropped.
+// ended records that utterance is over with nothing more to send: it ended on words that
+// came back empty, so nothing was heard, or its final was lost, and words of it still to
+// come are dropped.
 func (s *sentWords) ended(utterance int64) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if utterance >= s.utterance {
-		s.utterance, s.done = utterance, true
-	}
+	s.final = max(s.final, utterance)
 }
 
 // over says utterance's final has gone out, or it ended with nothing heard: words of it
@@ -98,7 +108,7 @@ func (s *sentWords) ended(utterance int64) {
 func (s *sentWords) over(utterance int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return utterance < s.utterance || (utterance == s.utterance && s.done)
+	return utterance <= s.final
 }
 
 // establish keeps language as the one utterance is spoken in, unless its first words have
@@ -190,17 +200,22 @@ func scripts(text string) (set uint) {
 // interim asks for the words so far while the caller talks on, once interimEvery of speech
 // has come since they were last asked for, by a pause's first check or an interim, less
 // often as the utterance grows past Window: one at a time, on a goroutine of its own, so
-// that it holds up no pause check and no final. The words are asked for in the utterance's
-// own language once its first words at a pause have said which (sentWords.establish), and
-// until then in the languages the callers were declared to speak; with none declared they
-// are not asked for yet, as the server would guess the language of a second of speech, and
-// a watcher would see the words switch language and script from one interim to the next. It
-// runs on the session's goroutine, on a frame of speech.
+// that it holds up no pause check and no final. Not before the utterance before has had its
+// final, which a slow server may still be writing: an interim out first would show the next
+// utterance's words before the last one's. The words are asked for in the utterance's own
+// language once its first words at a pause have said which (sentWords.establish), and until
+// then in the languages the callers were declared to speak; with none declared they are not
+// asked for yet, as the server would guess the language of a second of speech, and a watcher
+// would see the words switch language and script from one interim to the next. It runs on
+// the session's goroutine, on a frame of speech.
 func (t *Transcriber) interim(participant stt.Participant, heard int64) {
 	if !t.interims || t.interimOut.Load() {
 		return
 	}
 	utterance := t.utterance + 1
+	if !t.sent.over(utterance - 1) {
+		return
+	}
 	languages, spoken := t.languages, t.sent.spoken(utterance)
 	switch {
 	case spoken != "":

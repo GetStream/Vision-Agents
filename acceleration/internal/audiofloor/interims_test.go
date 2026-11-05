@@ -291,6 +291,26 @@ func (s *InterimSuite) TestAnInterimAnsweredAfterTheFinalIsDiscarded() {
 	s.none()
 }
 
+// A final is never dropped for an interim: words of the next utterance going out first, as a
+// pause's words of it can, leave the last utterance's final to go, and only its own final or
+// nothing heard ends an utterance (over). Interims of an utterance that is over are late.
+func (s *InterimSuite) TestAFinalGoesOutAfterANewerInterim() {
+	t := s.transcriber
+	s.Equal("written", t.send(stt.Transcript{Mode: stt.ModeReplacement, Interim: true, Utterance: 2, Text: "Is the", AudioDurationMs: 800}))
+	s.False(t.sent.over(1), "no final of the first utterance yet")
+	s.Equal("written", t.send(stt.Transcript{Mode: stt.ModeFinal, Utterance: 1, Text: "Two tickets to Bilbao, please.", AudioDurationMs: 3000}))
+	s.True(t.sent.over(1))
+	s.False(t.sent.over(2))
+	s.Equal("late", t.send(stt.Transcript{Mode: stt.ModeReplacement, Interim: true, Utterance: 1, Text: "Two tickets to Bilbao, please, for", AudioDurationMs: 3200}))
+	s.Equal("written", t.send(stt.Transcript{Mode: stt.ModeReplacement, Interim: true, Utterance: 2, Text: "Is the ferry", AudioDurationMs: 1800}))
+	t.sent.ended(2)
+	s.True(t.sent.over(2))
+	s.Equal("late", t.send(stt.Transcript{Mode: stt.ModeReplacement, Interim: true, Utterance: 2, Text: "Is the ferry running", AudioDurationMs: 2800}))
+	for range 3 {
+		next[stt.Transcript](&s.transcribing)
+	}
+}
+
 // An interim holds up nothing: a pause's check is asked at its time, and the turn ends on it,
 // while the interim is still out.
 func (s *InterimSuite) TestAnInterimHoldsUpNoCheck() {
