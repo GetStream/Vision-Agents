@@ -675,19 +675,14 @@ type UsageEventPage struct {
 }
 
 // UsageEvent is a usage event as recorded, with who started the work under its public name,
-// origin. The recorded field api_key is its old name, the same value.
+// origin.
 type UsageEvent struct {
 	usage.Event
 	Origin string `json:"origin" doc:"Who started the work: the public key it was started with, or the origin of work no key started, such as hook:chat."`
-}
-
-// TransformSchema marks the recorded api_key as origin's old name.
-func (*UsageEvent) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	if key := schema.Properties["api_key"]; key != nil {
-		key.Deprecated = true
-		key.Description = "The old name of origin, the same value, still answered for one release."
-	}
-	return schema
+	// APIKey hides the recorded event's api_key, origin's old name: a field of the outer
+	// struct wins over the embedded one of the same name, so it is left out of the answer and
+	// of the schema.
+	APIKey *string `json:"api_key,omitempty" hidden:"true"`
 }
 
 type listUsageInput struct {
@@ -698,29 +693,9 @@ type listUsageInput struct {
 	Meter    string    `query:"meter" doc:"The event's kind of work, such as llm or runtime."`
 	AppID    string    `query:"app_id"`
 	Origin   string    `query:"origin" doc:"Only events started with this public API key, or by this origin of work no key started, such as hook:chat."`
-	APIKeyID string    `query:"api_key_id" deprecated:"true" doc:"An old name of origin, still read for one release. Given with origin or api_key, it must name the same key or origin."`
-	APIKey   string    `query:"api_key" deprecated:"true" doc:"An old name of origin, still read for one release. Given with origin or api_key_id, it must name the same key or origin."`
 	UserID   string    `query:"user_id" doc:"Needs app_id: a user id is only unique within its app."`
 	Team     string    `query:"team" doc:"A team name, 1 to 64 characters of A-Z, a-z, 0-9, _ . -: the events with the category team:<name>. Not with category."`
 	Category string    `query:"category" doc:"Events with this usage category among theirs."`
-}
-
-// origin is the key or origin the list narrows to: origin, or one of its old names api_key_id
-// and api_key. The names given must all name the same one.
-func (input *listUsageInput) origin() (string, error) {
-	var first struct{ name, value string }
-	for _, given := range []struct{ name, value string }{
-		{"origin", input.Origin}, {"api_key_id", input.APIKeyID}, {"api_key", input.APIKey},
-	} {
-		switch {
-		case given.value == "":
-		case first.value == "":
-			first = given
-		case given.value != first.value:
-			return "", invalidRequest(fmt.Sprintf("%s and %s name two different keys or origins: api_key_id and api_key are old names of origin, so give one of them", first.name, given.name))
-		}
-	}
-	return first.value, nil
 }
 
 type listUsageOutput struct {
@@ -731,13 +706,9 @@ func (s *Server) listUsage(ctx context.Context, input *listUsageInput) (*listUsa
 	if err := checkOrganization(input.OrganizationID); err != nil {
 		return nil, err
 	}
-	origin, err := input.origin()
-	if err != nil {
-		return nil, err
-	}
 	filter := ledger.UsageFilter{
 		OrganizationID: input.OrganizationID, From: input.From, To: input.To, Meter: input.Meter,
-		AppID: input.AppID, APIKey: origin, UserID: input.UserID, Category: input.Category, Limit: input.Limit,
+		AppID: input.AppID, APIKey: input.Origin, UserID: input.UserID, Category: input.Category, Limit: input.Limit,
 	}
 	switch {
 	case input.UserID != "" && input.AppID == "":

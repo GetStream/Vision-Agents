@@ -3974,7 +3974,7 @@ export type paths = {
         };
         /**
          * What the calling customer spent, grouped
-         * @description Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat; "who:api_key" is its old name, still read for one release. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+         * @description Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
          *     scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
          *     Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
          *     Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
@@ -10070,11 +10070,6 @@ export type components = {
         readonly UsageEvent: {
             /** @description The agent the work was done for. */
             readonly agent_id?: string;
-            /**
-             * @deprecated
-             * @description The old name of origin, the same value, still answered for one release.
-             */
-            readonly api_key: string;
             /** @description The app the work was for. */
             readonly app_id: string;
             /** @description What chose the price or explains the work, such as country or direction. */
@@ -19877,11 +19872,6 @@ export interface operations {
     readonly getSpend: {
         readonly parameters: {
             readonly query: {
-                /**
-                 * @deprecated
-                 * @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
-                 */
-                readonly api_key_id?: string;
                 /** @description Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several. */
                 readonly category?: readonly string[];
                 /** @description Start of the window, inclusive. */
@@ -20181,11 +20171,6 @@ export interface operations {
     readonly listUsageEvents: {
         readonly parameters: {
             readonly query?: {
-                /**
-                 * @deprecated
-                 * @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
-                 */
-                readonly api_key_id?: string;
                 /** @description With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused. */
                 readonly app_id?: string;
                 /** @description Only work carrying this usage category, as the tokens name it. Not with team. */

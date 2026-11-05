@@ -202,7 +202,7 @@ class TestSpend:
                 start=datetime.datetime(2026, 11, 1), end=start, group_by="who:team"
             )
 
-    async def test_spend_sends_a_key_as_api_key_id(
+    async def test_spend_sends_a_key_as_origin(
         self, spend_api: stream.Client, spend_router: SpendRouter
     ):
         start = datetime.datetime(2026, 11, 1, tzinfo=datetime.timezone.utc)
@@ -212,7 +212,8 @@ class TestSpend:
         )
 
         query = spend_router.query("GET", "/v1/stats/spend")
-        assert query["api_key_id"] == "hook:chat"
+        assert query["origin"] == "hook:chat"
+        assert "api_key_id" not in query, "api_key_id is origin's old name, refused"
         assert "api_key" not in query, "api_key in a query is the proxy's credential"
 
 

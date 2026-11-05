@@ -26,7 +26,6 @@ class UsageEvent:
     cost. What Stream pays for it is Stream's, and is not here.
 
         Attributes:
-            api_key (str): The old name of origin, the same value, still answered for one release.
             app_id (str): The app the work was for.
             billable (bool): Whether cost_micros counts against the organization's credit and limits.
             cost_micros (int): What the organization is charged for the work, in millionths of a dollar.
@@ -59,7 +58,6 @@ class UsageEvent:
                 within the app. Absent when there was none, or the caller was anonymous.
     """
 
-    api_key: str
     app_id: str
     billable: bool
     cost_micros: int
@@ -85,8 +83,6 @@ class UsageEvent:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        api_key = self.api_key
-
         app_id = self.app_id
 
         billable = self.billable
@@ -139,7 +135,6 @@ class UsageEvent:
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "api_key": api_key,
                 "app_id": app_id,
                 "billable": billable,
                 "cost_micros": cost_micros,
@@ -186,8 +181,6 @@ class UsageEvent:
         from ..models.usage_event_tags import UsageEventTags
 
         d = dict(src_dict)
-        api_key = d.pop("api_key")
-
         app_id = d.pop("app_id")
 
         billable = d.pop("billable")
@@ -243,7 +236,6 @@ class UsageEvent:
         user_id = d.pop("user_id", UNSET)
 
         usage_event = cls(
-            api_key=api_key,
             app_id=app_id,
             billable=billable,
             cost_micros=cost_micros,

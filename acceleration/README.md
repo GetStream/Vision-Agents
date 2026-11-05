@@ -572,17 +572,16 @@ token, and answer 404 `billing_not_enabled` with no usage service or for an app 
 organization. A server-side caller's `origin` and `user_id` query parameters are filters there,
 as they are on `getSpend`. `origin` is who started the work: a public API key, or the origin of
 work no key started (`hook:chat`, `phone:inbound`, `job:<name>`); each `UsageEvent` names it as
-`origin`. Its old names, the query's `api_key_id` and the event's `api_key`, are still read and
-answered for one release; given beside `origin`, `api_key_id` must name the same one, else 400.
-A key that is only ever a key is named `api_key_id` in the query on the limits and grants lists
-and usage. `api_key` in the query is the caller's credential, which Stream's proxy requires on
-every call. `user_id` in the query only names who a backend acts for, which no account
-read looks at. `listTeams`
-sums the request rows this month when there is no usage service. Staff read the teams of any
+`origin`. Its old name `api_key_id` is refused with a 400 that names `origin`, so a caller
+still sending it never reads every key's events as one key's. A key that is only ever a key is
+named `api_key_id` in the query on the limits and grants lists and usage. `api_key` in the
+query is the caller's credential, which Stream's proxy requires on every call. `user_id` in the
+query only names who a backend acts for, which no account read looks at. `listTeams` sums the
+request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
 `getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:origin`
-(`who:api_key` is its old name, still read for one release), `who:user`, `who:team` (work with no
+(its old name `who:api_key` is refused), `who:user`, `who:team` (work with no
 team under the empty value) or `who:category` (the team left out, and a request counted once in each
 of its categories). A cost label key holds no `:`, so a label named `app` is still `group_by=app`.
 `scope=organization` counts every app of the caller's organization, and there a user is
@@ -2415,8 +2414,26 @@ target.
 
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \
-  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
+  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once] [--full]
 ```
+
+A run saves on this deployment the cursor of the source's changes it has applied, after the
+export and after each page of changes. A later run for the same app and source, `--once` or
+`--follow`, carries on from that cursor: it applies only what changed at the source since,
+and writes no row of the export over what was done here. Pass `--as <app id>` on a repeat run:
+with it the run does not ask for the export. Without it the run opens the export to learn the
+app, which starts a capture at the source and can answer 503 while a write there is open, then
+reads its first line and drops it. A run that stopped before the export ended saved no cursor,
+and the next run copies the export again.
+
+A run refuses, before it writes anything, an app this deployment already holds that no run
+saved a cursor for, such as one copied before runs saved them. It counts an app as held when a
+table in the shared database holds a row of it; a table kept in the shards does not count. It also refuses a cursor read
+longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION`, and a cursor the source answers
+410 for. The source records an app's changes only for its own retention after a read; the check
+assumes the source's retention is this deployment's, so set the two alike. Writes since may be
+missing. `--full` copies the whole export again, writing the source's rows over the ones here,
+and then saves the cursor.
 
 The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
 `--source-auth server` is for a source router reached directly.
@@ -2429,9 +2446,11 @@ any other edit keeps it.
 
 Until the last `--once`, the source is the truth: each change carried writes the row as the source
 has it, over whatever was done to that row here, a delete included. A config deleted here comes
-back if the source edits it afterwards. The exception is a connector connection the owner
-authorized again here: it keeps its state and credentials, so a rename, a disconnect or a soft
-delete at the source does not reach it. A hard delete at the source still does. So once SDKs
+back if the source edits it afterwards. There are two exceptions. A connector connection the owner
+authorized again here keeps its state and credentials, so a rename, a disconnect or a soft
+delete at the source does not reach it. A phone number on a trunk here, attached or given a line,
+keeps its trunk, route, app, call, bridge and agent config, while its other columns follow the source. A hard delete at the
+source still reaches both. So once SDKs
 point here, stop writing at the source.
 
 Cut over once SDKs point here:

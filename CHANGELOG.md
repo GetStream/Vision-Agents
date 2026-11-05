@@ -28,11 +28,11 @@
 
 ### Usage reads name who started the work `origin`
 
-A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names stay for one release, deprecated: the query's `api_key_id` (and `api_key` on the usage service) is still read and must name the same value when given beside `origin`, else 400; events still carry `api_key` with the same value; `who:api_key` still groups. Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). Both specs mark each old query name `deprecated` on the parameter itself, so the generated JavaScript and Go clients flag it (AI-2812).
+A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names are gone (see Breaking Changes). Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). A query parameter tagged deprecated is marked `deprecated` on the parameter itself in both specs, so the generated JavaScript and Go clients flag it (AI-2812).
 
 ### The operator hears of each organization's first money limit
 
-With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, the router posts to that Slack channel the first time each organization is refused at its credit, at Stream's spend hard limit for the day or the month, or at one of its own spend limits. In `shadow` it posts what would have been refused, and says the work was admitted. Each post names the organization, its tier, the app and the refusal as the caller was answered. It is sent once per organization and kind of limit across every router: the router that writes the organization's `limit_notices` row posts it, and one whose post failed is posted by the next router to sweep. A suspension, a user's own limit and a money check that could not be read are not posted (AI-1918).
+With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, the router posts to that Slack channel the first time each organization is refused at its credit, at Stream's spend hard limit for the day or the month, or at one of its own spend limits. In `shadow` it posts what would have been refused, and says the work was admitted. Each post names the organization, its tier, the app and the refusal as the caller was answered. It is sent once per organization and kind of limit across every router: the router that writes the organization's `limit_notices` row posts it, and one whose post failed is posted by the next router to sweep. A suspension, a user's own limit and a money check that could not be read are not posted (AI-1918). A post from anywhere but production starts with its `SENTRY_ENVIRONMENT` in capitals, such as `[STAGING]`; production's has no tag (AI-1918).
 
 ### The router reads a page into Markdown
 
@@ -365,6 +365,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### Usage reads drop the old names of `origin`
+
+`listUsageEvents` and `getSpend` refuse `api_key_id` with a 400 that names `origin`, rather than ignoring it and answering every key's events or spend; `getSpend` refuses `group_by=who:api_key` the same way, naming `who:origin`. Each `UsageEvent` answers `origin` alone, no longer `api_key`. On the usage service, `listUsage` and `readAccountUsage` no longer read `api_key_id` or `api_key` (ignored, as any undeclared parameter) and their events answer `origin` alone. `api_key` in the query is still the caller's credential, and limits and grants keep `api_key_id`. The generated clients lose those parameters and the field; `plugins/stream`'s `usage.spend(api_key=...)` now sends it as `origin` (AI-2851).
+
 ### A usage or spend read names a key as `api_key_id`
 
 `listUsageEvents`, `getSpend`, `listLimits`, `listLimitGrants` and `getLimitUsage` (and their `manage*` twins) now name a key in the query as `api_key_id`, where they took `api_key`. Stream's proxy requires `api_key=<app key>` on every call and forwards it, so through the proxy every usage list and spend read was narrowed to the caller's own key. Rows that an origin started (`hook:chat`, `phone:inbound`, `job:<name>`) or that another key of the app started could not be read, and `getLimitUsage` refused every subject but a key. `api_key` in the query is now only the credential. A read that still sends a key as `api_key` gets every key's rows back. Request bodies and response fields keep `api_key`. `plugins/stream` keeps its `api_key=` argument and sends it as `api_key_id` (AI-2684).
@@ -410,6 +414,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A repeat `router replicate --once` brings only what changed since the last run
+
+A second `--once` for an app copied before wrote the whole export again, so every row edited on the target since the first copy went back to the source's older copy. A run now saves the source's cursor on the target, and the next run for the app follows the changes from it and writes no row of the export. An app the target already holds with no saved cursor, copied before this release, is refused, and so is one whose last run read the source longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION` (taken to be the source's own); pass `--as` on a repeat run so it opens no export; `--full` copies everything again, as before (AI-2864).
 
 ### A Slack mention is answered when a reply that waited for it can no longer be read
 
