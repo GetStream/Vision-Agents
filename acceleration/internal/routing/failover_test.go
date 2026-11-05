@@ -7,11 +7,13 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/prometheus/client_golang/prometheus"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing/failovertest"
 )
 
-// failoversOf is every failover counted against provider, by "modality model stage reason".
+// failoversOf is every failover counted against provider, by "modality stage reason".
 func (s *RoutingSuite) failoversOf(provider string) map[string]float64 {
 	return failovertest.Of(s.T(), provider)
 }
@@ -82,7 +84,7 @@ func (s *RoutingSuite) TestACandidateThatFailedToStartIsAFailoverOnceTheNextIsSt
 
 	s.Require().NoError(err)
 	s.Equal(second+"/m", config.Name())
-	s.Equal(map[string]float64{"stt m start vendor": 1}, s.failoversOf(first))
+	s.Equal(map[string]float64{"stt start vendor": 1}, s.failoversOf(first))
 	s.Empty(s.failoversOf(second), "it served")
 }
 
@@ -96,7 +98,7 @@ func (s *RoutingSuite) TestACandidateThatStartedAndFailedInUseIsAFailoverAtUse()
 
 	s.Require().NoError(err)
 	s.Equal(second+"/m", config.Name())
-	s.Equal(map[string]float64{"stt m use vendor": 1}, s.failoversOf(first))
+	s.Equal(map[string]float64{"stt use vendor": 1}, s.failoversOf(first))
 }
 
 func (s *RoutingSuite) TestTheLastCandidateFailingIsNoFailover() {
@@ -108,7 +110,7 @@ func (s *RoutingSuite) TestTheLastCandidateFailingIsNoFailover() {
 		failingUse(&asked, map[string]error{first + "/m": errors.New("first: 500"), second + "/m": errors.New("second: 500")}))
 
 	s.Require().Error(err)
-	s.Equal(map[string]float64{"stt m use vendor": 1}, s.failoversOf(first))
+	s.Equal(map[string]float64{"stt use vendor": 1}, s.failoversOf(first))
 	s.Empty(s.failoversOf(second), "nothing was moved to after it")
 }
 
@@ -140,7 +142,7 @@ func (s *RoutingSuite) TestASettingTheCandidateRefusedIsCountedUnderRequestAtThe
 	_, err := router.Walk(s.ctx, Request{CustomerID: "acme", Providers: []string{first + "/m", second + "/m"}},
 		failingUse(&asked, map[string]error{second + "/m": Refused(errors.New("second: too long"))}))
 	s.Require().ErrorIs(err, ErrRequest)
-	s.Equal(map[string]float64{"stt m start request": 1}, s.failoversOf(first))
+	s.Equal(map[string]float64{"stt start request": 1}, s.failoversOf(first))
 	s.Empty(s.failoversOf(second), "the last one asked")
 
 	third, fourth := failoverVendors()
@@ -148,7 +150,7 @@ func (s *RoutingSuite) TestASettingTheCandidateRefusedIsCountedUnderRequestAtThe
 	_, err = router.Walk(s.ctx, Request{CustomerID: "acme", Providers: []string{third + "/m", fourth + "/m"}},
 		failingUse(&asked, map[string]error{third + "/m": Refused(errors.New("third: too long"))}))
 	s.Require().NoError(err)
-	s.Equal(map[string]float64{"stt m use request": 1}, s.failoversOf(third))
+	s.Equal(map[string]float64{"stt use request": 1}, s.failoversOf(third))
 }
 
 func (s *RoutingSuite) TestACandidateOnTheCustomersOwnKeyIsCountedUnderCustomerKey() {
@@ -167,7 +169,7 @@ func (s *RoutingSuite) TestACandidateOnTheCustomersOwnKeyIsCountedUnderCustomerK
 	s.Require().NoError(err)
 	s.Equal(first+"/m", config.Name())
 	s.False(config.BYOK, "the deployment's instance took it")
-	s.Equal(map[string]float64{"stt m start customer_key": 1}, s.failoversOf(first))
+	s.Equal(map[string]float64{"stt start customer_key": 1}, s.failoversOf(first))
 }
 
 func (s *RoutingSuite) TestAWalkTheCallerLeftInUseCountsNoFailover() {
@@ -195,7 +197,7 @@ func (s *RoutingSuite) TestAStartThatFailedOnceTheCallerHadLeftIsCountedUnderCan
 	_, _, err := router.Select(ctx, Request{CustomerID: "acme", Providers: []string{first + "/m", second + "/m"}})
 
 	s.Require().NoError(err, "a stub starts whatever the context, as in TestASelectWhoseContextHasEndedStillStartsTheFirstCandidateAsBefore")
-	s.Equal(map[string]float64{"stt m start cancelled": 1}, s.failoversOf(first))
+	s.Equal(map[string]float64{"stt start cancelled": 1}, s.failoversOf(first))
 }
 
 func (s *RoutingSuite) TestAFailureIsCountedUnderTheFirstReasonThatExplainsIt() {
@@ -205,6 +207,7 @@ func (s *RoutingSuite) TestAFailureIsCountedUnderTheFirstReasonThatExplainsIt() 
 	s.Equal(failoverRequest, failoverReason(own, refused, true), "a setting is refused the same way on any key and in any context")
 	s.Equal(failoverCancelled, failoverReason(own, errors.New("dial: canceled"), true), "a caller who left says nothing of their key")
 	s.Equal(failoverCustomerKey, failoverReason(own, errors.New("401"), false))
+	s.Equal(failoverCustomerKey, failoverReason(ProviderConfig{Provider: CustomProvider, Model: "prod"}, errors.New("401"), false), "a customer's own model is on their endpoint and key")
 	s.Equal(failoverVendor, failoverReason(ProviderConfig{Provider: "quick", Model: "en"}, errors.New("503"), false))
 }
 
@@ -215,17 +218,41 @@ func (s *RoutingSuite) TestAHandoverIsCountedAtSessionByWhatTheProviderSaidAndWh
 	CountHandover(LLM, ProviderConfig{Provider: vendor, Model: "m"}, Refused(errors.New("too long")))
 	CountHandover(STT, ProviderConfig{Provider: own, Model: "m", BYOK: true}, errors.New("401"))
 
-	s.Equal(map[string]float64{"tts m session vendor": 1, "llm m session request": 1}, s.failoversOf(vendor))
-	s.Equal(map[string]float64{"stt m session customer_key": 1}, s.failoversOf(own))
+	s.Equal(map[string]float64{"tts session vendor": 1, "llm session request": 1}, s.failoversOf(vendor))
+	s.Equal(map[string]float64{"stt session customer_key": 1}, s.failoversOf(own))
 }
 
-func (s *RoutingSuite) TestACustomersOwnModelIsCountedUnderCustomNotTheNameTheyChose() {
-	chosen := strings.ToLower(rand.Text())
-	before := s.failoversOf(CustomProvider)["llm custom session vendor"]
+func (s *RoutingSuite) TestACustomersOwnModelFailingIsCountedUnderCustomerKey() {
+	before := s.failoversOf(CustomProvider)
 
-	CountHandover(LLM, ProviderConfig{Provider: CustomProvider, Model: chosen}, errors.New("500"))
+	CountHandover(LLM, ProviderConfig{Provider: CustomProvider, Model: strings.ToLower(rand.Text())}, errors.New("401"))
 
 	counted := s.failoversOf(CustomProvider)
-	s.Equal(before+1, counted["llm custom session vendor"])
-	s.NotContains(counted, "llm "+chosen+" session vendor")
+	s.Equal(before["llm session customer_key"]+1, counted["llm session customer_key"], "their endpoint and their key are theirs to fix")
+	s.Equal(before["llm session vendor"], counted["llm session vendor"])
+}
+
+func (s *RoutingSuite) TestAFailoverIsCountedByProviderNotModel() {
+	vendor, _ := failoverVendors()
+
+	CountHandover(TTS, ProviderConfig{Provider: vendor, Model: "m"}, errors.New("socket closed"))
+
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	var labels []string
+	for _, family := range families {
+		if family.GetName() != "router_failovers_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			for _, label := range metric.GetLabel() {
+				if label.GetName() == "provider" && label.GetValue() == vendor {
+					for _, named := range metric.GetLabel() {
+						labels = append(labels, named.GetName())
+					}
+				}
+			}
+		}
+	}
+	s.ElementsMatch([]string{"modality", "provider", "stage", "reason"}, labels, "a model label grows the series with the catalog")
 }

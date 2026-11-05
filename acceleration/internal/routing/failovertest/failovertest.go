@@ -8,7 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 )
 
-// Of is every failover counted against provider, by "modality model stage reason". The
+// Of is every failover counted against provider, by "modality stage reason". The
 // counter is the process's, so a test names a provider no other test does.
 func Of(t testing.TB, provider string) map[string]float64 {
 	t.Helper()
@@ -27,7 +27,7 @@ func Of(t testing.TB, provider string) map[string]float64 {
 				labels[label.GetName()] = label.GetValue()
 			}
 			if labels["provider"] == provider {
-				counted[labels["modality"]+" "+labels["model"]+" "+labels["stage"]+" "+labels["reason"]] += metric.GetCounter().GetValue()
+				counted[labels["modality"]+" "+labels["stage"]+" "+labels["reason"]] += metric.GetCounter().GetValue()
 			}
 		}
 	}

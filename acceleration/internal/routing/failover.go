@@ -18,8 +18,8 @@ const (
 
 // The reasons a failover is counted under. Only vendor is the vendor failing, which is what
 // an alert reads: request is a setting the provider refused (ErrRequest), the same for every
-// vendor asked; customer_key is work on the customer's own key, whose revoked key or spent
-// account is theirs; cancelled is a candidate that failed once the caller's context had
+// vendor asked; customer_key is work on the customer's own key or their own model (custom,
+// their endpoint and key), whose revoked key or spent account is theirs; cancelled is a candidate that failed once the caller's context had
 // ended.
 const (
 	failoverVendor      = "vendor"
@@ -31,8 +31,8 @@ const (
 var failovers = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "failovers_total",
-	Help:      "Times the router moved work off a provider that failed, by the provider and model that failed, counted once another candidate has been started in its place: a failure nothing replaced (the last candidate, a walk the caller left) is no failover. Stage start is a candidate Walk could not start, use one that started and failed in Walk's use, session one that failed after its session started and another took over (an STT session the vendor refused, a voice lost mid-call, an LLM response that failed). By reason: request for a setting the provider refused, customer_key for work on the customer's own key, cancelled once the caller's context had ended, otherwise vendor",
-}, []string{"modality", "provider", "model", "stage", "reason"})
+	Help:      "Times the router moved work off a provider that failed, by the provider that failed, counted once another candidate has been started in its place: a failure nothing replaced (the last candidate, a walk the caller left) is no failover. Stage start is a candidate Walk could not start, use one that started and failed in Walk's use, session one that failed after its session started and another took over (an STT session the vendor refused, a voice lost mid-call to another provider or key, an LLM response that failed on the session's model or a fallback). By reason: request for a setting the provider refused, customer_key for work on the customer's own key or their own model (custom), cancelled once the caller's context had ended, otherwise vendor",
+}, []string{"modality", "provider", "stage", "reason"})
 
 // failover is a candidate the walk moved past on a failure.
 type failover struct {
@@ -55,18 +55,15 @@ func failoverReason(config ProviderConfig, err error, ended bool) string {
 		return failoverRequest
 	case ended:
 		return failoverCancelled
-	case config.BYOK:
+	case config.BYOK || config.Provider == CustomProvider:
 		return failoverCustomerKey
 	default:
 		return failoverVendor
 	}
 }
 
+// countFailover counts moved by provider alone: a model label would grow the series with
+// the catalog, and router_requests_total already tells a provider's models apart.
 func countFailover(modality Modality, moved failover) {
-	model := moved.config.Model
-	if moved.config.Provider == CustomProvider {
-		// The model is a name each customer chose: unbounded as a label.
-		model = CustomProvider
-	}
-	failovers.WithLabelValues(string(modality), moved.config.Provider, model, moved.stage, moved.reason).Inc()
+	failovers.WithLabelValues(string(modality), moved.config.Provider, moved.stage, moved.reason).Inc()
 }
