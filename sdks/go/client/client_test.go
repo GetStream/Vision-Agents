@@ -1240,11 +1240,12 @@ func TestGettingAUserAnswersTheirLink(t *testing.T) {
 	if user.UserId != "anya" || user.Phone == nil || *user.Phone != "+15550100100" || user.IncludePhoneHistory == nil || !*user.IncludePhoneHistory {
 		t.Errorf("the user came back as %+v", user)
 	}
-	if _, err := backend.client(t).Users().Get(t.Context(), ""); err == nil {
-		t.Error("an empty user id was read")
-	}
 	if asked := backend.requests("GET", "/v1/agents/users/anya"); asked != 1 {
 		t.Errorf("the router was asked %d times", asked)
+	}
+	nobody := newRouter(t)
+	if _, err := nobody.client(t).Users().Get(t.Context(), ""); err == nil || len(nobody.asked) != 0 {
+		t.Errorf("an empty user id was read: %v, %v", err, nobody.asked)
 	}
 }
 
