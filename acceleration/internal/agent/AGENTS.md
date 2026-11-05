@@ -6,3 +6,5 @@ Builds each reply's `harness.Turn` and keeps the conversation. Keep the reply's 
 - `a.history` is append-only: keep what `Remember` returns ahead of the reply. Every caller's words go through `harness.Defang`.
 
 Guarded by `TestEachRequestOpensWithTheOneBeforeItAcrossADeliveredAnswer` (`appendonly_test.go`).
+
+What a silent or one-way call is: `Silence` in `silence.go`. A session counts it in `router_silent_sessions_total` at its end (`internal/session/silence.go`).
