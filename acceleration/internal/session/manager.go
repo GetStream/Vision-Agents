@@ -632,6 +632,15 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}()
 	created := m.newSession(spec, conv, skills, opening, runtime)
+	// A session held ends where it closes (Session.counted); one never held ends here,
+	// unless it was turned away for a router shutting down or for a session already held
+	// under its id (a redelivered hook): neither is a session that failed.
+	turnedAway := false
+	defer func() {
+		if !opened && !turnedAway {
+			endCounter(endCreateFailed).Inc()
+		}
+	}()
 	fail := func() {
 		runtime.Cancel()
 		created.Close()
@@ -958,15 +967,19 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
+		turnedAway = true
 		fail()
 		return nil, stack.Wrap(errors.New("session: the manager is shut down"))
 	}
 	if held, raced := m.sessions[created.id]; raced && !replaces(spec, held) {
 		m.mu.Unlock()
+		turnedAway = true
 		fail()
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
+	sessionsActive.Inc()
+	created.active.Store(true)
 	m.mu.Unlock()
 
 	// Said after the session is here to be found, so a peer that forwards a request on
