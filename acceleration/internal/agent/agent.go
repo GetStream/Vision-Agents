@@ -146,6 +146,9 @@ type Options struct {
 	// AudioFloorMode is Act, or beside it when Shadow. Nil or another mode asks it nothing.
 	AudioFloor     *audiofloor.Client
 	AudioFloorMode audiofloor.Mode
+	// EndOfTurn is the agent's choice of when the audio floor model has a turn with the
+	// floor free ended. The zero value is the server's default.
+	EndOfTurn audiofloor.EndOfTurn
 	// Skills are what the voice model may hand over to the subagent. A written
 	// conversation with no subagent loads them itself, with load_skill.
 	Skills harness.Skills
@@ -707,7 +710,7 @@ func New(options Options) (*Agent, error) {
 	agent := &Agent{
 		options:          options,
 		logger:           logger,
-		audioFloor:       newAudioFloor(options.AudioFloor, options.AudioFloorMode, logger),
+		audioFloor:       newAudioFloor(options.AudioFloor, options.AudioFloorMode, options.EndOfTurn, logger),
 		emitter:          emitter,
 		prompt:           options.Instructions,
 		zone:             zone,

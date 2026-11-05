@@ -277,6 +277,7 @@ type CreateSessionRequest struct {
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
+	EndOfTurn            *EndOfTurn         `json:"end_of_turn,omitempty" doc:"When chorus-asr has the caller's turn ended in this session, over the agent config's, where the router asks it about turns: one of max_wait_ms, preset and bars, and an empty object for the server's default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because how eager the agent is to answer is the app's to decide."`
 	ResumeHistory        *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
 	Navigating           *bool              `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
 	Phone                *SessionPhone      `json:"phone,omitempty"`

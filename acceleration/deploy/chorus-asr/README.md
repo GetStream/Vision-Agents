@@ -1,6 +1,6 @@
 # chorus-asr
 
-One speech model that hears the caller's last 16 s and answers the flow controller's
+chorus-asr is one speech model that hears the caller's last 16 s and answers the flow controller's
 question from the audio: whether the caller has finished, what to do with the words
 (respond, clarify, ignore), what to do about the agent's own speech (stop, shorten,
 continue), and which of the agent's tools is wanted. The same server can write down what
@@ -34,30 +34,117 @@ The server is started with its model and the `policy.json` that ships with that 
 `GET /v1/info` hands the policy to the router, so nothing about a checkpoint is in the
 router. A server without one answers 501, and the router never acts on it.
 
+Three ways to use it, each a short Go program in
+[examples/routers/chorus_asr_example](../../../examples/routers/chorus_asr_example/README.md):
+
+| Use | Router | Agent |
+| --- | --- | --- |
+| [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL`, `ROUTER_CHORUS_ASR_MODE=act` | `stt: stream/chorus-asr`, its own `tts` |
+| [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL`, `ROUTER_CHORUS_ASR_MODE=act` | any `stt` |
+| [Transcription only](../../../examples/routers/chorus_asr_example/transcribe_only/main.go): the words, through the router's STT | `ROUTER_CHORUS_ASR_URL` | a router config naming `stream/chorus-asr` |
+
+## How eager turn-taking is: `end_of_turn`
+
+How long chorus-asr waits before it takes a pause for the end of a turn is the app's to
+choose, per agent, beside its `stt`, `llm` and `tts`. Waiting longer cuts the caller off less
+often, and answers later. `end_of_turn` takes one of three:
+
+```yaml
+# agent.yaml
+end_of_turn:
+  max_wait_ms: 1100   # the measured point with the fewest cut-ins that answers within 1.1 s at p90
+```
+
+```yaml
+end_of_turn:
+  preset: fast        # one of the server's presets, each naming a measured point
+```
+
+```yaml
+end_of_turn:
+  bars:               # your own: the first from 0 ms, each later one further into the pause
+    - {from_ms: 0, bar: 0.97}
+    - {from_ms: 900, bar: 0.25}
+```
+
+Left out, an agent keeps what is stored, and a new one ends its turns by the server's
+`default` preset; `end_of_turn: {}` is the default again. A sync (`POST /v1/agents/sync`, which
+carries agent.yaml's), a config's create, replace and patch, and a server-side
+`createSession`, which chooses for one session over its config's, all take the same field.
+
+The server measured a frontier of points on held-out calls, and these are the points of the
+checkpoint this was written against. Each point's bars apply from `from_ms` into a pause, and
+the turn has ended once as many checks of the pause in a row as its "In a row" have reached
+their bar:
+
+| Point | Chosen by | Bars | In a row | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts cut | Dictation guard |
+| --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- |
+| 500 ms | `preset: fast`, `max_wait_ms` 800 to 1,099 | 0.8 from 0 ms, 0.3 from 500 ms | 1 | 14.5% | 500 ms, 800 ms | 16.0% | 9 of 9 | fails |
+| 1,100 ms | `preset: safe` (default), `max_wait_ms` 1,100 to 1,399 | 0.995 from 0 ms, 0.2 from 1,100 ms | 1 | 4.5% | 1,100 ms, 1,100 ms | 12.6% | 0 of 9 | passes |
+| 1,400 ms | `max_wait_ms` 1,400 and over | 0.99 from 0 ms, 0.2 from 1,100 ms | 2 | 3.1% | 1,400 ms, 1,400 ms | 10.6% | 0 of 9 | passes |
+
+Cut-ins are the share of mid-turn pauses a point ended a turn in. Real dictation pauses are a
+caller's pauses inside a number, an ID or a spelled name; slow counts are counts read one
+number a second, cut when the turn ended before their last number. A point passes the dictation
+guard when it cuts at most 16.2% of the dictation pauses and no slow count. An agent whose
+callers read out numbers or IDs, or spell names, wants a point that passes.
+
+- **How a wait chooses.** `max_wait_ms` takes the point with the fewest cut-ins whose measured
+  p90 wait is within it. That is the measured wait, not the one a point was fitted to: the
+  500 ms point answers in 800 ms at p90, so a wait of 800 ms gets it, and a wait under 800 ms
+  gets nothing measured and is refused.
+- **What is checked, and when.** A write is refused (400), before anything is stored, when
+  `end_of_turn` names more than one of the three, when its bars don't begin at 0 ms and rise,
+  or one isn't strictly between 0 and 1, when the server publishes no preset by that name,
+  or when `max_wait_ms` is shorter than every measured point's p90 wait. A device may not
+  choose a session's (403). A sync that chooses a point failing the dictation guard is stored,
+  and its `warnings` say what the point does to slow counts and dictation pauses. When the
+  router asks chorus-asr nothing about turns (`ROUTER_CHORUS_ASR_MODE` off), or its server
+  can't say what it publishes, the choice is kept and the sync's `warnings` say so.
+- **What it replaces.** A point brings its bars and its checks in a row; bars of your own end a
+  turn at the first check that reaches its bar. When a pause is checked, how much more a turn's
+  first pause asks, and the cap stay the server's, which are fitted to its model. A run of checks
+  is one pause's, one after another: the caller speaking, a check not asked about or not
+  answered, or one under its bar starts it again.
+- **When it is read.** At each check, against the policy of the model the server runs then.
+  A preset or wait that model no longer publishes, as after a new checkpoint, ends the
+  session's turns by its default, and a warning says so once per session.
+- **What you see.** Once a session, and again if it changes, the router logs the point its
+  turns end by: `end_of_turn`, `checks_in_a_row`, `dictation_guard`, and the point's
+  `max_wait_ms`, `cut_ins`, `answer_ms_p90`, `dictation_pauses_cut`, `slow_counts_cut` and
+  `slow_counts`. `router_agent_chorus_asr_compared_total` counts each shadow comparison by its
+  `end_of_turn` label, `preset:NAME`, `max_wait_ms:N` for the point fitted to `N` (whatever
+  wait the agent asked for) or `custom` for its own, and its `dictation_guard` label, `pass`,
+  `fail` or `unmeasured`; the shadow log line carries both, with the bar it was held to and
+  the checks in a row so far.
+
+Bars of your own were not measured: measure them on your own calls before relying on them.
+
 ## Wire protocol
 
-`GET /v1/info`: what the server serves, here with each preset's `measured` left out:
+`GET /v1/info`: what the server serves, here with two of its three points left out:
 
 ```
-{"template":"v3.5","conversation_on_free_floor":false,"end_of_turn":{"first_check_ms":200,"first_pause_logit":0,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}],"measured":{...}},"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"measured":{...}}}},"max_tools":21,"sample_rate":16000,"window_samples":256000}
+{"template":"v3.5","conversation_on_free_floor":false,"end_of_turn":{"first_check_ms":200,"interval_ms":300,"cap_ms":2500,"first_pause_logit":0,"fitted_to":"...","measured_on":"...","default":"safe","presets":{"safe":1100,"fast":500},"frontier":[...,{"max_wait_ms":1100,"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"checks_in_a_row":1,"measured":{"cut_ins":0.0454,"answer_ms_median":1100,"answer_ms_p90":1100,"dictation_pauses_cut":0.1257,"slow_counts_cut":0,"slow_counts":9,"dictation_guard":true}},...]},"max_tools":21,"sample_rate":16000,"window_samples":256000}
 ```
 
-`end_of_turn` is fitted to the server's model. A pause is checked `first_check_ms` into it,
-counted from the voice's last frame, and every `interval_ms` after, when the transcriber is
-chorus-asr too ([Turns from the audio](#turns-from-the-audio)); with another transcriber the
-first check is when the words have held still for the cadence's gap, 350 ms after they last
-changed, and the rest every `interval_ms` after. The turn has ended at the first check where `p_eot`
-reaches the bar of the last of a preset's `bars` to have begun by then, `from_ms` into the
-pause, raised by `first_pause_logit` in log-odds on the turn's first pause. At `cap_ms` of
-pause it has ended whatever the model says. The presets are how eager turn-taking is, and
-the router applies the one the server names as its `default`. These values belong to one
-checkpoint, and another one comes with its own. The presets of the current one, on held-out
-calls:
-
-| Preset | Bars | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts |
-| --- | --- | --- | --- | --- | --- |
-| `safe` (default) | 0.995 from 0 ms, 0.20 from 1,100 ms | 4.5% | 1,100 ms, 1,100 ms | 12.6% | none of 9 cut |
-| `fast` | 0.8 from 0 ms, 0.3 from 500 ms | 14.5% | 500 ms, 800 ms | within the limit | one cut after "One" |
+`end_of_turn` is fitted to the server's model. A pause is checked `first_check_ms` into it
+and every `interval_ms` after: counted from the voice's last frame when chorus-asr is the
+transcriber too ([Turns from the audio](#turns-from-the-audio)), and with another
+transcriber from when the words last changed, the first check once they have held still for
+the cadence's 350 ms gap. At each check the bar is that of the last of the point's
+`bars` to have begun, `from_ms` into the pause, raised by `first_pause_logit` in log-odds on
+the turn's first pause, and the check reaches it when `p_eot` is at least the bar. The turn
+has ended at the first check that reaches its bar with the `checks_in_a_row - 1` checks of
+the pause before it, and at `cap_ms` of pause whatever the model says. `frontier` is the
+measured points, `presets` name points by their `max_wait_ms`, and `default` is the preset
+for an agent that chooses none (see
+[How eager turn-taking is](#how-eager-turn-taking-is-end_of_turn)). A point's `measured` is
+what it did on held-out calls: `cut_ins`, `answer_ms_median`, `answer_ms_p90`,
+`dictation_pauses_cut`, `slow_counts_cut` of `slow_counts`, and `dictation_guard`. A policy
+without a frontier, a point the router can't run as written, or a preset naming no point is
+one the router doesn't act on, as a server without a policy is. These values belong to one
+checkpoint, and another one comes with its own.
 
 `POST /v1/agents`: an agent, by what it was told and its customer tools. The router's own
 tools (ending or transferring the call, pressing keys, the knowledge and web lookups,
@@ -157,15 +244,16 @@ the newest sample, which at a pause of 200 ms or more is quiet.
 ## How a ruling maps onto the flow controller
 
 The server says what, and the router says when. `ruling` is what to do once the turn has
-ended; with the floor free the router has it ended when `p_eot` reaches the bar for this
-check, and otherwise rules wait and puts the same words again after `interval_ms`. The
+ended; with the floor free the router has it ended when `p_eot` has reached the bar at as many
+checks in a row as the agent's point asks, and otherwise rules wait and puts the same words
+again after `interval_ms`. The
 first check of a pause is the first time its words are put (`FlowTurn.Waited` false), the
 turn's first pause is one before any wait, and the pause runs from the voice's last frame
 when the transcriber is chorus-asr too, and otherwise from when the words last changed.
 
 | Model | `Decided.Disposition` | `Decided.Floor` | Also |
 | --- | --- | --- | --- |
-| floor free, `p_eot` under the preset's bar and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
+| floor free, fewer checks in a row at the agent's bar than its point asks, and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
 | `respond`, `clarify`, `ignore` | as said | `continue` | |
 | `cannot`, or a tool | `respond` | `continue` | |
 | over the agent: `stop`, `shorten` | `wait` while unfinished, else `respond` | as said | |
@@ -184,8 +272,9 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   turn the flow controller decided.
 - **Shadow.** One question at a time, none waited for: a slow server costs a call nothing.
   `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
-  and the preset, and a debug log line carries `p_end`, the preset and its bar, the pause,
-  first check and first pause.
+  and the `end_of_turn` and `dictation_guard` it was read by, and a debug log line carries
+  `p_end`, the same two, the bar and the checks in a row, the pause, first check and first
+  pause.
 - **Transcripts.** A server that is busy, restarting or slow costs a request, not the
   session: a 5xx, 404, 408 or 429, a timeout or a reset connection is logged and counted in
   `router_chorus_asr_transcribe_failures_total` by status, `timeout` or `connection`, and

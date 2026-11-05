@@ -123,23 +123,22 @@ const (
 )
 
 // Policy is when a turn with the floor free has ended, fitted to the server's model. A
-// pause is checked FirstCheckMs into it and every IntervalMs after, and the turn has ended
-// at the first check where p_eot reaches the bar of the last of the preset's bars to have
-// begun by then, raised by FirstPauseLogit in log-odds on the turn's first pause. At CapMs
-// of pause it has ended whatever the model says. The presets are how eager turn-taking is,
-// by name, and the server names its Default.
+// pause is checked FirstCheckMs into it and every IntervalMs after. The frontier is the
+// measured points, each bars and how many checks in a row must reach them: the turn has
+// ended at the first check where p_eot reaches the bar of the last of a point's bars to have
+// begun by then, raised by FirstPauseLogit in log-odds on the turn's first pause, with as
+// many checks before it as its ChecksInARow asks. At CapMs of pause it has ended whatever
+// the model says. Presets name points by their MaxWaitMs, and the server names its Default.
+// An agent chooses a point by preset or by the most a caller may wait, or brings bars of its
+// own (EndOfTurn).
 type Policy struct {
-	FirstCheckMs    int               `json:"first_check_ms"`
-	FirstPauseLogit float64           `json:"first_pause_logit"`
-	IntervalMs      int               `json:"interval_ms"`
-	CapMs           int               `json:"cap_ms"`
-	Default         string            `json:"default"`
-	Presets         map[string]Preset `json:"presets"`
-}
-
-// Preset is one choice of bars, each from a time into the pause on.
-type Preset struct {
-	Bars []PolicyBar `json:"bars"`
+	FirstCheckMs    int             `json:"first_check_ms"`
+	FirstPauseLogit float64         `json:"first_pause_logit"`
+	IntervalMs      int             `json:"interval_ms"`
+	CapMs           int             `json:"cap_ms"`
+	Default         string          `json:"default"`
+	Presets         map[string]int  `json:"presets"`
+	Frontier        []FrontierPoint `json:"frontier"`
 }
 
 // PolicyBar is the bar p_eot must reach at a check from FromMs into the pause on.
@@ -148,36 +147,28 @@ type PolicyBar struct {
 	Bar    float64 `json:"bar"`
 }
 
-// Bar is what p_eot must reach, by the default preset, at a check paused into the pause for
-// the turn to have ended.
-func (p Policy) Bar(paused time.Duration, firstPause bool) float64 {
-	var bar float64
-	for _, b := range p.Presets[p.Default].Bars {
-		if paused >= time.Duration(b.FromMs)*time.Millisecond {
-			bar = b.Bar
-		}
-	}
-	if firstPause {
-		bar = 1 / (1 + math.Exp(-(math.Log(bar/(1-bar)) + p.FirstPauseLogit)))
-	}
-	return bar
+// raised is bar raised by logit in log-odds.
+func raised(bar, logit float64) float64 {
+	return 1 / (1 + math.Exp(-(math.Log(bar/(1-bar)) + logit)))
 }
 
-// valid says the policy has its times and a default preset, and that every preset has a
-// bar for every check, each a probability.
+// valid says the policy has its times and a frontier of points a client can run, each with
+// what it was measured at, and that its default and every preset name one of them.
 func (p Policy) valid() bool {
-	if _, ok := p.Presets[p.Default]; !ok || p.FirstCheckMs <= 0 || p.IntervalMs <= 0 || p.CapMs <= 0 {
+	if p.FirstCheckMs <= 0 || p.IntervalMs <= 0 || p.CapMs <= 0 || len(p.Frontier) == 0 {
 		return false
 	}
-	for _, preset := range p.Presets {
-		bars := preset.Bars
-		if len(bars) == 0 || bars[0].FromMs != 0 {
+	if _, ok := p.Presets[p.Default]; !ok {
+		return false
+	}
+	for _, wait := range p.Presets {
+		if _, ok := p.point(wait); !ok {
 			return false
 		}
-		for i, b := range bars {
-			if b.Bar <= 0 || b.Bar >= 1 || (i > 0 && b.FromMs <= bars[i-1].FromMs) {
-				return false
-			}
+	}
+	for _, point := range p.Frontier {
+		if !point.valid() {
+			return false
 		}
 	}
 	return true
@@ -273,18 +264,24 @@ func (c *Client) Policy(ctx context.Context) (Policy, error) {
 		return Policy{}, stack.Wrap(err)
 	}
 	var info struct {
-		EndOfTurn Policy `json:"end_of_turn"`
+		EndOfTurn json.RawMessage `json:"end_of_turn"`
 	}
 	if _, err := c.do(req, &info); err != nil {
 		return Policy{}, err
 	}
-	if !info.EndOfTurn.valid() {
+	// A policy of another shape, from a server older or newer than this router, is one it
+	// can't run.
+	var policy Policy
+	if err := json.Unmarshal(info.EndOfTurn, &policy); err != nil {
+		return Policy{}, stack.Wrap(fmt.Errorf("%w: its end_of_turn is not one this router reads: %w", ErrUnsupported, err))
+	}
+	if !policy.valid() {
 		return Policy{}, stack.Wrap(fmt.Errorf("%w: its end_of_turn is incomplete", ErrUnsupported))
 	}
 	c.mu.Lock()
-	c.policy = &info.EndOfTurn
+	c.policy = &policy
 	c.mu.Unlock()
-	return info.EndOfTurn, nil
+	return policy, nil
 }
 
 // Decide asks about audio under the moment turn. The agent is registered first if it is

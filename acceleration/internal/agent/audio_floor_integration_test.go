@@ -49,8 +49,10 @@ import (
 //	  go test -tags integration -count=1 -timeout 30m -run TestAudioFloorReplay -v ./internal/agent/
 //
 // CHORUS_ASR_REPLAY_LOGS names a directory for each call's debug log (default: a new one in
-// the system's temporary directory). A failed check is what the call did, with its timeline
-// in the test's output.
+// the system's temporary directory), and CHORUS_ASR_END_OF_TURN the end_of_turn every call
+// chooses, as an agent config writes it ({"preset":"fast"}, {"max_wait_ms":1400}; default:
+// the server's). A failed check is what the call did, with its timeline in the test's output.
+// Check 4, a slow count, fails under a point that cuts slow counts, as the server measured.
 const (
 	replayRate  = audiofloor.SampleRate
 	replayFrame = replayRate / 50
@@ -119,6 +121,10 @@ type floorHarness struct {
 	requests *exchanges
 	policy   audiofloor.Policy
 	logDir   string
+	// endOfTurn is what every call chooses (CHORUS_ASR_END_OF_TURN), and ending what it is
+	// under the server's policy.
+	endOfTurn audiofloor.EndOfTurn
+	ending    audiofloor.Ending
 
 	weather, uhhuh, rain, pharmacy, long, reply []int16
 	count                                       [][]int16
@@ -142,12 +148,28 @@ func newFloorHarness(t *testing.T, url string) *floorHarness {
 	}
 	require.NoError(t, os.MkdirAll(h.logDir, 0o755))
 	t.Logf("each call's debug log is in %s", h.logDir)
+	h.endOfTurn = endOfTurnOf(t, os.Getenv("CHORUS_ASR_END_OF_TURN"))
 	h.weather, h.uhhuh, h.rain = fixture(t, "weather"), fixture(t, "uhhuh"), fixture(t, "rain")
 	h.pharmacy, h.long, h.reply = fixture(t, "pharmacy"), fixture(t, "long"), fixture(t, "reply")
 	for _, n := range []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"} {
 		h.count = append(h.count, trimmed(fixture(t, "count-"+n)))
 	}
 	return h
+}
+
+// endOfTurnOf is an end_of_turn as an agent config writes it, such as {"preset":"fast"} or
+// {"max_wait_ms":1400}: empty is the server's default.
+func endOfTurnOf(t *testing.T, raw string) audiofloor.EndOfTurn {
+	if raw == "" {
+		return audiofloor.EndOfTurn{}
+	}
+	var choice struct {
+		MaxWaitMs int                    `json:"max_wait_ms"`
+		Preset    string                 `json:"preset"`
+		Bars      []audiofloor.PolicyBar `json:"bars"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(raw), &choice), "CHORUS_ASR_END_OF_TURN")
+	return audiofloor.EndOfTurn{MaxWaitMs: choice.MaxWaitMs, Preset: choice.Preset, Bars: choice.Bars}
 }
 
 // warm has the server load what it maps and evaluates lazily, so that no check pays for it:
@@ -158,14 +180,17 @@ func (h *floorHarness) warm(t *testing.T) {
 	policy, err := h.client.Policy(ctx)
 	require.NoError(t, err, "GET /v1/info")
 	h.policy = policy
-	t.Logf("the server's end of turn: preset %q, bars %+v, first check %d ms, every %d ms, cap %d ms",
-		policy.Default, policy.Presets[policy.Default].Bars, policy.FirstCheckMs, policy.IntervalMs, policy.CapMs)
+	ending, err := policy.Resolve(h.endOfTurn)
+	require.NoError(t, err, "the end_of_turn the calls choose, %+v", h.endOfTurn)
+	h.ending = ending
+	t.Logf("the calls end turns by %s: bars %+v, %d checks in a row, dictation guard %s; checked %d ms into a pause, every %d ms, cap %d ms",
+		ending.Name, ending.Bars, ending.ChecksInARow, ending.Guard(), policy.FirstCheckMs, policy.IntervalMs, policy.CapMs)
 	stream, err := h.client.NewStream(audiofloor.Window)
 	require.NoError(t, err)
 	require.NoError(t, stream.Write(append(slices.Clone(h.weather), make([]int16, replayRate/2)...)))
 	said, err := h.client.Transcribe(ctx, stream.Last(audiofloor.Window), []string{"en"})
 	require.NoError(t, err)
-	_, err = audiofloor.NewHearer(h.client).Check(ctx, harness.FlowTurn{
+	_, err = audiofloor.NewHearer(h.client, audiofloor.EndOfTurn{}, slog.New(slog.DiscardHandler)).Check(ctx, harness.FlowTurn{
 		Instructions: "A warm-up agent.", Audio: stream.Last(audiofloor.Window), Paused: 500 * time.Millisecond, FirstPause: true,
 	})
 	require.NoError(t, err)
@@ -321,7 +346,7 @@ func (h *floorHarness) slowCount(t *testing.T) {
 	c.settle(2*time.Second, time.Minute)
 	defer c.report()
 
-	t.Logf("preset %q", h.policy.Default)
+	t.Logf("end_of_turn %s, %d checks in a row, slow counts cut %s", h.ending.Name, h.ending.ChecksInARow, slowCounts(h.ending))
 	early := c.decisionsBetween(first.began(), last.ended(), "answer")
 	for _, d := range early {
 		t.Logf("answered at %s, before ten ended: %q (%s)", c.since(d.At), d.E.Text, d.E.Reason)
@@ -330,6 +355,13 @@ func (h *floorHarness) slowCount(t *testing.T) {
 	answered := c.answered(last)
 	assert.True(t, answered.ok, "the count was answered once it was done")
 	h.measured(t, "4", answered)
+}
+
+func slowCounts(ending audiofloor.Ending) string {
+	if ending.Point == nil {
+		return "unmeasured"
+	}
+	return fmt.Sprintf("%d of %d", ending.Point.Measured.SlowCountsCut, ending.Point.Measured.SlowCounts)
 }
 
 // 5. A turn of more than 16 s: one transcript, and it has the turn's beginning.
@@ -523,6 +555,7 @@ func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions st
 		TTSTarget:      "en-low-latency",
 		AudioFloor:     h.client,
 		AudioFloorMode: mode,
+		EndOfTurn:      h.endOfTurn,
 		LanguageHints:  languages,
 		Logger:         logger,
 	})

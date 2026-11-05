@@ -2,6 +2,7 @@ package audiofloor
 
 import (
 	"fmt"
+	"log/slog"
 	"sync"
 	"testing"
 	"time"
@@ -12,13 +13,17 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// asking is an agent that has its transcriber ask about each pause.
+// asking is an agent that has its transcriber ask about each pause, ending turns by hearer's
+// choice of a point.
 type asking struct {
+	hearer   *Hearer
 	mu       sync.Mutex
 	speaking bool
 	asked    int
 	ruled    []Ruled
 }
+
+func (a *asking) Hearer() *Hearer { return a.hearer }
 
 func (a *asking) Moment(stt.Participant) harness.FlowTurn {
 	a.mu.Lock()
@@ -51,7 +56,7 @@ func TestPausesSuite(t *testing.T) {
 
 func (s *PausesSuite) SetupTest() {
 	s.transcribing.SetupTest()
-	s.agent = &asking{}
+	s.agent = &asking{hearer: NewHearer(s.client, EndOfTurn{}, slog.New(slog.DiscardHandler))}
 	s.transcriber.AskOnPauses(s.agent)
 	s.ending(0.999)
 }
@@ -127,6 +132,25 @@ func (s *PausesSuite) TestAPauseTheModelWaitsOnIsAskedAgainForTheDecisionAlone()
 	s.InDelta(500, float64(s.agent.rulings()[0].Paused.Milliseconds()), 40, "the second check, 300 ms after the first")
 	decisions, withWords, transcripts := s.counts()
 	s.Equal([3]int{2, 1, 0}, [3]int{decisions, withWords, transcripts})
+}
+
+// The session's choice of a point reads each check: a point that asks for two checks in a
+// row ends the turn on the second, 300 ms after the first, with the first check's words.
+func (s *PausesSuite) TestTheSessionsPointReadsEachCheck() {
+	s.agent.hearer = NewHearer(s.client, EndOfTurn{MaxWaitMs: 1400}, slog.New(slog.DiscardHandler))
+	s.say(1000, true)
+	s.say(220, false)
+	s.answered()
+	s.none()
+	s.say(320, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	ruled := s.agent.rulings()[0]
+	s.Equal("max_wait_ms:1400", ruled.Ending.Name)
+	s.Equal(2, ruled.InARow)
+	s.InDelta(500, float64(ruled.Paused.Milliseconds()), 40)
+	decisions, withWords, _ := s.counts()
+	s.Equal([2]int{2, 1}, [2]int{decisions, withWords})
 }
 
 // Speech after a pause the model waited on begins another pause, whose first check writes

@@ -1372,6 +1372,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Directory:             directory,
 		Workers:               everyWorker,
 		Streams:               streams,
+		AudioFloor:            floor,
+		AudioFloorMode:        floorMode,
 		Stream:                streamClients,
 		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
 		HookSecret:            settings.Stream.APISecret,

@@ -35,6 +35,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
@@ -159,6 +160,12 @@ type Options struct {
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
+	// AudioFloor is the chorus-asr server the router asks about turns when AudioFloorMode is
+	// shadow or act. An agent's end_of_turn is checked against what it publishes when the
+	// agent is written. Absent, or in another mode, end_of_turn is checked only for what it
+	// says, and a sync warns that it does nothing on this router.
+	AudioFloor     *audiofloor.Client
+	AudioFloorMode audiofloor.Mode
 	// Stream resolves which Stream app, and which credential, the router acts in for each
 	// customer: tokens, guests and the transcripts read back. Absent when the deployment
 	// has no Stream app at all, in which case those paths say so.
@@ -347,6 +354,7 @@ type Server struct {
 	forwarder          *node.Forwarder
 	peerCredentials    [][]byte // what a peer may present: one credential per key of the keyring
 	streams            *Streams
+	audioFloor         *audiofloor.Client // nil unless the router asks it about turns
 	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
 	hookSecret         string
@@ -540,6 +548,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		directory:          options.Directory,
 		workers:            options.Workers,
 		streams:            options.Streams,
+		audioFloor:         asksAboutTurns(options.AudioFloor, options.AudioFloorMode),
 		stream:             options.Stream,
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
 		hookSecret:         options.HookSecret,

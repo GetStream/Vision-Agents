@@ -1,0 +1,7 @@
+# chorus-asr hears the caller, writes what they said and decides when they have finished;
+# the agent's own model answers and its own voice speaks.
+name: ferry-concierge
+mode: voice
+stt: stream/chorus-asr
+llm: gemini/gemini-3.8-flash
+tts: cartesia/sonic-preview

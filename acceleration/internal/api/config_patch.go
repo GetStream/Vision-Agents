@@ -45,6 +45,7 @@ type AgentConfigPatch struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	EndOfTurn          *EndOfTurn               `json:"end_of_turn,omitempty" doc:"Replaces the choice whole. An empty object is the server's default."`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -208,7 +209,11 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
 	config.Calls = callsOr(config.Calls, patch.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, patch.ResumeHistory)
+	config.EndOfTurn = endOfTurnOr(config.EndOfTurn, patch.EndOfTurn)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if _, message, ok := s.endOfTurnComplaint(ctx, config.EndOfTurn, original.EndOfTurn); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {

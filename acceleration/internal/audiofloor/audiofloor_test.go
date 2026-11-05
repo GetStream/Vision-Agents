@@ -34,7 +34,19 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-const testInfo = `{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}}}}`
+// testInfo is /v1/info as a server publishes it: the measured frontier of a checkpoint, and
+// presets naming its points.
+const testInfo = `{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,` +
+	`"default":"safe","presets":{"safe":1100,"fast":500},"frontier":[` + testFrontier + `]}}`
+
+// testFrontier is that checkpoint's frontier: its 500 ms point fails the dictation guard, and
+// its 1400 ms point ends a turn on two checks in a row.
+const testFrontier = `{"max_wait_ms":500,"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}],"checks_in_a_row":1,` +
+	`"measured":{"cut_ins":0.1451,"answer_ms_median":500,"answer_ms_p90":800,"dictation_pauses_cut":0.16,"slow_counts_cut":9,"slow_counts":9,"dictation_guard":false}},` +
+	`{"max_wait_ms":1100,"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"checks_in_a_row":1,` +
+	`"measured":{"cut_ins":0.0454,"answer_ms_median":1100,"answer_ms_p90":1100,"dictation_pauses_cut":0.1257,"slow_counts_cut":0,"slow_counts":9,"dictation_guard":true}},` +
+	`{"max_wait_ms":1400,"bars":[{"from_ms":0,"bar":0.99},{"from_ms":1100,"bar":0.2}],"checks_in_a_row":2,` +
+	`"measured":{"cut_ins":0.0307,"answer_ms_median":1400,"answer_ms_p90":1400,"dictation_pauses_cut":0.1057,"slow_counts_cut":0,"slow_counts":9,"dictation_guard":true}}`
 
 // fakeServer answers as a chorus-asr server does, with what a test sets.
 type fakeServer struct {
@@ -235,11 +247,18 @@ func (s *ClientSuite) TestAServerWithoutAPolicyIsUnsupported() {
 	_, err := s.client.Decide(context.Background(), booking, Turn{}, some)
 	s.ErrorIs(err, ErrUnsupported)
 	const times = `"first_check_ms":200,"interval_ms":300,"cap_ms":2500`
+	point := func(bars string) string {
+		return `{"max_wait_ms":1100,"bars":` + bars + `,"checks_in_a_row":1,"measured":{"cut_ins":0.05,"answer_ms_median":1100,"answer_ms_p90":1100}}`
+	}
 	for _, info := range []string{
 		`{"end_of_turn":{}}`,
-		`{"end_of_turn":{` + times + `,"default":"b","presets":{"a":{"bars":[{"from_ms":0,"bar":0.9}]}}}}`,
-		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":{"bars":[{"from_ms":500,"bar":0.9}]}}}}`,
-		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":{"bars":[{"from_ms":0,"bar":0.9}]},"b":{"bars":[{"from_ms":0,"bar":0.9},{"from_ms":0,"bar":0.2}]}}}}`,
+		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":1100}}}`,
+		`{"end_of_turn":{` + times + `,"default":"b","presets":{"a":1100},"frontier":[` + point(`[{"from_ms":0,"bar":0.9}]`) + `]}}`,
+		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":1100,"b":900},"frontier":[` + point(`[{"from_ms":0,"bar":0.9}]`) + `]}}`,
+		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":1100},"frontier":[` + point(`[{"from_ms":500,"bar":0.9}]`) + `]}}`,
+		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":1100},"frontier":[` + point(`[{"from_ms":0,"bar":0.9},{"from_ms":0,"bar":0.2}]`) + `]}}`,
+		// Presets of bars, as servers published them before the frontier.
+		`{"end_of_turn":{` + times + `,"default":"a","presets":{"a":{"bars":[{"from_ms":0,"bar":0.9}]}}}}`,
 		`{"end_of_turn":{` + times + `,"first_bar":0.7,"later_bar":0.2}}`,
 	} {
 		s.server.info = info
@@ -286,7 +305,7 @@ func (s *ClientSuite) TestNoAudioIsNotAsked() {
 	s.Zero(s.server.requests())
 }
 
-// The bar is the default preset's last to have begun by the check's time into the pause,
+// The bar is the last of the bars to have begun by the check's time into the pause,
 // raised on the turn's first pause.
 func TestTheBarIsTheOneBegunByTheCheck(t *testing.T) {
 	var info struct {
@@ -299,10 +318,10 @@ func TestTheBarIsTheOneBegunByTheCheck(t *testing.T) {
 		want   float64
 	}{{200 * time.Millisecond, 0.995}, {800 * time.Millisecond, 0.995}, {1099 * time.Millisecond, 0.995},
 		{1100 * time.Millisecond, 0.20}, {2 * time.Second, 0.20}} {
-		require.InDelta(t, c.want, p.Bar(c.paused, false), 1e-9, "%v into the pause", c.paused)
+		require.InDelta(t, c.want, p.Bar(p.DefaultEnding().Bars, c.paused, false), 1e-9, "%v into the pause", c.paused)
 	}
-	require.InDelta(t, 0.292, p.Bar(1100*time.Millisecond, true), 1e-3)
-	require.InDelta(t, 0.997, p.Bar(800*time.Millisecond, true), 1e-3)
+	require.InDelta(t, 0.292, p.Bar(p.DefaultEnding().Bars, 1100*time.Millisecond, true), 1e-3)
+	require.InDelta(t, 0.997, p.Bar(p.DefaultEnding().Bars, 800*time.Millisecond, true), 1e-3)
 }
 
 // HearerSuite reads the model's answers as the flow controller's rulings.
@@ -317,7 +336,7 @@ func TestHearerSuite(t *testing.T) {
 
 func (s *HearerSuite) SetupTest() {
 	s.serverSuite.SetupTest()
-	s.hearer = NewHearer(s.client)
+	s.hearer = NewHearer(s.client, EndOfTurn{}, slog.New(slog.DiscardHandler))
 }
 
 func (s *HearerSuite) answering(pEOT float64, ruling string) {
@@ -332,7 +351,7 @@ func (s *HearerSuite) TestATurnHasEndedWhenPEndReachesTheBar() {
 	s.Require().NoError(err)
 	s.False(first.Ended)
 	s.InDelta(0.995, first.Bar, 1e-9)
-	s.Equal("safe", first.Preset)
+	s.Equal("preset:safe", first.Ending.Name)
 	s.Equal(harness.Decided{Disposition: harness.Wait, Floor: harness.Continue, Again: 300 * time.Millisecond}, first.Ruling)
 
 	later, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Waited: true, Paused: 1100 * time.Millisecond})

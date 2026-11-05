@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
@@ -41,6 +42,17 @@ func (s *SpecSuite) TestAConfigsReviewInstructionsAreWhatItsCallsAreReviewedBy()
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", ReviewInstructions: "Score the upsell."})
 
 	s.Equal("Score the upsell.", spec.ReviewInstructions)
+}
+
+func (s *SpecSuite) TestAConfigsEndOfTurnIsWhatItsSessionsEndTurnsBy() {
+	bars := []store.EndOfTurnBar{{FromMs: 0, Bar: 0.97}, {FromMs: 900, Bar: 0.25}}
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", EndOfTurn: store.EndOfTurn{Bars: bars}})
+
+	s.Equal(store.EndOfTurn{Bars: bars}, spec.EndOfTurn)
+	s.Equal(audiofloor.EndOfTurn{Bars: []audiofloor.PolicyBar{{FromMs: 0, Bar: 0.97}, {FromMs: 900, Bar: 0.25}}}, EndOfTurnOf(spec.EndOfTurn))
+	s.Equal(audiofloor.EndOfTurn{MaxWaitMs: 900}, EndOfTurnOf(store.EndOfTurn{MaxWaitMs: 900}))
+	s.Equal(audiofloor.EndOfTurn{Preset: "fast"}, EndOfTurnOf(store.EndOfTurn{Preset: "fast"}))
+	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(FromConfig(store.AgentConfig{CustomerID: "acme"}).EndOfTurn), "none chosen is the server's default")
 }
 
 func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {

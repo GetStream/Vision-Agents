@@ -9,8 +9,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// checkGrace is how long past endAfter a pause's checks have to end it before the pause ends
-// as it would with no agent: on its words alone.
+// checkGrace is how long past the policy's cap a pause's checks have to end it before the
+// pause ends as it would with no agent: on its words alone.
 const checkGrace = time.Second
 
 // Asker is an agent whose transcriber asks the chorus-asr server about each of the caller's
@@ -27,6 +27,9 @@ type Asker interface {
 	// Ruled is a check's ruling on an utterance that ended, with its words, handed over just
 	// before they go out as the utterance's final.
 	Ruled(participant stt.Participant, ruled Ruled)
+	// Hearer is the agent's, whose choice of how to end a turn (EndOfTurn) reads each check:
+	// the point's bars, and how many checks in a row must reach them.
+	Hearer() *Hearer
 }
 
 // Ruled is what a pause check ruled on an utterance that ended, and the words it was about.
@@ -87,35 +90,38 @@ func (t *Transcriber) AskOnPauses(agent Asker) {
 	t.asker = agent
 }
 
-// checkTimes are the policy's: the first check into a pause, and the interval after it.
-// Until the server has said, they are what the transcriber writes at.
-func (t *Transcriber) checkTimes() (time.Duration, time.Duration) {
+// checkTimes are the server's policy's: the first check into a pause, the interval after it,
+// and the pause that ends a turn whatever the model says. Until the server has said, they are
+// what the transcriber writes and ends utterances at.
+func (t *Transcriber) checkTimes() (first, every, cap time.Duration) {
 	t.client.mu.Lock()
 	defer t.client.mu.Unlock()
 	if t.client.policy == nil {
-		return writeAfter, 300 * time.Millisecond
+		return writeAfter, 300 * time.Millisecond, endAfter
 	}
-	return time.Duration(t.client.policy.FirstCheckMs) * time.Millisecond, t.client.policy.Interval()
+	p := t.client.policy
+	return time.Duration(p.FirstCheckMs) * time.Millisecond, p.Interval(), p.Cap()
 }
 
 // checksPause asks about the pause going on, when an agent has the transcriber do so: at the
 // policy's first check into it, then every interval, each once the one before has answered.
 // It says whether the pause is the checks' to end, which it is until one fails, or none has
-// ended it by endAfter and checkGrace, or the utterance has run to maxUtterance. A check that
-// ended it is waited on for its words, which a long utterance takes seconds to write.
+// ended it by the policy's cap and checkGrace, or the utterance has run to maxUtterance. A
+// check that ended it is waited on for its words, which a long utterance takes seconds to
+// write.
 func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool {
+	first, every, cap := t.checkTimes()
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	p := &t.pause
 	switch {
 	case t.asker == nil || p.failed || heard-t.start >= int64(maxUtterance/frame):
 		return false
-	case t.quiet >= endAfter+checkGrace && p.ended == nil:
+	case t.quiet >= cap+checkGrace && p.ended == nil:
 		t.logger.Warn("no check of a pause ended it, its words are asked for alone", "participant", participant.ID)
 		p.failed = true
 		return false
 	}
-	first, every := t.checkTimes()
 	if p.inFlight || p.ended != nil || t.quiet < first || (p.checks > 0 && t.quiet < p.asked+every) {
 		return true
 	}
@@ -169,6 +175,8 @@ func (t *Transcriber) newUtteranceLocked() {
 func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	defer t.running.Done()
 	turn := asker.Moment(c.participant)
+	// The checks in a row a point asks for are counted by participant, from each pause's first.
+	turn.Participant = c.participant.ID
 	turn.Audio, turn.Paused, turn.FirstPause, turn.Waited = c.audio, c.paused, c.firstPause, !c.first
 	ctx, cancel := context.WithTimeout(t.ctx, harness.HearDeadline(turn))
 	defer cancel()
@@ -188,7 +196,7 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		if err != nil {
 			return Check{}, err
 		}
-		return rule(policy, turn, answer)
+		return asker.Hearer().rule(policy, turn, answer)
 	}()
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {

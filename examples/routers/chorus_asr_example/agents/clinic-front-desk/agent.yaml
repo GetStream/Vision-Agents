@@ -1,0 +1,7 @@
+# Another transcriber writes the words; chorus-asr hears the caller's audio and decides when
+# they have finished, by the server's default end_of_turn, as nothing here chooses one.
+name: clinic-front-desk
+mode: voice
+stt: deepgram/flux-general-en
+llm: gemini/gemini-3.8-flash
+tts: cartesia/sonic-preview
