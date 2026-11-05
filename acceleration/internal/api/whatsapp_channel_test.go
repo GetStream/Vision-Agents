@@ -426,6 +426,67 @@ func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadFailedIsWrittenWithItOnTheNe
 	s.Equal([]llm.ImagePart{{Data: s.photoBytes(photo), MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
 }
 
+// A retried row writes the photo its first attempt uploaded (AI-2757): an attempt whose write
+// Stream Chat failed after the upload leaves the row the upload, so the next attempt neither
+// looks the photo up nor downloads or uploads it again, and the photo the person's message is
+// written and answered with is that one upload.
+func (s *WhatsAppChannelSuite) TestARetriedPhotoIsWrittenWithTheUploadOfItsFirstAttempt() {
+	s.answersWith("vision/vision-model")
+	person, asked, uploaded := s.digits(), len(s.vision.replies()), len(s.chat.Uploads())
+	photo := s.photo(person, "Is this tooth chipped?")
+	s.chat.Fail(http.MethodPost, "/message")
+	defer s.chat.Heal(http.MethodPost, "/message")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, photo)))
+
+	s.failedOnce()
+	s.chat.Heal(http.MethodPost, "/message")
+	channel := s.threadChannel(person)
+	stored := s.written(channel, 1)[0]
+	s.Equal("Is this tooth chipped?", stored["text"])
+	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored))
+	s.Equal("Two roses.", s.took(1)[0].text)
+	s.Equal([]llm.ImagePart{{Data: s.photoBytes(photo), MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
+	s.settled()
+	uploads := s.chat.Uploads()[uploaded:]
+	s.Require().Len(uploads, 1, "the retry uploaded the photo again")
+	s.Equal("photo-1.jpeg", uploads[0].Name)
+	id := photo["image"].(map[string]any)["id"].(string)
+	s.Equal([]metaGet{
+		{host: "graph.facebook.com", path: "/v25.0/" + id, authorized: true},
+		{host: "lookaside.fbsbx.com", path: "/whatsapp_business/attachments/", authorized: true},
+	}, s.meta.got(), "the retry downloaded the photo again")
+}
+
+// A photo alone whose message an earlier attempt wrote, and whose answer that attempt lost (its
+// turn's claim failed), is answered with its upload when the next attempt could no longer
+// download it, as after Meta's URL expired: it is not taken as a message left with nothing,
+// done and never answered (AI-2757).
+func (s *WhatsAppChannelSuite) TestAPhotoAloneWhoseAnswerWasLostIsAnsweredWhenItCanNoLongerBeDownloaded() {
+	s.answersWith("vision/vision-model")
+	person, asked, uploaded := s.digits(), len(s.vision.replies()), len(s.chat.Uploads())
+	photo := s.photo(person, "")
+	sent := s.photoBytes(photo)
+	drop := s.trigger("whatsapp_suite_failing_turn_claim", "channel_thread_messages", "INSERT",
+		"NEW.kind = '"+store.ClaimTurn+"' AND NEW.channel_id IN (SELECT channel_id FROM channel_threads WHERE customer_id = '"+s.customerID()+"')",
+		"RAISE EXCEPTION 'the router stopped';")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, photo)))
+
+	s.failedOnce()
+	channel := s.threadChannel(person)
+	s.Len(s.written(channel, 1), 1, "the first attempt wrote the message")
+	s.meta.serve(photo["image"].(map[string]any)["id"].(string), metaMedia{lookup: http.StatusNotFound})
+	drop()
+
+	s.Equal("Two roses.", s.took(1)[0].text)
+	s.Equal([]llm.ImagePart{{Data: sent, MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
+	s.settled()
+	s.Equal(1, s.inboundRows(store.ChannelInboundDone))
+	s.Len(s.chat.Uploads()[uploaded:], 1)
+	s.Len(s.meta.got(), 2, "the retry looked the photo up again")
+}
+
 // A photo is left out only on the row's last attempt: one Stream Chat fails to store on every
 // attempt but it (the suite's three retries, so the fourth try is the last) is still written
 // with the message when Stream Chat heals before that try.
