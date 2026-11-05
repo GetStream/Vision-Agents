@@ -347,3 +347,26 @@ func (s *ReplicateRepeatSuite) TestACursorTheSourceNoLongerKeepsTheChangesOfName
 
 	s.Equal("before the copy", s.label(1))
 }
+
+func (s *ReplicateRepeatSuite) TestARunThatBringsNoChangesStillSavesWhenItReadTheSource() {
+	s.recorded(1)
+	s.Require().NoError(s.once("acme", false))
+	_, err := s.target.DB().ExecContext(s.ctx, "UPDATE data_move_cursors SET read_at = now() - interval '50 minutes'")
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.once("acme", false))
+
+	s.WithinDuration(time.Now(), s.saved().ReadAt, time.Minute, "the read kept the source recording, so the next run is not refused")
+}
+
+func (s *ReplicateRepeatSuite) TestAnOrganizationsPolicyUnderTheAppsIDIsNotTheAppsData() {
+	// The export carries only app policies, so an organization's under the same id is not a copy.
+	_, err := s.target.DB().ExecContext(s.ctx,
+		"INSERT INTO policies (scope, scope_id, updated_at) VALUES ('organization', 'acme', now())")
+	s.Require().NoError(err)
+	s.recorded(1)
+
+	s.Require().NoError(s.once("acme", false))
+
+	s.Equal("", s.label(1))
+}

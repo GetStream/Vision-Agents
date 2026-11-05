@@ -2402,8 +2402,22 @@ target.
 
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \
-  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
+  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once] [--full]
 ```
+
+A run saves on this deployment the cursor of the source's changes it has applied, after the
+export and after each page of changes. A later run for the same app and source, `--once` or
+`--follow`, carries on from that cursor: it applies only what changed at the source since,
+and writes no row of the export over what was done here. With `--as` it does not ask for the
+export; without it, it reads only the export's first line, which names the app. A run that
+stopped before the export ended saved no cursor, and the next run copies the export again.
+
+A run refuses, before it writes anything, an app this deployment already holds that no run
+saved a cursor for, such as one copied before runs saved them. It also refuses a cursor read
+longer ago than `ROUTER_DATA_MOVE_RETENTION`, and a cursor the source answers 410 for: the
+source records an app's changes only for that long after a read, so writes since may be
+missing. `--full` copies the whole export again, writing the source's rows over the ones here,
+and then saves the cursor.
 
 The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
 `--source-auth server` is for a source router reached directly.
@@ -2416,9 +2430,11 @@ any other edit keeps it.
 
 Until the last `--once`, the source is the truth: each change carried writes the row as the source
 has it, over whatever was done to that row here, a delete included. A config deleted here comes
-back if the source edits it afterwards. The exception is a connector connection the owner
-authorized again here: it keeps its state and credentials, so a rename, a disconnect or a soft
-delete at the source does not reach it. A hard delete at the source still does. So once SDKs
+back if the source edits it afterwards. There are two exceptions. A connector connection the owner
+authorized again here keeps its state and credentials, so a rename, a disconnect or a soft
+delete at the source does not reach it. A phone number on a trunk here, attached or given a line,
+keeps its trunk, route, app, call, bridge and agent config, while its other columns follow the source. A hard delete at the
+source still reaches both. So once SDKs
 point here, stop writing at the source.
 
 Cut over once SDKs point here:
