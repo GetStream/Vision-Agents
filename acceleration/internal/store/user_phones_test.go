@@ -543,3 +543,96 @@ func (s *StoreSuite) rows(query string) int {
 	s.Require().NoError(s.store.db.QueryRowContext(s.ctx, query).Scan(&n))
 	return n
 }
+
+// linkedAt is when the tests below date a link: a fixed time, so no test depends on the clock.
+var linkedAt = time.Date(2026, 11, 2, 12, 0, 0, 0, time.UTC)
+
+// smsAt opens an SMS episode on a number's row that started at the time given.
+func (s *StoreSuite) smsAt(row *ContactMapEntry, at time.Time) string {
+	episode := &Episode{CustomerID: row.CustomerID, ContactID: row.ID, Source: EpisodeSMS, ThreadChannel: "agent:sms-" + newID(), StartedAt: at}
+	_, err := s.store.OpenEpisode(s.ctx, episode)
+	s.Require().NoError(err)
+	return episode.ID
+}
+
+// linkDated links a user to a number as LinkUserPhone does, dated at linkedAt.
+func (s *StoreSuite) linkDated(link *UserPhone) {
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, link))
+	_, err := s.store.db.ExecContext(s.ctx, "UPDATE user_phones SET updated_at = ? WHERE customer_id = ? AND user_id = ?",
+		linkedAt, link.CustomerID, link.UserID)
+	s.Require().NoError(err)
+}
+
+// readFor are the episodes a session of a row's person reads: those of its omni-channel, under
+// its agent config.
+func (s *StoreSuite) readFor(row *ContactMapEntry) []string {
+	cards, err := s.store.EpisodeCards(s.ctx, CardsQuery{CustomerID: row.CustomerID, AgentConfigID: row.AgentConfigID,
+		ConversationID: s.omniOf(row), Limit: 100})
+	s.Require().NoError(err)
+	return ids(cards)
+}
+
+// Catches a read that hands a linked user what the number said before the link, under a config
+// whose cards were off at the link (no row set aside): a number's row pinned to the
+// deployment's own app by its id, or by NULL, while the link names it 0. And one that hides
+// too much: what the number said at the link and after it, and the user's own chat.
+func (s *StoreSuite) TestCardsLeaveOutWhatALinkedNumberSaidBeforeTheLink() {
+	s.agentConfigs()
+	s.store.SetStreamPins(StreamPins{Deployment: func() int64 { return 4242 }})
+	s.T().Cleanup(func() { s.store.SetStreamPins(StreamPins{}) })
+	chat := s.made(streamUser("anya", "agent:omni-chat"))
+	own := s.chatEpisode(chat)
+	sms := s.made(contact("+15550100", "agent:omni-sms"))
+	s.smsAt(sms, linkedAt.Add(-time.Hour))
+	unpinned := contact("+15550100", "agent:omni-unpinned")
+	unpinned.AgentConfigID, unpinned.StreamAppPK = "agent-two", 0
+	s.made(unpinned)
+	s.smsAt(unpinned, linkedAt.Add(-time.Minute))
+
+	s.linkDated(&UserPhone{CustomerID: "acme-app", UserID: "anya", Phone: "+15550100"})
+
+	s.Require().Equal(s.omniOf(chat), s.omniOf(sms), "joined, as no config had the cards on")
+	at, after := s.smsAt(sms, linkedAt), s.smsAt(sms, linkedAt.Add(time.Hour))
+	s.ElementsMatch([]string{own, at, after}, s.readFor(chat))
+	afterUnpinned := s.smsAt(unpinned, linkedAt.Add(time.Minute))
+	s.Equal([]string{afterUnpinned}, s.readFor(unpinned), "a row pinned NULL is the deployment's own app's")
+}
+
+// The control: the read leaves out nothing of a number that is not linked, or that is linked in
+// another Stream app or by another customer, as the probe of this test at 668d15d5c (before
+// this change) answered.
+func (s *StoreSuite) TestCardsKeepWhatANumberLinkedElsewhereSaid() {
+	s.agentConfigs()
+	alone := s.made(contact("+15550100", "agent:omni-alone"))
+	elsewhere := s.made(contact("+15550177", "agent:omni-elsewhere"))
+	other := s.made(contact("+15550188", "agent:omni-other"))
+	var episodes []string
+	for _, row := range []*ContactMapEntry{alone, elsewhere, other} {
+		episodes = append(episodes, s.smsAt(row, linkedAt.Add(-time.Hour)))
+	}
+
+	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 7, UserID: "anya", Phone: "+15550177"})
+	s.linkDated(&UserPhone{CustomerID: "another-customer", StreamAppPK: 4242, UserID: "anya", Phone: "+15550188"})
+
+	s.Equal([]string{episodes[0]}, s.readFor(alone))
+	s.Equal([]string{episodes[1]}, s.readFor(elsewhere))
+	s.Equal([]string{episodes[2]}, s.readFor(other))
+}
+
+// Catches a link time the same number moves: a backend that sends the user's number again
+// would hide what the number said since the link. A new number is a new link, from then on.
+func (s *StoreSuite) TestTheSameNumberAgainKeepsTheTimeOfTheLink() {
+	s.agentConfigs()
+	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550100"})
+	linked := func() time.Time {
+		var at time.Time
+		s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT updated_at FROM user_phones WHERE user_id = 'anya'").Scan(&at))
+		return at.UTC()
+	}
+
+	s.Require().NoError(s.link("anya", "+15550100"))
+
+	s.Equal(linkedAt, linked(), "the same number again")
+	s.Require().NoError(s.link("anya", "+15550199"))
+	s.True(linked().After(linkedAt), "a new number")
+}
