@@ -881,7 +881,7 @@ func (b *Bridge) openThread(ctx context.Context, thread store.ChannelThread, con
 // only, as one that cannot be downloaded is, so the message's text is still written.
 func (b *Bridge) upload(ctx context.Context, target streamThread, thread store.ChannelThread, media []core.Media, files []fetched, last bool, log *slog.Logger) ([]core.Media, error) {
 	media = slices.Clone(media)
-	for _, photo := range files {
+	for i, photo := range files {
 		// As the person, as a photo they send in an app chat is (conversation.PublishPhotos).
 		uploaded, err := conversation.Upload(ctx, target.client, thread.ChannelID, photo.file, target.author)
 		if err != nil {
@@ -889,7 +889,7 @@ func (b *Bridge) upload(ctx context.Context, target streamThread, thread store.C
 				return nil, stack.Wrap(err)
 			}
 			log.Warn("a photo Stream Chat did not store is left out: the message goes on without it",
-				"connection", thread.ConnectionID, "photo", photo.file.Name, "error", err)
+				"connection", thread.ConnectionID, "photo", i+1, "error", err)
 			continue
 		}
 		media[photo.at].Uploaded, media[photo.at].MIMEType = uploaded.URL, photo.file.MIME

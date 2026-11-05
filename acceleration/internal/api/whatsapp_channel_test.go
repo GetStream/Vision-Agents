@@ -429,11 +429,13 @@ func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadFailedIsWrittenWithItOnTheNe
 // A retried row writes the photo its first attempt uploaded (AI-2757): an attempt whose write
 // Stream Chat failed after the upload leaves the row the upload, so the next attempt neither
 // looks the photo up nor downloads or uploads it again, and the photo the person's message is
-// written and answered with is that one upload.
+// written and answered with is that one upload, with the type its bytes sniffed as, not the
+// one the webhook says.
 func (s *WhatsAppChannelSuite) TestARetriedPhotoIsWrittenWithTheUploadOfItsFirstAttempt() {
 	s.answersWith("vision/vision-model")
 	person, asked, uploaded := s.digits(), len(s.vision.replies()), len(s.chat.Uploads())
 	photo := s.photo(person, "Is this tooth chipped?")
+	photo["image"].(map[string]any)["mime_type"] = "image/png"
 	s.chat.Fail(http.MethodPost, "/message")
 	defer s.chat.Heal(http.MethodPost, "/message")
 
@@ -445,6 +447,7 @@ func (s *WhatsAppChannelSuite) TestARetriedPhotoIsWrittenWithTheUploadOfItsFirst
 	stored := s.written(channel, 1)[0]
 	s.Equal("Is this tooth chipped?", stored["text"])
 	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored))
+	s.Equal(map[string]any{"mime_type": "image/jpeg"}, stored["attachments"].([]any)[0].(map[string]any)["custom"])
 	s.Equal("Two roses.", s.took(1)[0].text)
 	s.Equal([]llm.ImagePart{{Data: s.photoBytes(photo), MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
 	s.settled()
@@ -456,6 +459,27 @@ func (s *WhatsAppChannelSuite) TestARetriedPhotoIsWrittenWithTheUploadOfItsFirst
 		{host: "graph.facebook.com", path: "/v25.0/" + id, authorized: true},
 		{host: "lookaside.fbsbx.com", path: "/whatsapp_business/attachments/", authorized: true},
 	}, s.meta.got(), "the retry downloaded the photo again")
+}
+
+// A row that cannot keep its uploads is the attempt failing before the message is written,
+// as the store failing elsewhere in it is: a message written with a photo whose upload the
+// row lacks could not be answered with it once a later attempt can no longer download it.
+func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadTheRowCannotKeepIsWrittenOnALaterAttempt() {
+	s.answersWith("vision/vision-model")
+	person := s.digits()
+	drop := s.trigger("whatsapp_suite_failing_media_save", "channel_thread_inbound", "UPDATE",
+		"NEW.media IS DISTINCT FROM OLD.media AND NEW.customer_id = '"+s.customerID()+"'",
+		"RAISE EXCEPTION 'the store failed';")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"))))
+
+	s.failedOnce()
+	channel := s.threadChannel(person)
+	s.Empty(s.chat.Stored(channel), "the message was written without its upload on the row")
+	drop()
+	stored := s.written(channel, 1)[0]
+	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored))
+	s.Equal("Two roses.", s.took(1)[0].text)
 }
 
 // A photo alone whose message an earlier attempt wrote, and whose answer that attempt lost (its
