@@ -448,7 +448,8 @@ func TestALinkIsReadAsThePersonWroteIt(t *testing.T) {
 
 func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 	// A line written for people names a thing by its kind, its name and its ID side by side.
-	// Another ID on the line, the creator's or the sender's, is not one of that kind.
+	// Another ID on the line, the creator's or the sender's, is not one of that kind, nor is
+	// one after a role a label ends in or a named thing's role (AI-2884).
 	tools := []string{"search_channels", "read_channel", "lookup_phone_number"}
 	answered := func(result string) []llm.Message {
 		return []llm.Message{
@@ -513,6 +514,21 @@ func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 		{"a person in a text table row of channels, the role column after the kind", `{"results":"Ana Lind  U0ANA001  channel owner"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a kind of two words after the ID", `{"results":"Main line P0NUM001 phone number"}`, `{"phone_number_id":"P0NUM001"}`, false},
 		{"a kind of two words after the ID, then a role", `{"results":"Ana P0NUM001 phone number owner"}`, `{"phone_number_id":"P0NUM001"}`, true},
+		{"a person after a label that ends in a role", `{"results":"Channel owner: U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person after a lowercase label that ends in another role", `{"messages":"channel moderator: U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person after a label of the plural kind and a role", `{"results":"Channels admin: U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person after a label of a role and the word ID", `{"results":"Channel owner ID: U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person after a label of a kind of two words and a role", `{"results":"Phone number owner: P0NUM001"}`, `{"phone_number_id":"P0NUM001"}`, true},
+		{"a person after a named channel's role", `{"messages":"#help channel admin U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person bracketed after a named channel's role", `{"messages":"#help channel moderator (U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person after an owner label of a named channel", `{"messages":"Owner of #help: U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a channel after its kind and a name with no mark", `{"results":"channel help (C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after its kind, a name with no mark and a dash", `{"results":"Channel help - C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after its label and a name with no mark", `{"results":"Channel: help C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after a label that ends in its marked name", `{"results":"Channel #help: C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after a sentence that ends in its marked name", `{"results":"Posted to channel #help: C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after its name and kind", `{"results":"#help channel C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after its name and a label of its kind", `{"results":"#help channel: C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
 	}
 	for _, c := range cases {
 		_, _, _, unfound := unfoundID(answered(c.result), call(c.arguments), tools, "")
@@ -589,7 +605,7 @@ func TestAnIDInALinkAToolReturnedIsPassedOn(t *testing.T) {
 func TestALinkAToolReturnedGivesOnlyAnIDOfTheKindItsWordsName(t *testing.T) {
 	// A link names its parts by where they stand, but not what kind of thing each is: the
 	// words around it do, those of its line, of the keys it stands under or of the tool's
-	// name (AI-2852).
+	// name (AI-2852). Its own host and path say where it points, not what kind (AI-2881).
 	tools := []string{"search", "get_user", "search_channels", "read_channel", "open_case"}
 	answered := func(tool, result string) []llm.Message {
 		return []llm.Message{
@@ -612,6 +628,17 @@ func TestALinkAToolReturnedGivesOnlyAnIDOfTheKindItsWordsName(t *testing.T) {
 		{"a link on another line than the one that names the kind", "search", `{"results":"Channels found\nsee https://team.example.com/archives/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, true},
 		{"a link from a tool whose name names the kind", "read_channel", `{"results":"see https://team.example.com/archives/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a link in a result that answers no call", "", `{"next":"https://team.example.com/archives/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, true},
+		{"a link whose host names the kind", "search", `{"results":"see https://channels.example.com/u/U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a link whose subdomain names the kind", "search", `{"results":"https://channel.example.com/U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a link whose path names the kind", "search", `{"results":"see https://team.example.com/channels/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, true},
+		{"a link whose path names the kind just before the ID", "search", `{"results":"see https://team.example.com/channel/U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a link whose query key names the kind", "search", `{"results":"see https://team.example.com/view?channel=U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a link whose path names a case", "search", `{"results":"Opened https://desk.example.com/cases/CS0A6631"}`, `{"case_id":"CS0A6631"}`, true},
+		{"a link whose path is a label", "search", `{"results":"https://team.example.com/channel: Ana Lind (U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a link before the kind's word in brackets", "search", `{"results":"https://team.example.com/archives/C0HELP002 (channel)"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a link whose text names the kind", "search", `{"results":"[channel](https://team.example.com/archives/C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a link whose host names the kind, under a key that names it", "search", `{"channel":"https://channels.example.com/archives/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a link whose host names the kind, from a tool whose name names it", "read_channel", `{"results":"see https://channels.example.com/archives/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
 	}
 	for _, c := range cases {
 		history := answered(c.tool, c.result)
