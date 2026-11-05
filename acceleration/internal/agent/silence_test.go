@@ -119,6 +119,34 @@ func (s *AgentSuite) TestOneAudibleFrameAmongSilentOnesIsAudioTheTranscriberWrot
 	s.Equal([]Silence{SilenceNoWords}, s.agent.CallAudio().Silences())
 }
 
+func (s *AgentSuite) TestOneHeardParticipantBesideASilentOneIsNotSilent() {
+	// Catches a call judged by the last participant counted instead of by all of them: one
+	// who spoke and one whose frames were silent would read silent_inbound_audio or no_words
+	// whenever the silent one came last. Judged 64 times so map order cannot hide it.
+	s.join(true)
+	alice, bob := stt.Participant{ID: "alice"}, stt.Participant{ID: "bob"}
+	s.sends(alice, audio.AudibleSample)
+	s.says(alice, "hello")
+	s.eventually(func() bool { return s.agent.CallAudio().Words > 0 }, "the words were never counted")
+	s.sends(bob, 0)
+
+	for range 64 {
+		s.Nil(s.agent.CallAudio().Silences())
+	}
+}
+
+func (s *AgentSuite) TestAnAudibleParticipantWithOnlyAPartialTranscriptIsNotNoWords() {
+	// Catches a partial transcript left out of the words heard: a call whose transcriber
+	// never settled a turn would be counted no_words.
+	s.join(true)
+	alice := stt.Participant{ID: "alice"}
+	s.sends(alice, audio.AudibleSample)
+	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeDelta, Text: "hel", Language: "en", Confidence: 1})
+	s.eventually(func() bool { return s.agent.CallAudio().Words > 0 }, "the partial was never counted")
+
+	s.Nil(s.agent.CallAudio().Silences())
+}
+
 func (s *AgentSuite) TestACallWithWordsHeardAndSpeechTakenByTheTrackIsNotSilent() {
 	// Catches a normal call counted as silent or one-way.
 	s.edgeFactory = func(base *loopbackEdge) Edge { return &markedEdge{loopbackEdge: base} }
