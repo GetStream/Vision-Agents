@@ -14,6 +14,8 @@ import (
 	"github.com/danielgtaylor/huma/v2/adapters/humachi"
 	"github.com/go-chi/chi/v5"
 	"gopkg.in/yaml.v3"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/apispec"
 )
 
 const specDescription = `Routes speech-to-text and text-to-speech traffic across providers and reports what it cost. Every path is scoped by modality, so the same provider serving two modalities is reported on separately. Who the caller is depends on ROUTER_AUTH_MODE: ` + "`api_key`" + `, the default, wants an API key and a token signed with its secret; ` + "`proxy`" + ` believes the X-Stream- headers something in front of the router set; ` + "`noauth`" + ` reads a trusted X-Customer-Id header and takes every caller for that customer's own backend.
@@ -339,7 +341,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 				Headers:         answerHeaders,
 				SecuritySchemes: securitySchemes,
 			},
-			OnAddOperation: []huma.AddOpFunc{shareErrorResponses},
+			OnAddOperation: []huma.AddOpFunc{shareErrorResponses, apispec.DeprecateParams},
 		},
 		Formats:       huma.DefaultFormats,
 		DefaultFormat: "application/json",

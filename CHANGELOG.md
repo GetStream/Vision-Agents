@@ -4,7 +4,7 @@
 
 ### Usage reads name who started the work `origin`
 
-A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names stay for one release, deprecated: the query's `api_key_id` (and `api_key` on the usage service) is still read and must name the same value when given beside `origin`, else 400; events still carry `api_key` with the same value; `who:api_key` still groups. Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811).
+A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names stay for one release, deprecated: the query's `api_key_id` (and `api_key` on the usage service) is still read and must name the same value when given beside `origin`, else 400; events still carry `api_key` with the same value; `who:api_key` still groups. Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). Both specs mark each old query name `deprecated` on the parameter itself, so the generated JavaScript and Go clients flag it (AI-2812).
 
 ### The operator hears of each organization's first money limit
 
@@ -390,6 +390,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A repeat copy keeps a phone number attached where it moved to
 
 `router replicate --once`, `--follow` and `POST /v1/data/import` wrote the source's row of a phone number over the destination's, so a number attached on the destination lost its trunk, route, call and agent and stopped ringing it. A number on a trunk on the destination now keeps them, while its other columns still take the source's edits; a number not on a trunk there takes the source's row as before (AI-2844).
+### A short video is sampled into the frames it has
+
+`responses.create` with a video of fewer frames than `max_frames` (8 by default) failed with `video: reading the frame at 812.5ms` when the clip ended inside its last frame: a one second clip at 4 frames a second could not be sampled at its default. The router now picks the frame showing at each sampling moment, which it reads from the clip, and shows a frame once however many moments fall in it, so that clip gives its four frames. A clip with more frames than `max_frames` gives `max_frames` frames as before, each now the frame on screen at its time rather than the next to begin (AI-2658, #1767).
 
 ### `git lfs pull` works in a sandbox behind the egress proxy
 
