@@ -1261,6 +1261,9 @@ func TestLinkingNobodyOrNoNumberIsRefusedBeforeTheRouter(t *testing.T) {
 	if err := backend.client(t).Users().UnlinkPhone(t.Context(), ""); err == nil {
 		t.Error("an empty user id was unlinked")
 	}
+	if _, err := backend.client(t).Users().LinkPhoneWithHistory(t.Context(), "anya", "", PhoneHistory{All: true}); err == nil {
+		t.Error("an empty number was sent with its history")
+	}
 	if len(backend.asked) != 0 {
 		t.Errorf("the router was asked %v", backend.asked)
 	}

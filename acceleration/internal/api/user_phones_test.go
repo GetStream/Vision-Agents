@@ -369,7 +369,7 @@ func (s *UserPhonesSuite) TestTheLinksHistoryDecidesWhatTheThreadAndTheChatRead(
 	}{
 		{"", false}, {`, "include_phone_history": false`, false}, {`, "include_phone_history": true`, true},
 		{`, "phone_history_since": "` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"`, true},
-		{`, "include_phone_history": false, "phone_history_since": "SINCE"`, false},
+		{`, "include_phone_history": false, "phone_history_since": "` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"`, true},
 	} {
 		s.user, s.person = "user-"+s.utils.uuid(), s.utils.number()
 		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "allergic to penicillin"), time.Now()))
@@ -377,9 +377,8 @@ func (s *UserPhonesSuite) TestTheLinksHistoryDecidesWhatTheThreadAndTheChatRead(
 		s.took(turns)
 		s.idle()
 		s.chatCard()
-		since := strings.ReplaceAll(c.fields, "SINCE", time.Now().UTC().Format(time.RFC3339Nano))
 
-		s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"`+since+`}`, nil))
+		s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"`+c.fields+`}`, nil))
 
 		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "what do you know about me?"), time.Now()))
 		turns++

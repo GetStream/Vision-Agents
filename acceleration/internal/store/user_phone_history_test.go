@@ -95,16 +95,24 @@ func (s *StoreSuite) TestOnlyABoundaryBeforeTheLinkJoinsTheSetAsideRows() {
 	chat, own, sunday, monday := s.historyStory()
 	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550100"})
 
+	aside := func() string {
+		var omni string
+		s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT conversation_id FROM contact_map WHERE address LIKE 'retired:%'").Scan(&omni))
+		return omni
+	}
 	s.linkWith("+15550100", &PhoneHistory{Since: linkedAt.Add(time.Hour)})
 	s.Equal([]string{own}, s.readFor(chat), "a boundary after the link")
+	s.Equal("agent:omni-sms", aside(), "a boundary after the link")
 	_, err := s.store.db.ExecContext(s.ctx, "UPDATE user_phone_history SET phone = '+15550199', since = NULL")
 	s.Require().NoError(err)
 	s.linkWith("+15550100", nil)
 	s.Equal([]string{own}, s.readFor(chat), "a row of another number")
+	s.Equal("agent:omni-sms", aside(), "a row of another number")
 	s.Equal(linkedAt, s.boundary().UTC())
 
 	s.linkWith("+15550100", &PhoneHistory{Since: linkedAt.Add(-time.Hour)})
 	s.Equal([]string{own}, s.readFor(chat), "joined, and bounded")
+	s.Equal(s.omniOf(chat), aside())
 	s.linkWith("+15550100", &PhoneHistory{All: true})
 	s.ElementsMatch([]string{own, sunday, monday}, s.readFor(chat))
 }
@@ -144,8 +152,9 @@ func (s *StoreSuite) TestAThreadsHistoryIsCutAtItsNumbersLink() {
 	}
 	open("+15550100")
 	s.linkDated(&UserPhone{CustomerID: "another-customer", StreamAppPK: 4242, UserID: "anya", Phone: "+15550100"})
+	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 7, UserID: "anya", Phone: "+15550100"})
 	_, cut := since()
-	s.False(cut, "linked to nobody of the customer")
+	s.False(cut, "linked to nobody of the customer in the row's app")
 
 	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550100"})
 	at, cut := since()
