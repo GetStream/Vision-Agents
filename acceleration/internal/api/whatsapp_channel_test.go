@@ -482,6 +482,23 @@ func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadTheRowCannotKeepIsWrittenOnA
 	s.Equal("Two roses.", s.took(1)[0].text)
 }
 
+// A worker whose lease on a row is gone when its upload is to be kept writes nothing: the
+// worker that took the lease writes the message, with the upload it keeps. The trigger skips the
+// save of the row's media as a lease taken since does.
+func (s *WhatsAppChannelSuite) TestAWorkerWhoseLeaseIsGoneWhenItsUploadIsKeptWritesNothing() {
+	s.answersWith("vision/vision-model")
+	person, asked := s.digits(), len(s.vision.replies())
+	s.trigger("whatsapp_suite_lease_taken", "channel_thread_inbound", "UPDATE",
+		"NEW.media IS DISTINCT FROM OLD.media AND NEW.customer_id = '"+s.customerID()+"'", "RETURN NULL;")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, "Is this tooth chipped?"))))
+
+	s.settled()
+	channel := s.threadChannel(person)
+	s.Empty(s.chat.Stored(channel), "the worker wrote a message with an upload the row does not keep")
+	s.Len(s.vision.replies(), asked, "the worker handed the agent a message it does not hold")
+}
+
 // A photo alone whose message an earlier attempt wrote, and whose answer that attempt lost (its
 // turn's claim failed), is answered with its upload when the next attempt could no longer
 // download it, as after Meta's URL expired: it is not taken as a message left with nothing,

@@ -41,7 +41,8 @@ inbound worker (every router)                 off the request
   upload: each downloaded photo to the channel; fails: the attempt fails, but on the last
     attempt or a 4xx but 429 it is left out; none and nothing else: done, nothing written
   store.SaveChannelInboundMedia: the new uploads on the row (media "uploaded"), under its
-    lease; fails: the attempt fails, nothing written
+    lease; fails: the attempt fails, nothing written; lease gone: returns,
+    the lease holder writes
   omnichannel.Cards.Open from the row (config id + name, author): contact map row
     of the author, episode opened on the thread's first message (episodeSources);
     fails: ERROR, no card, the message goes on

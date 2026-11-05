@@ -263,11 +263,17 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	// The row keeps this attempt's uploads before the message is written, so a later attempt,
 	// such as one after a write Stream Chat failed or an answer that was lost, writes them
 	// again instead of downloading and uploading the photos, whose provider URLs may have
-	// expired by then. A lease taken over keeps nothing: the worker that took it writes.
+	// expired by then. A lease taken over keeps nothing, and this worker holds the row no
+	// longer: it returns, and the worker that took the lease writes.
 	uploaded := uploads(media)
 	if len(uploaded) > len(uploads(inbound.Media)) {
-		if _, err := b.store.SaveChannelInboundMedia(ctx, message, media); err != nil {
+		changed, err := b.store.SaveChannelInboundMedia(ctx, message, media)
+		if err != nil {
 			return err
+		}
+		if !changed {
+			log.Info("an inbound message's lease ran out before its photos were kept: the worker that took it writes it")
+			return nil
 		}
 	}
 	if nothingToWrite(inbound, len(uploaded), named) {
