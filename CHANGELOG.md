@@ -2,6 +2,10 @@
 
 ## Features
 
+### The link says how much of the number's past the user reads
+
+`PUT /v1/agents/users/{user_id}` takes `include_phone_history` and `phone_history_since`. `true` gives the user everything the number ever said. `false` gives what it says from the request on. A time gives what it said from then on. With neither field, a new link starts at the link, and the same number again keeps what was stored. The boundary covers the user's episode cards and the history a session on the number's SMS, WhatsApp or iMessage thread is handed, which until now held the whole thread. A conversation that started before it is left out whole. `true` with a time, or a time in the future, is a 400. `GET /v1/agents/users/{user_id}` answers the number and the boundary as stored. A thread whose number is linked to nobody is handed all of it, as before (AI-2861, #PR).
+
 ### Usage reads name who started the work `origin`
 
 A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names are gone (see Breaking Changes). Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). A query parameter tagged deprecated is marked `deprecated` on the parameter itself in both specs, so the generated JavaScript and Go clients flag it (AI-2812).

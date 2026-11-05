@@ -226,6 +226,12 @@ func newRouter(t *testing.T) *router {
 		}
 	})
 
+	mux.HandleFunc("GET /v1/agents/users/{user_id}", func(w http.ResponseWriter, r *http.Request) {
+		backend.record(r)
+		answer(w, http.StatusOK, acceleration.AgentUser{UserId: r.PathValue("user_id"), Phone: ptr("+15550100100"),
+			IncludePhoneHistory: ptr(true)})
+	})
+
 	mux.HandleFunc("POST /v1/agents/guests", func(w http.ResponseWriter, r *http.Request) {
 		backend.record(r)
 		answer(w, http.StatusCreated, acceleration.GuestUser{
@@ -1197,6 +1203,48 @@ func TestATakenNumberIsTheRoutersConflict(t *testing.T) {
 	var refused *stream.RouterError
 	if !errors.As(err, &refused) || refused.Status != http.StatusConflict || refused.Code != "phone_taken" {
 		t.Fatalf("the refusal came back as %v", err)
+	}
+}
+
+// Catches a link with history that sends both fields, which the router refuses, or neither, which
+// keeps what the same number had: all of it, from a time, and from the request on.
+func TestLinkingWithHistorySendsOneOfItsFields(t *testing.T) {
+	since := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	for _, c := range []struct {
+		history PhoneHistory
+		sent    map[string]any
+	}{
+		{PhoneHistory{All: true}, map[string]any{"phone": "+15550100100", "include_phone_history": true}},
+		{PhoneHistory{Since: since}, map[string]any{"phone": "+15550100100", "phone_history_since": "2026-11-02T00:00:00Z"}},
+		{PhoneHistory{}, map[string]any{"phone": "+15550100100", "include_phone_history": false}},
+	} {
+		backend := newRouter(t)
+
+		if _, err := backend.client(t).Users().LinkPhoneWithHistory(t.Context(), "anya", "+15550100100", c.history); err != nil {
+			t.Fatal(err)
+		}
+		if sent := backend.body(t, "PUT", "/v1/agents/users/anya"); !reflect.DeepEqual(sent, c.sent) {
+			t.Errorf("%+v: the router was sent %v", c.history, sent)
+		}
+	}
+}
+
+// Catches a read that drops what the router keeps of the link, or asks it for nobody.
+func TestGettingAUserAnswersTheirLink(t *testing.T) {
+	backend := newRouter(t)
+
+	user, err := backend.client(t).Users().Get(t.Context(), "anya")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if user.UserId != "anya" || user.Phone == nil || *user.Phone != "+15550100100" || user.IncludePhoneHistory == nil || !*user.IncludePhoneHistory {
+		t.Errorf("the user came back as %+v", user)
+	}
+	if _, err := backend.client(t).Users().Get(t.Context(), ""); err == nil {
+		t.Error("an empty user id was read")
+	}
+	if asked := backend.requests("GET", "/v1/agents/users/anya"); asked != 1 {
+		t.Errorf("the router was asked %d times", asked)
 	}
 }
 
