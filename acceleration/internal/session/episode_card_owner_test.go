@@ -40,25 +40,39 @@ func (s *EpisodeReadingSuite) withTelephony() {
 	s.manager = s.managerOver()
 }
 
-// placedCall keeps a call the router placed from line to callee, as phone.Service.Call does
-// before it dials, and returns its call id, which is the session's.
+// placedCall keeps a call the router placed from line to callee in the deployment's own Stream
+// app, as phone.Service.Call does, and returns its call id, which is the session's.
 func (s *EpisodeReadingSuite) placedCall(callType string) string {
+	return s.placedCallIn(0, callType)
+}
+
+// placedCallIn keeps a call the router placed into a Stream app, dialled under the vendor's
+// call id the session names (placedSpec).
+func (s *EpisodeReadingSuite) placedCallIn(streamApp int64, callType string) string {
 	call := uuid.NewString()
-	_, err := outcome.NewKeeper(s.store, time.Now).Placed(s.ctx, outcome.Call{
-		Key:    outcome.Key{CustomerID: s.customerID, CallType: callType, CallID: call, Local: line, Remote: callee},
+	keeper := outcome.NewKeeper(s.store, time.Now)
+	token, err := keeper.Placed(s.ctx, outcome.Call{
+		Key:    outcome.Key{CustomerID: s.customerID, StreamAppPK: streamApp, CallType: callType, CallID: call, Local: line, Remote: callee},
 		Vendor: "twilio",
 	})
 	s.Require().NoError(err)
+	s.Require().NoError(keeper.Dialed(s.ctx, token, vendorCallID(call)))
 	return call
 }
 
+// vendorCallID is the vendor's id for the leg of a placed call.
+func vendorCallID(call string) string {
+	return "vendor-" + call
+}
+
 // placedSpec is the session a customer's backend opens on a call it placed through
-// POST /v1/phone/calls: the session id the call was placed into, the line in phone and no
-// PhoneSpec.To, which the API cannot set (api.specOf).
+// POST /v1/phone/calls: the session id the call was placed into, the line and the vendor's
+// call id in phone, as the SDKs send them, and no PhoneSpec.To, which the API cannot set
+// (api.specOf).
 func (s *EpisodeReadingSuite) placedSpec(call string, cards bool) Spec {
 	return Spec{
 		ID: call, CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCards: cards,
-		CallerKind: auth.KindServer, Phone: &PhoneSpec{Number: line, VendorCallID: "vendor-" + uuid.NewString()},
+		CallerKind: auth.KindServer, Phone: &PhoneSpec{Number: line, VendorCallID: vendorCallID(call)},
 		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
 	}
 }
@@ -160,6 +174,99 @@ func (s *EpisodeReadingSuite) TestAnEndUsersSessionOnAPlacedCallReadsNoneOfWhoIt
 	cards, _ := s.manager.cards.read(s.ctx, spec, bound)
 
 	s.Nil(cards)
+}
+
+// Defect: a backend's session with no phone could name the id of a call the router placed and
+// be handed the cards of who that call rang, though no phone is on it.
+func (s *EpisodeReadingSuite) TestASessionWithNoPhoneOnAPlacedCallReadsNoneOfWhoItRang() {
+	s.at(-30)
+	s.smsThread(callee, "sms-author", "is the clinic open on Sunday?")
+	call := s.placedCall("agent")
+	s.chat.PutCall("agent", call, "browser-user")
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	spec := s.placedSpec(call, true)
+	spec.Phone = nil
+	spec.CallID, spec.CallType = call, "agent"
+
+	cards, _ := s.manager.cards.read(s.ctx, spec, bound)
+
+	s.Nil(cards)
+}
+
+// Defect: the same session filed its card under who the placed call rang.
+func (s *EpisodeReadingSuite) TestASessionWithNoPhoneOnAPlacedCallFilesNoCard() {
+	call := s.placedCall("agent")
+	s.chat.PutCall("agent", call, "browser-user")
+	spec := s.placedSpec(call, true)
+	spec.Phone = nil
+
+	created := s.opens(spec)
+
+	select {
+	case <-s.cardWritersDone():
+	case <-time.After(settleFor):
+		s.FailNow("the card writer never stopped")
+	}
+	s.Empty(callEpisodesIn(s.store, created.ID()))
+	s.Zero(s.contactRows(callee)(), "nobody the session is not with gets its card")
+}
+
+// Defect: a call the router placed in another Stream app of the same customer, with the
+// session's call type and id, is another call, whose callee is nobody on this one.
+func (s *EpisodeReadingSuite) TestACallPlacedInAnotherStreamAppNamesNobodyOnTheSessionsCall() {
+	s.at(-30)
+	s.smsThread(callee, "sms-author", "is the clinic open on Sunday?")
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	call := s.placedCallIn(bound.Identity.StreamApp+7, "agent")
+	s.chat.PutCall("agent", call, "sip-"+line)
+	spec := s.placedSpec(call, true)
+	spec.CallID, spec.CallType, spec.StreamApp = call, "agent", bound.Identity.StreamApp
+
+	cards, _ := s.manager.cards.read(s.ctx, spec, bound)
+
+	s.Nil(cards)
+}
+
+// Defect: a session naming another vendor call than the one placed into its call id is not
+// that call's, so who it rang is nobody on it.
+func (s *EpisodeReadingSuite) TestACallPlacedUnderAnotherVendorCallNamesNobodyOnTheSessionsCall() {
+	s.at(-30)
+	s.smsThread(callee, "sms-author", "is the clinic open on Sunday?")
+	call := s.placedCall("agent")
+	s.chat.PutCall("agent", call, "sip-"+line)
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	spec := s.placedSpec(call, true)
+	spec.CallID, spec.CallType = call, "agent"
+	spec.Phone.VendorCallID = vendorCallID(uuid.NewString())
+
+	cards, _ := s.manager.cards.read(s.ctx, spec, bound)
+
+	s.Nil(cards)
+}
+
+// Defect: a backend whose SDK sends no vendor call id would find nobody the call it placed
+// rang, so its card went to nobody.
+func (s *EpisodeReadingSuite) TestAPlacedCallsSessionNamingNoVendorCallReadsWhoItRang() {
+	s.at(-30)
+	s.smsThread(callee, "sms-author", "is the clinic open on Sunday?")
+	call := s.placedCall("agent")
+	s.chat.PutCall("agent", call, "sip-"+line)
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	spec := s.placedSpec(call, true)
+	spec.CallID, spec.CallType = call, "agent"
+	spec.Phone.VendorCallID = ""
+
+	cards, _ := s.manager.cards.read(s.ctx, spec, bound)
+
+	var handed string
+	for _, card := range cards {
+		handed += card.Content
+	}
+	s.Contains(handed, "is the clinic open on Sunday?")
 }
 
 // Defect: a call of another type that has the session's call id is another call, whose callee

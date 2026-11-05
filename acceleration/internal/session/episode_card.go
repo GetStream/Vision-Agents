@@ -284,18 +284,27 @@ func (c *callCards) calledParty(ctx context.Context, spec Spec, stream streamapp
 // rung is who the router rang on the session's call, for a session the customer's backend
 // opened on a call placed through POST /v1/phone/calls, which names no PhoneSpec.To: the
 // phone that joins such a call is the vendor's leg, under the line's own number
-// (store.ConnectCallLeg matches it by local_number). Not for an end user's device, which may
-// name the session id of a call it was never meant to be on. Empty for a call the router did
-// not place.
+// (store.ConnectCallLeg matches it by local_number). Only for a phone session (PhoneSpec set)
+// on the call placed: its call type and Stream app, and its vendor's call id when the session
+// names one (the SDKs send it). Not for an end user's device, nor a session with no phone,
+// either of which may name the session id of a call it was never meant to be on. Empty for a
+// call the router did not place.
 func (c *callCards) rung(ctx context.Context, spec Spec) (string, error) {
-	if c.placed == nil || spec.CallerKind != auth.KindServer {
+	if c.placed == nil || spec.CallerKind != auth.KindServer || spec.Phone == nil {
 		return "", nil
 	}
 	placed, err := c.placed.Read(ctx, spec.CustomerID, spec.CallID)
-	if errors.Is(err, outcome.ErrUnknownCall) || (err == nil && placed.CallType != spec.CallType) {
+	if errors.Is(err, outcome.ErrUnknownCall) {
 		return "", nil
 	}
-	return placed.Remote, err
+	if err != nil {
+		return "", err
+	}
+	if placed.CallType != spec.CallType || placed.StreamAppPK != spec.StreamApp ||
+		(spec.Phone.VendorCallID != "" && placed.VendorCallID != spec.Phone.VendorCallID) {
+		return "", nil
+	}
+	return placed.Remote, nil
 }
 
 // ownLine reports whether number is the line the session's call is on (PhoneSpec.Number),
