@@ -173,6 +173,23 @@ func (s *ReplicateSourceSuite) TestAnUnknownSourceAuthIsRefused() {
 	s.Require().ErrorContains(err, "--source-auth is jwt or server")
 }
 
+func (s *ReplicateSourceSuite) TestFullIsAskedForOnlyWhenTheFlagIsGiven() {
+	args := []string{"--from", "http://source", "--api-key", sourceKey, "--api-secret", sourceSecret}
+
+	asked, err := parseReplicate(append(args, "--full"))
+	s.Require().NoError(err)
+	plain, err := parseReplicate(args)
+	s.Require().NoError(err)
+
+	s.True(asked.full)
+	s.False(plain.full)
+}
+
+func (s *ReplicateSourceSuite) TestTheCaughtUpMessageTellsTheNextRunToPassAs() {
+	s.Contains(caughtUpMessage(7, "acme"), "once more, with --as acme,")
+	s.Contains(caughtUpMessage(7, "other"), "once more, with --as other,")
+}
+
 func (s *ReplicateSourceSuite) TestTheCutOverNeedsNoSource() {
 	options, err := parseReplicate([]string{"--resume", "--as", "acme"})
 

@@ -106,13 +106,18 @@ func runReplicate(args []string, settings config.Config, logger *slog.Logger) er
 	if err != nil {
 		return err
 	}
-	customerID, cursor, err := copyEverything(ctx, options.source, pgStore, reservation, options.as, options.full,
+	return options.copyAndFollow(ctx, settings, pgStore, reservation, logger)
+}
+
+// copyAndFollow copies the app here, or carries on from the last run's cursor, and follows the
+// source's changes from there.
+func (o replicateOptions) copyAndFollow(ctx context.Context, settings config.Config, pgStore *store.Store, reservation *store.IDReservation, logger *slog.Logger) error {
+	customerID, cursor, err := copyEverything(ctx, o.source, pgStore, reservation, o.as, o.full,
 		settings.DataMove.Retention, logger)
 	if err != nil {
 		return err
 	}
-
-	return follow(ctx, options.source, pgStore, reservation, customerID, cursor, options.poll, options.once, logger)
+	return follow(ctx, o.source, pgStore, reservation, customerID, cursor, o.poll, o.once, logger)
 }
 
 // replicateOptions is what the command line asked replicate for.
@@ -284,19 +289,20 @@ func carryOn(ctx context.Context, pgStore *store.Store, customerID, source strin
 			// (StartDataCapture), and answers a cursor from before that gap with the changes
 			// after it as if they were all.
 			if age := time.Since(saved.ReadAt); age >= retention {
-				return nil, fmt.Errorf("the last run here read %s %s ago, longer than the %s the source records %s's changes after a read "+
-					"(ROUTER_DATA_MOVE_RETENTION), so writes there since may be missing here: run this again with --full, which copies "+
-					"everything again over what was done here", source, age.Round(time.Minute), retention, customerID)
+				return nil, fmt.Errorf("the last run here read %s %s ago, longer than this deployment's ROUTER_DATA_MOVE_RETENTION (%s), "+
+					"which this check takes to be the source's own: the source records %s's changes only that long after a read, so writes "+
+					"there since may be missing here. Run this again with --full, which copies everything again over what was done here",
+					source, age.Round(time.Minute), retention, customerID)
 			}
 			return saved.Cursor, nil
 		case saved == nil:
-			holds, err := pgStore.HoldsCustomer(ctx, customerID)
+			table, err := pgStore.HoldingTable(ctx, customerID)
 			if err != nil {
 				return nil, err
 			}
-			if holds {
-				return nil, fmt.Errorf("%s already has data here, and no run here saved where its copy from %s stands, as for an app "+
-					"copied before runs saved it: run this again with --full, which copies everything again over what was done here", customerID, source)
+			if table != "" {
+				return nil, fmt.Errorf("%s already has data here (a row in %s), and no run here saved where its copy from %s stands, as for an app "+
+					"copied before runs saved it: run this again with --full, which copies everything again over what was done here", customerID, table, source)
 			}
 		}
 	}
@@ -349,9 +355,7 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 
 		if page.CaughtUp {
 			if once {
-				fmt.Printf("caught up at cursor %d. Point your SDKs here, pause the campaigns at the deployment copied from "+
-					"and wait for their calls to end, then run this once more to pick up the last writes. "+
-					"Once the deployment copied from stops delivering, run it with --resume --as %s, and do not run --once again after that.\n", cursor, customerID)
+				fmt.Println(caughtUpMessage(cursor, customerID))
 				return nil
 			}
 			fmt.Printf("caught up at cursor %d\n", cursor)
@@ -364,6 +368,15 @@ func follow(ctx context.Context, source *deployment, pgStore *store.Store, reser
 		case <-ticker.C:
 		}
 	}
+}
+
+// caughtUpMessage is what --once prints when it has caught up. It names --as for the next run:
+// without it a run opens the source's export just to learn the app, which starts a capture there.
+func caughtUpMessage(cursor int64, customerID string) string {
+	return fmt.Sprintf("caught up at cursor %d. Point your SDKs here, pause the campaigns at the deployment copied from "+
+		"and wait for their calls to end, then run this once more, with --as %s, to pick up the last writes. "+
+		"Once the deployment copied from stops delivering, run it with --resume --as %s, and do not run --once again after that.",
+		cursor, customerID, customerID)
 }
 
 // resumeMove is the cut-over: it resumes what the copy paused and names the campaigns the source

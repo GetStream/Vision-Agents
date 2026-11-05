@@ -19,6 +19,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
@@ -38,6 +39,8 @@ type ReplicateRepeatSuite struct {
 	truncated bool
 	// changesDown makes the source answer the changes 503.
 	changesDown bool
+	// pageSize is how many changes the source answers in a page.
+	pageSize int
 }
 
 func TestReplicateRepeatSuite(t *testing.T) {
@@ -46,7 +49,7 @@ func TestReplicateRepeatSuite(t *testing.T) {
 
 func (s *ReplicateRepeatSuite) SetupTest() {
 	s.ctx = context.Background()
-	s.exports, s.truncated, s.changesDown = 0, false, false
+	s.exports, s.truncated, s.changesDown, s.pageSize = 0, false, false, 500
 	s.source = s.emptyStore("repeat_source")
 	s.target = s.emptyStore("repeat_target")
 	s.server = httptest.NewServer(http.HandlerFunc(s.serveSource))
@@ -96,7 +99,7 @@ func (s *ReplicateRepeatSuite) serveSource(w http.ResponseWriter, r *http.Reques
 			return
 		}
 		after, _ := strconv.ParseInt(r.URL.Query().Get("after"), 10, 64)
-		changes, cursor, err := s.source.Changes(r.Context(), "acme", after, 500)
+		changes, cursor, err := s.source.Changes(r.Context(), "acme", after, s.pageSize)
 		if errors.Is(err, store.ErrChangesExpired) {
 			w.WriteHeader(http.StatusGone)
 			return
@@ -105,24 +108,33 @@ func (s *ReplicateRepeatSuite) serveSource(w http.ResponseWriter, r *http.Reques
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
-		_ = json.NewEncoder(w).Encode(changePage{Changes: changes, Cursor: cursor, CaughtUp: len(changes) < 500})
+		_ = json.NewEncoder(w).Encode(changePage{Changes: changes, Cursor: cursor, CaughtUp: len(changes) < s.pageSize})
 	default:
 		w.WriteHeader(http.StatusNotFound)
 	}
 }
 
 // once runs `router replicate --once` against the source, with --as when as is not empty and
-// with --full when full is.
-func (s *ReplicateRepeatSuite) once(as string, full bool) error {
-	source := s.deployment()
-	logger := slog.New(slog.DiscardHandler)
+// with --full when full is, on a deployment whose retention is retention.
+func (s *ReplicateRepeatSuite) onceWithin(as string, full bool, retention time.Duration) error {
+	args := []string{"--from", s.server.URL, "--api-key", sourceKey, "--api-secret", sourceSecret,
+		"--source-auth", auth.AuthTypeServer, "--once", "--poll", "1ms"}
+	if as != "" {
+		args = append(args, "--as", as)
+	}
+	if full {
+		args = append(args, "--full")
+	}
+	options, err := parseReplicate(args)
+	s.Require().NoError(err)
 	reservation, err := s.target.ReserveImportedIDs(s.ctx)
 	s.Require().NoError(err)
-	customerID, cursor, err := copyEverything(s.ctx, source, s.target, reservation, as, full, time.Hour, logger)
-	if err != nil {
-		return err
-	}
-	return follow(s.ctx, source, s.target, reservation, customerID, cursor, time.Millisecond, true, logger)
+	settings := config.Config{DataMove: config.DataMove{Retention: retention}}
+	return options.copyAndFollow(s.ctx, settings, s.target, reservation, slog.New(slog.DiscardHandler))
+}
+
+func (s *ReplicateRepeatSuite) once(as string, full bool) error {
+	return s.onceWithin(as, full, time.Hour)
 }
 
 func (s *ReplicateRepeatSuite) deployment() *deployment {
@@ -287,7 +299,7 @@ func (s *ReplicateRepeatSuite) TestAnAppCopiedBeforeRunsSavedACursorIsRefused() 
 
 	err := s.once("", false)
 
-	s.Require().ErrorContains(err, "acme already has data here")
+	s.Require().ErrorContains(err, "acme already has data here (a row in phone_numbers)")
 	s.ErrorContains(err, "--full")
 	s.Equal("edited here", s.label(2), "nothing is written over it")
 }
@@ -369,4 +381,79 @@ func (s *ReplicateRepeatSuite) TestAnOrganizationsPolicyUnderTheAppsIDIsNotTheAp
 	s.Require().NoError(s.once("acme", false))
 
 	s.Equal("", s.label(1))
+}
+
+func (s *ReplicateRepeatSuite) TestTheRetentionOfTheDeploymentIsTheOneACursorIsCheckedAgainst() {
+	s.recorded(1)
+	s.Require().NoError(s.once("acme", false))
+	_, err := s.target.DB().ExecContext(s.ctx, "UPDATE data_move_cursors SET read_at = now() - interval '5 minutes'")
+	s.Require().NoError(err)
+	s.tagged(s.source, 1, "source again")
+
+	err = s.onceWithin("acme", false, time.Minute)
+
+	s.Require().ErrorContains(err, "ROUTER_DATA_MOVE_RETENTION (1m0s)")
+	s.ErrorContains(err, "takes to be the source's own")
+	s.Equal("", s.label(1))
+	s.Require().NoError(s.onceWithin("acme", false, time.Hour))
+	s.Equal("source again", s.label(1))
+}
+
+func (s *ReplicateRepeatSuite) TestAPageThatFailedToApplyIsBroughtByTheNextRun() {
+	s.recorded(1)
+	s.recorded(2)
+	s.Require().NoError(s.once("acme", false))
+	// A page of one change, so the second change is a page of its own, which the target refuses.
+	s.pageSize = 1
+	_, err := s.target.DB().ExecContext(s.ctx, `
+CREATE FUNCTION refuse_poison() RETURNS trigger AS $$
+BEGIN
+  IF NEW.tags->>'label' = 'poison' THEN RAISE EXCEPTION 'poison'; END IF;
+  RETURN NEW;
+END $$ LANGUAGE plpgsql;
+CREATE TRIGGER refuse_poison BEFORE INSERT OR UPDATE ON phone_numbers FOR EACH ROW EXECUTE FUNCTION refuse_poison()`)
+	s.Require().NoError(err)
+	s.tagged(s.source, 1, "fine")
+	s.tagged(s.source, 2, "poison")
+
+	s.Require().Error(s.once("acme", false))
+
+	s.Equal("fine", s.label(1), "the page before it landed")
+	_, err = s.target.DB().ExecContext(s.ctx, "DROP TRIGGER refuse_poison ON phone_numbers")
+	s.Require().NoError(err)
+	s.Require().NoError(s.once("acme", false))
+	s.Equal("poison", s.label(2), "the cursor is saved only after a page is applied, so the page that failed comes again")
+}
+
+func (s *ReplicateRepeatSuite) TestACursorNeverMovesBack() {
+	five, three := int64(5), int64(3)
+	earlier := time.Now().Add(-time.Hour)
+	s.Require().NoError(s.target.SaveMoveCursor(s.ctx, "acme", "src", &five, time.Now()))
+
+	s.Require().NoError(s.target.SaveMoveCursor(s.ctx, "acme", "src", &three, earlier))
+
+	saved, err := s.target.MoveCursor(s.ctx, "acme", "src")
+	s.Require().NoError(err)
+	s.Equal(int64(5), *saved.Cursor, "a run that read less cannot undo one that read more")
+	s.WithinDuration(time.Now(), saved.ReadAt, time.Minute)
+
+	s.Require().NoError(s.target.SaveMoveCursor(s.ctx, "acme", "src", nil, earlier))
+	saved, err = s.target.MoveCursor(s.ctx, "acme", "src")
+	s.Require().NoError(err)
+	s.Nil(saved.Cursor, "a copy that starts again clears it")
+}
+
+func (s *ReplicateRepeatSuite) TestOnlyATableInTheSharedDatabaseMakesAnAppHeld() {
+	// call bridges are kept in the shards, which a pod reads only its own of.
+	_, err := s.target.DB().ExecContext(s.ctx,
+		"INSERT INTO call_bridges (token, customer_id, vendor, trunk_uri, call_id, expires_at) VALUES ('t', 'acme', 'telnyx', 'sip:x', 'c', now())")
+	s.Require().NoError(err)
+	table, err := s.target.HoldingTable(s.ctx, "acme")
+	s.Require().NoError(err)
+	s.Equal("", table, "a row in a shard table does not count")
+
+	s.Require().NoError(s.target.RecordNumber(s.ctx, &store.PhoneNumber{E164: e164(1), Vendor: "telnyx", Country: "US", CustomerID: "acme"}))
+	table, err = s.target.HoldingTable(s.ctx, "acme")
+	s.Require().NoError(err)
+	s.Equal("phone_numbers", table)
 }

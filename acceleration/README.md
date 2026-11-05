@@ -2408,14 +2408,18 @@ go run ./cmd/router replicate --from https://old.example.com \
 A run saves on this deployment the cursor of the source's changes it has applied, after the
 export and after each page of changes. A later run for the same app and source, `--once` or
 `--follow`, carries on from that cursor: it applies only what changed at the source since,
-and writes no row of the export over what was done here. With `--as` it does not ask for the
-export; without it, it reads only the export's first line, which names the app. A run that
-stopped before the export ended saved no cursor, and the next run copies the export again.
+and writes no row of the export over what was done here. Pass `--as <app id>` on a repeat run:
+with it the run does not ask for the export. Without it the run opens the export to learn the
+app, which starts a capture at the source and can answer 503 while a write there is open, then
+reads its first line and drops it. A run that stopped before the export ended saved no cursor,
+and the next run copies the export again.
 
 A run refuses, before it writes anything, an app this deployment already holds that no run
-saved a cursor for, such as one copied before runs saved them. It also refuses a cursor read
-longer ago than `ROUTER_DATA_MOVE_RETENTION`, and a cursor the source answers 410 for: the
-source records an app's changes only for that long after a read, so writes since may be
+saved a cursor for, such as one copied before runs saved them. It counts an app as held when a
+table in the shared database holds a row of it; a table kept in the shards does not count. It also refuses a cursor read
+longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION`, and a cursor the source answers
+410 for. The source records an app's changes only for its own retention after a read; the check
+assumes the source's retention is this deployment's, so set the two alike. Writes since may be
 missing. `--full` copies the whole export again, writing the source's rows over the ones here,
 and then saves the cursor.
 
