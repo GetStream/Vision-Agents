@@ -179,7 +179,7 @@ func (s *ConfigsSuite) TestARetiredKeyOfTheWrongShapeIsRefusedByTheSchema() {
 }
 
 // TestAnEntryOfEitherShapeABaseSaveTookIsRefusedAsRetired: a plugins entry may be a catalog id
-// or an object, as PluginEntry took either, and both get the refusal rather than a schema error
+// or an object, as the base took either, and both get the refusal rather than a schema error
 // (probe on dd9794408: 400 invalid_request with the retired text for each).
 func (s *ConfigsSuite) TestAnEntryOfEitherShapeABaseSaveTookIsRefusedAsRetired() {
 	for label, entry := range map[string]any{"an id": "sentry", "an object": map[string]any{"name": "linear", "readonly": true}} {
