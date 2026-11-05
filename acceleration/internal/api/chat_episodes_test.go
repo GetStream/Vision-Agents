@@ -552,6 +552,20 @@ func (s *ChatEpisodesSuite) TestAMessageToARunningSessionWritesACard() {
 	s.Equal(store.EpisodeChat, custom["source"])
 }
 
+// Defect: a card written into the deployment's app for a customer whose work there may only be
+// read, as app mode leaves it once the fallback is off: a session that started before still
+// answers, and the message opens nothing.
+func (s *ChatEpisodesSuite) TestAMessageToARunningSessionOfACustomerReadOnlyInTheAppWritesNoCard() {
+	s.worker()
+	config := s.config(true, "en-low-latency")
+	s.serverClient.createSession(CreateSessionRequest{AgentId: &s.channelID, ConfigId: &config.ID})
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
 // Catches an incognito session's message being kept: it records nothing of the person.
 func (s *ChatEpisodesSuite) TestAMessageToAnIncognitoSessionOpensNothing() {
 	worker := s.worker()
