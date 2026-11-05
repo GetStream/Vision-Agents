@@ -859,6 +859,30 @@ func (s *DataMoveSuite) TestWaitingForOpenWritesHoldsAWriteFromBeforeTheCaptureS
 		slices.Contains(handed, id), "the write is in neither the export nor the changes")
 }
 
+// The wait is for the writes open when it started. One that opens later sees the capture, so it
+// records its own change, and waiting for it would make a busy database refuse every export.
+func (s *DataMoveSuite) TestWaitingForOpenWritesIgnoresAWriteOpenedAfterItStarted() {
+	first := s.begin()
+	s.writeIn(first, "acme", "open before the wait")
+	s.capture("acme")
+
+	waited := make(chan error, 1)
+	go func() { waited <- s.source.WaitForOpenWrites(s.ctx, time.Minute) }()
+	s.Never(func() bool { return len(waited) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the wait returned while the first write was open")
+
+	later := s.begin()
+	s.writeIn(later, "acme", "opened after the wait started")
+	s.Require().NoError(first.Commit())
+
+	select {
+	case err := <-waited:
+		s.NoError(err)
+	case <-time.After(10 * time.Second):
+		s.Fail("the wait held on a write that opened after it started")
+	}
+}
+
 // With nothing open there is nothing to wait for, so even no time at all is enough.
 func (s *DataMoveSuite) TestWaitingForOpenWritesReturnsAtOnceWithNoneOpen() {
 	s.NoError(s.source.WaitForOpenWrites(s.ctx, 0))
