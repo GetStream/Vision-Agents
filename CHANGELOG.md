@@ -387,6 +387,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A Slack mention is answered when a reply that waited for it can no longer be read
+
+A Slack reply that is not to the bot, in a thread nobody linked yet, waits for the mention that starts the thread. When the connection was pinned meanwhile to a revision that does not read the reply, the mention failed with a 500 on every retry and was never answered. Now that reply is dropped and logged at warn, and the mention is answered. Any other failure to take a waiting reply still fails the mention, and Slack's retry takes both (AI-2743).
+
 ### A linked user never reads what the number said before the link, whenever the cards were turned on
 
 A number linked to a user (`PUT /v1/agents/users/{user_id}`) under an agent with `episode_cards` off kept its earlier SMS and call episodes on the user's omni-channel. Once the agent turned the cards on, the user's app chat, their own device and the number's later calls and SMS read those cards. Now no session reads an episode that a linked number started before the link, and sending the same number again no longer moves the time of the link (#1772).
