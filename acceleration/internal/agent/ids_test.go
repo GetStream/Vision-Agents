@@ -96,9 +96,14 @@ func TestAKindWordInsideAnotherWordIsNotTheCallerNamingTheID(t *testing.T) {
 	}{
 		{"said beside its kind", []llm.Message{{Role: llm.User, Content: "My case number is 6631."}}, false},
 		{"said beside its plural", []llm.Message{{Role: llm.User, Content: "Cases 6631 and 6632."}}, false},
+		{"said joined to its kind by #", []llm.Message{{Role: llm.User, Content: "It is case#6631."}}, false},
+		{"said joined to its kind by a dash", []llm.Message{{Role: llm.User, Content: "My ticket-4521 and case-6631."}}, false},
+		{"said beside a kind joined to another word by a dash", []llm.Message{{Role: llm.User, Content: "My case-number is 6631."}}, false},
 		{"said beside a word that holds its kind", []llm.Message{{Role: llm.User, Content: "The showcase number is 6631."}}, true},
 		{"said beside a word that begins with its kind", []llm.Message{{Role: llm.User, Content: "My casework is 6631."}}, true},
 		{"answered to its kind asked", []llm.Message{{Role: llm.Assistant, Content: "What's your case number?"}, {Role: llm.User, Content: "6631"}}, false},
+		{"answered to a kind joined to another word asked", []llm.Message{{Role: llm.Assistant, Content: "What's your case-number?"}, {Role: llm.User, Content: "6631"}}, false},
+		{"answered to a kind joined by # asked", []llm.Message{{Role: llm.Assistant, Content: "What's your case#?"}, {Role: llm.User, Content: "6631"}}, false},
 		{"answered to a word that holds its kind asked", []llm.Message{{Role: llm.Assistant, Content: "What's your suitcase number?"}, {Role: llm.User, Content: "6631"}}, true},
 	} {
 		_, _, _, unfound := unfoundID(c.history, call, tools, "")
@@ -501,11 +506,6 @@ func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 	}
 }
 
-func TestAnIDInALinkAToolReturnedIsPassedOn(t *testing.T) {
-	// A tool's record may give a channel's ID only in its link: the link names what each of
-	// its parts is by where it stands, as one the person pastes does.
-	tools := []string{"search_channels", "read_channel"}
-	answered := func(arguments, result string) []llm.Message {
 func TestALineLabellingAnIDAsAnotherKindOnlyDoubtsALabel(t *testing.T) {
 	// Another line's label doubts a label that gives the ID (AI-2823), not a line that has the
 	// ID beside its own kind, and not a line a call echoes back the ID it was sent in.
@@ -537,6 +537,11 @@ func TestALineLabellingAnIDAsAnotherKindOnlyDoubtsALabel(t *testing.T) {
 	}
 }
 
+func TestAnIDInALinkAToolReturnedIsPassedOn(t *testing.T) {
+	// A tool's record may give a channel's ID only in its link: the link names what each of
+	// its parts is by where it stands, as one the person pastes does.
+	tools := []string{"search_channels", "read_channel"}
+	answered := func(arguments, result string) []llm.Message {
 		return []llm.Message{
 			{Role: llm.User, Content: "What's new in the help channel?"},
 			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "search_channels", Arguments: arguments}}},
@@ -553,6 +558,7 @@ func TestALineLabellingAnIDAsAnotherKindOnlyDoubtsALabel(t *testing.T) {
 		{"a record whose link alone gives the ID", answered(`{"query":"help"}`, `{"results":"### Result 1 of 2\nName: #help\nCreator: Ana Lind (<@U0ANA001)\nPermalink: [link](https://team.example.com/archives/C0HELP002)\nChannel Type: public_channel"}`), false},
 		{"a link whose slashes are escaped for JSON", answered(`{"query":"help"}`, `{"permalink":"https:\/\/team.example.com\/archives\/C0HELP002"}`), false},
 		{"a link whose & is escaped for HTML", answered(`{"query":"help"}`, `{"results":"see https://team.example.com/view?thread=1793120000.000100&amp;cid=C0HELP002"}`), false},
+		{"a link in text that is escaped for HTML inside JSON", answered(`{"query":"help"}`, `{"results":"she said &quot;read https:\/\/team.example.com\/archives\/C0HELP002&quot;"}`), false},
 		{"a link that holds what the call was sent", answered(`{"query":"C0HELP002"}`, `{"results":"Nothing found: https://team.example.com/search?q=C0HELP002"}`), true},
 		{"a link that holds another ID", answered(`{"query":"help"}`, `{"permalink":"https://team.example.com/archives/C0HELP003"}`), true},
 		{"a link a failed call wrote", answered(`{"query":"help"}`, `{"ok":false,"error":"no access to https://team.example.com/archives/C0HELP002"}`), true},
@@ -589,7 +595,6 @@ func TestAnArgumentSentEscapedIsStillAnEcho(t *testing.T) {
 	}
 	for _, c := range cases {
 		_, _, _, unfound := unfoundID(answered(c.arguments, listed(c.id)), llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":"` + c.id + `"}`}, tools, "")
-		{"a link in text that is escaped for HTML inside JSON", answered(`{"query":"help"}`, `{"results":"she said &quot;read https:\/\/team.example.com\/archives\/C0HELP002&quot;"}`), false},
 		assert.Equal(t, c.unfound, unfound, c.name)
 	}
 }

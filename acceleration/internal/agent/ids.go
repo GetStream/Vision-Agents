@@ -120,12 +120,12 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		if wanted == "" {
 			return name, text, collectIDs(results), true
 		}
-		if strings.Contains(heard, wanted) && holdsKind(lineWords(said.String()), entityOf(name), strings.Contains) ||
+		if strings.Contains(heard, wanted) && holdsKind(plainWords(said.String()), entityOf(name), strings.Contains) ||
 			slices.Contains(pasted, wanted) || slices.Contains(linked, wanted) {
 			continue
 		}
 		if slices.ContainsFunc(answers, func(given answer) bool {
-			return holdsKind(lineWords(given.question), entityOf(name), strings.Contains) && strings.Contains(given.said, wanted)
+			return holdsKind(plainWords(given.question), entityOf(name), strings.Contains) && strings.Contains(given.said, wanted)
 		}) || holdsValue(told, wanted) {
 			continue
 		}
@@ -939,6 +939,14 @@ func lineWords(line string) []string {
 		}
 	}
 	return words
+}
+
+// plainWords are the words of text the person or the model wrote, lowercase, split at every
+// mark: "case#6631", "ticket-4521" and "case-number" each hold the word for the kind.
+func plainWords(text string) []string {
+	return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
 }
 
 // holdsKind reports whether words hold the word for kind, or its plural: find (strings.Contains
