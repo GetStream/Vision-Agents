@@ -292,7 +292,12 @@ From the end of the caller's voice, "Will it rain in Porto this weekend?" (four 
 | Requests a pause | 2: the words, then the decision | 1 | 1 |
 
 The weather question pauses after "Hi", which is asked about first, and the second call is
-a new agent's first turn, registered then. Both questions end with p_eot over 0.995 at the
+a new agent's first turn, registered then. On the recording of a person asking it (2.2 s,
+in place of `weather.ogg`, checks 7 and 1, `safe`): before, "Hi." was a turn of its own,
+answered with a question (p_eot 1.0), and the question answered 1.07 and 1.19 s after the
+voice; after, the pause after "Hi." was waited on (p_eot 0.43 and 0.39 at 200 ms), the
+server ruled on the question 334 and 350 ms after the voice and it was answered at 692 and
+735 ms, and "uh-huh" over the reply was ruled `ignore`. Both questions end with p_eot over 0.995 at the
 first check, so the two presets answer them alike. A breath after a question restarts the
 pause, and a turn is answered 200 ms after the breath, about 1.1 s after the words.
 
