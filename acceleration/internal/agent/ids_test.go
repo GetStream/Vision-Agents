@@ -498,6 +498,7 @@ func TestAnIDInALinkAToolReturnedIsPassedOn(t *testing.T) {
 	}{
 		{"a link under a key", answered(`{"query":"help"}`, `{"permalink":"https://team.example.com/archives/C0HELP002"}`), false},
 		{"a record whose link alone gives the ID", answered(`{"query":"help"}`, `{"results":"### Result 1 of 2\nName: #help\nCreator: Ana Lind (<@U0ANA001)\nPermalink: [link](https://team.example.com/archives/C0HELP002)\nChannel Type: public_channel"}`), false},
+		{"a link whose slashes are escaped for JSON", answered(`{"query":"help"}`, `{"permalink":"https:\/\/team.example.com\/archives\/C0HELP002"}`), false},
 		{"a link whose & is escaped for HTML", answered(`{"query":"help"}`, `{"results":"see https://team.example.com/view?thread=1793120000.000100&amp;cid=C0HELP002"}`), false},
 		{"a link that holds what the call was sent", answered(`{"query":"C0HELP002"}`, `{"results":"Nothing found: https://team.example.com/search?q=C0HELP002"}`), true},
 		{"a link that holds another ID", answered(`{"query":"help"}`, `{"permalink":"https://team.example.com/archives/C0HELP003"}`), true},
