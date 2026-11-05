@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"maps"
 	"net/url"
 	"regexp"
 	"slices"
@@ -41,8 +42,9 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	var answers []answer
 	// pasted are the parts of the links the caller wrote.
 	var pasted []string
-	// sent are the arguments of each call, by its ID: a result that writes one of them back
-	// echoes the model, it does not return it.
+	// sent are the arguments of each call, by its ID, their escapes undone: a result that
+	// writes one of them back echoes the model, it does not return it, however the model
+	// escaped it ("\u0043" for "C").
 	sent := map[string]string{}
 	// lines are the lines a JSON result writes out for people, with the arguments of the
 	// call it answers.
@@ -56,7 +58,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				question = message.Content
 			}
 			for _, made := range message.ToolCalls {
-				sent[made.ID] = made.Arguments
+				sent[made.ID] = asWritten(made.Arguments)
 			}
 		case llm.User:
 			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
@@ -787,6 +789,38 @@ func linkParts(text string) []string {
 		}
 	}
 	return parts
+}
+
+// asWritten is text with the escapes of JSON undone: the keys and values of a JSON value, one
+// per line, each number as it was written. Text that is not JSON is returned as it is.
+func asWritten(text string) string {
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
+	if !json.Valid([]byte(text)) || decoder.Decode(&value) != nil {
+		return text
+	}
+	var written []string
+	var walk func(any)
+	walk = func(value any) {
+		switch typed := value.(type) {
+		case string:
+			written = append(written, typed)
+		case json.Number:
+			written = append(written, typed.String())
+		case []any:
+			for _, inner := range typed {
+				walk(inner)
+			}
+		case map[string]any:
+			for _, key := range slices.Sorted(maps.Keys(typed)) {
+				written = append(written, key)
+				walk(typed[key])
+			}
+		}
+	}
+	walk(value)
+	return strings.Join(written, "\n")
 }
 
 // prose returns the strings of more than one word a JSON result holds, wherever they are. A
