@@ -12,10 +12,10 @@
 package video
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -25,6 +25,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -225,35 +226,42 @@ func duration(ctx context.Context, path string) (time.Duration, error) {
 }
 
 // frameTimes is when each frame of the clip at path begins to show, in order, counted from
-// the clip's start as ffmpeg's -ss counts.
+// the clip's start as ffmpeg's -ss counts. ffprobe's lines are read as they come, so a clip
+// of millions of frames costs the router only the times, not ffprobe's whole listing.
 func frameTimes(ctx context.Context, path string) ([]time.Duration, error) {
+	errNotAVideo := errors.New("video: not a video ffmpeg can read")
 	args := append([]string{"-v", "error", "-select_streams", "v:0"}, readOnlyAClip...)
-	out, err := exec.CommandContext(ctx, "ffprobe", append(args,
-		"-show_entries", "format=start_time:packet=pts_time", "-of", "json", path)...).Output()
-	var probed struct {
-		Format struct {
-			StartTime string `json:"start_time"`
-		} `json:"format"`
-		Packets []struct {
-			PTSTime string `json:"pts_time"`
-		} `json:"packets"`
+	command := exec.CommandContext(ctx, "ffprobe", append(args,
+		"-show_entries", "format=start_time:packet=pts_time", "-of", "csv", path)...)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, stack.Wrap(err)
 	}
-	if err != nil || json.Unmarshal(out, &probed) != nil {
-		return nil, stack.Wrap(errors.New("video: not a video ffmpeg can read"))
+	if err := command.Start(); err != nil {
+		return nil, stack.Wrap(errNotAVideo)
 	}
-	start, _ := strconv.ParseFloat(probed.Format.StartTime, 64)
-	times := make([]time.Duration, 0, len(probed.Packets))
-	for _, packet := range probed.Packets {
-		seconds, err := strconv.ParseFloat(packet.PTSTime, 64)
-		if err != nil {
-			continue
+	var start time.Duration
+	var times []time.Duration
+	lines := bufio.NewScanner(stdout)
+	for lines.Scan() {
+		kind, value, _ := strings.Cut(lines.Text(), ",")
+		seconds, err := strconv.ParseFloat(value, 64)
+		switch {
+		case err != nil:
+		case kind == "format":
+			start = time.Duration(seconds * float64(time.Second))
+		case kind == "packet":
+			times = append(times, time.Duration(seconds*float64(time.Second)))
 		}
-		times = append(times, time.Duration((seconds-start)*float64(time.Second)))
 	}
-	if len(times) == 0 {
-		return nil, stack.Wrap(errors.New("video: not a video ffmpeg can read"))
+	// Wait closes the pipe, so it comes after the last read.
+	if lines.Err() != nil || command.Wait() != nil || len(times) == 0 {
+		return nil, stack.Wrap(errNotAVideo)
 	}
-	sort.Slice(times, func(i, j int) bool { return times[i] < times[j] })
+	for i := range times {
+		times[i] -= start
+	}
+	slices.Sort(times)
 	return times, nil
 }
 
@@ -262,7 +270,7 @@ func frameAt(ctx context.Context, path string, at time.Duration) ([]byte, error)
 	var stderr bytes.Buffer
 	args := append([]string{"-v", "error"}, readOnlyAClip...)
 	command := exec.CommandContext(ctx, "ffmpeg", append(args,
-		"-ss", strconv.FormatFloat(at.Seconds(), 'f', 3, 64), "-i", path,
+		"-ss", strconv.FormatFloat(at.Seconds(), 'f', 6, 64), "-i", path,
 		"-frames:v", "1", "-vf", fmt.Sprintf("scale='min(%d,iw)':-2", frameWidth),
 		"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-")...)
 	command.Stderr = &stderr

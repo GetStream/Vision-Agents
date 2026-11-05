@@ -269,6 +269,21 @@ func (s *VideoSuite) TestAMomentGetsTheFrameShowingThen() {
 	}
 }
 
+// A seek is told to ffmpeg to the microsecond: at three decimals the frames of a clip
+// faster than 1000 a second cannot be told apart, and a moment gets its neighbour.
+func (s *VideoSuite) TestAFrameOfAClipFasterThanAThousandASecondIsFoundByItsMoment() {
+	clip := s.recordSource("fast.mp4", "testsrc=duration=0.01:size=64x64:rate=4000", "-pix_fmt", "yuv420p")
+	path := filepath.Join(s.T().TempDir(), "fast.mp4")
+	s.Require().NoError(os.WriteFile(path, clip, 0o600))
+
+	for _, n := range []int{5, 7} {
+		jpeg, err := frameAt(s.T().Context(), path, time.Duration(n)*250*time.Microsecond)
+
+		s.Require().NoError(err)
+		s.Equal(s.frame(clip, n), jpeg, "the frame at %d quarter milliseconds", n)
+	}
+}
+
 func (s *VideoSuite) TestAWebMClipIsSampled() {
 	frames, length, err := Frames(s.T().Context(), "data:video/webm;base64,"+base64.StdEncoding.EncodeToString(s.webm), 2)
 
@@ -347,6 +362,41 @@ func (s *VideoSuite) TestAFrameIsReadOnlyFromAFile() {
 	s.Error(err)
 	s.Nil(jpeg)
 	s.False(hit.Load(), "ffmpeg fetched the URL")
+}
+
+func (s *VideoSuite) TestTheFrameTimesAreReadOnlyFromAFile() {
+	address, hit := s.served()
+
+	_, err := frameTimes(s.T().Context(), address)
+
+	s.ErrorContains(err, "not a video ffmpeg can read")
+	s.False(hit.Load(), "ffprobe fetched the URL")
+}
+
+func (s *VideoSuite) TestTheFrameTimesAreNotReadThroughAnHLSPlaylist() {
+	dir := s.T().TempDir()
+	canary, opened := s.canary(dir)
+	playlist := filepath.Join(dir, "playlist.m3u8")
+	s.Require().NoError(os.WriteFile(playlist, hlsPlaylist(canary), 0o600))
+
+	times, err := frameTimes(s.T().Context(), playlist)
+
+	s.Error(err)
+	s.Nil(times)
+	s.False(opened(), "ffprobe opened the file the playlist names")
+}
+
+func (s *VideoSuite) TestTheFrameTimesAreNotReadThroughAConcatList() {
+	dir := s.T().TempDir()
+	_, opened := s.canary(dir)
+	list := filepath.Join(dir, "list.ffconcat")
+	s.Require().NoError(os.WriteFile(list, concatList("canary.ts"), 0o600))
+
+	times, err := frameTimes(s.T().Context(), list)
+
+	s.Error(err)
+	s.Nil(times)
+	s.False(opened(), "ffprobe opened the file the list names")
 }
 
 func (s *VideoSuite) TestAClipNamingNoCountGetsTheDefault() {
