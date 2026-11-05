@@ -6,13 +6,16 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net"
 	"net/url"
 	"os"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/redis/rueidis"
 	"github.com/stretchr/testify/suite"
 
@@ -32,14 +35,16 @@ import (
 // telnyx, and the service's clock is the suite's.
 type OutcomeSuite struct {
 	suite.Suite
-	ctx      context.Context
-	store    *store.Store
-	redis    rueidis.Client
-	service  *Service
-	vendor   *stub
-	clock    *meteringClock
-	customer string
-	e164     string
+	ctx   context.Context
+	store *store.Store
+	redis rueidis.Client
+	// redisAddress is where the suite's Redis listens.
+	redisAddress string
+	service      *Service
+	vendor       *stub
+	clock        *meteringClock
+	customer     string
+	e164         string
 	// asked is every (customer, session) the service asked to end because nobody answered.
 	asked [][2]string
 }
@@ -52,6 +57,7 @@ func (s *OutcomeSuite) SetupSuite() {
 		s.T().Skip("ROUTER_POSTGRES_DSN and ROUTER_REDIS_ADDR must be set")
 	}
 	s.ctx = context.Background()
+	s.redisAddress = address
 	opened, err := store.Open(testenv.Database(dsn, "phone_outcome"))
 	s.Require().NoError(err)
 	s.Require().NoError(opened.Migrate(s.ctx))
@@ -584,4 +590,211 @@ func (s *OutcomeSuite) TestAnInboundCallAsksNothing() {
 	s.ended(defaultCallType, callID)
 
 	s.Empty(s.asked)
+}
+
+// callsCounted is what router_phone_call_outcomes_total holds for telnyx, by direction and
+// outcome, read off the registry /metrics serves. No other test in this package counts calls
+// while a suite runs, so a test reads a change from it.
+func (s *OutcomeSuite) callsCounted() map[[2]string]float64 { return s.callsCountedAt("telnyx") }
+
+// callsCountedAt is callsCounted for vendor.
+func (s *OutcomeSuite) callsCountedAt(vendor string) map[[2]string]float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	counted := map[[2]string]float64{}
+	for _, family := range families {
+		if family.GetName() != "router_phone_call_outcomes_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, label := range metric.GetLabel() {
+				labels[label.GetName()] = label.GetValue()
+			}
+			if labels["vendor"] == vendor {
+				counted[[2]string{labels["direction"], labels["outcome"]}] = metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return counted
+}
+
+// countedSince is what the calls counted for telnyx grew by since before.
+func (s *OutcomeSuite) countedSince(before map[[2]string]float64) map[[2]string]float64 {
+	return s.countedAtSince("telnyx", before)
+}
+
+// countedAtSince is countedSince for vendor.
+func (s *OutcomeSuite) countedAtSince(vendor string, before map[[2]string]float64) map[[2]string]float64 {
+	grew := map[[2]string]float64{}
+	for series, now := range s.callsCountedAt(vendor) {
+		if now != before[series] {
+			grew[series] = now - before[series]
+		}
+	}
+	return grew
+}
+
+func (s *OutcomeSuite) TestABusyPlacedCallIsCountedOnceWhenItsCallEnds() {
+	before := s.callsCounted()
+	placed, token := s.placeReported()
+	s.Require().NoError(s.report(token, CallBusy, "busy"))
+
+	s.ended(placed.CallType, placed.CallID)
+	s.ended(placed.CallType, placed.CallID)
+
+	s.Equal(map[[2]string]float64{{"outbound", "busy"}: 1}, s.countedSince(before))
+}
+
+func (s *OutcomeSuite) TestAnAnsweredPlacedCallIsCountedOnceWhenItsPhoneLeavesAndTheCallEnds() {
+	before := s.callsCounted()
+	placed, token := s.placeReported()
+	s.answered(placed)
+	s.Require().NoError(s.report(token, CallCompleted, "completed"))
+	s.clock.advance(time.Minute)
+
+	s.left(placed)
+	s.ended(placed.CallType, placed.CallID)
+
+	s.Equal(map[[2]string]float64{{"outbound", "completed"}: 1}, s.countedSince(before))
+}
+
+func (s *OutcomeSuite) TestAnArrivingCallIsCountedInboundWhenItEnds() {
+	before := s.callsCounted()
+	callID := "call-" + uuid.NewString()
+	s.arrived(callID)
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, defaultCallType, callID, "session-1", "caller-1",
+		"+15125550199", time.Time{}))
+	s.clock.advance(time.Minute)
+
+	s.ended(defaultCallType, callID)
+	s.ended(defaultCallType, callID)
+
+	s.Equal(map[[2]string]float64{{"inbound", "completed"}: 1}, s.countedSince(before))
+}
+
+func (s *OutcomeSuite) TestATransferIsNotCountedBesideThePlacedCall() {
+	placed := s.place()
+	before := s.callsCounted()
+	s.transfer(placed.CallID, "+15125550124")
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, placed.CallType, placed.CallID, "session-1", "human-1",
+		"+15125550124", time.Time{}))
+	s.clock.advance(time.Minute)
+
+	s.Require().NoError(s.service.Left(s.ctx, everyApp, placed.CallType, placed.CallID, "human-1", time.Time{}))
+
+	s.Empty(s.countedSince(before))
+}
+
+// A join refused on its first delivery and delivered again after the call ended revives the leg,
+// and the stored outcome becomes completed; the call was counted when its leg first ended, under
+// what was known then, and is not counted again.
+func (s *OutcomeSuite) TestAJoinDeliveredAgainAfterTheCallEndedDoesNotCountTheCallAgain() {
+	before := s.callsCounted()
+	placed := s.place()
+	s.clock.advance(10 * time.Second)
+	joined := s.clock.now()
+	s.clock.advance(10 * time.Second)
+	s.ended(placed.CallType, placed.CallID)
+
+	s.Require().NoError(s.service.Connect(s.ctx, everyApp, placed.CallType, placed.CallID, "session-1", "phone-1",
+		"+15125550123", joined))
+
+	s.Equal(outcome.Completed, s.read(placed.CallID).Outcome)
+	s.Equal(map[[2]string]float64{{"outbound", "no_answer"}: 1}, s.countedSince(before))
+}
+
+func (s *OutcomeSuite) TestAnArrivingCallItsAgentLeftOnTheLineIsCountedDropped() {
+	before := s.callsCounted()
+	callID := "call-" + uuid.NewString()
+	s.arrived(callID)
+	s.Require().NoError(s.store.SaveSession(s.ctx, &store.AgentSession{
+		ID: callID, CustomerID: s.customer, CallType: defaultCallType, CallID: callID,
+	}))
+	s.Require().NoError(s.store.CloseSession(s.ctx, callID, s.clock.now(), ""))
+	s.clock.advance(time.Minute)
+
+	s.ended(defaultCallType, callID)
+
+	s.Equal(map[[2]string]float64{{"inbound", "dropped"}: 1}, s.countedSince(before))
+}
+
+func (s *OutcomeSuite) TestACallOnACustomersTrunkIsCountedUnderTheTrunk() {
+	before := s.callsCountedAt(SIPTrunkVendor)
+	callID := "call-" + uuid.NewString()
+	s.service.OpenLeg(s.ctx, routing.Owner{CustomerID: s.customer, Attribution: routing.Attribution{APIKey: routing.OriginPhoneInbound}},
+		store.CallLeg{CallType: defaultCallType, CallID: callID, StreamSessionID: "session-1", Vendor: SIPTrunkVendor,
+			Direction: store.Inbound, LocalNumber: s.e164, Country: "US"}, true)
+	s.clock.advance(time.Minute)
+
+	s.ended(defaultCallType, callID)
+
+	s.Equal(map[[2]string]float64{{"inbound", "completed"}: 1}, s.countedAtSince(SIPTrunkVendor, before))
+}
+
+// TestAnArrivingCallIsCountedCompletedWhenRedisHangs catches the read of a leg's refusal mark
+// spending the whole budget of the leg's end: a Redis that answers nothing left the end no time
+// to be kept, and the call was counted nowhere, where it is documented as completed.
+func (s *OutcomeSuite) TestAnArrivingCallIsCountedCompletedWhenRedisHangs() {
+	hang := &atomic.Bool{}
+	s.service.redis = s.redisThatHangs(hang)
+	before := s.callsCounted()
+	callID := "call-" + uuid.NewString()
+	s.arrived(callID)
+	s.clock.advance(time.Minute)
+
+	hang.Store(true)
+	started := time.Now()
+	s.ended(defaultCallType, callID)
+
+	s.Less(time.Since(started), outcomeTimeout, "the end waited out its whole budget")
+	s.Equal(map[[2]string]float64{{"inbound", "completed"}: 1}, s.countedSince(before))
+}
+
+// redisThatHangs is a client of the suite's Redis through a proxy that, while hang is set,
+// passes nothing on in either direction: a Redis that is up and answers nothing.
+func (s *OutcomeSuite) redisThatHangs(hang *atomic.Bool) rueidis.Client {
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { listener.Close() })
+	pass := func(to, from net.Conn) {
+		defer to.Close()
+		defer from.Close()
+		buffer := make([]byte, 32*1024)
+		for {
+			n, err := from.Read(buffer)
+			for hang.Load() {
+				time.Sleep(10 * time.Millisecond)
+			}
+			if n > 0 {
+				if _, err := to.Write(buffer[:n]); err != nil {
+					return
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+	}
+	go func() {
+		for {
+			conn, err := listener.Accept()
+			if err != nil {
+				return
+			}
+			upstream, err := net.Dial("tcp", s.redisAddress)
+			if err != nil {
+				conn.Close()
+				continue
+			}
+			go pass(upstream, conn)
+			go pass(conn, upstream)
+		}
+	}()
+	client, err := rueidis.NewClient(rueidis.ClientOption{InitAddress: []string{listener.Addr().String()}, DisableCache: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(client.Close)
+	// Before the client closes: a close waits on the connection the proxy holds.
+	s.T().Cleanup(func() { hang.Store(false) })
+	return client
 }

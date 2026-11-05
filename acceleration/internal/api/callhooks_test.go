@@ -11,12 +11,14 @@ import (
 	"encoding/hex"
 	"fmt"
 	"log/slog"
+	"maps"
 	"net/http"
 	"strings"
 	"testing"
 	"time"
 
 	getstream "github.com/GetStream/getstream-go/v5"
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -37,8 +39,10 @@ type CallHooksSuite struct {
 	// unique, because a number is held by one customer at a time.
 	e164   string
 	callID string
-	// numberTags are the cost labels hold records the number with.
-	numberTags map[string]string
+	// numberTags are the cost labels hold records the number with, and numberVendor the
+	// vendor it is bought from.
+	numberTags   map[string]string
+	numberVendor string
 	// stats stands in for Stream's call stats, so no test in the suite reaches Stream.
 	stats *recordedStats
 	// logged is what the router logged, at debug and up.
@@ -63,6 +67,7 @@ func (s *CallHooksSuite) SetupTest() {
 	s.e164 = s.utils.number()
 	s.callID = "phone-" + s.e164
 	s.numberTags = nil
+	s.numberVendor = "telnyx"
 	s.stats = &recordedStats{asked: make(chan string, 8), answer: &getstream.QueryCallSessionParticipantStatsResponse{}}
 	s.router.readCallStats = s.stats.read
 	s.router.callStatsWaits = []time.Duration{0}
@@ -130,6 +135,107 @@ func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnsweredAndIsEnded() {
 	s.Contains(s.logged.String(), "refused an arriving call to a suspended app; ending it")
 	s.Eventually(func() bool { return strings.Contains(s.logged.String(), "could not end a refused arriving call") },
 		5*time.Second, 20*time.Millisecond, "ended at Stream, which the suite's phone service has no credentials for")
+}
+
+// TestAnArrivingCallTheRouterRefusedIsCountedFailedWhenItsLegEnds catches a refused call, which
+// no agent answered, counted completed when Stream's end of it arrives, and checks the refusal
+// still bills the leg as base did: from the caller's arrival to the call's end.
+func (s *CallHooksSuite) TestAnArrivingCallTheRouterRefusedIsCountedFailedWhenItsLegEnds() {
+	// No other test of the package holds a number at this vendor, so its inbound series move
+	// only here.
+	s.numberVendor = "vonage"
+	s.hold("default", s.callID)
+	s.Require().NoError(s.store.SuspendTelephony(context.Background(), &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
+	}))
+	failed, completed := s.inboundCalls("vonage", "failed"), s.inboundCalls("vonage", "completed")
+	// Recent, so the legs are timed by the events, not by when they were delivered.
+	arrived := time.Now().UTC().Add(-time.Minute).Truncate(time.Second)
+	ended := arrived.Add(30 * time.Second)
+
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCallAt("default:"+s.callID, arrived)))
+	s.Require().True(s.refused())
+	s.Require().Eventually(func() bool {
+		keys, err := s.live.Redis().Do(context.Background(), s.live.Redis().B().Keys().Pattern("phone:refused:*:"+s.callID+":session-1").Build()).AsStrSlice()
+		return err == nil && len(keys) == 1
+	}, settleFor, 10*time.Millisecond, "the refusal was never marked")
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
+		`{"type":"call.session_ended","call_cid":"default:%s","session_id":"session-1","created_at":%q,`+
+			`"call":{"cid":"default:%s","id":"%s","type":"default","custom":{}}}`,
+		s.callID, ended.Format(time.RFC3339), s.callID, s.callID)))
+
+	s.Equal(1.0, s.inboundCalls("vonage", "failed")-failed)
+	s.Zero(s.inboundCalls("vonage", "completed") - completed)
+	var legs []store.CallLeg
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).Where("call_id = ?", s.callID).Scan(context.Background()))
+	s.Require().Len(legs, 1)
+	s.Equal(arrived, legs[0].StartedAt.UTC())
+	s.Equal(ended, legs[0].EndedAt.UTC())
+	s.Equal(store.LegEnded, legs[0].EndReason)
+}
+
+// TestALaterCallerInTheSameCallIsNotCountedRefused catches the refusal marked for the whole
+// call: a number attached before per-caller calls puts every caller in the number's own call, each
+// caller a Stream session with a leg of its own, so one refused caller made every later caller
+// of the number count failed, answered or not.
+func (s *CallHooksSuite) TestALaterCallerInTheSameCallIsNotCountedRefused() {
+	s.numberVendor = "vonage"
+	s.hold("default", s.callID)
+	ctx := context.Background()
+	s.Require().NoError(s.store.SuspendTelephony(ctx, &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
+	}))
+	arrived := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Second)
+	end := func(session string, at time.Time) {
+		s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
+			`{"type":"call.session_ended","call_cid":"default:%s","session_id":%q,"created_at":%q,`+
+				`"call":{"cid":"default:%s","id":"%s","type":"default","custom":{}}}`,
+			s.callID, session, at.Format(time.RFC3339), s.callID, s.callID)))
+	}
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCallAt("default:"+s.callID, arrived)))
+	s.Require().True(s.refused())
+	s.Require().Eventually(func() bool {
+		keys, err := s.live.Redis().Do(ctx, s.live.Redis().B().Keys().Pattern("phone:refused:*:"+s.callID+"*").Build()).AsStrSlice()
+		return err == nil && len(keys) == 1
+	}, settleFor, 10*time.Millisecond, "the refusal was never marked")
+	end("session-1", arrived.Add(10*time.Second))
+	s.Require().NoError(s.store.LiftTelephonySuspension(ctx, s.customerID()))
+
+	failed, completed := s.inboundCalls("vonage", "failed"), s.inboundCalls("vonage", "completed")
+	second := arrived.Add(time.Minute)
+	body := strings.ReplaceAll(arrivingCallAt("default:"+s.callID, second), "session-1", "session-2")
+	body = strings.ReplaceAll(body, `"s1"`, `"s2"`)
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", body))
+	end("session-2", second.Add(20*time.Second))
+
+	var legs []store.CallLeg
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).Where("call_id = ?", s.callID).Scan(ctx))
+	s.Require().Len(legs, 2, "the second caller opened a leg of its own")
+	s.Equal(1.0, s.inboundCalls("vonage", "completed")-completed, "the second caller counted completed")
+	s.Zero(s.inboundCalls("vonage", "failed")-failed, "the second caller counted failed by the first caller's mark")
+}
+
+// inboundCalls is how many arriving calls at vendor were counted under outcome, read off the
+// registry /metrics serves.
+func (s *CallHooksSuite) inboundCalls(vendor, outcome string) float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	want := map[string]string{"vendor": vendor, "direction": "inbound", "outcome": outcome}
+	for _, family := range families {
+		if family.GetName() != "router_phone_call_outcomes_total" {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if maps.Equal(labels, want) {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
 }
 
 func (s *CallHooksSuite) TestACallOnACustomNamedLineStillFindsItsOwner() {
@@ -730,7 +836,7 @@ func (s *CallHooksSuite) holdBridged(callType, callID, bridgeURI string) {
 	ctx := context.Background()
 	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
 		E164:        s.e164,
-		Vendor:      "telnyx",
+		Vendor:      s.numberVendor,
 		Country:     "US",
 		CustomerID:  s.customerID(),
 		PurchasedAt: time.Now().UTC(),

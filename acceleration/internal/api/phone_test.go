@@ -619,7 +619,7 @@ func (s *CallStatusSuite) TestASessionShowsWhenTheCallWasAnsweredAndForHowLong()
 	_, key := s.placedFor(opened.Id)
 	answered := time.Now().UTC().Truncate(time.Second)
 	s.Require().NoError(s.router.phone.Outcomes().Answered(context.Background(), key, answered))
-	s.Require().NoError(s.router.phone.Outcomes().Ended(context.Background(), key, answered.Add(75*time.Second)))
+	s.Require().NoError(s.router.phone.Outcomes().Ended(context.Background(), key, answered.Add(75*time.Second), outcome.Leg{}))
 
 	read := s.serverClient.getSession(opened.Id)
 

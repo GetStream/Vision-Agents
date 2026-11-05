@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -47,6 +48,8 @@ type Service struct {
 	publicURL string
 	// outcomes keeps how each placed call ended. Nil without a store.
 	outcomes *outcome.Keeper
+	// redis keeps the arriving calls the router refused (Refused). Nil marks none.
+	redis rueidis.Client
 	// unanswered ends the session of a placed call nobody will answer. Nil leaves it to the
 	// session's start timeout.
 	unanswered func(ctx context.Context, customerID, sessionID string)
@@ -88,7 +91,11 @@ type ServiceOptions struct {
 	// vendors say so rather than placing a call nothing will answer.
 	PublicURL string
 	// Now is the clock call legs are timed by. Nil is the wall clock.
-	Now    func() time.Time
+	Now func() time.Time
+	// Redis is where an arriving call the router refused is marked (Refused), for the node
+	// that ends its leg, whichever it is, to count it failed. Without it such a call is
+	// counted completed.
+	Redis  rueidis.Client
 	Logger *slog.Logger
 }
 
@@ -112,10 +119,15 @@ func NewService(options ServiceOptions) (*Service, error) {
 		gate:      options.Gate,
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
 		clock:     options.Now,
+		redis:     options.Redis,
 		logger:    options.Logger,
 	}
 	if options.Store != nil {
-		service.outcomes = outcome.NewKeeper(options.Store, service.now)
+		vendors := []string{SIPTrunkVendor}
+		for _, vendor := range options.Registry.Vendors() {
+			vendors = append(vendors, vendor.Vendor)
+		}
+		service.outcomes = outcome.NewKeeper(options.Store, service.now, vendors, options.Logger)
 	}
 	return service, nil
 }

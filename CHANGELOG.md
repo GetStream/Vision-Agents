@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router counts how phone calls end
+
+`/metrics` serves `router_phone_call_outcomes_total{vendor, direction, outcome}`: each inbound and placed call once, when its leg first ends, under its stored outcome or as `dropped`, an answered call whose agent left it on the line (stopped, failed, or the router shut down) before the caller hung up. A network or vendor cut is not told apart from the caller hanging up. What a dropped call is, and what is not detected, is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2780, #1783).
+
 ### The router counts its sessions and how they end
 
 `/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed}`, each session end once: its stored end reason, or `closed`, `shutdown`, `create_failed`, `agent_failed` or `model_failed`; `failed` is `true` for `start`, `create_failed`, `agent_failed` and `model_failed` (AI-2779, #1782).
