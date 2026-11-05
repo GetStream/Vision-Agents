@@ -54,8 +54,10 @@ class TestRoboflowLocalDetectionProcessor:
     @pytest.mark.parametrize("annotate", [True, False])
     async def test_process_video_objects_detected(
         self, cat_video_track, agent_mock, events_manager, annotate: bool
-    ):
-        processor = RoboflowLocalDetectionProcessor(annotate=annotate)
+    ) -> None:
+        processor = RoboflowLocalDetectionProcessor(
+            annotate=annotate, conf_threshold=0.25
+        )
         await processor.warmup()
         processor.attach_agent(agent_mock)
 
