@@ -184,17 +184,14 @@ func deviceCaller(spec Spec) bool {
 }
 
 // checksTokens reports whether Stream says the app the session acts in checks the tokens it is
-// sent. An app that could not be asked is taken as one that does not.
+// sent (streamapp.Clients.ChecksTokens). An app that could not be asked is taken as one that
+// does not.
 func (c *callCards) checksTokens(ctx context.Context, spec Spec, stream streamapp.Bound) bool {
-	if stream.Client == nil {
-		return false
-	}
-	readiness, err := c.stream.Readiness(ctx, stream)
+	checks, err := c.stream.ChecksTokens(ctx, stream)
 	if err != nil {
 		c.logger.Warn("could not ask Stream whether an app checks tokens, so no episode cards are read", "session", spec.ID, "error", err)
-		return false
 	}
-	return !readiness.AuthChecksOff
+	return checks
 }
 
 // Close abandons the cards still being written and waits for them to stop.

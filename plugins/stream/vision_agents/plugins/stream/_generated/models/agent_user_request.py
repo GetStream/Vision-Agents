@@ -17,11 +17,11 @@ class AgentUserRequest:
     Attributes:
         phone (None | str): The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages,
             iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's
-            episode cards of one are read by the other. What the number said before the link is not the user's: under an
-            agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the
-            number the user had, and that number then reads none of the user's cards. A new number takes the place of the
-            old one, which reads none of the user's cards from then on. A number linked to another user of the app is
-            refused (409 phone_taken). Example: +15551234567.
+            episode cards of one are read by the other. What the number said before the link is not the user's: the user
+            reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later. null
+            unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the
+            place of the old one, which reads none of the user's cards from then on. A number linked to another user of the
+            app is refused (409 phone_taken). Example: +15551234567.
     """
 
     phone: None | str
