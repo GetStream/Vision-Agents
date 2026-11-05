@@ -27,7 +27,7 @@ func main() {
 	_ = godotenv.Load("../../../../.env")
 
 	// stt: deepgram/flux-general-en; chorus-asr decides the turns by the server's default.
-	agent, err := agents.New(agents.Options{Dir: "../agents/chorus-front-desk"})
+	agent, err := agents.New(agents.Options{Dir: "../agents/clinic-front-desk"})
 	if err != nil {
 		log.Fatal(err)
 	}

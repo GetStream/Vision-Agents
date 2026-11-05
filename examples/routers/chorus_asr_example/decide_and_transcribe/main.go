@@ -27,7 +27,7 @@ func main() {
 	_ = godotenv.Load("../../../../.env")
 
 	// stt: stream/chorus-asr and end_of_turn: {max_wait_ms: 1100}, beside its llm and tts.
-	agent, err := agents.New(agents.Options{Dir: "../agents/chorus-concierge"})
+	agent, err := agents.New(agents.Options{Dir: "../agents/ferry-concierge"})
 	if err != nil {
 		log.Fatal(err)
 	}
