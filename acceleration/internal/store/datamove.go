@@ -209,15 +209,38 @@ func DataTables() []string {
 // every model request is a row, and recording all of them for everybody in case somebody
 // one day leaves is a cost nobody agreed to. It expires so that a move abandoned halfway
 // stops recording on its own, and reading changes pushes it out again.
-func (s *Store) StartDataCapture(ctx context.Context, customerID string, retention time.Duration) error {
+//
+// A capture that was off and is turned on is a start, and updates data_change_starts in the
+// same transaction: a repeatable read or serializable write that looked for a capture before
+// it holds that row (record_data_change), so a start waits for it, and gives up with
+// ErrWritesOpen past within. Pushing out a capture still on is no start, so following the
+// changes waits for nobody.
+func (s *Store) StartDataCapture(ctx context.Context, customerID string, retention, within time.Duration) error {
 	if customerID == "" {
 		return errors.New("store: a customer id is required")
 	}
-	_, err := s.db.ExecContext(ctx, `
+	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
+		// A lock_timeout of 0 waits for ever.
+		if _, err := tx.ExecContext(ctx, "SELECT set_config('lock_timeout', ?, true)",
+			fmt.Sprintf("%dms", max(within.Milliseconds(), 1))); err != nil {
+			return err
+		}
+		if _, err := tx.ExecContext(ctx, `
+UPDATE data_change_starts SET started = started + 1
+WHERE NOT EXISTS (SELECT 1 FROM data_change_capture WHERE customer_id = ? AND expires_at > now())`,
+			customerID); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(ctx, `
 INSERT INTO data_change_capture (customer_id, expires_at)
 VALUES (?, now() + make_interval(secs => ?))
 ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
-		customerID, retention.Seconds())
+			customerID, retention.Seconds())
+		return err
+	})
+	if isViolation(err, lockNotAvailable) {
+		return ErrWritesOpen
+	}
 	if err != nil {
 		return fmt.Errorf("store: start data capture: %w", err)
 	}
@@ -225,7 +248,7 @@ ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
 }
 
 // ErrWritesOpen says a transaction that wrote before a capture started was still open when
-// WaitForOpenWrites gave up on it.
+// StartDataCapture or WaitForOpenWrites gave up on it.
 var ErrWritesOpen = errors.New("store: a write from before the capture started is still open")
 
 // WaitForOpenWrites returns once every transaction that had written to the shared database
@@ -242,6 +265,8 @@ var ErrWritesOpen = errors.New("store: a write from before the capture started i
 // query comes later sees the capture and records its change. The lock goes once the commit
 // is visible, as record_data_change's notes on CommitTransaction say, so a snapshot taken
 // after this returns holds every row of the ones waited for.
+// A repeatable read or serializable transaction that has not written yet is not waited for:
+// its write is refused instead (record_data_change).
 //
 // Only this database's transactions: ids are counted across the whole Postgres server, whose
 // other databases write nothing of this one's. A shard's tables record no changes

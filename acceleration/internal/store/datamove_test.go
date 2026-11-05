@@ -173,7 +173,7 @@ func (s *DataMoveSuite) exportFrom(store *Store, customerID string) exported {
 
 // capture turns on change recording for a customer, which is what an export does.
 func (s *DataMoveSuite) capture(customerID string) {
-	s.Require().NoError(s.source.StartDataCapture(s.ctx, customerID, time.Hour))
+	s.Require().NoError(s.source.StartDataCapture(s.ctx, customerID, time.Hour, time.Second))
 }
 
 func (s *DataMoveSuite) TestExportCarriesOnlyTheCallersRows() {
@@ -771,7 +771,7 @@ func (s *DataMoveSuite) TestAnOpenTransactionThatRecordsNothingDoesNotHoldTheFee
 func (s *DataMoveSuite) TestAChangeInFlightInAnotherDatabaseDoesNotHoldTheFeedBack() {
 	s.capture("acme")
 	cursor := s.export("acme").cursor
-	s.Require().NoError(s.destination.StartDataCapture(s.ctx, "acme", time.Hour))
+	s.Require().NoError(s.destination.StartDataCapture(s.ctx, "acme", time.Hour, time.Second))
 	elsewhere, err := s.destination.DB().BeginTx(s.ctx, nil)
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = elsewhere.Rollback() })
@@ -907,6 +907,117 @@ func (s *DataMoveSuite) TestWaitingForOpenWritesIgnoresAnotherDatabase() {
 	s.NoError(s.source.WaitForOpenWrites(s.ctx, 0))
 }
 
+// A repeatable read or serializable transaction reads with the snapshot of its first query, so
+// its trigger sees no capture that started after it, and it has no transaction id for the wait
+// to hold. Its write is refused instead, which those levels are retried on, and the retry is in
+// the changes.
+func (s *DataMoveSuite) TestARepeatableReadWriteOnASnapshotFromBeforeTheCaptureIsNotLost() {
+	s.writeOnASnapshotFromBeforeTheCaptureIsNotLost(sql.LevelRepeatableRead)
+}
+
+func (s *DataMoveSuite) TestASerializableWriteOnASnapshotFromBeforeTheCaptureIsNotLost() {
+	s.writeOnASnapshotFromBeforeTheCaptureIsNotLost(sql.LevelSerializable)
+}
+
+func (s *DataMoveSuite) writeOnASnapshotFromBeforeTheCaptureIsNotLost(level sql.IsolationLevel) {
+	before := s.beginAt(level)
+	s.capture("acme")
+	s.Require().NoError(s.source.WaitForOpenWrites(s.ctx, time.Second))
+	exported := s.export("acme")
+
+	lost, err := s.tryWriteIn(before, "acme", "first write after the capture")
+	if err == nil {
+		err = before.Commit()
+	}
+	s.True(isViolation(err, serializationFailure), "the write on the old snapshot was not refused: %v", err)
+	retry := s.beginAt(level)
+	again := s.writeIn(retry, "acme", "the same write again")
+	s.Require().NoError(retry.Commit())
+
+	handed, _ := s.follow("acme", exported.cursor)
+	s.NotContains(handed, lost)
+	s.Equal([]string{again}, handed)
+}
+
+// A repeatable read write that looked for a capture before the start recorded nothing, so the
+// start waits for it to end, and gives up rather than hangs, even when given no time at all.
+func (s *DataMoveSuite) TestACaptureStartWaitsForARepeatableReadWriteThatLookedBeforeIt() {
+	before := s.beginAt(sql.LevelRepeatableRead)
+	id := s.writeIn(before, "acme", "looked before the start")
+
+	bounded, cancel := context.WithTimeout(s.ctx, 5*time.Second)
+	defer cancel()
+	s.ErrorIs(s.source.StartDataCapture(bounded, "acme", time.Hour, 0), ErrWritesOpen)
+
+	started := make(chan error, 1)
+	go func() { started <- s.source.StartDataCapture(s.ctx, "acme", time.Hour, time.Minute) }()
+	s.Never(func() bool { return len(started) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the start did not wait for the write")
+	s.Require().NoError(before.Commit())
+	s.Require().NoError(<-started)
+	s.True(slices.ContainsFunc(s.export("acme").of("agent_configs"), func(row map[string]any) bool { return row["id"] == id }))
+}
+
+// Following the changes pushes out a capture still on, which is no start: it waits for nobody.
+func (s *DataMoveSuite) TestPushingOutACaptureStillOnWaitsForNobody() {
+	s.capture("acme")
+	writing := s.beginAt(sql.LevelRepeatableRead)
+	s.writeIn(writing, "not-moving", "holds the starts")
+
+	s.NoError(s.source.StartDataCapture(s.ctx, "acme", time.Hour, 50*time.Millisecond))
+}
+
+// A capture that expired is off, so turning it on again is a start.
+func (s *DataMoveSuite) TestRenewingAnExpiredCaptureIsAStart() {
+	s.capture("acme")
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = 'acme'")
+	s.Require().NoError(err)
+	before := s.beginAt(sql.LevelRepeatableRead)
+	s.capture("acme")
+
+	_, err = s.tryWriteIn(before, "acme", "on a snapshot of the expired capture")
+
+	s.True(isViolation(err, serializationFailure), "the write on the old snapshot was not refused: %v", err)
+}
+
+// With nobody moving, a repeatable read write commits and records nothing, as before.
+func (s *DataMoveSuite) TestARepeatableReadWriteWithNobodyMovingRecordsNothing() {
+	writing := s.beginAt(sql.LevelRepeatableRead)
+	s.writeIn(writing, "acme", "nobody moving")
+	s.Require().NoError(writing.Commit())
+
+	var recorded int
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM data_changes").Scan(&recorded))
+	s.Zero(recorded)
+}
+
+// A transaction that only reads writes nothing a capture could miss, however old its snapshot,
+// so an export neither waits for it nor is refused for it.
+func (s *DataMoveSuite) TestALongReadDoesNotHoldAnExport() {
+	reading, err := s.source.DB().BeginTx(s.ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = reading.Rollback() })
+	s.Require().NoError(reading.QueryRowContext(s.ctx,
+		"SELECT count(*) FROM agent_configs, data_change_capture").Scan(new(int)))
+
+	s.capture("acme")
+	s.NoError(s.source.WaitForOpenWrites(s.ctx, 0))
+}
+
+// serializationFailure is the SQLSTATE of a transaction Postgres refused to let go on at its
+// isolation level, the one such a transaction is retried on.
+const serializationFailure = "40001"
+
+// beginAt opens a transaction at an isolation level and takes its snapshot.
+func (s *DataMoveSuite) beginAt(level sql.IsolationLevel) bun.Tx {
+	tx, err := s.source.DB().BeginTx(s.ctx, &sql.TxOptions{Isolation: level})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = tx.Rollback() })
+	s.Require().NoError(tx.QueryRowContext(s.ctx, "SELECT count(*) FROM agent_configs").Scan(new(int)))
+	return tx
+}
+
 // begin opens a transaction on the source that the test commits when it says so.
 func (s *DataMoveSuite) begin() bun.Tx {
 	tx, err := s.source.DB().BeginTx(s.ctx, nil)
@@ -916,12 +1027,18 @@ func (s *DataMoveSuite) begin() bun.Tx {
 }
 
 func (s *DataMoveSuite) writeIn(tx bun.Tx, customerID, name string) string {
+	id, err := s.tryWriteIn(tx, customerID, name)
+	s.Require().NoError(err)
+	return id
+}
+
+// tryWriteIn is writeIn for a write the test expects may be refused.
+func (s *DataMoveSuite) tryWriteIn(tx bun.Tx, customerID, name string) (string, error) {
 	id := newID()
 	_, err := tx.ExecContext(s.ctx,
 		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES (?, ?, ?, ?)",
 		id, customerID, name, "be brief")
-	s.Require().NoError(err)
-	return id
+	return id, err
 }
 
 // follow reads a customer's changes after a cursor and returns the ids of the rows they name,

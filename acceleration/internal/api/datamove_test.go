@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -315,6 +316,39 @@ func (s *DataMoveSuite) TestAnExportGivesUpOnAWriteThatStaysOpen() {
 	s.export()
 }
 
+// A repeatable read write that looked for the recording before the export started it holds the
+// start, which gives up within the same bound as the wait after it.
+func (s *DataMoveSuite) TestAnExportGivesUpOnARepeatableReadWriteThatLookedBeforeIt() {
+	s.skipOnARouterWithShards()
+	stranger := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(100 * time.Millisecond)
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), "still open")
+
+	s.Require().NoError(stranger.tx.Rollback())
+	s.export()
+}
+
+// Following the changes of a move whose recording expired starts it again, which gives up on such
+// a write too.
+func (s *DataMoveSuite) TestFollowingAnExpiredRecordingGivesUpOnARepeatableReadWriteThatLookedBeforeIt() {
+	s.skipOnARouterWithShards()
+	s.export()
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+	stranger := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(100 * time.Millisecond)
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/data/changes?after=0", nil)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), "still open")
+
+	s.Require().NoError(stranger.tx.Rollback())
+}
+
 // A shard's tables record no changes, so a write to one after the export would never reach the
 // changes: a router with a shard of its own refuses to be the source, before it records anything.
 func (s *DataMoveSuite) TestARouterWithAShardOfItsOwnRefusesToBeTheSource() {
@@ -369,7 +403,12 @@ func (s *DataMoveSuite) shardDSN() string {
 
 // openWrite writes an agent config of a customer in a transaction the test ends.
 func (s *DataMoveSuite) openWrite(customerID string) openWrite {
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	return s.openWriteAt(sql.LevelDefault, customerID)
+}
+
+// openWriteAt is openWrite in a transaction at an isolation level.
+func (s *DataMoveSuite) openWriteAt(level sql.IsolationLevel, customerID string) openWrite {
+	tx, err := s.store.DB().BeginTx(context.Background(), &sql.TxOptions{Isolation: level})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = tx.Rollback() })
 	id := "agent-" + s.utils.uuid()
