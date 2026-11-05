@@ -558,6 +558,7 @@ func TestAnArgumentSentEscapedIsStillAnEcho(t *testing.T) {
 	}
 	for _, c := range cases {
 		_, _, _, unfound := unfoundID(answered(c.arguments, listed(c.id)), llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":"` + c.id + `"}`}, tools, "")
+		{"a link in text that is escaped for HTML inside JSON", answered(`{"query":"help"}`, `{"results":"she said &quot;read https:\/\/team.example.com\/archives\/C0HELP002&quot;"}`), false},
 		assert.Equal(t, c.unfound, unfound, c.name)
 	}
 }
