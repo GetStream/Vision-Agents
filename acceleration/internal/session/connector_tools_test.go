@@ -4,7 +4,6 @@ package session
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"log/slog"
 	"strings"
