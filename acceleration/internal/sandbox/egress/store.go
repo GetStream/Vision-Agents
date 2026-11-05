@@ -77,14 +77,26 @@ func named(hosts []string, host string) string {
 	return ""
 }
 
-// granted says whether any grant covers host.
+// granted says whether any grant covers host, or lists it among an LFS read's downloads, which it
+// reaches with no token.
 func (r Record) granted(host string) bool {
 	for _, grant := range r.Grants {
-		if grant.covers(host) {
+		if grant.covers(host) || grant.downloads(host) != "" {
 			return true
 		}
 	}
 	return false
+}
+
+// downloads is the entry of the grant's LFS reads' downloads that covers host, or "" when none
+// does. Such a host is not one of the grant's Hosts, so placed never gives it the token.
+func (g Grant) downloads(host string) string {
+	for _, read := range g.Reads {
+		if entry := named(read.Downloads, host); read.LFS && entry != "" {
+			return entry
+		}
+	}
+	return ""
 }
 
 // reads says whether a request with method to target's path on host only reads: a GET or a HEAD,
@@ -93,29 +105,30 @@ func (r Record) granted(host string) bool {
 // matched, so no other spelling of a path reaches another resource behind a pattern. When a read
 // that matches is a GraphQL one it says graphQL, whatever other reads match: the request reads
 // only if its body holds queries alone. A SQL read says sql the same way: the request reads only
-// if the host's dry run of it says it is one SELECT.
+// if the host's dry run of it says it is one SELECT. An LFS read says lfs: the request reads only
+// if its body asks to download.
 // git push's first request, a GET of info/refs for git-receive-pack (gitprotocol-http(5),
 // https://git-scm.com/docs/gitprotocol-http, "Smart Clients"), is not a read: git prints the
 // body of a refusal there to the model, and drops the body of a refused POST.
-func (r Record) reads(host, method string, target *url.URL) (reads, graphQL, sql bool) {
+func (r Record) reads(host, method string, target *url.URL) (reads, graphQL, sql, lfs bool) {
 	if method == http.MethodGet || method == http.MethodHead {
-		return !strings.HasSuffix(target.Path, "/info/refs") || !slices.Contains(target.Query()["service"], "git-receive-pack"), false, false
+		return !strings.HasSuffix(target.Path, "/info/refs") || !slices.Contains(target.Query()["service"], "git-receive-pack"), false, false, false
 	}
 	at := target.EscapedPath()
 	if at != target.Path || path.Clean(at) != at {
-		return false, false, false
+		return false, false, false, false
 	}
 	for _, grant := range r.Grants {
 		for _, read := range grant.Reads {
-			if read.GraphQL || read.SQL {
+			if read.GraphQL || read.SQL || read.LFS {
 				read.Method = http.MethodPost
 			}
 			if matched, _ := path.Match(read.Path, at); matched && read.Method == method && covers([]string{read.Host}, host) {
-				reads, graphQL, sql = true, graphQL || read.GraphQL, sql || read.SQL
+				reads, graphQL, sql, lfs = true, graphQL || read.GraphQL, sql || read.SQL, lfs || read.LFS
 			}
 		}
 	}
-	return reads, graphQL, sql
+	return reads, graphQL, sql, lfs
 }
 
 // readsSQL says whether a grant has a SQL read on host: a refusal there tells the model how
@@ -137,6 +150,9 @@ func (r Record) readsSQL(host string) bool {
 func (r Record) hostLabel(host string) string {
 	for _, grant := range r.Grants {
 		if entry := named(grant.Hosts, host); entry != "" {
+			return entry
+		}
+		if entry := grant.downloads(host); entry != "" {
 			return entry
 		}
 	}

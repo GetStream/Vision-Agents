@@ -26,9 +26,12 @@ func TestSandboxSuite(t *testing.T) {
 // (https://git-scm.com/docs/gitprotocol-http); a push's git-receive-pack is no read. From
 // revision 9 gh reads with a POST of queries to api.github.com/graphql
 // (https://docs.github.com/en/graphql/guides/forming-calls-with-graphql). Revision 10 keeps them.
+// From revision 11 git lfs pull reads with a POST of downloads to the LFS batch API
+// (https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md), and fetches the objects from
+// the host its answer names, which gets no token.
 func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts() {
 	github := s.manifest("github")
-	s.Equal(10, github.Revision)
+	s.Equal(11, github.Revision)
 
 	for _, scheme := range github.Schemes {
 		resolved, err := github.Resolve(scheme, nil, nil)
@@ -36,19 +39,22 @@ func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts()
 
 		s.Equal(&core.SandboxRule{Env: "GITHUB_TOKEN", Hosts: []string{"api.github.com", "uploads.github.com", "github.com"},
 			Reads: []core.SandboxRead{{Host: "github.com", Method: "POST", Path: "/*/*/git-upload-pack"},
-				{Host: "api.github.com", Path: "/graphql", GraphQL: true}}}, resolved.Sandbox, scheme)
+				{Host: "api.github.com", Path: "/graphql", GraphQL: true},
+				{Host: "github.com", Path: "/*/*/info/lfs/objects/batch", LFS: true, Downloads: []string{"github-cloud.githubusercontent.com"}}}},
+			resolved.Sandbox, scheme)
 	}
 }
 
-// Revisions 8 and 9 add reads alone, which a session takes from the latest revision, so a
-// connection pinned to revision 7 reads as one on 9 and is not marked outdated, as on 10, which
-// adds read_only_tools.
+// Revisions 8, 9 and 11 add reads alone, which a session takes from the latest revision, so a
+// connection pinned to revision 7 reads as one on 11 and is not marked outdated, as on 10, which
+// adds read_only_tools. The LFS read's download host rides in the read, so it needs no reconnect
+// either.
 func (s *SandboxSuite) TestGitHubsReadsNeedNoReconnect() {
 	raw, err := fs.ReadFile(providers.FS, "github.yaml")
 	s.Require().NoError(err)
 	before, _, found := strings.Cut(string(raw), "  reads:\n")
 	s.Require().True(found)
-	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 10\n", "revision: 7\n", 1)))
+	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 11\n", "revision: 7\n", 1)))
 	s.Require().NoError(err)
 	s.Equal(7, seven.Revision)
 	s.Nil(seven.Sandbox.Reads)

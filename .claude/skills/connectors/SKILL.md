@@ -273,6 +273,8 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   revision 9: `POST api.github.com/graphql`, so `gh`'s queries work and its mutations get the 403).
   A read with `sql: true` takes a POST whose dry run the host says is one SELECT (BigQuery
   revision 4: jobs.query).
+  A read with `lfs: true` takes a POST to the LFS batch path whose operation is `download` (GitHub
+  revision 11), so `git lfs pull` works and `git lfs push` gets the 403.
   Connections pinned to an earlier revision get the reads without a reconnect. Allowed domains
   take any method. Under the Daytona broker nothing checks methods: code can write with the token
   (`internal/sandbox/egress/AGENTS.md`, «Read-only»).
