@@ -74,6 +74,8 @@ var (
 // it was handed to leaves it to this one.
 func withMetrics(routes *chi.Mux, next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		// The entry node counts a forwarded request. A node-to-node /internal/* route is only ever
+		// sent forwarded, so no node counts it: it is not the customer API.
 		if node.Forwarded(r.Context()) {
 			next.ServeHTTP(w, r)
 			return

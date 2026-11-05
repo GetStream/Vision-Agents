@@ -58,6 +58,17 @@ func (s *HTTPMetricsRouterSuite) TestARequestWithoutCredentialsIsCountedAsARefus
 	s.GreaterOrEqual(sumOf(s.T(), "router_http_requests_total", answered), before+1)
 }
 
+// Defect: Handler passes withMetrics a router that serves nothing, so a request that
+// withServerSide refuses before the mux is counted under "unmatched", not its route template.
+func (s *HTTPMetricsRouterSuite) TestARefusalBeforeTheMuxIsCountedUnderTheRouteItWasFor() {
+	refused := map[string]string{"method": http.MethodGet, "route": "/v1/agents/configs/{id}", "status": "4xx"}
+	before := sumOf(s.T(), "router_http_requests_total", refused)
+
+	s.Equal(http.StatusForbidden, s.client.do(http.MethodGet, "/v1/agents/configs/"+s.utils.uuid(), nil, nil))
+
+	s.GreaterOrEqual(sumOf(s.T(), "router_http_requests_total", refused), before+1)
+}
+
 // Defect: the session socket timed as a response, so the API's latency holds how long
 // conversations last. No correct router ever times a 1xx, so the series stays absent
 // whatever other suites open.
