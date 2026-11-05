@@ -56,7 +56,7 @@ func TestARealServerRulesAndTranscribes(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 	client := New(url, Opus, nil)
-	hearer := NewHearer(client)
+	hearer := NewHearer(client, EndOfTurn{}, slog.New(slog.DiscardHandler))
 	for _, format := range []Format{PCM, Opus} {
 		turn := harness.FlowTurn{
 			Instructions: "You answer the phone for a weather service.",

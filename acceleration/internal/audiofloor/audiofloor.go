@@ -87,10 +87,12 @@ const (
 
 // Policy is when a turn with the floor free has ended, fitted to the server's model. A
 // pause is checked FirstCheckMs into it and every IntervalMs after, and the turn has ended
-// at the first check where p_eot reaches the bar of the last of the preset's bars to have
+// at the first check where p_eot reaches the bar of the last of the agent's bars to have
 // begun by then, raised by FirstPauseLogit in log-odds on the turn's first pause. At CapMs
 // of pause it has ended whatever the model says. The presets are how eager turn-taking is,
-// by name, and the server names its Default.
+// by name, and the server names its Default. The frontier, when the server measured one, is
+// bars fitted to each of several waits, which an agent chooses by the most a caller may wait
+// (EndOfTurn).
 type Policy struct {
 	FirstCheckMs    int               `json:"first_check_ms"`
 	FirstPauseLogit float64           `json:"first_pause_logit"`
@@ -98,6 +100,7 @@ type Policy struct {
 	CapMs           int               `json:"cap_ms"`
 	Default         string            `json:"default"`
 	Presets         map[string]Preset `json:"presets"`
+	Frontier        []FrontierPoint   `json:"frontier,omitempty"`
 }
 
 // Preset is one choice of bars, each from a time into the pause on.
@@ -111,36 +114,26 @@ type PolicyBar struct {
 	Bar    float64 `json:"bar"`
 }
 
-// Bar is what p_eot must reach, by the default preset, at a check paused into the pause for
-// the turn to have ended.
-func (p Policy) Bar(paused time.Duration, firstPause bool) float64 {
-	var bar float64
-	for _, b := range p.Presets[p.Default].Bars {
-		if paused >= time.Duration(b.FromMs)*time.Millisecond {
-			bar = b.Bar
-		}
-	}
-	if firstPause {
-		bar = 1 / (1 + math.Exp(-(math.Log(bar/(1-bar)) + p.FirstPauseLogit)))
-	}
-	return bar
+// raised is bar raised by logit in log-odds.
+func raised(bar, logit float64) float64 {
+	return 1 / (1 + math.Exp(-(math.Log(bar/(1-bar)) + logit)))
 }
 
-// valid says the policy has its times and a default preset, and that every preset has a
-// bar for every check, each a probability.
+// valid says the policy has its times and a default preset, that every preset and frontier
+// point has a bar for every check, each a probability, and that every point has its wait and
+// what it was measured at.
 func (p Policy) valid() bool {
 	if _, ok := p.Presets[p.Default]; !ok || p.FirstCheckMs <= 0 || p.IntervalMs <= 0 || p.CapMs <= 0 {
 		return false
 	}
 	for _, preset := range p.Presets {
-		bars := preset.Bars
-		if len(bars) == 0 || bars[0].FromMs != 0 {
+		if checkBars(preset.Bars) != nil {
 			return false
 		}
-		for i, b := range bars {
-			if b.Bar <= 0 || b.Bar >= 1 || (i > 0 && b.FromMs <= bars[i-1].FromMs) {
-				return false
-			}
+	}
+	for _, point := range p.Frontier {
+		if !point.valid() {
+			return false
 		}
 	}
 	return true

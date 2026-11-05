@@ -256,7 +256,7 @@ func (s *ClientSuite) TestNoAudioIsNotAsked() {
 	s.Zero(s.server.requests())
 }
 
-// The bar is the default preset's last to have begun by the check's time into the pause,
+// The bar is the last of the bars to have begun by the check's time into the pause,
 // raised on the turn's first pause.
 func TestTheBarIsTheOneBegunByTheCheck(t *testing.T) {
 	var info struct {
@@ -269,10 +269,10 @@ func TestTheBarIsTheOneBegunByTheCheck(t *testing.T) {
 		want   float64
 	}{{200 * time.Millisecond, 0.995}, {800 * time.Millisecond, 0.995}, {1099 * time.Millisecond, 0.995},
 		{1100 * time.Millisecond, 0.20}, {2 * time.Second, 0.20}} {
-		require.InDelta(t, c.want, p.Bar(c.paused, false), 1e-9, "%v into the pause", c.paused)
+		require.InDelta(t, c.want, p.Bar(p.DefaultEnding().Bars, c.paused, false), 1e-9, "%v into the pause", c.paused)
 	}
-	require.InDelta(t, 0.292, p.Bar(1100*time.Millisecond, true), 1e-3)
-	require.InDelta(t, 0.997, p.Bar(800*time.Millisecond, true), 1e-3)
+	require.InDelta(t, 0.292, p.Bar(p.DefaultEnding().Bars, 1100*time.Millisecond, true), 1e-3)
+	require.InDelta(t, 0.997, p.Bar(p.DefaultEnding().Bars, 800*time.Millisecond, true), 1e-3)
 }
 
 // HearerSuite reads the model's answers as the flow controller's rulings.
@@ -287,7 +287,7 @@ func TestHearerSuite(t *testing.T) {
 
 func (s *HearerSuite) SetupTest() {
 	s.serverSuite.SetupTest()
-	s.hearer = NewHearer(s.client)
+	s.hearer = NewHearer(s.client, EndOfTurn{}, slog.New(slog.DiscardHandler))
 }
 
 func (s *HearerSuite) answering(pEOT float64, ruling string) {
@@ -302,7 +302,7 @@ func (s *HearerSuite) TestATurnHasEndedWhenPEndReachesTheBar() {
 	s.Require().NoError(err)
 	s.False(first.Ended)
 	s.InDelta(0.995, first.Bar, 1e-9)
-	s.Equal("safe", first.Preset)
+	s.Equal("preset:safe", first.EndOfTurn)
 	s.Equal(harness.Decided{Disposition: harness.Wait, Floor: harness.Continue, Again: 300 * time.Millisecond}, first.Ruling)
 
 	later, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Waited: true, Paused: 1100 * time.Millisecond})

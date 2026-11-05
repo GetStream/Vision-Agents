@@ -21,8 +21,8 @@ const audioFloorPending = 64
 var audioFloorCompared = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "agent_audio_floor_compared_total",
-	Help:      "Turns both the flow controller and, in shadow mode, the audio floor model ruled on, by each one's disposition and floor, and the end-of-turn preset the model's was read by. The model's ruling is not acted on.",
-}, []string{"controller_disposition", "model_disposition", "controller_floor", "model_floor", "preset"})
+	Help:      "Turns both the flow controller and, in shadow mode, the audio floor model ruled on, by each one's disposition and floor, and the end-of-turn bars the model's was read by: preset:NAME, max_wait_ms:N for the frontier point fitted to N, or custom for the agent's own. The model's ruling is not acted on.",
+}, []string{"controller_disposition", "model_disposition", "controller_floor", "model_floor", "end_of_turn"})
 
 // audioFloor keeps each participant's last 16 s for the audio floor model, encoded once as
 // it arrives. Acting, the model is the flow controller's Hearer. In shadow mode it is asked
@@ -58,15 +58,16 @@ type audioFloorTurn struct {
 	controller             *harness.Decided
 }
 
-// newAudioFloor returns nil unless the model is asked.
-func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, logger *slog.Logger) *audioFloor {
+// newAudioFloor returns nil unless the model is asked. A turn with the floor free ends by the
+// bars endOfTurn chooses.
+func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, endOfTurn audiofloor.EndOfTurn, logger *slog.Logger) *audioFloor {
 	if client == nil || (mode != audiofloor.Shadow && mode != audiofloor.Act) {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &audioFloor{
 		client:  client,
-		hearer:  audiofloor.NewHearer(client),
+		hearer:  audiofloor.NewHearer(client, endOfTurn, logger),
 		shadow:  mode == audiofloor.Shadow,
 		logger:  logger,
 		ctx:     ctx,
@@ -196,7 +197,7 @@ func (v *audioFloor) settle(candidate string, say func(*audioFloorTurn)) {
 	}
 	model, controller := turn.model.Ruling, turn.controller
 	audioFloorCompared.WithLabelValues(string(controller.Disposition), string(model.Disposition), string(controller.Floor), string(model.Floor),
-		turn.model.Preset).Inc()
+		turn.model.EndOfTurn).Inc()
 	answer := turn.model.Answer
 	var pEnd any
 	if answer.PEOT != nil {
@@ -206,7 +207,7 @@ func (v *audioFloor) settle(candidate string, say func(*audioFloorTurn)) {
 		"controller_disposition", controller.Disposition, "controller_floor", controller.Floor,
 		"model_disposition", model.Disposition, "model_floor", model.Floor,
 		"model_answer", answer.Answer, "model_p", answer.AnswerProbability, "p_end", pEnd,
-		"preset", turn.model.Preset, "bar", turn.model.Bar, "ended", turn.model.Ended, "paused_ms", turn.paused.Milliseconds(),
+		"end_of_turn", turn.model.EndOfTurn, "bar", turn.model.Bar, "ended", turn.model.Ended, "paused_ms", turn.paused.Milliseconds(),
 		"first_check", turn.firstCheck, "first_pause", turn.firstPause,
 		"tool", model.Tool, "cannot", model.Cannot, "took_ms", turn.took.Milliseconds())
 }
