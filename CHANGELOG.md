@@ -335,7 +335,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### The generated clients lose the plugin and MCP server types
 
-`PluginEntry`, `PluginWithOptions`, `PluginEvent`, `McpServer` and `McpServerBranding` are gone from the spec and from every generated client (Go, Python `plugins/stream`, JavaScript, .NET, Ruby, Rust, PHP). `plugins`, `plugin_events` and `mcp_servers` stay on `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, deprecated, as lists with no schema of their own (`plugins`: strings or objects; the other two: objects), so code that built them from those types no longer compiles. The router answers as before: a non-empty list is the same 400, and `[]`, `null` or a left-out key saves. (#PRNUM)
+`PluginEntry`, `PluginWithOptions`, `PluginEvent`, `McpServer` and `McpServerBranding` are gone from the spec and from every generated client (Go, Python `plugins/stream`, JavaScript, .NET, Ruby, Rust, PHP). `plugins`, `plugin_events` and `mcp_servers` stay on `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, deprecated, as lists with no schema of their own (`plugins`: strings or objects; the other two: objects), so code that built them from those types no longer compiles. The router answers as before: a non-empty list is the same 400, and `[]`, `null` or a left-out key saves. (#1742)
 
 ### The router refuses `plugins`, `plugin_events` and `mcp_servers` and serves none of them
 
