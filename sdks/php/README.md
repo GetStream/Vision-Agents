@@ -134,6 +134,10 @@ stored config instead of sending it again. The fingerprint is the Go SDK's, so e
 the same directory. An unknown key in `agent.yaml`, `urls.yaml` or a simulations file is
 refused rather than ignored.
 
+`end_of_turn:` is how eager chorus-asr's turn-taking is: `{max_wait_ms: 900}`, `{preset: fast}`
+or `{bars: [{from_ms: 0, bar: 0.97}, ...]}`. `{}` is the server's default; left out, the stored
+choice stays.
+
 ```php
 $agent->knowledge()->addUrl('https://example.com/pricing', title: 'Pricing', refreshHours: 24);
 ```

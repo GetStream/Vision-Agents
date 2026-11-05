@@ -181,6 +181,7 @@ connectors:
   - github
 keyterms:
   - Vision Agents
+end_of_turn: {max_wait_ms: 900}  # chorus-asr's turn-taking: or a preset, or bars; {} is its default
 tags:
   project: support
 ```

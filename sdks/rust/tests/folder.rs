@@ -404,6 +404,13 @@ fn a_declaration_key_nobody_knows_is_refused() {
         "sandbox_options:\n  timeout: 2h\n",
         "sandbox_options:\n  cpu: two\n",
         "sandbox_options:\n  network: maybe\n",
+        "end_of_turn:\n  max_wait: 900\n",
+        "end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n",
+        "end_of_turn: fast\n",
+        "end_of_turn:\n  max_wait_ms: soon\n",
+        "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n",
+        "end_of_turn:\n  bars:\n    - {bar: 0.9}\n",
+        "end_of_turn:\n  bars:\n    - {from_ms: 0}\n",
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);

@@ -234,7 +234,10 @@ class TestFolder < Minitest::Test
      "user_plugins: [linear]\n", "plugin_events: [linear]\n", "progressive_tools: true\n", "greeting: Hello\n",
      "greeting:\n  text: Hello\n  tone: warm\n", "sandbox_options:\n  memory: 4\n",
      "sandbox_options:\n  timeout: 2h\n", "sandbox_options:\n  cpu: two\n",
-     "sandbox_options:\n  network: maybe\n"].each do |yaml|
+     "sandbox_options:\n  network: maybe\n", "end_of_turn:\n  max_wait: 900\n",
+     "end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n", "end_of_turn: fast\n",
+     "end_of_turn:\n  max_wait_ms: soon\n", "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n",
+     "end_of_turn:\n  bars:\n    - {bar: 0.9}\n", "end_of_turn:\n  bars:\n    - {from_ms: 0}\n"].each do |yaml|
       write("agent.yaml", yaml)
 
       assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }

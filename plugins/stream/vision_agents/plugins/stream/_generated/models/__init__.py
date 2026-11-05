@@ -219,6 +219,8 @@ from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
 from .effective_quota import EffectiveQuota
 from .end_call_settings import EndCallSettings
+from .end_of_turn import EndOfTurn
+from .end_of_turn_bar import EndOfTurnBar
 from .endpointing import Endpointing
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
@@ -805,6 +807,8 @@ __all__ = (
     "DispatchSetting",
     "EffectiveQuota",
     "EndCallSettings",
+    "EndOfTurn",
+    "EndOfTurnBar",
     "Endpointing",
     "EqualsType1",
     "ErrorDetail",

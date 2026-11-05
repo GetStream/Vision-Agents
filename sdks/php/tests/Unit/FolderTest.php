@@ -276,6 +276,47 @@ final class FolderTest extends TestCase
         Folder::load($this->dir);
     }
 
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function refusedEndsOfTurn(): iterable
+    {
+        yield 'unknown key' => ["end_of_turn:\n  max_wait: 900\n", '"end_of_turn.max_wait" is not something agent.yaml declares'];
+        yield 'unknown bar key' => ["end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n", '"end_of_turn.bars[0].from" is not something agent.yaml declares'];
+        yield 'a scalar' => ["end_of_turn: fast\n", 'end_of_turn is a mapping of max_wait_ms, preset or bars'];
+        yield 'a list' => ["end_of_turn: []\n", 'end_of_turn is a mapping of max_wait_ms, preset or bars'];
+        yield 'a wait that is not a number' => ["end_of_turn:\n  max_wait_ms: soon\n", 'end_of_turn.max_wait_ms must be a whole number of milliseconds'];
+        yield 'a fractional wait' => ["end_of_turn:\n  max_wait_ms: 900.5\n", 'end_of_turn.max_wait_ms must be a whole number of milliseconds'];
+        yield 'a preset that is a mapping' => ["end_of_turn:\n  preset: {name: fast}\n", 'end_of_turn.preset is a single value'];
+        yield 'bars as a mapping' => ["end_of_turn:\n  bars: {from_ms: 0, bar: 0.9}\n", 'end_of_turn.bars is a list'];
+        yield 'a bar that is not a mapping' => ["end_of_turn:\n  bars: [0.9]\n", 'end_of_turn.bars[0] is a mapping of from_ms and bar'];
+        yield 'a bar that is not a number' => ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n", 'end_of_turn.bars[0].bar must be a number'];
+        yield 'a start that is not a number' => ["end_of_turn:\n  bars:\n    - {from_ms: soon, bar: 0.9}\n", 'end_of_turn.bars[0].from_ms must be a whole number of milliseconds'];
+        yield 'a bar without from_ms' => ["end_of_turn:\n  bars:\n    - {bar: 0.9}\n", 'end_of_turn.bars[0] names both from_ms and bar'];
+        yield 'a bar without bar' => ["end_of_turn:\n  bars:\n    - {from_ms: 0}\n", 'end_of_turn.bars[0] names both from_ms and bar'];
+        yield 'a later bar without from_ms' => ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.9}\n    - {bar: 0.2}\n", 'end_of_turn.bars[1] names both from_ms and bar'];
+        yield 'a null bar' => ["end_of_turn:\n  bars:\n    - ~\n", 'end_of_turn.bars[0] names both from_ms and bar'];
+    }
+
+    #[DataProvider('refusedEndsOfTurn')]
+    public function testRefusesAnEndOfTurnGoRefuses(string $declaration, string $message): void
+    {
+        $this->write('agent.yaml', $declaration);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($message);
+        Folder::load($this->dir);
+    }
+
+    public function testReadsEndOfTurnAsWritten(): void
+    {
+        $this->write('agent.yaml', "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 1}\n    - {from_ms: 900, bar: 0.25}\n");
+
+        $endOfTurn = Folder::load($this->dir)->settings->endOfTurn;
+
+        self::assertSame(['bars' => [['bar' => 1.0, 'from_ms' => 0], ['bar' => 0.25, 'from_ms' => 900]]], $endOfTurn?->toArray());
+    }
+
     public function testReadsConnectorsAsWritten(): void
     {
         $this->write('agent.yaml', "connectors:\n  - linear\n  - name: issues\n    connector: linear\n    tools: [search]\n    connection: prod\n    required: false\n");

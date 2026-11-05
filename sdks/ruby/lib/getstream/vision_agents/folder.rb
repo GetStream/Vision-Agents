@@ -141,13 +141,16 @@ module GetStream
 
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search sandbox].freeze
       SETTING_LISTS = %w[keyterms].freeze
-      SETTINGS = (SETTING_STRINGS + SETTING_LISTS + %w[greeting tags video dispatch connectors sandbox_options]).freeze
+      SETTINGS = (SETTING_STRINGS + SETTING_LISTS +
+                  %w[greeting tags video dispatch connectors sandbox_options end_of_turn]).freeze
       SANDBOX_LISTS = %w[setup allowed_domains network_allow_list].freeze
       SANDBOX_SIZES = %w[cpu memory_gb disk_gb].freeze
       SANDBOX_KEYS = (SANDBOX_LISTS + SANDBOX_SIZES + %w[image timeout network]).freeze
       GREETING_KEYS = %w[text mode].freeze
       VIDEO_KEYS = %w[source max_frames].freeze
       DISPATCH_KEYS = %w[incoming_call text].freeze
+      END_OF_TURN_KEYS = %w[max_wait_ms preset bars].freeze
+      BAR_KEYS = %w[from_ms bar].freeze
       PAGE_KEYS = %w[url title description refresh_hours].freeze
       CONNECTOR_KEYS = %w[name connector tools connection required].freeze
       SIMULATION_STRINGS = %w[name scenario assertion mode caller_target judge_target caller_stt caller_tts
@@ -308,7 +311,58 @@ module GetStream
         when "dispatch" then dispatch(value, file)
         when "connectors" then connectors(value, file)
         when "sandbox_options" then sandbox_options(value, file)
+        when "end_of_turn" then end_of_turn(value, file)
         end
+      end
+
+      # How eager chorus-asr's turn-taking is, as written: max_wait_ms, preset or bars, or {}
+      # for the server's default. Only the shape is read here; the router refuses a choice
+      # naming more than one, bars that do not begin at 0 and rise, or a preset or wait
+      # chorus-asr does not publish.
+      def self.end_of_turn(value, file)
+        raise ConfigurationError, "#{file}: end_of_turn should be a mapping" unless value.is_a?(Hash)
+
+        unknown = value.keys.map(&:to_s) - END_OF_TURN_KEYS
+        raise ConfigurationError, "#{file}: end_of_turn has no #{unknown.join(", ")}" unless unknown.empty?
+
+        value.to_h do |key, setting|
+          key = key.to_s
+          next [key, nil] if setting.nil?
+
+          case key
+          when "max_wait_ms"
+            raise ConfigurationError, "#{file}: end_of_turn.max_wait_ms must be a whole number" unless setting.is_a?(Integer)
+
+            [key, setting]
+          when "preset"
+            raise ConfigurationError, "#{file}: end_of_turn.preset should be a string" if setting.is_a?(Hash) || setting.is_a?(Array)
+
+            [key, setting.to_s]
+          else
+            raise ConfigurationError, "#{file}: end_of_turn.bars should be a list" unless setting.is_a?(Array)
+
+            [key, setting.each_with_index.map { |bar, index| end_of_turn_bar(bar, index, file) }]
+          end
+        end.compact
+      end
+
+      # One of end_of_turn's bars, which names both where it begins and what it asks.
+      def self.end_of_turn_bar(bar, index, file)
+        name = "end_of_turn.bars[#{index}]"
+        raise ConfigurationError, "#{file}: #{name} should be a mapping of from_ms and bar" unless bar.is_a?(Hash)
+
+        unknown = bar.keys.map(&:to_s) - BAR_KEYS
+        raise ConfigurationError, "#{file}: #{name} has no #{unknown.join(", ")}" unless unknown.empty?
+
+        fields = bar.transform_keys(&:to_s)
+        from_ms, reach = fields.values_at(*BAR_KEYS)
+        unless from_ms.nil? || from_ms.is_a?(Integer)
+          raise ConfigurationError, "#{file}: #{name}.from_ms must be a whole number"
+        end
+        raise ConfigurationError, "#{file}: #{name}.bar must be a number" unless reach.nil? || reach.is_a?(Numeric)
+        raise ConfigurationError, "#{file}: #{name} names both from_ms and bar" if from_ms.nil? || reach.nil?
+
+        { "from_ms" => from_ms, "bar" => reach }
       end
 
       # How the sandbox is built and what code in it may reach, as the sync takes it. Outbound

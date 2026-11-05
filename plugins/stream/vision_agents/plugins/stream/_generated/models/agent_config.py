@@ -23,6 +23,7 @@ if TYPE_CHECKING:
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.end_of_turn import EndOfTurn
     from ..models.greeting import Greeting
     from ..models.left_out_connector import LeftOutConnector
     from ..models.resume_history import ResumeHistory
@@ -55,6 +56,12 @@ class AgentConfig:
             are none.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
+        end_of_turn (EndOfTurn | Unset): When chorus-asr has a caller's turn ended, where the router asks it about
+            turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait
+            chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach
+            them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever
+            the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read
+            when a pause is checked; one that model no longer publishes ends turns by its default.
         episode_cards (bool | Unset): Whether each phone call and each app chat conversation under this agent writes an
             episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel
             of the person and the agent alone, a phone call, or a session the person's own app opens with their token that
@@ -116,6 +123,7 @@ class AgentConfig:
     channels: AgentChannels | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
+    end_of_turn: EndOfTurn | Unset = UNSET
     episode_cards: bool | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
@@ -176,6 +184,10 @@ class AgentConfig:
         dispatch: dict[str, Any] | Unset = UNSET
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
+
+        end_of_turn: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.end_of_turn, Unset):
+            end_of_turn = self.end_of_turn.to_dict()
 
         episode_cards = self.episode_cards
 
@@ -284,6 +296,8 @@ class AgentConfig:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
+        if end_of_turn is not UNSET:
+            field_dict["end_of_turn"] = end_of_turn
         if episode_cards is not UNSET:
             field_dict["episode_cards"] = episode_cards
         if greeting is not UNSET:
@@ -351,6 +365,7 @@ class AgentConfig:
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.end_of_turn import EndOfTurn
         from ..models.greeting import Greeting
         from ..models.left_out_connector import LeftOutConnector
         from ..models.resume_history import ResumeHistory
@@ -399,6 +414,13 @@ class AgentConfig:
             dispatch = UNSET
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
+
+        _end_of_turn = d.pop("end_of_turn", UNSET)
+        end_of_turn: EndOfTurn | Unset
+        if isinstance(_end_of_turn, Unset):
+            end_of_turn = UNSET
+        else:
+            end_of_turn = EndOfTurn.from_dict(_end_of_turn)
 
         episode_cards = d.pop("episode_cards", UNSET)
 
@@ -529,6 +551,7 @@ class AgentConfig:
             channels=channels,
             connectors=connectors,
             dispatch=dispatch,
+            end_of_turn=end_of_turn,
             episode_cards=episode_cards,
             greeting=greeting,
             guardrail=guardrail,

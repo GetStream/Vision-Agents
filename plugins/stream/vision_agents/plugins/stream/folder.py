@@ -190,6 +190,31 @@ class GreetingSettings:
 
 
 @dataclass
+class EndOfTurnBar:
+    """What chorus-asr's p_eot must reach for the turn to have ended, at a check from
+    `from_ms` into the pause on. A bar names both."""
+
+    from_ms: int
+    bar: float
+
+
+@dataclass
+class EndOfTurnSettings:
+    """When chorus-asr has a caller's turn ended: one of `max_wait_ms`, `preset` and
+    `bars`, each None when the file does not name it, and none of them the server's
+    default. The router refuses a sync that names more than one, bars that do not begin
+    at 0 and rise, each strictly between 0 and 1, or a preset or wait its chorus-asr
+    server does not publish."""
+
+    max_wait_ms: int | None = None
+    """The most a caller who has finished may wait for the answer, in milliseconds."""
+    preset: str | None = None
+    """One of the presets the server publishes, such as safe or fast."""
+    bars: list[EndOfTurnBar] | None = None
+    """The agent's own: the first from 0 ms, each later one from further into the pause."""
+
+
+@dataclass
 class Settings:
     """What `agent.yaml` declares.
 
@@ -234,6 +259,9 @@ class Settings:
     scheduling: SchedulingSettings | None = None
     """Whether the agent may schedule tasks for its users. None when the file says
     nothing about it."""
+    end_of_turn: EndOfTurnSettings | None = None
+    """How eager chorus-asr's turn-taking is. None when the file says nothing about it,
+    which leaves the stored choice; an empty one is the server's default."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -486,6 +514,8 @@ def _declare(path: Path) -> Settings:
             settings.channels = _channels(path, value)
         elif field_name == "scheduling":
             settings.scheduling = _scheduling(path, value)
+        elif field_name == "end_of_turn":
+            settings.end_of_turn = _end_of_turn(path, value)
         elif field_name == "keyterms":
             settings.keyterms = _terms(path, field_name, value)
         elif field_name == "tags":
@@ -752,6 +782,54 @@ def _scheduling(path: Path, value: object) -> SchedulingSettings | None:
         max_tasks_per_user=maximum,
         default_timezone=_word(value.get("default_timezone")),
     )
+
+
+def _end_of_turn(path: Path, value: object) -> EndOfTurnSettings | None:
+    """Only the shape is read: what the choice means is the router's to refuse, since it
+    knows what its chorus-asr server publishes."""
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give end_of_turn as a mapping")
+    extra = set(value) - {"max_wait_ms", "preset", "bars"}
+    if extra:
+        raise ValueError(f"{path} unknown end_of_turn setting: {sorted(extra)[0]}")
+    wait = value.get("max_wait_ms")
+    if wait is not None and type(wait) is not int:
+        raise ValueError(f"{path} end_of_turn.max_wait_ms must be a whole number")
+    preset = value.get("preset")
+    if preset is not None and not isinstance(preset, str):
+        raise ValueError(f"{path} end_of_turn.preset must be a preset's name")
+    bars = value.get("bars")
+    if bars is not None and not isinstance(bars, list):
+        raise ValueError(f"{path} should give end_of_turn.bars as a list")
+    return EndOfTurnSettings(
+        max_wait_ms=wait,
+        preset=preset,
+        bars=None
+        if bars is None
+        else [_end_of_turn_bar(path, index, bar) for index, bar in enumerate(bars)],
+    )
+
+
+def _end_of_turn_bar(path: Path, index: int, value: object) -> EndOfTurnBar:
+    """One bar, which names both: one left out is refused rather than sent as 0, which
+    would be a bar nobody wrote."""
+    name = f"end_of_turn.bars[{index}]"
+    if not isinstance(value, dict):
+        raise ValueError(f"{path} should give {name} as a mapping of from_ms and bar")
+    extra = set(value) - {"from_ms", "bar"}
+    if extra:
+        raise ValueError(f"{path} unknown end_of_turn.bars setting: {sorted(extra)[0]}")
+    from_ms = value.get("from_ms")
+    bar = value.get("bar")
+    if from_ms is None or bar is None:
+        raise ValueError(f"{path} {name} needs both from_ms and bar")
+    if type(from_ms) is not int:
+        raise ValueError(f"{path} {name}.from_ms must be a whole number")
+    if type(bar) not in (int, float):
+        raise ValueError(f"{path} {name}.bar must be a number")
+    return EndOfTurnBar(from_ms=from_ms, bar=float(bar))
 
 
 def _channel(path: Path, kind: str, value: object) -> ChannelSettings | None:

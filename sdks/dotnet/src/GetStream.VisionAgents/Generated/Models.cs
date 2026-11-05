@@ -328,6 +328,12 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
+        /// Absent when chorus-asr ends the agent's turns by the server's default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_of_turn")]
+        public EndOfTurn? EndOfTurn { get; set; } = default!;
+
+        /// <summary>
         /// Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
@@ -476,6 +482,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("dispatch")]
         public AgentDispatch? Dispatch { get; set; } = default!;
+
+        /// <summary>
+        /// Replaces the choice whole. An empty object is the server's default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_of_turn")]
+        public EndOfTurn? EndOfTurn { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
         public bool? EpisodeCards { get; set; } = default!;
@@ -629,6 +641,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("dispatch")]
         public AgentDispatch? Dispatch { get; set; } = default!;
+
+        /// <summary>
+        /// When chorus-asr has a caller's turn ended in this agent's sessions, where the router asks it about turns: one of max_wait_ms, preset and bars. A session request's wins over this. Left out on a create, the server's default; left out on an update, the stored choice stays, and an empty object is the server's default again. A preset or wait the server does not publish is refused (400) when the router can ask it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_of_turn")]
+        public EndOfTurn? EndOfTurn { get; set; } = default!;
 
         /// <summary>
         /// Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
@@ -5083,6 +5101,12 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
+        /// When chorus-asr has the caller's turn ended in this session, over the agent config's, where the router asks it about turns: one of max_wait_ms, preset and bars, and an empty object for the server's default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because how eager the agent is to answer is the app's to decide.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_of_turn")]
+        public EndOfTurn? EndOfTurn { get; set; } = default!;
+
+        /// <summary>
         /// What the agent opens the call with, over what the config says.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
@@ -6010,6 +6034,54 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    /// <summary>
+    /// When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class EndOfTurn
+    {
+
+        /// <summary>
+        /// Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("bars")]
+        public System.Collections.Generic.List<EndOfTurnBar>? Bars { get; set; } = default!;
+
+        /// <summary>
+        /// The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("max_wait_ms")]
+        public long? MaxWaitMs { get; set; } = default!;
+
+        /// <summary>
+        /// One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("preset")]
+        public string? Preset { get; set; } = default!;
+
+    }
+
+    /// <summary>
+    /// What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class EndOfTurnBar
+    {
+
+        /// <summary>
+        /// What p_eot, chorus-asr's probability that the caller has finished, must reach for the turn to have ended: strictly between 0 and 1.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("bar")]
+        public double Bar { get; set; } = default!;
+
+        /// <summary>
+        /// How far into the pause, in milliseconds, the bar begins.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("from_ms")]
+        public long FromMs { get; set; } = default!;
 
     }
 
@@ -13488,6 +13560,12 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("dispatch")]
         public AgentDispatch? Dispatch { get; set; } = default!;
+
+        /// <summary>
+        /// agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. When the server cannot be asked, or the router asks it nothing about turns, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_of_turn")]
+        public EndOfTurn? EndOfTurn { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public Greeting? Greeting { get; set; } = default!;

@@ -146,6 +146,11 @@ export interface Declaration {
   channels?: Schemas["AgentChannels"];
   /** Whether the agent may schedule tasks for its users, and the bounds on that. */
   scheduling?: Schemas["AgentScheduling"];
+  /**
+   * How eager chorus-asr's turn-taking is: one of `max_wait_ms`, `preset` and `bars`, as
+   * written. Undefined leaves the stored choice; an empty object is the server's default.
+   */
+  endOfTurn?: Schemas["EndOfTurn"];
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -760,6 +765,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),
+    ...(declared.endOfTurn ? { end_of_turn: declared.endOfTurn } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
