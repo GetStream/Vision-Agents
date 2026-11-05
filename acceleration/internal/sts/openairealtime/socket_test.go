@@ -866,13 +866,13 @@ func (s *RealtimeSocketSuite) TestTheKeyCodeOnAnotherFrameTypeIsNotAnInvalidKey(
 }
 
 // rateLimitsFrame is OpenAI's example rate_limits.updated, with a limit it does not document
-// and one with no remaining added:
+// and a later tokens with no remaining added, which says nothing of what is left:
 // https://developers.openai.com/api/reference/resources/realtime/server-events (rate_limits.updated).
 const rateLimitsFrame = `{"event_id":"event_5758","type":"rate_limits.updated","rate_limits":[` +
 	`{"name":"requests","limit":1000,"remaining":999,"reset_seconds":60},` +
 	`{"name":"tokens","limit":50000,"remaining":49950,"reset_seconds":60},` +
 	`{"name":"images","limit":10,"remaining":4,"reset_seconds":60},` +
-	`{"name":"requests_day","limit":10}]}`
+	`{"name":"tokens","limit":50000}]}`
 
 // rateLimitsKept starts a session on apiKey, has the server send rateLimitsFrame and then an
 // error frame, and returns the headroom series under keyVar once the error was heard: the

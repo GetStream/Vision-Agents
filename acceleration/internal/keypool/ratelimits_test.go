@@ -240,6 +240,8 @@ func (s *VendorRateLimitSuite) TestACustomersOwnKeyIsNeitherCountedNorItsHeadroo
 
 	s.Empty(s.limited(keyVar))
 	s.Empty(s.remaining(keyVar))
+	s.Empty(s.limited(""), "nor under no variable")
+	s.Empty(s.remaining(""), "nor under no variable")
 	s.Equal(1.0, keypooltest.Refused(s.T(), keyVar, "429"), "the refusal counter keeps naming it as on the base")
 }
 
@@ -388,6 +390,22 @@ func (s *VendorRateLimitSuite) TestARefusedHandshakeIsCountedAndTheNextKeyDialle
 	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
 }
 
+func (s *VendorRateLimitSuite) TestAHandshakeThatGetsNoAnswerFailsAsItDid() {
+	p := s.pool("unanswered")
+	closed := httptest.NewServer(http.NotFoundHandler())
+	endpoint := "ws" + strings.TrimPrefix(closed.URL, "http")
+	closed.Close()
+
+	_, response, key, err := p.Dial(context.Background(), websocket.DefaultDialer, func(key string) (string, http.Header) {
+		return endpoint, http.Header{"Authorization": {"Bearer " + key}}
+	})
+
+	s.Error(err)
+	s.Nil(response)
+	s.Equal(p.keys[0], key)
+	s.Empty(s.limited(p.keyVars[0]))
+}
+
 func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeKeepsItsHeadroom() {
 	p := s.pool("accepted")
 	s.answer(p.keys[0], answer{header: http.Header{"Current-Concurrent-Requests": {"1"}, "Maximum-Concurrent-Requests": {"5"}}})
@@ -414,6 +432,7 @@ func (s *VendorRateLimitSuite) TestAFrameReportsHeadroomOnlyOnTheRoutersKeysAndO
 	customer := FromEnv("vr-customer-"+id, keyVar)
 	customer.Remaining("vr-customer-"+id, "tokens", 5)
 	s.Empty(s.remaining(keyVar))
+	s.Empty(s.remaining(""), "nor under no variable")
 }
 
 func (s *VendorRateLimitSuite) TestNoLabelHoldsAKey() {
