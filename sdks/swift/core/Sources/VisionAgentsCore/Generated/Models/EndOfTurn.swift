@@ -1,13 +1,13 @@
 import Foundation
 import StreamCore
 
-/// When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+/// When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 final class EndOfTurn: Sendable, Codable, JSONEncodable {
-    /// Bars of the agent's own: the first from 0 ms, each later one from further into the pause. At each check of a pause, the turn has ended when p_eot reaches the last bar to have begun.
+    /// Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers.
     let bars: [EndOfTurnBar]?
     /// The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
     let maxWaitMs: Int?
-    /// One of the presets the chorus-asr server publishes, by name, such as safe or fast. Refused when the server publishes none by that name.
+    /// One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name.
     let preset: String?
 
     init(bars: [EndOfTurnBar]? = nil, maxWaitMs: Int? = nil, preset: String? = nil) {

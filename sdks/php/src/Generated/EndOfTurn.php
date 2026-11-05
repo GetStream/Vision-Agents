@@ -10,21 +10,22 @@ use GetStream\VisionAgents\Json;
 
 /**
  * When chorus-asr has a caller's turn ended, where the router asks it about turns: one of
- * max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is
- * named replaces only the bars: when a pause is checked, how much more a turn's first pause
- * asks, and the pause that ends a turn whatever the model says stay the server's. What a
- * preset or a wait means is the policy of the model the server runs, read when a pause is
- * checked; one that model no longer publishes ends turns by its default.
+ * max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a
+ * wait chooses one of the server's measured points: its bars, and how many checks in a row of
+ * one pause must reach them. When a pause is checked, how much more a turn's first pause asks,
+ * and the pause that ends a turn whatever the model says stay the server's. What a preset or a
+ * wait means is the policy of the model the server runs, read when a pause is checked; one
+ * that model no longer publishes ends turns by its default.
  */
 final readonly class EndOfTurn
 {
     public function __construct(
-        // Bars of the agent's own: the first from 0 ms, each later one from further into the pause. At each check of...
+        // Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ende...
         /** @var list<EndOfTurnBar>|null */
         public ?array $bars = null,
         // The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus...
         public ?int $maxWaitMs = null,
-        // One of the presets the chorus-asr server publishes, by name, such as safe or fast. Refused when the server...
+        // One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its m...
         public ?string $preset = null,
     ) {
     }

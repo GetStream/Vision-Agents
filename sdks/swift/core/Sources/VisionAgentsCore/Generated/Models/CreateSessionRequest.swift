@@ -20,7 +20,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let custom: [String: RawJSON]?
     /// A longer note about the conversation, searched alongside the title.
     let description: String?
-    /// When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+    /// When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
     let endOfTurn: EndOfTurn?
     /// What the agent says as it joins, before anyone speaks.
     let greeting: GreetingPayload?

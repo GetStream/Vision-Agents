@@ -5109,17 +5109,17 @@ pub struct EndCallSettings {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub when: ::std::option::Option<::std::string::String>,
 }
-///When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+///When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct EndOfTurn {
-    ///Bars of the agent's own: the first from 0 ms, each later one from further into the pause. At each check of a pause, the turn has ended when p_eot reaches the last bar to have begun.
+    ///Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub bars: ::std::option::Option<::std::vec::Vec<EndOfTurnBar>>,
     ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub max_wait_ms: ::std::option::Option<i64>,
-    ///One of the presets the chorus-asr server publishes, by name, such as safe or fast. Refused when the server publishes none by that name.
+    ///One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub preset: ::std::option::Option<::std::string::String>,
 }
@@ -12164,7 +12164,7 @@ pub struct SyncAgentRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. When the server cannot be asked, or the router asks it nothing about turns, the choice is kept and a warning says so.
+    ///agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. When the server cannot be asked, or the router asks it nothing about turns, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub end_of_turn: ::std::option::Option<EndOfTurn>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
