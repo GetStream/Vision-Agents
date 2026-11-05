@@ -50,8 +50,6 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 	if link.CustomerID == "" || link.UserID == "" || link.Phone == "" {
 		return stack.Wrap(errors.New("store: a customer, a user and a number are required"))
 	}
-	now := time.Now().UTC().Truncate(time.Microsecond)
-	link.CreatedAt, link.UpdatedAt = now, now
 	link.StreamAppPK = s.linkApp(link.StreamAppPK)
 	err := s.lockLink(ctx, *link, func(ctx context.Context, tx bun.Tx) error {
 		var had []string
@@ -60,7 +58,12 @@ func (s *Store) LinkUserPhone(ctx context.Context, link *UserPhone) error {
 			Where("user_id = ?", link.UserID).Scan(ctx, &had); err != nil {
 			return stack.Wrap(fmt.Errorf("store: read user phone: %w", err))
 		}
+		// The link's time is Postgres's, as an SMS episode's start is (the inbound queue's
+		// created_at), so an SMS queued after the link is never dated before it by the skew of
+		// two clocks (EpisodeCards).
 		_, err := tx.NewInsert().Model(link).
+			Value("created_at", "statement_timestamp()").
+			Value("updated_at", "statement_timestamp()").
 			On("CONFLICT (customer_id, stream_app_pk, user_id) DO UPDATE").
 			Set("phone = EXCLUDED.phone").
 			Set("updated_at = CASE WHEN up.phone = EXCLUDED.phone THEN up.updated_at ELSE EXCLUDED.updated_at END").
