@@ -10,6 +10,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing/failovertest"
 )
 
+// errUnbuilt, given to failingOver, is a vendor whose provider fails to build once the
+// session's own has been, as a fallback whose session cannot be opened.
+var errUnbuilt = errors.New("unbuilt: 503")
+
 // failingOver routes to one vendor per error in errs, in order, each with one model m whose
 // responses fail with that error; nil answers. The vendors are named for this test alone.
 func (s *LLMRouterSuite) failingOver(errs ...error) (*Session, []string) {
@@ -19,6 +23,9 @@ func (s *LLMRouterSuite) failingOver(errs ...error) (*Session, []string) {
 	for i, createErr := range errs {
 		vendor := "vendor" + string(rune('a'+i)) + strings.ToLower(rand.Text())
 		registry.Register(vendor, func(routing.Spec) (Provider, error) {
+			if createErr == errUnbuilt {
+				return nil, errUnbuilt
+			}
 			provider := newStubLLM()
 			provider.createErr = createErr
 			return Started[llm.LLM](provider, nil)
@@ -55,6 +62,16 @@ func (s *LLMRouterSuite) TestEachFallbackThatFailedBeforeAnotherAnsweredIsAFailo
 	s.Require().NoError(err)
 	s.Equal(map[string]float64{"llm session vendor": 1}, failovertest.Of(s.T(), vendors[0]))
 	s.Equal(map[string]float64{"llm session vendor": 1}, failovertest.Of(s.T(), vendors[1]), "the response moved off it too")
+	s.Empty(failovertest.Of(s.T(), vendors[2]), "it answered")
+}
+
+func (s *LLMRouterSuite) TestAFallbackThatCouldNotBeOpenedBeforeAnotherAnsweredIsAFailover() {
+	session, vendors := s.failingOver(errors.New("a: 503"), errUnbuilt, nil)
+
+	_, err := session.Create(s.ctx, llm.ResponseParams{ID: "r1", Input: []llm.Message{{Role: llm.User, Content: "hello"}}})
+
+	s.Require().NoError(err)
+	s.Equal(map[string]float64{"llm session vendor": 1}, failovertest.Of(s.T(), vendors[1]), "the response moved off it")
 	s.Empty(failovertest.Of(s.T(), vendors[2]), "it answered")
 }
 
