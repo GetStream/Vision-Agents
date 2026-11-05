@@ -176,7 +176,12 @@ class AgentChat extends ChangeNotifier {
 
   /// Tells the agent what the person did in the UI of a reply, such as tapping a place on its
   /// map: their message says it in words, and carries the action for the agent.
+  ///
+  /// The router takes one response at a time, so an action taken while a reply is still
+  /// being written waits for it to end rather than failing.
   Future<void> _answer(AIUIAction action) async {
+    await _whenIdle();
+    if (_closed) return;
     failure = null;
     _askedAfter = messages.lastOrNull?.id ?? '';
     notifyListeners();
@@ -189,6 +194,20 @@ class AgentChat extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
+  }
+
+  /// Completes once no reply is on its way, or this chat is closed.
+  Future<void> _whenIdle() {
+    if (!isAnswering || _closed) return Future.value();
+    final idle = Completer<void>();
+    void check() {
+      if (isAnswering && !_closed) return;
+      removeListener(check);
+      idle.complete();
+    }
+
+    addListener(check);
+    return idle.future;
   }
 
   /// Stops the reply in flight. What was written so far is kept.
