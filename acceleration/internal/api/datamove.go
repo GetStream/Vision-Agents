@@ -21,6 +21,13 @@ const (
 	maxChangeLimit     = 1000
 )
 
+// exportWritesWait bounds how long an export waits for the writes open when it started
+// (Store.WaitForOpenWrites): twice shippingIdle (internal/store/shipping.go), the idle limit
+// shipping sets on its own transaction, a write transaction of the router that is not
+// meant to sit open. Postgres cannot say whose a transaction still open past that is, and
+// an export is a rare call whose caller can come back, so it is told to rather than held.
+const exportWritesWait = 30 * time.Second
+
 // dataLine is one line of an export.
 //
 // Rows, and then a last line naming the cursor their changes carry on from. It is last
@@ -50,6 +57,16 @@ func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
 	if err := s.store.StartDataCapture(r.Context(), customerID, s.dataRetention); err != nil {
 		s.logger.Error("could not start recording changes", "customer", customerID, "error", err)
 		writeError(w, unavailable("changes cannot be recorded, so an export would be a copy nothing could catch up from"))
+		return
+	}
+	// A write whose trigger looked before the recording started recorded nothing, so the
+	// snapshot is read only once it has committed and is in the rows.
+	if err := s.store.WaitForOpenWrites(r.Context(), s.exportWritesWait); err != nil {
+		if errors.Is(err, store.ErrWritesOpen) {
+			writeError(w, unavailable("a write that started before this export is still open: try again"))
+			return
+		}
+		writeFailure(w, r, err)
 		return
 	}
 

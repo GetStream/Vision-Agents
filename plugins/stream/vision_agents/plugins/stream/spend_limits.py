@@ -58,6 +58,9 @@ MICROS_PER_USD = 1_000_000
 MAX_USAGE_SUBJECTS = 100
 # The page size lists are read in, the most the router answers.
 _PAGE = 200
+# A key is api_key in a body and api_key_id in a query, where api_key is the credential
+# Stream's proxy requires on every call.
+_QUERY_NAMES = {"api_key": "api_key_id"}
 
 
 def usd(micros: int) -> Decimal:
@@ -384,7 +387,7 @@ class SpendLimits:
         )
         return await _unwrapped(
             get_limit_usage.asyncio(
-                client=self._backend.client(), subject=kind, **lists
+                client=self._backend.client(), subject=kind, **_query(lists)
             ),
             f"reading the spend of {kind}",
         )
@@ -462,22 +465,32 @@ def _filters(
     """A list's filters, with the subject as the router names it."""
     if subject is not None:
         kind, filters = _target(subject, app_id, api_key, user_id, team, category)
-        return {"subject": kind, **filters}
+        return {"subject": kind, **_query(filters)}
     if team is not None:
         check_team(team)
     if category is not None:
         _kind("category", False, [], [category])
-    return {
-        name: value
-        for name, value in {
-            "app_id": app_id,
-            "api_key": api_key,
-            "user_id": user_id,
-            "team": team,
-            "category": category,
-        }.items()
-        if value
-    }
+    return _query(
+        {
+            name: value
+            for name, value in {
+                "app_id": app_id,
+                "api_key": api_key,
+                "user_id": user_id,
+                "team": team,
+                "category": category,
+            }.items()
+            if value
+        }
+    )
+
+
+_Value = TypeVar("_Value")
+
+
+def _query(ids: dict[str, _Value]) -> dict[str, _Value]:
+    """The ids as a query names them."""
+    return {_QUERY_NAMES.get(name, name): value for name, value in ids.items()}
 
 
 _Body = TypeVar("_Body", LimitInput, LimitGrantInput, LimitResetInput)

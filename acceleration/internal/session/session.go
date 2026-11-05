@@ -658,9 +658,6 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	// What a worker hands on from a channel it answers is already there, written by the
 	// person, so only the reply is (Spec.Dispatched).
 	if s.persisted != nil && s.spec.Text && s.spec.Dispatched {
-		if nothingToAnswer(text, images) {
-			return "", stack.Wrap(errNothingToAnswer)
-		}
 		_, turnID, err := s.followUp(ctx, store.NewID(), text, images, asked, false)
 		return turnID, err
 	}
@@ -688,12 +685,13 @@ func (s *Session) Respond(ctx context.Context, text string, images []llm.ImagePa
 	return s.openTurn(turnID, text), nil
 }
 
-// errNothingToAnswer is an answer handed on from a channel with no text and no images.
+// errNothingToAnswer is a follow-up with no text and no images.
 var errNothingToAnswer = errors.New("there is nothing to answer")
 
-// nothingToAnswer is a respond a worker from before photos were read sends for a photo sent
-// alone: no text and no images, so the model has nothing to be asked, as on the HTTP answer's
-// 400. It is the worker's socket only: a photo the router follows up itself reaches the model.
+// nothingToAnswer is a follow-up with no text and no images, so the model has nothing to be
+// asked, as on the HTTP answer's 400: a respond a worker from before photos were read sends for
+// a photo sent alone, or a message of blanks the router follows up itself. A model such as
+// Gemini refuses a turn with nothing in it.
 func nothingToAnswer(text string, images []llm.ImagePart) bool {
 	return strings.TrimSpace(text) == "" && len(images) == 0
 }
@@ -771,6 +769,12 @@ func (s *Session) Durable() bool { return s.persisted != nil }
 // alone. notes are voice notes sent with it, shown on the person's message; text already holds
 // what they said.
 func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
+	return s.RespondCommandWithAction(ctx, id, text, clientID, images, asked, nil, notes...)
+}
+
+// RespondCommandWithAction is RespondCommand for a person's message that says what they did in
+// a reply's UI. Their message carries the action, and the model is told it after their words.
+func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, clientID string, images []llm.ImagePart, asked options.LLM, action map[string]any, notes ...persistent.VoiceNote) (persistent.CommandReceipt, string, error) {
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
@@ -793,13 +797,14 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(err)
 	}
-	if handedOn {
-		if nothingToAnswer(text, images) {
-			return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
-		}
-		return s.followUp(ctx, id, text, images, asked, true)
+	told := text
+	if note := persistent.DescribeUIAction(action, s.persisted.ActedOn(ctx, action)); note != "" {
+		told += "\n\n" + note
 	}
-	receipt, err := s.persisted.BeginCommand(id, text, clientID, photos...)
+	if handedOn {
+		return s.followUp(ctx, id, told, images, asked, true)
+	}
+	receipt, err := s.persisted.BeginCommandWithAction(id, text, clientID, action, photos...)
 	if err != nil {
 		return receipt, "", stack.Wrap(err)
 	}
@@ -815,7 +820,7 @@ func (s *Session) RespondCommand(ctx context.Context, id, text, clientID string,
 	if !s.spec.Text {
 		s.typeInto(text)
 	}
-	turnID, err := s.current().RespondTo(ctx, text, images, asked)
+	turnID, err := s.current().RespondTo(ctx, told, images, asked)
 	if err != nil {
 		s.persisted.Cancel()
 		return receipt, "", stack.Wrap(err)
@@ -901,6 +906,9 @@ func (s *Session) FollowUp(ctx context.Context, id, text string, images []llm.Im
 func (s *Session) followUp(ctx context.Context, id, text string, images []llm.ImagePart, asked options.LLM, accepted bool) (persistent.CommandReceipt, string, error) {
 	if s.persisted == nil {
 		return persistent.CommandReceipt{}, "", stack.Wrap(errors.New("a follow-up needs a persistent text conversation"))
+	}
+	if nothingToAnswer(text, images) {
+		return persistent.CommandReceipt{}, "", stack.Wrap(errNothingToAnswer)
 	}
 	receipt, err := s.persisted.BeginFollowUp(id, text)
 	if err != nil {

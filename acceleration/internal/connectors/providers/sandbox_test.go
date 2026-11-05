@@ -25,10 +25,10 @@ func TestSandboxSuite(t *testing.T) {
 // revision 8 git clone and fetch read there with a POST to git-upload-pack
 // (https://git-scm.com/docs/gitprotocol-http); a push's git-receive-pack is no read. From
 // revision 9 gh reads with a POST of queries to api.github.com/graphql
-// (https://docs.github.com/en/graphql/guides/forming-calls-with-graphql).
+// (https://docs.github.com/en/graphql/guides/forming-calls-with-graphql). Revision 10 keeps them.
 func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts() {
 	github := s.manifest("github")
-	s.Equal(9, github.Revision)
+	s.Equal(10, github.Revision)
 
 	for _, scheme := range github.Schemes {
 		resolved, err := github.Resolve(scheme, nil, nil)
@@ -41,13 +41,14 @@ func (s *SandboxSuite) TestGitHubGivesASandboxItsTokenForTheRESTAPIAndGitHosts()
 }
 
 // Revisions 8 and 9 add reads alone, which a session takes from the latest revision, so a
-// connection pinned to revision 7 reads as one on 9 and is not marked outdated.
+// connection pinned to revision 7 reads as one on 9 and is not marked outdated, as on 10, which
+// adds read_only_tools.
 func (s *SandboxSuite) TestGitHubsReadsNeedNoReconnect() {
 	raw, err := fs.ReadFile(providers.FS, "github.yaml")
 	s.Require().NoError(err)
 	before, _, found := strings.Cut(string(raw), "  reads:\n")
 	s.Require().True(found)
-	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 9\n", "revision: 7\n", 1)))
+	seven, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 10\n", "revision: 7\n", 1)))
 	s.Require().NoError(err)
 	s.Equal(7, seven.Revision)
 	s.Nil(seven.Sandbox.Reads)
@@ -71,10 +72,10 @@ func (s *SandboxSuite) TestGoogleDriveGivesASandboxItsTokenForTheRESTAPIHost() {
 
 // From revision 2, Linear's GraphQL API read with queries alone, and its file storage
 // (https://linear.app/developers/file-storage-authentication), for linear_app's OAuth token
-// (AI-2082).
+// (AI-2082). Revision 3 keeps them.
 func (s *SandboxSuite) TestLinearAppGivesASandboxItsTokenForQueriesOfTheGraphQLAPI() {
 	linear := s.manifest("linear_app")
-	s.Equal(2, linear.Revision)
+	s.Equal(3, linear.Revision)
 	s.Require().NotEmpty(linear.Schemes)
 
 	for _, scheme := range linear.Schemes {
@@ -94,7 +95,7 @@ func (s *SandboxSuite) TestALinearAppConnectionOfRevisionOneNeedsAReconnect() {
 	s.Require().NoError(err)
 	before, _, found := strings.Cut(string(raw), "\nsandbox:\n")
 	s.Require().True(found)
-	one, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 2\n", "revision: 1\n", 1)))
+	one, err := core.ParseManifest([]byte(strings.Replace(before, "revision: 3\n", "revision: 1\n", 1)))
 	s.Require().NoError(err)
 	s.Equal(1, one.Revision)
 	s.Nil(one.Sandbox)

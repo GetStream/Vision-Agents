@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"testing"
@@ -104,6 +105,24 @@ func (s *AdmissionSuite) TestAnLLMRequestWithNoCreditIsAPaymentRequired() {
 	s.Equal(codeInsufficientCredits, failure.Code)
 	s.Contains(failure.Message, "add credit")
 	s.NotContains(failure.Message, "policy:", "the policy's words, without the package's")
+}
+
+func (s *AdmissionSuite) TestAKnowledgeFileWithNoCreditIsAPaymentRequired() {
+	body, contentType := formWith("manual.pdf", extractFixture(s.T(), "manual.pdf"))
+	var failure ErrorDetail
+	s.Require().Eventually(func() bool {
+		status, payload := s.postKnowledgeFile(s.serverClient, body, contentType, url.Values{"namespace": {"manuals"}})
+		if status != http.StatusPaymentRequired {
+			return false
+		}
+		var answered ErrorResponse
+		s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
+		failure = answered.Error
+		return !unreadLimits(failure)
+	}, 10*time.Second, 50*time.Millisecond, "the upload is refused for money")
+
+	s.Equal(codeInsufficientCredits, failure.Code, "told before the file is kept, as a text ingest is")
+	s.NotContains(failure.Message, "policy:")
 }
 
 func (s *AdmissionSuite) TestASearchWithNoCreditIsAPaymentRequired() {

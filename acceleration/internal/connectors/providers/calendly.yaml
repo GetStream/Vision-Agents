@@ -18,8 +18,8 @@
 # calendly.com instead, so every value taken from those three is # unverified for it.
 id: calendly
 # A new revision for any change to what this file says; see AGENTS.md. 2 renames
-# client.policy to client.registration.
-revision: 2
+# client.policy to client.registration. 3 lists the tools that only read.
+revision: 3
 # [proto]:46-48
 name: Calendly
 category: Scheduling
@@ -74,3 +74,39 @@ refresh:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from «Calendly MCP: Supported Tools»
+    # (https://developer.calendly.com/docs/mcp/supported-tools, opened 2026-11-05; 38 tools,
+    # each with the REST endpoint it calls): every tool whose endpoint is a GET, and
+    # list_calendly_skills, which names no endpoint and «List[s] available Calendly skills».
+    # Left out: every tool whose endpoint is a POST, PUT, PATCH or DELETE, which changes the
+    # account. Among them scheduling_links-create_single_use_scheduling_link and
+    # shares-create_share make a booking link anyone holding it can open, so a link carries
+    # the account out too. A tool added later is left out.
+    read_only_tools:
+      - event_types-list_event_types
+      - event_types-get_event_type
+      - event_types-list_event_type_available_times
+      - event_types-list_event_type_availability_schedule
+      - locations-list_user_meeting_locations
+      - meetings-list_events
+      - meetings-get_event
+      - meetings-list_event_invitees
+      - meetings-get_event_invitee
+      - meetings-get_invitee_no_show
+      - availability-list_user_availability_schedules
+      - availability-get_user_availability_schedule
+      - availability-list_user_busy_times
+      - routing_forms-list_routing_forms
+      - routing_forms-get_routing_form
+      - routing_forms-list_routing_form_submissions
+      - routing_forms-get_routing_form_submission
+      - users-get_current_user
+      - users-get_user
+      - organizations-get_organization
+      - organizations-list_organization_memberships
+      - organizations-get_organization_membership
+      - organizations-list_organization_invitations
+      - notetaker-list_recaps
+      - notetaker-get_recap
+      - notetaker-get_recap_transcript
+      - list_calendly_skills

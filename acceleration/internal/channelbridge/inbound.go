@@ -240,6 +240,30 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	inbound := message.Message()
 	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
 		"seq", message.Seq)
+	// Before the episode opens: a message that is only files named by id, none of them a
+	// photo that downloaded, has nothing to write or answer, so it opens no episode whose card
+	// nothing would ever write.
+	files, named, err := b.download(ctx, thread, inbound, log)
+	if err != nil {
+		return err
+	}
+	if nothingToWrite(inbound, len(files), named) {
+		log.Warn("an inbound message that is only files none of which could be downloaded is not written or answered")
+		return nil
+	}
+	target, err := b.openThread(ctx, thread, config, inbound)
+	if err != nil {
+		return err
+	}
+	// The row's last attempt writes the message without a photo Stream Chat keeps failing.
+	uploaded, err := b.upload(ctx, target, thread, files, message.Attempts+1 > len(b.inboundRetries), log)
+	if err != nil {
+		return err
+	}
+	if nothingToWrite(inbound, len(uploaded), named) {
+		log.Warn("an inbound message that is only files none of which could be stored is not written or answered")
+		return nil
+	}
 	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
 	if err != nil {
 		log.Error("could not open the episode of an inbound message", "error", err)
@@ -254,11 +278,10 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 		opened.New = true
 	}
 	id := inboundMessageID(thread.ChannelID, inbound.ProviderMessageID)
-	written, err := b.writeInto(ctx, thread, config, inbound, id)
-	switch {
-	case alreadyWritten(err):
-		written = rewritten(thread, inbound, id)
-	case err != nil:
+	// Stream Chat refusing the write as already done answers no message, so writeInto
+	// rebuilds it.
+	written, err := b.writeInto(ctx, target, thread, inbound, id, uploaded)
+	if err != nil && !alreadyWritten(err) {
 		return err
 	}
 	log.Info("an inbound message is written into its thread channel", "message", id)

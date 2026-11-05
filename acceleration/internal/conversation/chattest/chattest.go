@@ -31,6 +31,8 @@ type store struct {
 	trunks   map[string]map[string]any
 	// calls are the participant ids in each call's session, by "<type>:<id>".
 	calls map[string][]string
+	// callMembers are the member ids of each call, by "<type>:<id>".
+	callMembers map[string][]string
 	// made are the bodies calls were created with, by "<type>:<id>", with the custom an
 	// update merged in.
 	made     map[string]map[string]any
@@ -61,19 +63,21 @@ type store struct {
 	held   *held
 	// limited are the path suffixes RateLimit answers 429 to.
 	limited map[string]bool
-	// failing are the path suffixes Fail answers 500 to, by method.
-	failing map[string]map[string]bool
+	// failing are the path suffixes Fail and FailWith answer, by method, with the status each
+	// is answered with.
+	failing map[string]map[string]int
 	// uploads are the files stored on channels, in the order they came.
 	uploads []Upload
 	// events are the events sent to each channel, by channel id, in the order they came.
 	events map[string][]map[string]any
 }
 
-// Upload is one file stored on a channel: which endpoint took it ("image" or "file"), its
-// name, who it was uploaded as, as the JSON the client sent, and what was in it.
+// Upload is one file stored on a channel: the channel's id, which endpoint took it ("image"
+// or "file"), its name, who it was uploaded as, as the JSON the client sent, and what was in
+// it.
 type Upload struct {
-	Endpoint, Name, User string
-	Data                 []byte
+	Channel, Endpoint, Name, User string
+	Data                          []byte
 }
 
 // held is one request Hold keeps waiting: the path it ends in, a channel closed once it
@@ -135,7 +139,7 @@ func NewServer(t *testing.T) *Server {
 	db := &store{
 		channels: map[string]map[string]any{}, messages: map[string]map[string]any{},
 		users: map[string]map[string]any{}, trunks: map[string]map[string]any{},
-		rules: map[string]map[string]any{}, calls: map[string][]string{}, made: map[string]map[string]any{}, hooks: map[string][]json.RawMessage{},
+		rules: map[string]map[string]any{}, calls: map[string][]string{}, callMembers: map[string][]string{}, made: map[string]map[string]any{}, hooks: map[string][]json.RawMessage{},
 		updates: map[string][]json.RawMessage{}, events: map[string][]map[string]any{}, now: time.Now,
 		app: App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": safeGrants}, CallTypes: []string{"agent"}},
 	}
@@ -306,6 +310,13 @@ func (s *Server) PutCall(callType, id string, participants ...string) {
 	s.db.calls[callType+":"+id] = participants
 }
 
+// PutCallMembers has the call hold the members named, whether in its session or not.
+func (s *Server) PutCallMembers(callType, id string, members ...string) {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.callMembers[callType+":"+id] = members
+}
+
 // Trunks are the ids of the SIP trunks the app holds now.
 func (s *Server) Trunks() []string {
 	s.db.mu.Lock()
@@ -423,15 +434,20 @@ func (s *Server) LiftRateLimit(suffix string) {
 // Fail answers every request of method whose path ends in suffix with a 500
 // for a call it could not update. Other methods on that path are served.
 func (s *Server) Fail(method, suffix string) {
+	s.FailWith(method, suffix, http.StatusInternalServerError)
+}
+
+// FailWith is Fail answering with status, such as a 404 for something the app still holds.
+func (s *Server) FailWith(method, suffix string, status int) {
 	s.db.mu.Lock()
 	defer s.db.mu.Unlock()
 	if s.db.failing == nil {
-		s.db.failing = map[string]map[string]bool{}
+		s.db.failing = map[string]map[string]int{}
 	}
 	if s.db.failing[method] == nil {
-		s.db.failing[method] = map[string]bool{}
+		s.db.failing[method] = map[string]int{}
 	}
-	s.db.failing[method][suffix] = true
+	s.db.failing[method][suffix] = status
 }
 
 // Heal serves requests of method ending in suffix again.
@@ -634,9 +650,22 @@ func (db *store) upload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	data, _ := io.ReadAll(file)
-	stored := Upload{Endpoint: path.Base(r.URL.Path), Name: path.Base(header.Filename), User: r.FormValue("user"), Data: data}
+	stored := Upload{Channel: path.Base(path.Dir(r.URL.Path)), Endpoint: path.Base(r.URL.Path), Name: path.Base(header.Filename),
+		User: r.FormValue("user"), Data: data}
 	db.uploads = append(db.uploads, stored)
 	_ = json.NewEncoder(w).Encode(map[string]any{"file": "https://cdn.fake/" + stored.Endpoint + "/" + stored.Name})
+}
+
+// listed is every trunk or rule the app holds, each the body it was written with and its id,
+// as Stream lists them: all at once, with no page.
+func listed(held map[string]map[string]any) []map[string]any {
+	all := []map[string]any{}
+	for _, id := range slices.Sorted(maps.Keys(held)) {
+		entry := maps.Clone(held[id])
+		entry["id"] = id
+		all = append(all, entry)
+	}
+	return all
 }
 
 // gone answers a delete of something the app does not hold with a 404. The body's code is
@@ -660,10 +689,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
-	for suffix := range db.failing[r.Method] {
+	for suffix, status := range db.failing[r.Method] {
 		if strings.HasSuffix(r.URL.Path, suffix) {
-			w.WriteHeader(http.StatusInternalServerError)
-			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": http.StatusInternalServerError})
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]any{"code": 4, "message": "boom", "StatusCode": status})
 			return
 		}
 	}
@@ -765,6 +794,11 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 			call["session"] = map[string]any{"id": "session-" + cid, "participants": participants}
 		}
 		result["call"] = call
+		members := []map[string]any{}
+		for _, id := range db.callMembers[cid] {
+			members = append(members, map[string]any{"user_id": id, "role": "user"})
+		}
+		result["members"] = members
 	case r.Method == http.MethodPost && len(parts) >= 4 && parts[len(parts)-3] == "call" && parts[len(parts)-4] == "video":
 		// A get-or-create loads a call that is already there and creates only a missing one
 		// (getstream.io/video/docs/react/guides/joining-and-creating-calls/), so the call
@@ -810,6 +844,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		sent, _ := body["custom"].(map[string]any)
 		maps.Copy(custom, sent)
 		result["call"] = map[string]any{"type": parts[len(parts)-2], "id": parts[len(parts)-1], "custom": custom}
+	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodGet:
+		result["sip_trunks"] = listed(db.trunks)
+	case strings.HasSuffix(r.URL.Path, "/sip/inbound_routing_rules") && r.Method == http.MethodGet:
+		result["sip_inbound_routing_rules"] = listed(db.rules)
 	case strings.HasSuffix(r.URL.Path, "/sip/inbound_trunks") && r.Method == http.MethodPost:
 		if db.trunkCap > 0 && len(db.trunks) >= db.trunkCap {
 			refuse(w, "your application reached the maximum number of SIP trunks (25)")

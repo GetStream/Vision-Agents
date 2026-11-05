@@ -29,6 +29,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -36,8 +38,11 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tracing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 )
+
+var tracer = tracing.Tracer("routing")
 
 // Provider is the little a router needs from a model provider: it can be opened, closed
 // and named. Everything that makes a modality itself lives on the modality's own
@@ -597,6 +602,9 @@ func (r *Router[P]) Resolve(ctx context.Context, target string, languageHints []
 
 	alias, ok := r.config.Aliases[target]
 	if !ok {
+		if instead, retired := r.config.Retired[target]; retired {
+			return nil, Refused(stack.Wrap(fmt.Errorf("routing: %s is retired; ask for %s instead", target, instead)))
+		}
 		return nil, Refused(stack.Wrap(fmt.Errorf("routing: unknown target %q", target)))
 	}
 
@@ -1065,7 +1073,14 @@ func (r *Router[P]) startCandidate(ctx context.Context, request Request, candida
 			return zero, stack.Wrap(err)
 		}
 	}
-	if err := provider.Start(ctx); err != nil {
+	started, span := tracer.Start(ctx, "routing.provider.start", trace.WithAttributes(
+		attribute.String("routing.modality", string(r.modality)),
+		attribute.String("routing.provider", candidate.Config.Provider),
+		attribute.String("routing.model", candidate.Config.Model)))
+	err = provider.Start(started)
+	tracing.Fail(span, err)
+	span.End()
+	if err != nil {
 		provider.Close()
 		r.recorder.Record(candidate.Config, Stat{
 			Owner:        request.Owner(),

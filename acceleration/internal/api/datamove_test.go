@@ -5,12 +5,17 @@ package api
 import (
 	"context"
 	"encoding/json"
+	"io"
 	"math/rand/v2"
 	"net/http"
 	"strconv"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/suite"
+	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -21,8 +26,11 @@ type DataMoveSuite struct {
 	RouterSuite
 }
 
+// TestDataMoveSuite runs on its own rather than beside the other suites: the change feed waits
+// for every transaction open on the Postgres server, and other suites hold one for longer than
+// a change is waited for (a row locked past auditWriteTimeout).
 func TestDataMoveSuite(t *testing.T) {
-	runSuite(t, new(DataMoveSuite))
+	suite.Run(t, new(DataMoveSuite))
 }
 
 func (s *DataMoveSuite) SetupTest() {
@@ -91,6 +99,27 @@ func (s *DataMoveSuite) TestFollowingTheChangesFromWhereTheLastPageEndedRepeatsN
 	second := s.changesSince(first.Cursor)
 
 	s.NotContains(s.rendered(second.Changes), s.rendered(first.Changes))
+}
+
+// The numbers are shared by every app, so the ones between the export's cursor and the app's
+// first change after it can be another moving app's.
+func (s *DataMoveSuite) TestTheFirstChangeAfterAnExportIsAnsweredWhenAnotherAppChangedInBetween() {
+	stranger := s.data.backendOfAnotherApp()
+	s.Require().Equal(http.StatusOK, stranger.do(http.MethodGet, "/v1/data/export", nil, nil))
+	theirs := func() {
+		s.Require().Equal(http.StatusCreated, stranger.do(http.MethodPost, "/v1/agents/configs",
+			AgentConfigRequest{Name: "agent-" + s.utils.uuid(), Llm: pointerTo("llm-flow")}, nil))
+	}
+	theirs()
+	exported := s.export()
+	cursor := exported[len(exported)-1].Cursor
+	s.Require().NotNil(cursor, "the export did not finish")
+	theirs()
+	agent := s.data.createAgentConfig()
+
+	changed := s.changesSince(*cursor)
+
+	s.Contains(s.rendered(changed.Changes), agent.Id)
 }
 
 func (s *DataMoveSuite) TestACursorThatIsNotOneIsRefused() {
@@ -200,6 +229,118 @@ func (s *DataMoveSuite) TestOnlyTheAppsOwnBackendMayFollowTheChanges() {
 	})
 }
 
+// A write whose trigger looked for the recording before the export started it recorded
+// nothing, so an export whose snapshot is read while it is open cannot have it either.
+func (s *DataMoveSuite) TestAWriteOpenWhenAnExportStartsIsInTheExportOrItsChanges() {
+	open := s.openWrite(s.customerID())
+	s.waitAtMost(100 * time.Millisecond)
+
+	first, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
+	s.Require().NoError(open.tx.Commit())
+	exported := string(body)
+	if first != http.StatusOK {
+		exported = ndjson(s.export())
+	}
+	var changed changedRows
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet,
+		"/v1/data/changes?after="+strconv.FormatInt(s.cursorOf(exported), 10), nil, &changed))
+
+	s.True(strings.Contains(exported, open.id) || strings.Contains(s.rendered(changed.Changes), open.id),
+		"the write is in neither the export nor the changes after it")
+	s.Equal(http.StatusServiceUnavailable, first, "an export that cannot wait it out says so")
+}
+
+func (s *DataMoveSuite) TestAnExportWaitsForAWriteOpenWhenItStartedToCommit() {
+	open := s.openWrite(s.customerID())
+	type answer struct {
+		status int
+		body   []byte
+		err    error
+	}
+	request, err := http.NewRequest(http.MethodGet, s.serverClient.base()+"/v1/data/export", nil)
+	s.Require().NoError(err)
+	request.Header = s.serverClient.header.Clone()
+	answered := make(chan answer, 1)
+	go func() {
+		response, err := s.server.Client().Do(request)
+		if err != nil {
+			answered <- answer{err: err}
+			return
+		}
+		defer response.Body.Close()
+		body, err := io.ReadAll(response.Body)
+		answered <- answer{status: response.StatusCode, body: body, err: err}
+	}()
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		var capturing bool
+		assert.NoError(c, s.store.DB().QueryRowContext(context.Background(),
+			"SELECT EXISTS (SELECT 1 FROM data_change_capture WHERE customer_id = ?)", s.customerID()).Scan(&capturing))
+		assert.True(c, capturing, "the export has not started recording")
+	}, settleFor, 10*time.Millisecond)
+	s.Require().NoError(open.tx.Commit())
+
+	select {
+	case got := <-answered:
+		s.Require().NoError(got.err)
+		s.Equal(http.StatusOK, got.status)
+		s.Contains(string(got.body), open.id)
+	case <-time.After(exportWritesWait):
+		s.Fail("the export did not answer once the write committed")
+	}
+}
+
+// Postgres cannot tell another app's open write from this one's, so the export is bounded and
+// answers rather than hangs.
+func (s *DataMoveSuite) TestAnExportGivesUpOnAWriteThatStaysOpen() {
+	stranger := s.openWrite("another-app-" + s.utils.uuid())
+	s.waitAtMost(100 * time.Millisecond)
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), "still open")
+
+	s.Require().NoError(stranger.tx.Rollback())
+	s.export()
+}
+
+// openWrite writes an agent config of a customer in a transaction the test ends.
+func (s *DataMoveSuite) openWrite(customerID string) openWrite {
+	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = tx.Rollback() })
+	id := "agent-" + s.utils.uuid()
+	_, err = tx.ExecContext(context.Background(),
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES (?, ?, ?, ?)",
+		id, customerID, id, "be brief")
+	s.Require().NoError(err)
+	return openWrite{tx: tx, id: id}
+}
+
+type openWrite struct {
+	tx bun.Tx
+	id string
+}
+
+// waitAtMost bounds how long this test's exports wait for the writes open when they start.
+func (s *DataMoveSuite) waitAtMost(wait time.Duration) {
+	s.Equal(exportWritesWait, s.router.exportWritesWait, "the default bound")
+	s.router.exportWritesWait = wait
+	s.T().Cleanup(func() { s.router.exportWritesWait = exportWritesWait })
+}
+
+// cursorOf is the cursor on the last line of an export.
+func (s *DataMoveSuite) cursorOf(exported string) int64 {
+	var cursor *int64
+	decoder := json.NewDecoder(strings.NewReader(exported))
+	for decoder.More() {
+		var line dataLine
+		s.Require().NoError(decoder.Decode(&line))
+		cursor = line.Cursor
+	}
+	s.Require().NotNil(cursor, "the export did not finish")
+	return *cursor
+}
+
 // export reads the whole snapshot, one JSON object per line.
 func (s *DataMoveSuite) export() []dataLine {
 	status, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
@@ -222,12 +363,13 @@ func (s *DataMoveSuite) export() []dataLine {
 // it has committed.
 func (s *DataMoveSuite) changesSince(after int64) changedRows {
 	var page changedRows
-	answered := 0
-	s.Require().Eventually(func() bool {
-		answered = s.serverClient.do(http.MethodGet,
+	s.Require().EventuallyWithT(func(c *assert.CollectT) {
+		page = changedRows{}
+		answered := s.serverClient.do(http.MethodGet,
 			"/v1/data/changes?after="+strconv.FormatInt(after, 10), nil, &page)
-		return answered == http.StatusOK && len(page.Changes) > 0
-	}, settleFor, 50*time.Millisecond, "no change became readable, the last answer was %d", answered)
+		assert.Equal(c, http.StatusOK, answered, "the change feed's answer")
+		assert.NotEmpty(c, page.Changes, "no change became readable")
+	}, settleFor, 50*time.Millisecond)
 	return page
 }
 

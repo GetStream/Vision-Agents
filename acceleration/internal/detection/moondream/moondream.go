@@ -105,6 +105,13 @@ type detectResponse struct {
 		XMax float64 `json:"x_max"`
 		YMax float64 `json:"y_max"`
 	} `json:"objects"`
+	// Metrics is what the call read and wrote, which is what Moondream bills: about 736
+	// tokens for the image and three for each box (https://moondream.ai/pricing, read
+	// 2026-11-04).
+	Metrics struct {
+		InputTokens  int64 `json:"input_tokens"`
+		OutputTokens int64 `json:"output_tokens"`
+	} `json:"metrics"`
 }
 
 // Detect looks for each class in turn.
@@ -125,6 +132,8 @@ func (p *Provider) Detect(ctx context.Context, request detection.Request) (detec
 		if err := p.post(ctx, "/detect", detectRequest{ImageURL: image, Object: class, Variant: p.model}, &answer); err != nil {
 			return detection.Result{}, err
 		}
+		result.InputTokens += answer.Metrics.InputTokens
+		result.OutputTokens += answer.Metrics.OutputTokens
 		for _, object := range answer.Objects {
 			result.Detections = append(result.Detections, detection.Detection{
 				Label:      class,

@@ -29,6 +29,33 @@ func TestBridgeSuite(t *testing.T) {
 	suite.Run(t, new(BridgeSuite))
 }
 
+// A message whose files named by id all failed to download is written only when it has
+// something else for the agent: text, a photo at a URL or a photo that did download. One that
+// names no file by id is written as before, whatever it holds (AI-2740).
+func (s *BridgeSuite) TestOnlyAMessageLeftWithNothingIsNotWritten() {
+	byID := core.Media{ID: "300", MIMEType: "image/jpeg"}
+	atURL := core.Media{URL: "https://cdn.example.com/a.jpeg", MIMEType: "image/jpeg"}
+	video := core.Media{URL: "https://cdn.example.com/a.mov", MIMEType: "video/quicktime"}
+	downloaded := []sandbox.File{{Name: "photo-1.jpeg", MIME: "image/jpeg", Data: []byte{0xff}}}
+	for _, tc := range []struct {
+		name    string
+		message core.InboundMessage
+		files   []sandbox.File
+		named   int
+		nothing bool
+	}{
+		{"a photo by id that failed", core.InboundMessage{Media: []core.Media{byID}}, nil, 1, true},
+		{"a photo by id that failed, with text", core.InboundMessage{Text: "hi", Media: []core.Media{byID}}, nil, 1, false},
+		{"a photo by id that downloaded", core.InboundMessage{Media: []core.Media{byID}}, downloaded, 1, false},
+		{"a photo by id that failed beside one at a URL", core.InboundMessage{Media: []core.Media{byID, atURL}}, nil, 1, false},
+		{"a photo by id that failed beside a video", core.InboundMessage{Media: []core.Media{byID, video}}, nil, 1, true},
+		{"a video alone, named by no id", core.InboundMessage{Media: []core.Media{video}}, nil, 0, false},
+		{"nothing at all, named by no id", core.InboundMessage{}, nil, 0, false},
+	} {
+		s.Equal(tc.nothing, nothingToWrite(tc.message, len(tc.files), tc.named), tc.name)
+	}
+}
+
 func (s *BridgeSuite) TestAnAuthorIsTheSameUserOnEveryMessage() {
 	s.Equal(AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"), AuthorUserID("acme", "slack_bot", "T0000TEAM", "U0000ALICE"))
 }

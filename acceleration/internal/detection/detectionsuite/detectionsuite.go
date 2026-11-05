@@ -18,6 +18,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/detection"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	// The providers need their credentials, which live in the repository's .env rather
 	// than in the environment an editor happens to run a test with.
 	_ "github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
@@ -53,6 +54,9 @@ type Suite struct {
 	// ReportsBilled marks a provider whose result says how many images it was charged for
 	// (detection.Result.Billed). One that does not is billed one image a request.
 	ReportsBilled bool
+	// BillsTokens marks a provider that bills by the token and says how many a request
+	// read and wrote (detection.Result.InputTokens and OutputTokens).
+	BillsTokens bool
 
 	// Provider is built once and never closed: a detection provider holds no connection.
 	Provider detection.Provider
@@ -110,6 +114,20 @@ func (s *Suite) TestTheWorkIsBilled() {
 	found := s.Detect(detection.Request{Image: cat, Classes: []string{"cat", "dog"}})
 
 	s.GreaterOrEqual(found.Billed, 1, "the result should say how many images were charged for")
+}
+
+// TestTheTokensAreCounted: a provider that bills by the token says how many every request
+// read and wrote, or the request would be billed by the image instead.
+func (s *Suite) TestTheTokensAreCounted() {
+	if !s.BillsTokens {
+		s.T().Skip("bills by the image")
+	}
+	found := s.Detect(detection.Request{Image: cat, Classes: []string{"cat"}})
+
+	used := found.Used()
+	s.Greater(used[pricing.InputTokens], int64(100), "an image is read as hundreds of tokens")
+	s.Positive(used[pricing.OutputTokens])
+	s.Zero(used[pricing.Images])
 }
 
 func (s *Suite) TestEveryFaceCarriesAnEmbedding() {

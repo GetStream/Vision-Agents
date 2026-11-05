@@ -74,6 +74,11 @@ type Message struct {
 	// Files are what the agent's own code made for this reply, such as a rendered image, or
 	// on a person's message the photos they sent with it.
 	Files []sandbox.Attachment `json:"files,omitempty"`
+	// UI is a reply's generated UI as Stream stores it (custom.ai_ui), when the reply was read
+	// back rather than written here, where it is still part of Text (ui.go).
+	UI map[string]any `json:"ui,omitempty"`
+	// UIAction is what a person did in a reply's UI, on their message (custom.ai_ui_action).
+	UIAction map[string]any `json:"ui_action,omitempty"`
 	// ConnectorAuthorizations ask the end user to connect a connector binding the reply
 	// needed (connector_logins.go). They are written among the attachments, by MarshalJSON.
 	ConnectorAuthorizations []ConnectorAuthorization `json:"-"`
@@ -804,6 +809,12 @@ func (s *Service) Describe(ctx context.Context, customer, cid, title, descriptio
 	return stack.Wrap(err)
 }
 
+// Shared reports whether a conversation's channel is open to every member of it
+// (support_access "members"), not to its owner alone; custom is the channel's.
+func Shared(custom map[string]any) bool {
+	return custom["support_access"] == "members"
+}
+
 // ownedBy reads server-owned channel metadata. Explicit member access still
 // requires the caller's current membership, checked against the query response.
 // A channel with no owner is a backend-owned demo, which no end user may claim.
@@ -925,7 +936,7 @@ func commandsIn(messages []Message) map[string]commandRecord {
 		}
 		commands[m.ID] = commandRecord{
 			CommandReceipt: CommandReceipt{CommandID: m.ID, UserMessageID: m.ID, State: "interrupted"},
-			Digest:         fmt.Sprintf("%x", sha256.Sum256([]byte(m.Text))),
+			Digest:         commandDigest(m.Text, m.UIAction, nil),
 			Initiator:      initiator,
 		}
 	}
@@ -1016,7 +1027,7 @@ func (s *Service) readPage(ctx context.Context, client *getstream.Stream, custom
 			return Page{}, stack.Wrap(errors.New("conversation caller is not a channel member"))
 		}
 	}
-	p := Page{agent: stored, shared: r.Data.Channel.Custom["support_access"] == "members", thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
+	p := Page{agent: stored, shared: Shared(r.Data.Channel.Custom), thread: thread, dispatched: dispatched, empty: len(r.Data.Messages) == 0, Messages: []Message{}, Truncated: len(r.Data.Messages) == limit}
 	if raw, ok := r.Data.Channel.Custom["support_memory_scope"]; ok {
 		b, err := json.Marshal(raw)
 		if err != nil {
@@ -1165,6 +1176,13 @@ func entries(p Page) []entry {
 
 func entryOf(p Page, m Message) entry {
 	said := m.Text
+	if block := uiBlock(m.UI); block != "" && m.Role == "assistant" {
+		// The model reads back the UI it wrote, which Stream keeps beside the reply's words.
+		said = strings.TrimSpace(said + "\n\n" + block)
+	}
+	if note := DescribeUIAction(m.UIAction, uiWords(p.Messages, m.UIAction)); note != "" && m.Role == "user" {
+		said += "\n\n" + note
+	}
 	if photos := photosOn(m); m.Role == "user" && photos > 0 {
 		// The model saw the photos with the reply to this message alone, as it does while
 		// a session is open, so history says they were sent rather than sending them again.
@@ -1379,6 +1397,12 @@ func (c *Conversation) CheckBegin(id, text string) (heard string, err error) {
 // what the person sent with it (PublishPhotos), which their message shows; text may be empty
 // when there are some.
 func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) (CommandReceipt, error) {
+	return c.BeginCommandWithAction(id, text, clientID, nil, photos...)
+}
+
+// BeginCommandWithAction is BeginCommand for a person's message that says what they did in a
+// reply's UI (ui.go), which their message carries beside their words.
+func (c *Conversation) BeginCommandWithAction(id, text, clientID string, action map[string]any, photos ...Photo) (CommandReceipt, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if !c.active {
@@ -1387,7 +1411,10 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	if !validCommandID.MatchString(id) || text == "" && len(photos) == 0 || len(text) > maxCommandText {
 		return CommandReceipt{}, stack.Wrap(errInvalidCommand)
 	}
-	digest := commandDigest(text, photos)
+	if !ValidUIAction(action) {
+		return CommandReceipt{}, stack.Wrap(errors.New("invalid UI action"))
+	}
+	digest := commandDigest(text, action, photos)
 	if previous, ok := c.data.Commands[id]; ok {
 		if previous.Initiator != c.data.Owner {
 			return CommandReceipt{}, stack.Wrap(ErrCommandNotFound)
@@ -1409,7 +1436,7 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	// The user's message is stored under the command ID, so a client that shows the
 	// message before it is delivered (an optimistic send) sees Stream's copy replace
 	// its own instead of a duplicate.
-	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID}
+	u := Message{ID: id, CommandID: id, Role: "user", Text: text, State: "completed", StartedAt: now, StateStartedAt: now, FinishedAt: &now, Tools: []Tool{}, ClientID: clientID, UIAction: action}
 	for _, photo := range photos {
 		u.Files = append(u.Files, photo.Uploaded)
 	}
@@ -1435,11 +1462,17 @@ func (c *Conversation) BeginCommand(id, text, clientID string, photos ...Photo) 
 	return receipt, nil
 }
 
-// commandDigest is what a retry of a command is matched on: its text and the bytes of each
-// photo sent with it. A command with no photos keeps the digest of its text alone, which is
-// what the commands recorded before photos were taken are stored under.
-func commandDigest(text string, photos []Photo) string {
+// commandDigest is what a retry of a command is matched on: its text, what the person did in
+// a reply's UI, and the bytes of each photo sent with it. A command with neither keeps the
+// digest of its text alone, which is what the commands recorded before photos were taken are
+// stored under. Its action is in it as JSON, whose keys are sorted, so the digest of a command
+// with an action and no photos is rebuilt from what Stream keeps (commandsIn).
+func commandDigest(text string, action map[string]any, photos []Photo) string {
 	digest := sha256.Sum256([]byte(text))
+	if action != nil {
+		encoded, _ := json.Marshal(action)
+		digest = sha256.Sum256(append(digest[:], encoded...))
+	}
 	if len(photos) == 0 {
 		return fmt.Sprintf("%x", digest)
 	}
@@ -1964,12 +1997,19 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 	}
 	m.Saved = !ephemeral
 	m.Error = ""
-	metadata, err := metadataOf(m, visible)
+	text, ui := wireUI(m)
+	wire := m
+	wire.Text = text
+	wire.AnswerStart = min(wire.AnswerStart, utf8.RuneCountInString(text))
+	metadata, err := metadataOf(wire, visible)
 	if err != nil {
 		return err
 	}
-	runtime := runtimeOf(m)
-	fields := map[string]any{"text": m.Text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
+	runtime := runtimeOf(wire)
+	fields := map[string]any{"text": text, "generating": m.FinishedAt == nil, "source": "agent", "support_message": metadata, "support_runtime": runtime}
+	if ui != nil {
+		fields["ai_ui"] = ui
+	}
 	if m.Refused {
 		fields[RefusedField] = true
 	}
@@ -1988,13 +2028,20 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		if m.ClientID != "" {
 			custom["client_id"] = m.ClientID
 		}
+		if ui != nil {
+			custom["ai_ui"] = ui
+		}
+		if m.UIAction != nil {
+			custom["ai_ui_action"] = m.UIAction
+		}
 		// ai_generated is how Stream's AI components tell a streamed reply from the rest.
 		// User messages are written as the agent too, so it goes on assistant replies only.
 		if m.Role == "assistant" {
 			custom["ai_generated"] = true
 		}
+		fitUI(custom)
 		_, err := client.Chat().SendMessage(ctx, "agent", strings.TrimPrefix(c.data.CID, "agent:"), &getstream.SendMessageRequest{Message: getstream.MessageRequest{
-			ID: &m.ID, UserID: &user, Text: &m.Text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
+			ID: &m.ID, UserID: &user, Text: &text, Custom: custom, Attachments: chatFileAttachments(m.Files, m.Role == "user"),
 		}})
 		if err != nil && ctx.Err() == nil {
 			existing, readErr := client.Chat().GetMessage(ctx, m.ID, &getstream.GetMessageRequest{})
@@ -2011,10 +2058,10 @@ func (c *Conversation) sendWith(ctx context.Context, client *getstream.Stream, o
 		if op.reasoning != nil {
 			fields["reasoning"] = op.reasoning
 		}
-		_, err := client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields})
+		_, err := client.Chat().EphemeralMessageUpdate(ctx, m.ID, &getstream.EphemeralMessageUpdateRequest{UserID: &user, Set: fields, Unset: uiUnset(fields)})
 		return err
 	}
-	_, err = client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields})
+	_, err = client.Chat().UpdateMessagePartial(ctx, m.ID, &getstream.UpdateMessagePartialRequest{UserID: &user, Set: fields, Unset: uiUnset(fields)})
 	return err
 }
 func sameSnapshot(a, b Message) bool {
@@ -2095,12 +2142,14 @@ func (c *Conversation) flush() bool {
 // reply in a thread channel. Call it with mu held.
 func (c *Conversation) finishedReply(op operation) (FinishedReply, bool) {
 	m := op.Message
-	if m.Role != "assistant" || m.FinishedAt == nil || m.State != "completed" || (m.Text == "" && len(m.Files) == 0) ||
+	// An external thread shows no UI, so it gets the reply's words, as push notifications do.
+	words, _ := wireUI(m)
+	if m.Role != "assistant" || m.FinishedAt == nil || m.State != "completed" || (words == "" && len(m.Files) == 0) ||
 		!c.thread {
 		return FinishedReply{}, false
 	}
 	return FinishedReply{Customer: c.data.Customer, CID: c.data.CID, MessageID: m.ID, CommandID: m.CommandID,
-		Text: m.Text, Files: append([]sandbox.Attachment(nil), m.Files...)}, true
+		Text: words, Files: append([]sandbox.Attachment(nil), m.Files...)}, true
 }
 
 // retire takes a conversation released retireAfter ago, with nothing left to write, out of

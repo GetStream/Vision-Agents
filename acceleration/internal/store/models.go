@@ -566,24 +566,16 @@ type AgentConfig struct {
 	// Skills names entries in the skill registry rather than carrying their instructions,
 	// so editing a skill changes every config that uses it.
 	Skills []string `bun:"skills,type:jsonb"`
-	// Plugins names hosted MCP servers this agent is allowed to reach, from the built-in
-	// catalog, each with how it is reached. The app logs into one once; one marked User is
-	// connected by each end user with their own account, from the conversation, when the
-	// model first needs it. An app's plugin without a connected row is one that was attached
-	// and then the login expired or was revoked.
-	Plugins []PluginEntry `bun:"plugins,type:jsonb"`
 	// Connectors are the connectors this agent may call tools of, each under an alias.
 	Connectors []ConnectorBinding `bun:"connectors,type:jsonb"`
 	// LeftOutConnectors are the connectors agent.yaml named that the last sync left out of
 	// Connectors, because the app has no connection by the id or label they name. Only a
 	// sync writes them, as the SDK sent them; nothing reads them but the API.
 	LeftOutConnectors []LeftOutConnector `bun:"left_out_connectors,type:jsonb"`
-	// PluginEvents are the MCP events the agent subscribes to on its plugins, each opening
-	// a conversation of its own when it arrives.
-	PluginEvents []PluginEvent `bun:"plugin_events,type:jsonb"`
-	// MCPServers are MCP servers outside the catalog that the agent's sessions open by
-	// their URL, with no login unless one sets scopes or user.
-	MCPServers []MCPServer `bun:"mcp_servers,type:jsonb"`
+	// The row's plugins, plugin_events and mcp_servers columns, from before connectors, are
+	// not modelled: no code reads them, a save leaves them as they are and an insert gives them
+	// their default [].
+
 	// Channels are the lines this agent answers on outside a Stream Chat channel: a
 	// WhatsApp number, a number to text, an iMessage line.
 	Channels AgentChannels `bun:"channels,type:jsonb,notnull"`
@@ -877,42 +869,6 @@ type Skill struct {
 	DeletedAt  *time.Time `bun:"deleted_at"`
 }
 
-// MCPServer is an MCP server an agent reaches by its URL rather than from the catalog.
-type MCPServer struct {
-	// Name prefixes its tools, as a plugin's id does.
-	Name string `json:"name"`
-	URL  string `json:"url"`
-	// Tools offer only the server's tools matching these names or path.Match patterns.
-	// Empty offers every tool.
-	Tools []string `json:"tools,omitempty"`
-	// Scopes are what its login asks for at consent, in place of what the server
-	// advertises.
-	Scopes []string `json:"scopes,omitempty"`
-	// User has each end user log in with their own account, in the conversation, rather
-	// than the app once, on the dashboard.
-	User bool `json:"user,omitempty"`
-	// Branding is how the server described itself when the config was saved. Nil when it
-	// did not answer.
-	Branding *MCPBranding `json:"branding,omitempty"`
-	// NeedsLogin is whether the server said it requires an OAuth login when the config was
-	// saved. Nil when it could not be asked, which a session starting asks again.
-	NeedsLogin *bool `json:"needs_login,omitempty"`
-}
-
-// AppLogin reports whether the app logs into the server once, on the dashboard.
-func (s MCPServer) AppLogin() bool {
-	return !s.User && s.NeedsLogin != nil && *s.NeedsLogin
-}
-
-// MCPBranding is what an MCP server said about itself at initialize.
-type MCPBranding struct {
-	Title       string `json:"title,omitempty"`
-	Description string `json:"description,omitempty"`
-	Version     string `json:"version,omitempty"`
-	IconURL     string `json:"icon_url,omitempty"`
-	WebsiteURL  string `json:"website_url,omitempty"`
-}
-
 // ChannelIdentity is who a number is to one agent, and where its conversation is kept.
 type ChannelIdentity struct {
 	bun.BaseModel `bun:"table:channel_identities,alias:ci"`
@@ -1081,34 +1037,6 @@ type ChannelAccount struct {
 	DeletedAt         *time.Time `bun:"deleted_at"`
 }
 
-// PluginEntry is one catalog plugin an agent config names, and how it is reached. Only
-// Name is required; without the rest the plugin is the catalog's.
-type PluginEntry struct {
-	Name string `json:"name"`
-	// User has each end user connect the plugin with their own account, in the conversation,
-	// rather than the app once.
-	User bool `json:"user,omitempty"`
-	// Readonly reaches the plugin's read-only endpoint.
-	Readonly bool `json:"readonly,omitempty"`
-	// Scopes are asked for at consent in place of the catalog's.
-	Scopes []string `json:"scopes,omitempty"`
-	// Toolsets limit the server to these groups of tools. Empty offers every tool.
-	Toolsets []string `json:"toolsets,omitempty"`
-	// Tools offer only the server's tools matching these names or path.Match patterns.
-	// Empty offers every tool.
-	Tools []string `json:"tools,omitempty"`
-}
-
-// PluginEvent is one MCP event an agent config subscribes to on a plugin it names.
-type PluginEvent struct {
-	Plugin string `json:"plugin"`
-	Event  string `json:"event"`
-	// Arguments are the event's filters, as its inputSchema describes them.
-	Arguments map[string]any `json:"arguments,omitempty"`
-	// Instructions say what the agent does with the event when it arrives.
-	Instructions string `json:"instructions,omitempty"`
-}
-
 // Where a knowledge url has got to.
 const (
 	// KnowledgeURLPending means it has been added but not yet read.
@@ -1166,11 +1094,35 @@ type KnowledgeDocument struct {
 	// Source is what the passages are keyed by, and what a reader would call the document.
 	Source   string `bun:"source,notnull"`
 	Passages int    `bun:"passages,notnull"`
-	// Text is the document as it was posted. Listings leave it out.
-	Text      string    `bun:"text,notnull"`
+	// Text is the document as it was posted, or as its file was read. Listings leave it out.
+	Text string `bun:"text,notnull"`
+	// State is pending while an uploaded file waits to be read, failed when it could not
+	// be, and indexed otherwise. Error says why it failed.
+	State string `bun:"state,notnull"`
+	Error string `bun:"error,notnull"`
+	// Pages is how many pages the uploaded file had, 0 for text and for a file without pages.
+	Pages int `bun:"pages,notnull"`
+	// ContentType and Bytes are what was sent: the file's type as the upload named it, and
+	// its size.
+	ContentType string `bun:"content_type,notnull"`
+	Bytes       int64  `bun:"bytes,notnull"`
+	// ObjectKey is the uploaded file in the knowledge bucket while it waits to be read, and
+	// empty once it has been. A read that finds another key here was overtaken by a newer
+	// upload of the same source, and leaves the row to it.
+	ObjectKey string    `bun:"object_key,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`
 	UpdatedAt time.Time `bun:"updated_at,notnull"`
 }
+
+// Where a knowledge document has got to.
+const (
+	// KnowledgeDocumentPending is an uploaded file not read yet.
+	KnowledgeDocumentPending = "pending"
+	// KnowledgeDocumentIndexed is a document whose passages can be looked up.
+	KnowledgeDocumentIndexed = "indexed"
+	// KnowledgeDocumentFailed is an uploaded file that could not be read, and Error says why.
+	KnowledgeDocumentFailed = "failed"
+)
 
 // What a provider has made of a voice's samples.
 const (

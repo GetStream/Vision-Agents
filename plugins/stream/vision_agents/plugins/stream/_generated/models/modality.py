@@ -8,6 +8,7 @@ class Modality(StrEnum):
     KNOWLEDGE = "knowledge"
     LLM = "llm"
     MEMORY = "memory"
+    OCR = "ocr"
     PHONE = "phone"
     SEARCH = "search"
     STS = "sts"

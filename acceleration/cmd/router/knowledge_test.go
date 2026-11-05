@@ -51,7 +51,7 @@ func (s *KnowledgeLimitsSuite) TestARegionKeptWhereTheDefaultRegionIsIsRefused()
 }
 
 func (s *KnowledgeLimitsSuite) TestLimitsThatGrowADocumentFourTimesOrLessAreNotWarnedOf() {
-	s.settings.Knowledge.MinChunk, s.settings.Knowledge.MaxHeading = 500, 235
+	s.settings.Knowledge.MinChunk, s.settings.Knowledge.MaxHeading = 500, 232
 
 	warnKnowledgeLimits(s.settings, slog.New(slog.NewTextHandler(&s.logs, nil)))
 
@@ -64,7 +64,7 @@ func (s *KnowledgeLimitsSuite) TestLimitsThatGrowADocumentMoreThanFourTimesAreWa
 	warnKnowledgeLimits(s.settings, slog.New(slog.NewTextHandler(&s.logs, nil)))
 
 	s.Contains(s.logs.String(), "level=WARN")
-	s.Contains(s.logs.String(), "5.6")
+	s.Contains(s.logs.String(), "5.7")
 	s.Contains(s.logs.String(), "ROUTER_KNOWLEDGE_MAX_HEADING")
 	s.Contains(s.logs.String(), "ROUTER_KNOWLEDGE_MIN_CHUNK")
 }
@@ -76,4 +76,19 @@ func (s *KnowledgeLimitsSuite) TestNoMinimumChunkIsWarnedOf() {
 
 	s.Contains(s.logs.String(), "level=WARN")
 	s.Contains(s.logs.String(), "ROUTER_KNOWLEDGE_MIN_CHUNK")
+}
+
+func (s *KnowledgeLimitsSuite) TestUploadedFilesAreQueuedOnTheShardsOwnRedis() {
+	s.settings.Redis = config.Redis{
+		Addr:  "global:6379",
+		Shard: config.ShardRedis{Addr: "europe-west4:6379", Username: "router", Password: "secret"},
+	}
+
+	s.Equal(config.Redis{Addr: "europe-west4:6379", Username: "router", Password: "secret"}, shardRedis(s.settings.Redis))
+}
+
+func (s *KnowledgeLimitsSuite) TestAShardWithoutItsOwnRedisQueuesUploadedFilesOnTheSharedOne() {
+	s.settings.Redis = config.Redis{Addr: "global:6379", Username: "router"}
+
+	s.Equal(s.settings.Redis, shardRedis(s.settings.Redis))
 }

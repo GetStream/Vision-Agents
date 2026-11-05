@@ -15,7 +15,7 @@ use GetStream\VisionAgents\Json;
 final readonly class AgentUserRequest
 {
     public function __construct(
-        // The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it...
+        // The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and...
         public string $phone,
     ) {
     }

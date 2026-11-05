@@ -183,8 +183,29 @@ func (s *UsageIdentitySuite) TestSpendIsNarrowedToAKeyAUserATeamAndACategory() {
 	s.Equal(int64(1), s.spentCount("team=finance"))
 	s.Equal(int64(1), s.spentCount("category=project:onboarding"))
 	s.Equal(int64(1), s.spentCount("user_id="+url.QueryEscape(sales.userID)))
-	s.Equal(int64(2), s.spentCount("api_key="+url.QueryEscape(s.app.key)))
-	s.Equal(int64(0), s.spentCount("api_key=hook:chat"))
+	s.Equal(int64(2), s.spentCount("api_key_id="+url.QueryEscape(s.app.key)))
+	s.Equal(int64(0), s.spentCount("api_key_id=hook:chat"))
+}
+
+// Stream's proxy forwards the app's key as api_key in every call's query: spend read through it
+// counts every key's and origin's work, and api_key_id narrows it (AI-2684).
+func (s *UsageIdentitySuite) TestSpendWithTheCallersKeyInTheQueryCountsEveryKey() {
+	s.searched(s.client)
+	s.hookRow()
+	proxied := "api_key=" + url.QueryEscape(s.app.key)
+
+	s.Equal(int64(2), s.spentCount(proxied))
+	s.Equal(int64(1), s.spentCount(proxied+"&api_key_id=hook%3Achat"))
+	s.Equal(int64(1), s.spentCount(proxied+"&api_key_id="+url.QueryEscape(s.app.key)))
+}
+
+// Spend read with no key in the query counts every key's and origin's work, as before
+// api_key_id (AI-2684).
+func (s *UsageIdentitySuite) TestSpendWithNoKeyInTheQueryCountsEveryKey() {
+	s.searched(s.client)
+	s.hookRow()
+
+	s.Equal(int64(2), s.spentCount(""))
 }
 
 func (s *UsageIdentitySuite) TestASpendFilterNamingTwoTeamsIsRefused() {
@@ -212,6 +233,15 @@ func (s *UsageIdentitySuite) userWith(categories []string, team string) *testCli
 // searched has client search once and returns the row it recorded.
 func (s *UsageIdentitySuite) searched(client *testClient) store.Request {
 	return searchedBy(&s.RouterSuite, client)
+}
+
+// hookRow records a row of work a chat hook started, which names the origin hook:chat in
+// place of a key.
+func (s *UsageIdentitySuite) hookRow() {
+	s.Require().NoError(s.store.RecordRequest(context.Background(), &store.Request{
+		Modality: "stt", CustomerID: s.customerID(), OrganizationID: s.app.organization.ID, APIKey: "hook:chat",
+		Provider: "stub", Model: "stub-stt", StartedAt: time.Now(), CostMicros: 1_000, Billable: true, Success: true,
+	}))
 }
 
 // respond asks a session a question as client.

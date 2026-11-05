@@ -120,6 +120,7 @@ func (s *VoiceNotesSuite) TestTheVoiceNoteIsShownOnThePersonsMessageWithWhatItSa
 	uploads := s.chat.Uploads()[before:]
 	s.Require().Len(uploads, 1, "the voice note is uploaded once")
 	s.Equal(audio, uploads[0].Data, "what is shown is the voice note as sent")
+	s.Equal(channel, uploads[0].Channel, "the voice note is stored on the conversation's channel")
 	s.Contains(string(attachments), `"asset_url":"`, "the message points at the upload")
 }
 

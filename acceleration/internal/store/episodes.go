@@ -133,7 +133,9 @@ func (s *Store) OpenEpisode(ctx context.Context, episode *Episode) (opened bool,
 // touchThreadEpisodeQuery sets the last message of the thread's episode in progress, and
 // reads the episode. open holds the episode's row until the message commits, so a sweep
 // skips it meanwhile (closeIdleEpisodesQuery), and a touch that waited for a close finds the
-// episode no longer open.
+// episode no longer open. A message's time is when it was made or queued, so a message tried
+// again after a later one keeps the later one's time: the episode stays open from its last
+// message on.
 const touchThreadEpisodeQuery = `
 WITH open AS (
     SELECT id FROM episodes
@@ -142,7 +144,8 @@ WITH open AS (
 ), touched AS (
     INSERT INTO episode_activity (episode_id, last_message_at)
     SELECT id, ? FROM open
-    ON CONFLICT (episode_id) DO UPDATE SET last_message_at = excluded.last_message_at
+    ON CONFLICT (episode_id) DO UPDATE
+    SET last_message_at = GREATEST(episode_activity.last_message_at, excluded.last_message_at)
     RETURNING episode_id
 )
 SELECT ep.* FROM episodes AS ep JOIN touched ON touched.episode_id = ep.id`
@@ -172,7 +175,7 @@ const leasedWithContact = `, leased AS (
     RETURNING episode_id, summary_lease_until
 )
 SELECT closed.*, leased.summary_lease_until,
-    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, cm.address AS contact_address
+    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, ` + reachedAt + ` AS contact_address
 FROM closed
 JOIN leased ON leased.episode_id = closed.id
 JOIN contact_map AS cm ON cm.id = closed.contact_id`
@@ -277,7 +280,7 @@ WITH due AS (
     RETURNING act.episode_id, act.summary_lease_until
 )
 SELECT ep.*, leased.summary_lease_until,
-    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, cm.address AS contact_address
+    cm.conversation_id, cm.agent_config_id, cm.kind AS contact_kind, ` + reachedAt + ` AS contact_address
 FROM leased
 JOIN episodes AS ep ON ep.id = leased.episode_id
 JOIN contact_map AS cm ON cm.id = ep.contact_id`
@@ -374,7 +377,7 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 	var cards []EpisodeCard
 	err := s.db.NewSelect().Model(&cards).
 		ColumnExpr("ep.*").
-		ColumnExpr("cm.kind AS contact_kind, cm.address AS contact_address, cm.agent_config_id").
+		ColumnExpr("cm.kind AS contact_kind, "+reachedAt+" AS contact_address, cm.agent_config_id").
 		// LEAST ignores NULLs, so Until is nil only when both are.
 		ColumnExpr(`LEAST(ep.ended_at, (SELECT min(nx.started_at) FROM episodes AS nx
 			WHERE nx.customer_id = ep.customer_id AND nx.thread_channel = ep.thread_channel

@@ -655,7 +655,7 @@ type MessageContent0 = string
 // MessageContent1 is the MessageContent1 schema.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 type Modality string
 
 // Defines values for Modality.
@@ -666,6 +666,7 @@ const (
 	Knowledge     Modality = "knowledge"
 	Llm           Modality = "llm"
 	Memory        Modality = "memory"
+	Ocr           Modality = "ocr"
 	Phone         Modality = "phone"
 	Search        Modality = "search"
 	Sts           Modality = "sts"
@@ -688,6 +689,8 @@ func (e Modality) Valid() bool {
 		return true
 	case Memory:
 		return true
+	case Ocr:
+		return true
 	case Phone:
 		return true
 	case Search:
@@ -704,7 +707,7 @@ func (e Modality) Valid() bool {
 }
 
 func (Modality) Schema(registry huma.Registry) *huma.Schema {
-	return namedEnum(registry, "Modality", "What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.", "stt", "tts", "llm", "sts", "search", "decision_model", "image", "detection", "memory", "knowledge", "phone")
+	return namedEnum(registry, "Modality", "What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.", "stt", "tts", "llm", "sts", "search", "decision_model", "image", "detection", "ocr", "memory", "knowledge", "phone")
 }
 
 // Provider is the Provider schema.

@@ -1,0 +1,14 @@
+{
+  "pages": [
+    {
+      "index": 0,
+      "markdown": "# Fryer cleaning\n\n![img-0.jpeg](img-0.jpeg)\n\n\n\nDrain the oil before it cools below 60 C.   \n\n| Step | Who |\n| --- | --- |\n| Drain | Cook |",
+      "images": [],
+      "header": "Equipment Manual - Kitchen Operations",
+      "footer": "12",
+      "dimensions": {"dpi": 160, "height": 1760, "width": 1360}
+    }
+  ],
+  "model": "mistral-ocr-4-1",
+  "usage_info": {"pages_processed": 1, "doc_size_bytes": 48211}
+}

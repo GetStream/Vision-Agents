@@ -84,6 +84,9 @@ type Signal struct {
 type Media struct {
 	URL      string
 	MIMEType string
+	// ID is, in place of URL, the provider's id for the file, which the manifest's media
+	// lookup finds it by (MessageRule.MediaLookup, AI-2740).
+	ID string
 }
 
 // InboundMessage is one message a person sent on an external thread, named by the provider's

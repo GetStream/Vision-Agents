@@ -247,7 +247,7 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 	if s.dispatch == nil {
 		return
 	}
-	if elsewhere, _ := s.forwardedToWorkers(r.Context(), s.replayed(r, payload), number.CustomerID); elsewhere {
+	if elsewhere, _ := s.forwardedToWorkers(r.Context(), s.replayed(r, payload), number.CustomerID, dispatch.Calls); elsewhere {
 		return
 	}
 

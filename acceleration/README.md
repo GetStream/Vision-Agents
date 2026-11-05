@@ -105,6 +105,7 @@ the other commands that read them there.
 | `ROUTER_LISTEN_FD`      | A listening socket inherited from a supervisor, served instead of `ROUTER_ADDR`, so an old and a new router take connections from one queue |
 | `ROUTER_SHUTDOWN_DRAIN` | How long a stopping router keeps its sessions after it stops taking work, e.g. `1h`. Unset ends them once HTTP has drained (10s). A second signal ends the wait. A draining router stops serving metrics when the drain starts, so a router started after it on the same `ROUTER_METRICS_ADDR` serves them |
 | `ROUTER_VOICES_BUCKET_URL` | Bucket for voice recordings, e.g. `s3://voices?region=eu-west-1` or `gs://voices`. Without it, voices of your own are unavailable |
+| `ROUTER_KNOWLEDGE_BUCKET_URL` | Bucket a file uploaded to a knowledge base waits in until it is read, e.g. `gs://knowledge`; each file is deleted once read. Each shard needs its own, in its own region, as the files are read by its workers alone. Without it, `POST /v1/agents/knowledge/files` answers 503 |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
 | `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.2 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
@@ -520,7 +521,7 @@ any app manages every limit of its organization (an app seen in no organization 
 | --------- | ---- | ------------ |
 | `listLimits`, `createLimit` | `GET`, `POST /v1/spend/limits` | The organization's limits by id, filtered by subject, level, ids, team, category or interval; a new one, 201 |
 | `getLimit`, `updateLimit`, `deleteLimit` | `GET`, `PATCH`, `DELETE /v1/spend/limits/{limit_id}` | One limit; its amount and note only; 204 |
-| `getLimitUsage` | `GET /v1/spend/limits/usage` | Up to 100 subjects of one kind, in the order asked (repeat `app_id`, `api_key`, `user_id`, `team` or `category`; a list of one goes with every subject): each one's current window in every interval, spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
+| `getLimitUsage` | `GET /v1/spend/limits/usage` | Up to 100 subjects of one kind, in the order asked (repeat `app_id`, `api_key_id`, `user_id`, `team` or `category`; a list of one goes with every subject): each one's current window in every interval, spent, the limit in force, its baseline and room, and the operator's spend hard limit beside them |
 | `resetLimitUsage` | `POST /v1/spend/limits/usage/reset` | Resets the subject's spend for its limits in the windows named, with a reason |
 
 A team is `subject: team` (or `app_team` with an `app_id`) and `team: finance`, kept as the
@@ -563,13 +564,15 @@ What an organization's own dashboard reads about its money, server-side only:
 | `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
 | `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
 | `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
-| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key_id`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
 
 The first two and `listUsageEvents` read the usage service's customer view with the ingest
 token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
-organization. A server-side caller's `api_key` and `user_id` query parameters are filters there,
-as they are on `getSpend`: the key is the `X-Api-Key` header's, and `user_id` in the query only
-names who a backend acts for, which no account read looks at. `listTeams`
+organization. A server-side caller's `api_key_id` and `user_id` query parameters are filters there,
+as they are on `getSpend`. A key is named `api_key_id` in the query on these reads and on the limits
+and grants lists and usage. `api_key` in the query is the caller's credential, which Stream's proxy
+requires on every call. `user_id` in the query only names who a backend acts for, which no account
+read looks at. `listTeams`
 sums the request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
@@ -1635,7 +1638,7 @@ between:
 | `tavily/basic`        | Index plus a written summary in the same round trip               |
 | `exa/auto`            | Exa choosing between its neural and keyword indexes               |
 | `tavily/advanced`     | Crawls the pages it finds rather than trusting the snippet        |
-| `perplexity/sonar`, `perplexity/sonar-pro` | A model reads the pages and writes the answer |
+| `perplexity/sonar`    | A model searches the web and writes the answer                    |
 
 A session that names nothing gets `search-fast`. Sonar is a target rather than a fork:
 because it is a language model in the middle of a conversation, whether it is worth its
@@ -2378,6 +2381,13 @@ Three endpoints move a customer between two deployments, all server-side only:
 `cmd/router replicate` is both halves at once: the copy, and everything that happens after
 the copy, which is what makes the switchover free of a window where writes are lost.
 
+An export starts recording the app's changes, then waits until every write transaction open in
+the source's shared database when recording started has ended, and only then reads its snapshot.
+So every write of the app to a table the export carries is in the export or in the changes after its cursor,
+including one that was in progress when the export started. A shard's tables record no changes:
+their rows come across as the export read them. A transaction still open after 30 seconds makes the
+export answer 503: run it again.
+
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
@@ -2394,7 +2404,10 @@ any other edit keeps it.
 
 Until the last `--once`, the source is the truth: each change carried writes the row as the source
 has it, over whatever was done to that row here, a delete included. A config deleted here comes
-back if the source edits it afterwards. So once SDKs point here, stop writing at the source.
+back if the source edits it afterwards. The exception is a connector connection the owner
+authorized again here: it keeps its state and credentials, so a rename, a disconnect or a soft
+delete at the source does not reach it. A hard delete at the source still does. So once SDKs
+point here, stop writing at the source.
 
 Cut over once SDKs point here:
 
@@ -2464,9 +2477,14 @@ Changes are captured by a trigger per table writing into `data_changes`, gated o
 `data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
 starts the capture and reading a page refreshes it, so an abandoned move stops recording by
 itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
-rather than silently missing writes. Each change records `pg_current_xact_id()`, and the
-cursor never passes `pg_snapshot_xmin(pg_current_snapshot())`, so a sequence number handed
-out by a transaction that has not committed yet cannot be stepped over.
+rather than silently missing writes. A change is numbered when it is written and seen when
+its transaction commits, so a transaction that commits late can hold a lower number than
+one already seen. Each transaction that records a change holds a shared advisory lock
+naming the highest number handed out before its first one, until it ends, and the cursor
+never passes the lowest such lock: no change at or below the cursor can still appear. While
+a transaction recording a change is open, every customer's feed waits for it; an open
+transaction that records nothing holds no feed back. Pruning drops only the oldest
+numbers, so what is kept runs without a gap from the oldest change kept.
 
 ## Test
 

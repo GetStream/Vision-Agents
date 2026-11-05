@@ -325,7 +325,7 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
+    ///Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -428,7 +428,9 @@ pub struct AgentConfigPatch {
     pub llm: ::std::option::Option<::std::string::String>,
     ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
+    pub mcp_servers: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is unique among the customer's own.
@@ -436,10 +438,12 @@ pub struct AgentConfigPatch {
     pub name: ::std::option::Option<::std::string::String>,
     ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
+    pub plugin_events: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    pub plugins: ::std::option::Option<::std::vec::Vec<AgentConfigPatchPluginsItem>>,
     ///Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub region: ::std::option::Option<::std::string::String>,
@@ -484,6 +488,20 @@ pub struct AgentConfigPatch {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
 }
+///`AgentConfigPatchPluginsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum AgentConfigPatchPluginsItem {
+    String(::std::string::String),
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for AgentConfigPatchPluginsItem
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self::Object(value)
+    }
+}
 ///`AgentConfigRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentConfigRequest {
@@ -498,7 +516,7 @@ pub struct AgentConfigRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+    ///Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -521,17 +539,21 @@ pub struct AgentConfigRequest {
     pub llm: ::std::option::Option<::std::string::String>,
     ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
+    pub mcp_servers: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is unique among the customer's own.
     pub name: ::std::string::String,
     ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
+    pub plugin_events: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    pub plugins: ::std::option::Option<::std::vec::Vec<AgentConfigRequestPluginsItem>>,
     ///Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub region: ::std::option::Option<::std::string::String>,
@@ -584,6 +606,20 @@ pub struct AgentConfigRequest {
     ///The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///`AgentConfigRequestPluginsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum AgentConfigRequestPluginsItem {
+    String(::std::string::String),
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for AgentConfigRequestPluginsItem
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self::Object(value)
+    }
 }
 ///A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -1170,7 +1206,7 @@ pub struct AgentUser {
 ///Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentUserRequest {
-    ///The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+    ///The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub phone: ::std::option::Option<::std::string::String>,
 }
@@ -3102,6 +3138,8 @@ pub struct ConnectionTool {
     ///The scopes a call of the tool needs, as the connector says. Absent when it says none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub needs_scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+    pub read_only: bool,
     ///The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
     pub schema_digest: ::std::string::String,
 }
@@ -4160,6 +4198,9 @@ pub struct CreateResponseRequest {
     pub request_id: ::std::option::Option<::std::string::String>,
     ///What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
     pub text: ::std::string::String,
+    ///What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
+    pub ui_action: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     ///Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub videos: ::std::option::Option<::std::vec::Vec<VideoSource>>,
@@ -5997,16 +6038,26 @@ impl ::std::convert::TryFrom<::std::string::String> for ImageSourceDetail {
     }
 }
 ///`IndexedKnowledgeDocument`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct IndexedKnowledgeDocument {
+    ///The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+    pub bytes: i64,
+    ///The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+    pub content_type: ::std::string::String,
     pub created_at: ::std::string::String,
+    ///Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
     pub id: ::std::string::String,
     pub namespace: ::std::string::String,
-    ///How many passages it was last cut into.
+    ///How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+    pub pages: i64,
+    ///How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
     pub passages: i64,
     ///What the document was posted as, and what its passages are keyed by.
     pub source: ::std::string::String,
-    ///The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+    pub state: KnowledgeDocumentState,
+    ///The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub text: ::std::option::Option<::std::string::String>,
     ///When it was last written.
@@ -6196,6 +6247,61 @@ pub struct KnowledgeDocument {
     pub source: ::std::string::String,
     ///The document, whole. It is cut into passages here.
     pub text: ::std::string::String,
+}
+///Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum KnowledgeDocumentState {
+    #[serde(rename = "pending")]
+    Pending,
+    #[serde(rename = "indexed")]
+    Indexed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for KnowledgeDocumentState {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Pending => f.write_str("pending"),
+            Self::Indexed => f.write_str("indexed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for KnowledgeDocumentState {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "pending" => Ok(Self::Pending),
+            "indexed" => Ok(Self::Indexed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for KnowledgeDocumentState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///`KnowledgePassage`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -7152,45 +7258,6 @@ pub struct ManageStatus {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub name: ::std::option::Option<::std::string::String>,
 }
-///An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct McpServer {
-    ///How the server described itself when the config was saved. Absent when it did not answer.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub branding: ::std::option::Option<McpServerBranding>,
-    ///What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
-    pub name: ::std::string::String,
-    ///Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub needs_login: ::std::option::Option<bool>,
-    ///The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
-    pub url: ::std::string::String,
-    ///Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
-}
-///The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
-pub struct McpServerBranding {
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub description: ::std::option::Option<::std::string::String>,
-    ///Its first icon served over https, as the server links it.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub icon_url: ::std::option::Option<::std::string::String>,
-    ///Its display title, or its name when it gives none.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub title: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub version: ::std::option::Option<::std::string::String>,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub website_url: ::std::option::Option<::std::string::String>,
-}
 ///`MessageContent`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 #[serde(untagged)]
@@ -7203,7 +7270,7 @@ impl ::std::convert::From<::std::vec::Vec<ContentPart>> for MessageContent {
         Self::Array(value)
     }
 }
-///What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+///What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -7233,6 +7300,8 @@ pub enum Modality {
     Image,
     #[serde(rename = "detection")]
     Detection,
+    #[serde(rename = "ocr")]
+    Ocr,
     #[serde(rename = "memory")]
     Memory,
     #[serde(rename = "knowledge")]
@@ -7251,6 +7320,7 @@ impl ::std::fmt::Display for Modality {
             Self::DecisionModel => f.write_str("decision_model"),
             Self::Image => f.write_str("image"),
             Self::Detection => f.write_str("detection"),
+            Self::Ocr => f.write_str("ocr"),
             Self::Memory => f.write_str("memory"),
             Self::Knowledge => f.write_str("knowledge"),
             Self::Phone => f.write_str("phone"),
@@ -7269,6 +7339,7 @@ impl ::std::str::FromStr for Modality {
             "decision_model" => Ok(Self::DecisionModel),
             "image" => Ok(Self::Image),
             "detection" => Ok(Self::Detection),
+            "ocr" => Ok(Self::Ocr),
             "memory" => Ok(Self::Memory),
             "knowledge" => Ok(Self::Knowledge),
             "phone" => Ok(Self::Phone),
@@ -7485,6 +7556,161 @@ pub struct NumberSearchResult {
     pub numbers: ::std::vec::Vec<AvailableNumber>,
     ///Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
     pub skipped: ::std::vec::Vec<SkippedVendor>,
+}
+///Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OcrErrorCode {
+    #[serde(rename = "provider_failed")]
+    ProviderFailed,
+    #[serde(rename = "timeout")]
+    Timeout,
+    #[serde(rename = "cancelled")]
+    Cancelled,
+}
+impl ::std::fmt::Display for OcrErrorCode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::ProviderFailed => f.write_str("provider_failed"),
+            Self::Timeout => f.write_str("timeout"),
+            Self::Cancelled => f.write_str("cancelled"),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrErrorCode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "provider_failed" => Ok(Self::ProviderFailed),
+            "timeout" => Ok(Self::Timeout),
+            "cancelled" => Ok(Self::Cancelled),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrErrorCode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Who reads the page, and what may happen to it afterwards.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct OcrOptions {
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub data_policy: ::std::option::Option<DataPolicy>,
+    ///Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub figures: ::std::option::Option<bool>,
+    ///A priority list of where to try, in the order given, which wins over target when it holds anything.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub providers: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///A provider/model or a shortcut. Defaults to ocr-default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub target: ::std::option::Option<::std::string::String>,
+}
+///`OcrRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct OcrRequest {
+    ///The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+    pub image: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub options: ::std::option::Option<OcrOptions>,
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+}
+///`OcrResult`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct OcrResult {
+    ///Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+    pub cost_micros: i64,
+    ///What went wrong, in words. Absent when the page was read.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error: ::std::option::Option<::std::string::String>,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_code: ::std::option::Option<OcrErrorCode>,
+    ///This response's own id, for logs. Nothing is stored under it.
+    pub id: ::std::string::String,
+    ///The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+    pub markdown: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
+    ///Who read it, or who failed to. Absent when nothing got as far as a provider.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider: ::std::option::Option<::std::string::String>,
+    pub status: OcrStatus,
+}
+///Whether the page was read. A failed reading says why in error_code and error.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum OcrStatus {
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "failed")]
+    Failed,
+}
+impl ::std::fmt::Display for OcrStatus {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Completed => f.write_str("completed"),
+            Self::Failed => f.write_str("failed"),
+        }
+    }
+}
+impl ::std::str::FromStr for OcrStatus {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "completed" => Ok(Self::Completed),
+            "failed" => Ok(Self::Failed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for OcrStatus {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
 }
 ///One tool as the model sees it.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -7896,53 +8122,6 @@ pub struct PlacedCall {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub vendor: ::std::option::Option<::std::string::String>,
     pub vendor_call_id: ::std::string::String,
-}
-///One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-#[serde(untagged)]
-pub enum PluginEntry {
-    String(::std::string::String),
-    PluginWithOptions(PluginWithOptions),
-}
-impl ::std::convert::From<PluginWithOptions> for PluginEntry {
-    fn from(value: PluginWithOptions) -> Self {
-        Self::PluginWithOptions(value)
-    }
-}
-///One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginEvent {
-    ///The event's filters, as its inputSchema describes them.
-    #[serde(default, skip_serializing_if = "::serde_json::Map::is_empty")]
-    pub arguments: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
-    ///The event's name, as the server's events/list gives it, such as comment.created.
-    pub event: ::std::string::String,
-    ///What the agent does with the event when it arrives, added to its instructions for that conversation.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instructions: ::std::option::Option<::std::string::String>,
-    ///A catalog plugin the config names under plugins.
-    pub plugin: ::std::string::String,
-}
-///One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct PluginWithOptions {
-    ///A catalog plugin id, such as linear.
-    pub name: ::std::string::String,
-    ///Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub readonly: ::std::option::Option<bool>,
-    ///The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub tools: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub toolsets: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
-    ///Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub user: ::std::option::Option<bool>,
 }
 ///What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -11974,17 +12153,21 @@ pub struct SyncAgentRequest {
     pub llm: ::std::option::Option<::std::string::String>,
     ///No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub mcp_servers: ::std::option::Option<::std::vec::Vec<McpServer>>,
+    pub mcp_servers: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub mode: ::std::option::Option<AgentMode>,
     ///What the config is called, which is also the directory's name.
     pub name: ::std::string::String,
     ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugin_events: ::std::option::Option<::std::vec::Vec<PluginEvent>>,
+    pub plugin_events: ::std::option::Option<
+        ::std::vec::Vec<::serde_json::Map<::std::string::String, ::serde_json::Value>>,
+    >,
     ///No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub plugins: ::std::option::Option<::std::vec::Vec<PluginEntry>>,
+    pub plugins: ::std::option::Option<::std::vec::Vec<SyncAgentRequestPluginsItem>>,
     ///agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub region: ::std::option::Option<::std::string::String>,
@@ -12030,6 +12213,20 @@ pub struct SyncAgentRequest {
     ///The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub voice: ::std::option::Option<::std::string::String>,
+}
+///`SyncAgentRequestPluginsItem`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(untagged)]
+pub enum SyncAgentRequestPluginsItem {
+    String(::std::string::String),
+    Object(::serde_json::Map<::std::string::String, ::serde_json::Value>),
+}
+impl ::std::convert::From<::serde_json::Map<::std::string::String, ::serde_json::Value>>
+    for SyncAgentRequestPluginsItem
+{
+    fn from(value: ::serde_json::Map<::std::string::String, ::serde_json::Value>) -> Self {
+        Self::Object(value)
+    }
 }
 ///`SyncAgentResult`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]

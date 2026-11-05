@@ -328,7 +328,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
+        /// Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
         public bool? EpisodeCards { get; set; } = default!;
@@ -512,7 +512,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         [System.Obsolete]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -528,7 +528,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
         /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
@@ -631,7 +631,7 @@ namespace GetStream.VisionAgents.Models
         public AgentDispatch? Dispatch { get; set; } = default!;
 
         /// <summary>
-        /// Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+        /// Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("episode_cards")]
         public bool? EpisodeCards { get; set; } = default!;
@@ -674,7 +674,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         [System.Obsolete]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -690,7 +690,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
         /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
@@ -1344,7 +1344,7 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+        /// The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("phone")]
         public string? Phone { get; set; } = default!;
@@ -3669,6 +3669,12 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? NeedsScopes { get; set; } = default!;
 
         /// <summary>
+        /// Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("read_only")]
+        public bool ReadOnly { get; set; } = default!;
+
+        /// <summary>
         /// The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("schema_digest")]
@@ -4868,6 +4874,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
+
+        /// <summary>
+        /// What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("ui_action")]
+        public System.Collections.Generic.Dictionary<string, object>? UiAction { get; set; } = default!;
 
         /// <summary>
         /// Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
@@ -6573,8 +6585,26 @@ namespace GetStream.VisionAgents.Models
     public partial class IndexedKnowledgeDocument
     {
 
+        /// <summary>
+        /// The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("bytes")]
+        public long Bytes { get; set; } = default!;
+
+        /// <summary>
+        /// The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("content_type")]
+        public string ContentType { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("created_at")]
         public System.DateTimeOffset CreatedAt { get; set; } = default!;
+
+        /// <summary>
+        /// Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("id")]
         public string Id { get; set; } = default!;
@@ -6583,7 +6613,13 @@ namespace GetStream.VisionAgents.Models
         public string Namespace { get; set; } = default!;
 
         /// <summary>
-        /// How many passages it was last cut into.
+        /// How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("pages")]
+        public int Pages { get; set; } = default!;
+
+        /// <summary>
+        /// How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("passages")]
         public int Passages { get; set; } = default!;
@@ -6594,8 +6630,11 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("source")]
         public string Source { get; set; } = default!;
 
+        [System.Text.Json.Serialization.JsonPropertyName("state")]
+        public string State { get; set; } = default!;
+
         /// <summary>
-        /// The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+        /// The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an &lt;!-- page N --&gt; comment. Only reading one document fills it in, and one written before its text was kept has none.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string? Text { get; set; } = default!;
@@ -7949,105 +7988,6 @@ namespace GetStream.VisionAgents.Models
 
     }
 
-    /// <summary>
-    /// An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class McpServer
-    {
-
-        /// <summary>
-        /// How the server described itself when the config was saved. Absent when it did not answer.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("branding")]
-        public McpServerBranding? Branding { get; set; } = default!;
-
-        /// <summary>
-        /// What its tools are prefixed with, as &lt;name&gt;__&lt;tool&gt;. Lowercase, without __, and not a catalog plugin's id.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("needs_login")]
-        public bool? NeedsLogin { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes")]
-        public System.Collections.Generic.List<string>? Scopes { get; set; } = default!;
-
-        /// <summary>
-        /// Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("tools")]
-        public System.Collections.Generic.List<string>? Tools { get; set; } = default!;
-
-        /// <summary>
-        /// Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("url")]
-        public string Url { get; set; } = default!;
-
-        /// <summary>
-        /// Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class McpServerBranding
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string? Description { get; set; } = default!;
-
-        /// <summary>
-        /// Its first icon served over https, as the server links it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("icon_url")]
-        public string? IconUrl { get; set; } = default!;
-
-        /// <summary>
-        /// Its display title, or its name when it gives none.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("title")]
-        public string? Title { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("version")]
-        public string? Version { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("website_url")]
-        public string? WebsiteUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class MessageContent
     {
@@ -8257,6 +8197,126 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("skipped")]
         public System.Collections.Generic.List<SkippedVendor> Skipped { get; set; } = new System.Collections.Generic.List<SkippedVendor>();
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    /// <summary>
+    /// Who reads the page, and what may happen to it afterwards.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrOptions
+    {
+
+        [System.Text.Json.Serialization.JsonPropertyName("data_policy")]
+        public DataPolicy? DataPolicy { get; set; } = default!;
+
+        /// <summary>
+        /// Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("figures")]
+        public bool? Figures { get; set; } = default!;
+
+        /// <summary>
+        /// A priority list of where to try, in the order given, which wins over target when it holds anything.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("providers")]
+        public System.Collections.Generic.List<string>? Providers { get; set; } = default!;
+
+        /// <summary>
+        /// A provider/model or a shortcut. Defaults to ocr-default.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("target")]
+        public string? Target { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrRequest
+    {
+
+        /// <summary>
+        /// The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("image")]
+        public byte[] Image { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("options")]
+        public OcrOptions? Options { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("tags")]
+        public System.Collections.Generic.Dictionary<string, string>? Tags { get; set; } = default!;
+
+        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
+
+        [System.Text.Json.Serialization.JsonExtensionData]
+        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
+        {
+            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
+            set { _additionalProperties = value; }
+        }
+
+    }
+
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class OcrResult
+    {
+
+        /// <summary>
+        /// Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("cost_micros")]
+        public long CostMicros { get; set; } = default!;
+
+        /// <summary>
+        /// What went wrong, in words. Absent when the page was read.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error")]
+        public string? Error { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("error_code")]
+        public string? ErrorCode { get; set; } = default!;
+
+        /// <summary>
+        /// This response's own id, for logs. Nothing is stored under it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id")]
+        public string Id { get; set; } = default!;
+
+        /// <summary>
+        /// The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("markdown")]
+        public string Markdown { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("model")]
+        public string? Model { get; set; } = default!;
+
+        /// <summary>
+        /// Who read it, or who failed to. Absent when nothing got as far as a provider.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider")]
+        public string? Provider { get; set; } = default!;
+
+        [System.Text.Json.Serialization.JsonPropertyName("status")]
+        public string Status { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -8656,117 +8716,6 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("vendor_call_id")]
         public string VendorCallId { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginEntry
-    {
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginEvent
-    {
-
-        /// <summary>
-        /// The event's filters, as its inputSchema describes them.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("arguments")]
-        public System.Collections.Generic.Dictionary<string, object>? Arguments { get; set; } = default!;
-
-        /// <summary>
-        /// The event's name, as the server's events/list gives it, such as comment.created.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("event")]
-        public string Event { get; set; } = default!;
-
-        /// <summary>
-        /// What the agent does with the event when it arrives, added to its instructions for that conversation.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
-        public string? Instructions { get; set; } = default!;
-
-        /// <summary>
-        /// A catalog plugin the config names under plugins.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugin")]
-        public string Plugin { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginWithOptions
-    {
-
-        /// <summary>
-        /// A catalog plugin id, such as linear.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("readonly")]
-        public bool? Readonly { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes")]
-        public System.Collections.Generic.List<string>? Scopes { get; set; } = default!;
-
-        /// <summary>
-        /// Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("tools")]
-        public System.Collections.Generic.List<string>? Tools { get; set; } = default!;
-
-        /// <summary>
-        /// Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("toolsets")]
-        public System.Collections.Generic.List<string>? Toolsets { get; set; } = default!;
-
-        /// <summary>
-        /// Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -13587,7 +13536,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         [System.Obsolete]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -13603,7 +13552,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
         /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.

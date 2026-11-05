@@ -22,7 +22,7 @@ def _get_kwargs(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: list[str] | Unset = UNSET,
@@ -58,7 +58,7 @@ def _get_kwargs(
 
     params["tag"] = json_tag
 
-    params["api_key"] = api_key
+    params["api_key_id"] = api_key_id
 
     params["user_id"] = user_id
 
@@ -151,7 +151,7 @@ def sync_detailed(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: list[str] | Unset = UNSET,
@@ -183,8 +183,9 @@ def sync_detailed(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat.
+        api_key_id (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
+            query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -207,7 +208,7 @@ def sync_detailed(
         from_=from_,
         to=to,
         tag=tag,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -230,7 +231,7 @@ def sync(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: list[str] | Unset = UNSET,
@@ -262,8 +263,9 @@ def sync(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat.
+        api_key_id (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
+            query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -287,7 +289,7 @@ def sync(
         from_=from_,
         to=to,
         tag=tag,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -304,7 +306,7 @@ async def asyncio_detailed(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: list[str] | Unset = UNSET,
@@ -336,8 +338,9 @@ async def asyncio_detailed(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat.
+        api_key_id (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
+            query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -360,7 +363,7 @@ async def asyncio_detailed(
         from_=from_,
         to=to,
         tag=tag,
-        api_key=api_key,
+        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -381,7 +384,7 @@ async def asyncio(
     from_: datetime.datetime,
     to: datetime.datetime,
     tag: list[str] | Unset = UNSET,
-    api_key: str | Unset = UNSET,
+    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: list[str] | Unset = UNSET,
@@ -413,8 +416,9 @@ async def asyncio(
         to (datetime.datetime): End of the window, exclusive.
         tag (list[str] | Unset): Only count requests carrying every one of these cost labels, each
             written "key:value". Repeat for several.
-        api_key (str | Unset): Only count usage started with this public API key, or by this
-            origin of work no key started, such as hook:chat.
+        api_key_id (str | Unset): Only count usage started with this public API key, or by this
+            origin of work no key started, such as hook:chat. Named api_key_id because api_key in the
+            query is the caller's credential, which Stream's proxy requires on every call.
         user_id (str | Unset): Only count usage for this end user of the app.
         team (str | Unset): Only count usage for this team: its users' tokens name it in their
             team claim.
@@ -439,7 +443,7 @@ async def asyncio(
             from_=from_,
             to=to,
             tag=tag,
-            api_key=api_key,
+            api_key_id=api_key_id,
             user_id=user_id,
             team=team,
             category=category,

@@ -1414,6 +1414,27 @@ func (e InvocationErrorType) Valid() bool {
 	}
 }
 
+// Defines values for KnowledgeDocumentState.
+const (
+	KnowledgeDocumentStateFailed  KnowledgeDocumentState = "failed"
+	KnowledgeDocumentStateIndexed KnowledgeDocumentState = "indexed"
+	KnowledgeDocumentStatePending KnowledgeDocumentState = "pending"
+)
+
+// Valid indicates whether the value is a known member of the KnowledgeDocumentState enum.
+func (e KnowledgeDocumentState) Valid() bool {
+	switch e {
+	case KnowledgeDocumentStateFailed:
+		return true
+	case KnowledgeDocumentStateIndexed:
+		return true
+	case KnowledgeDocumentStatePending:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for KnowledgeUrlState.
 const (
 	KnowledgeUrlStateFailed  KnowledgeUrlState = "failed"
@@ -1614,6 +1635,7 @@ const (
 	ModalityKnowledge     Modality = "knowledge"
 	ModalityLlm           Modality = "llm"
 	ModalityMemory        Modality = "memory"
+	ModalityOcr           Modality = "ocr"
 	ModalityPhone         Modality = "phone"
 	ModalitySearch        Modality = "search"
 	ModalitySts           Modality = "sts"
@@ -1635,6 +1657,8 @@ func (e Modality) Valid() bool {
 	case ModalityLlm:
 		return true
 	case ModalityMemory:
+		return true
+	case ModalityOcr:
 		return true
 	case ModalityPhone:
 		return true
@@ -1693,6 +1717,45 @@ func (e ModelOverwritesVerbosity) Valid() bool {
 	case ModelOverwritesVerbosityLow:
 		return true
 	case ModelOverwritesVerbosityMedium:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OcrErrorCode.
+const (
+	OcrErrorCodeCancelled      OcrErrorCode = "cancelled"
+	OcrErrorCodeProviderFailed OcrErrorCode = "provider_failed"
+	OcrErrorCodeTimeout        OcrErrorCode = "timeout"
+)
+
+// Valid indicates whether the value is a known member of the OcrErrorCode enum.
+func (e OcrErrorCode) Valid() bool {
+	switch e {
+	case OcrErrorCodeCancelled:
+		return true
+	case OcrErrorCodeProviderFailed:
+		return true
+	case OcrErrorCodeTimeout:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for OcrStatus.
+const (
+	OcrStatusCompleted OcrStatus = "completed"
+	OcrStatusFailed    OcrStatus = "failed"
+)
+
+// Valid indicates whether the value is a known member of the OcrStatus enum.
+func (e OcrStatus) Valid() bool {
+	switch e {
+	case OcrStatusCompleted:
+		return true
+	case OcrStatusFailed:
 		return true
 	default:
 		return false
@@ -3047,7 +3110,7 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
+	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3144,7 +3207,7 @@ type AgentConfigPatch struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3154,11 +3217,11 @@ type AgentConfigPatch struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+	Plugins *[]AgentConfigPatch_Plugins_Item `json:"plugins,omitempty"`
 
 	// Region Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
 	//
@@ -3203,6 +3266,17 @@ type AgentConfigPatch struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
+// AgentConfigPatchPlugins0 defines model for AgentConfigPatch.Plugins.0.
+type AgentConfigPatchPlugins0 = string
+
+// AgentConfigPatchPlugins1 defines model for AgentConfigPatch.Plugins.1.
+type AgentConfigPatchPlugins1 = map[string]interface{}
+
+// AgentConfigPatch_Plugins_Item defines model for AgentConfigPatch.plugins.Item.
+type AgentConfigPatch_Plugins_Item struct {
+	union json.RawMessage
+}
+
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
@@ -3217,7 +3291,7 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3241,7 +3315,7 @@ type AgentConfigRequest struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3251,11 +3325,11 @@ type AgentConfigRequest struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+	Plugins *[]AgentConfigRequest_Plugins_Item `json:"plugins,omitempty"`
 
 	// Region Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
 	//
@@ -3308,6 +3382,17 @@ type AgentConfigRequest struct {
 
 	// Voice The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// AgentConfigRequestPlugins0 defines model for AgentConfigRequest.Plugins.0.
+type AgentConfigRequestPlugins0 = string
+
+// AgentConfigRequestPlugins1 defines model for AgentConfigRequest.Plugins.1.
+type AgentConfigRequestPlugins1 = map[string]interface{}
+
+// AgentConfigRequest_Plugins_Item defines model for AgentConfigRequest.plugins.Item.
+type AgentConfigRequest_Plugins_Item struct {
+	union json.RawMessage
 }
 
 // AgentConnectorBinding A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other.
@@ -3516,7 +3601,7 @@ type AgentUser struct {
 
 // AgentUserRequest Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
 type AgentUserRequest struct {
-	// Phone The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+	// Phone The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
 	//
 	// Example: +15551234567
 	Phone *string `json:"phone"`
@@ -4502,6 +4587,9 @@ type ConnectionTool struct {
 	// NeedsScopes The scopes a call of the tool needs, as the connector says. Absent when it says none.
 	NeedsScopes *[]string `json:"needs_scopes,omitempty"`
 
+	// ReadOnly Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+	ReadOnly bool `json:"read_only"`
+
 	// SchemaDigest The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
 	SchemaDigest string `json:"schema_digest"`
 }
@@ -4998,6 +5086,9 @@ type CreateResponseRequest struct {
 
 	// Text What to answer, as though it had been said. May be empty when images or audio carry the question. Images with no text are shown on the person's message in a session kept in Stream Chat, so they are then data URIs, at most 8, with or without a request_id.
 	Text string `json:"text"`
+
+	// UiAction What the person did in the generated UI of an earlier reply, such as tapping a place or submitting a form, which the text says in their words: an object naming the reply (message_id), the UI's format and the action (name), with what it carries (payload), of at most 8 KB as JSON. Their message carries it as custom.ai_ui_action, and the model is told it after the text.
+	UiAction *map[string]interface{} `json:"ui_action,omitempty"`
 
 	// Videos Recorded clips to show the agent. The router samples evenly spaced frames from each and hands them to the vision skill with their timestamps, which is how every vision model is shown a video, since none of the ones routed here take one whole.
 	Videos *[]VideoSource `json:"videos,omitempty"`
@@ -5782,11 +5873,24 @@ type ImageSourceDetail string
 
 // IndexedKnowledgeDocument defines model for IndexedKnowledgeDocument.
 type IndexedKnowledgeDocument struct {
-	CreatedAt time.Time `json:"created_at"`
-	Id        string    `json:"id"`
-	Namespace string    `json:"namespace"`
+	// Bytes The size of the file uploaded, or of the text posted. 0 for a document written before sizes were kept.
+	Bytes int64 `json:"bytes"`
 
-	// Passages How many passages it was last cut into.
+	// ContentType The type the file was uploaded as, or text/markdown for text posted. Empty for a document written before types were kept.
+	//
+	// Example: application/pdf
+	ContentType string    `json:"content_type"`
+	CreatedAt   time.Time `json:"created_at"`
+
+	// Error Why the uploaded file could not be read, written for whoever uploaded it. Set while a read that failed is tried again, and once it has failed for good.
+	Error     *string `json:"error,omitempty"`
+	Id        string  `json:"id"`
+	Namespace string  `json:"namespace"`
+
+	// Pages How many pages the uploaded file has. 0 for text, and for a file without pages, such as a spreadsheet.
+	Pages int `json:"pages"`
+
+	// Passages How many passages it was last cut into. A file uploaded again keeps its old passages, which are still looked up, until the new file has been read.
 	Passages int `json:"passages"`
 
 	// Source What the document was posted as, and what its passages are keyed by.
@@ -5794,7 +5898,10 @@ type IndexedKnowledgeDocument struct {
 	// Example: pricing.md
 	Source string `json:"source"`
 
-	// Text The document as it was last posted. Only reading one document fills it in, and one written before its text was kept has none.
+	// State Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+	State KnowledgeDocumentState `json:"state"`
+
+	// Text The document as it was last posted, or as its file was read: Markdown, each page of a file opening with an <!-- page N --> comment. Only reading one document fills it in, and one written before its text was kept has none.
 	Text *string `json:"text,omitempty"`
 
 	// UpdatedAt When it was last written.
@@ -5872,6 +5979,9 @@ type KnowledgeDocument struct {
 	// Text The document, whole. It is cut into passages here.
 	Text string `json:"text"`
 }
+
+// KnowledgeDocumentState Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
+type KnowledgeDocumentState string
 
 // KnowledgePassage defines model for KnowledgePassage.
 type KnowledgePassage struct {
@@ -6392,43 +6502,6 @@ type ManageStatus struct {
 	Name *string `json:"name,omitempty"`
 }
 
-// McpServer An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
-type McpServer struct {
-	// Branding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-	Branding *McpServerBranding `json:"branding,omitempty"`
-
-	// Name What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
-	Name string `json:"name"`
-
-	// NeedsLogin Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
-	NeedsLogin *bool `json:"needs_login,omitempty"`
-
-	// Scopes The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
-	Scopes *[]string `json:"scopes,omitempty"`
-
-	// Tools Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
-	Tools *[]string `json:"tools,omitempty"`
-
-	// Url Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
-	Url string `json:"url"`
-
-	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
-	User *bool `json:"user,omitempty"`
-}
-
-// McpServerBranding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-type McpServerBranding struct {
-	Description *string `json:"description,omitempty"`
-
-	// IconUrl Its first icon served over https, as the server links it.
-	IconUrl *string `json:"icon_url,omitempty"`
-
-	// Title Its display title, or its name when it gives none.
-	Title      *string `json:"title,omitempty"`
-	Version    *string `json:"version,omitempty"`
-	WebsiteUrl *string `json:"website_url,omitempty"`
-}
-
 // MessageContent defines model for MessageContent.
 type MessageContent struct {
 	union json.RawMessage
@@ -6440,7 +6513,7 @@ type MessageContent0 = string
 // MessageContent1 defines model for MessageContent.1.
 type MessageContent1 = []ContentPart
 
-// Modality What kind of work was done. The first seven are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, and detection is boxes found in one. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
+// Modality What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 type Modality string
 
 // ModelCallTiming defines model for ModelCallTiming.
@@ -6523,6 +6596,70 @@ type NumberSearchResult struct {
 	// Skipped Vendors that were not part of the answer. A search that reached two of eight vendors found what two vendors had, and deciding whether to buy needs to know which.
 	Skipped []SkippedVendor `json:"skipped"`
 }
+
+// OcrErrorCode Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+type OcrErrorCode string
+
+// OcrOptions Who reads the page, and what may happen to it afterwards.
+type OcrOptions struct {
+	// DataPolicy What a caller requires of what happens to what they send: the audio they had transcribed, or the text they had spoken and the voice speaking it, and the region it is done in. This is a requirement rather than a description: a request naming one is only routed to a model whose declared handling meets it, and if none does the request is refused rather than sent somewhere that does not.
+	DataPolicy *DataPolicy `json:"data_policy,omitempty"`
+
+	// Figures Summarise each chart, diagram, photo or table drawn as a picture where it is on the page, as its words and a quote that opens with **Figure:**. Only vision language models can, so they are tried first and Mistral OCR last, for the text alone; ocr-figures names the ones that do it best.
+	Figures *bool `json:"figures,omitempty"`
+
+	// Providers A priority list of where to try, in the order given, which wins over target when it holds anything.
+	Providers *[]string `json:"providers,omitempty"`
+
+	// Target A provider/model or a shortcut. Defaults to ocr-default.
+	//
+	// Example: ocr-vision
+	Target *string `json:"target,omitempty"`
+}
+
+// OcrRequest defines model for OcrRequest.
+type OcrRequest struct {
+	// Image The page, base64. A JPEG or PNG of at most 10 MiB and 10,000 pixels a side; a page drawn at 150 to 200 dpi reads well.
+	Image []byte `json:"image"`
+
+	// Options Who reads the page, and what may happen to it afterwards.
+	Options *OcrOptions        `json:"options,omitempty"`
+	Tags    *map[string]string `json:"tags,omitempty"`
+}
+
+// OcrResult defines model for OcrResult.
+type OcrResult struct {
+	// CostMicros Millionths of a dollar, priced per page or per token from what the model billed. Zero when it failed.
+	CostMicros int64 `json:"cost_micros"`
+
+	// Error What went wrong, in words. Absent when the page was read.
+	Error *string `json:"error,omitempty"`
+
+	// ErrorCode Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
+	ErrorCode *OcrErrorCode `json:"error_code,omitempty"`
+
+	// Id This response's own id, for logs. Nothing is stored under it.
+	//
+	// Example: ocr_1b9d6bcd-bbfd-4b2d-9b5d-ab8dfbbd4bed
+	Id string `json:"id"`
+
+	// Markdown The page's text as Markdown, headings, lists and tables kept. Empty for a page with no text on it, or when the reading failed.
+	Markdown string `json:"markdown"`
+
+	// Model Example: mistral-ocr-4-1
+	Model *string `json:"model,omitempty"`
+
+	// Provider Who read it, or who failed to. Absent when nothing got as far as a provider.
+	//
+	// Example: mistral
+	Provider *string `json:"provider,omitempty"`
+
+	// Status Whether the page was read. A failed reading says why in error_code and error.
+	Status OcrStatus `json:"status"`
+}
+
+// OcrStatus Whether the page was read. A failed reading says why in error_code and error.
+type OcrStatus string
 
 // OfferedTool One tool as the model sees it.
 type OfferedTool struct {
@@ -6684,50 +6821,6 @@ type PlacedCall struct {
 	// Vendor Who is placing the call.
 	Vendor       *string `json:"vendor,omitempty"`
 	VendorCallId string  `json:"vendor_call_id"`
-}
-
-// PluginEntry One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
-type PluginEntry struct {
-	union json.RawMessage
-}
-
-// PluginEntry0 defines model for PluginEntry.0.
-type PluginEntry0 = string
-
-// PluginEvent One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
-type PluginEvent struct {
-	// Arguments The event's filters, as its inputSchema describes them.
-	Arguments *map[string]interface{} `json:"arguments,omitempty"`
-
-	// Event The event's name, as the server's events/list gives it, such as comment.created.
-	Event string `json:"event"`
-
-	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
-	Instructions *string `json:"instructions,omitempty"`
-
-	// Plugin A catalog plugin the config names under plugins.
-	Plugin string `json:"plugin"`
-}
-
-// PluginWithOptions One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-type PluginWithOptions struct {
-	// Name A catalog plugin id, such as linear.
-	Name string `json:"name"`
-
-	// Readonly Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
-	Readonly *bool `json:"readonly,omitempty"`
-
-	// Scopes The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
-	Scopes *[]string `json:"scopes,omitempty"`
-
-	// Tools Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
-	Tools *[]string `json:"tools,omitempty"`
-
-	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
-	Toolsets *[]string `json:"toolsets,omitempty"`
-
-	// User Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
-	User *bool `json:"user,omitempty"`
 }
 
 // Policy What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
@@ -8856,7 +8949,7 @@ type SyncAgentRequest struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -8866,11 +8959,11 @@ type SyncAgentRequest struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+	Plugins *[]SyncAgentRequest_Plugins_Item `json:"plugins,omitempty"`
 
 	// Region agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
 	//
@@ -8912,6 +9005,17 @@ type SyncAgentRequest struct {
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// SyncAgentRequestPlugins0 defines model for SyncAgentRequest.Plugins.0.
+type SyncAgentRequestPlugins0 = string
+
+// SyncAgentRequestPlugins1 defines model for SyncAgentRequest.Plugins.1.
+type SyncAgentRequestPlugins1 = map[string]interface{}
+
+// SyncAgentRequest_Plugins_Item defines model for SyncAgentRequest.plugins.Item.
+type SyncAgentRequest_Plugins_Item struct {
+	union json.RawMessage
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -10109,6 +10213,21 @@ type ListKnowledgeDocumentsParams struct {
 	Namespace *string `form:"namespace,omitempty" json:"namespace,omitempty"`
 }
 
+// UploadKnowledgeFileMultipartBody defines parameters for UploadKnowledgeFile.
+type UploadKnowledgeFileMultipartBody struct {
+	// File The file, at most 50 MB.
+	File openapi_types.File `json:"file"`
+}
+
+// UploadKnowledgeFileParams defines parameters for UploadKnowledgeFile.
+type UploadKnowledgeFileParams struct {
+	// Namespace The knowledge base to read the file into.
+	Namespace string `form:"namespace" json:"namespace"`
+
+	// Source What the document is called and its passages keyed by. The file part's filename when left out.
+	Source *string `form:"source,omitempty" json:"source,omitempty"`
+}
+
 // ListKnowledgeUrlsParams defines parameters for ListKnowledgeUrls.
 type ListKnowledgeUrlsParams struct {
 	// Namespace One knowledge base. Omit to list every page the customer has.
@@ -10361,10 +10480,12 @@ type GetPricesParams struct {
 // ListLimitsParams defines parameters for ListLimits.
 type ListLimitsParams struct {
 	// Subject Only limits on this subject. team lists the teams' limits, category every other category's.
-	Subject  *LimitSubject  `form:"subject,omitempty" json:"subject,omitempty"`
-	Level    *LimitLevel    `form:"level,omitempty" json:"level,omitempty"`
-	AppId    *string        `form:"app_id,omitempty" json:"app_id,omitempty"`
-	ApiKey   *string        `form:"api_key,omitempty" json:"api_key,omitempty"`
+	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	Level   *LimitLevel   `form:"level,omitempty" json:"level,omitempty"`
+	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// ApiKeyId Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string        `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 	UserId   *string        `form:"user_id,omitempty" json:"user_id,omitempty"`
 	Team     *string        `form:"team,omitempty" json:"team,omitempty"`
 	Category *string        `form:"category,omitempty" json:"category,omitempty"`
@@ -10379,12 +10500,14 @@ type ListLimitsParams struct {
 
 // ListLimitGrantsParams defines parameters for ListLimitGrants.
 type ListLimitGrantsParams struct {
-	Subject  *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
-	AppId    *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
-	ApiKey   *string       `form:"api_key,omitempty" json:"api_key,omitempty"`
-	UserId   *string       `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Team     *string       `form:"team,omitempty" json:"team,omitempty"`
-	Category *string       `form:"category,omitempty" json:"category,omitempty"`
+	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// ApiKeyId Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
+	UserId   *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Team     *string `form:"team,omitempty" json:"team,omitempty"`
+	Category *string `form:"category,omitempty" json:"category,omitempty"`
 
 	// State Only grants in this state. Omitted is every one.
 	State *LimitGrantState `form:"state,omitempty" json:"state,omitempty"`
@@ -10403,8 +10526,8 @@ type GetLimitUsageParams struct {
 	// AppId The app of each subject, for every subject but organization, category and team. One goes with every subject.
 	AppId *[]string `form:"app_id,omitempty" json:"app_id,omitempty"`
 
-	// ApiKey The key of each subject, for subject api_key.
-	ApiKey *[]string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *[]string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId The end user of each subject, for subject user.
 	UserId *[]string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10457,8 +10580,8 @@ type GetSpendParams struct {
 	// Tag Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
 	Tag *[]string `form:"tag,omitempty" json:"tag,omitempty"`
 
-	// ApiKey Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
-	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only count usage for this end user of the app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10518,8 +10641,8 @@ type ListUsageEventsParams struct {
 	// Meter Only this kind of work, such as llm or runtime.
 	Meter *string `form:"meter,omitempty" json:"meter,omitempty"`
 
-	// ApiKey Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
-	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -10636,6 +10759,9 @@ type ClaimGuestUserJSONRequestBody = ClaimGuestRequest
 // IngestKnowledgeJSONRequestBody defines body for IngestKnowledge for application/json ContentType.
 type IngestKnowledgeJSONRequestBody = IngestKnowledgeRequest
 
+// UploadKnowledgeFileMultipartRequestBody defines body for UploadKnowledgeFile for multipart/form-data ContentType.
+type UploadKnowledgeFileMultipartRequestBody UploadKnowledgeFileMultipartBody
+
 // AddKnowledgeUrlJSONRequestBody defines body for AddKnowledgeUrl for application/json ContentType.
 type AddKnowledgeUrlJSONRequestBody = KnowledgeUrlRequest
 
@@ -10732,6 +10858,9 @@ type DetectJSONRequestBody = DetectionRequest
 // GenerateImageJSONRequestBody defines body for GenerateImage for application/json ContentType.
 type GenerateImageJSONRequestBody = ImageGenerationRequest
 
+// ReadPageJSONRequestBody defines body for ReadPage for application/json ContentType.
+type ReadPageJSONRequestBody = OcrRequest
+
 // SaveBusinessProfileJSONRequestBody defines body for SaveBusinessProfile for application/json ContentType.
 type SaveBusinessProfileJSONRequestBody = BusinessProfileRequest
 
@@ -10815,6 +10944,130 @@ type TranscribeRecordingJSONRequestBody = TranscriptionRequest
 
 // RecordSpeechJSONRequestBody defines body for RecordSpeech for application/json ContentType.
 type RecordSpeechJSONRequestBody = SpeechRequest
+
+// AsAgentConfigPatchPlugins0 returns the union data inside the AgentConfigPatch_Plugins_Item as a AgentConfigPatchPlugins0
+func (t AgentConfigPatch_Plugins_Item) AsAgentConfigPatchPlugins0() (AgentConfigPatchPlugins0, error) {
+	var body AgentConfigPatchPlugins0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigPatchPlugins0 overwrites any union data inside the AgentConfigPatch_Plugins_Item as the provided AgentConfigPatchPlugins0
+func (t *AgentConfigPatch_Plugins_Item) FromAgentConfigPatchPlugins0(v AgentConfigPatchPlugins0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigPatchPlugins0 performs a merge with any union data inside the AgentConfigPatch_Plugins_Item, using the provided AgentConfigPatchPlugins0
+func (t *AgentConfigPatch_Plugins_Item) MergeAgentConfigPatchPlugins0(v AgentConfigPatchPlugins0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAgentConfigPatchPlugins1 returns the union data inside the AgentConfigPatch_Plugins_Item as a AgentConfigPatchPlugins1
+func (t AgentConfigPatch_Plugins_Item) AsAgentConfigPatchPlugins1() (AgentConfigPatchPlugins1, error) {
+	var body AgentConfigPatchPlugins1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigPatchPlugins1 overwrites any union data inside the AgentConfigPatch_Plugins_Item as the provided AgentConfigPatchPlugins1
+func (t *AgentConfigPatch_Plugins_Item) FromAgentConfigPatchPlugins1(v AgentConfigPatchPlugins1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigPatchPlugins1 performs a merge with any union data inside the AgentConfigPatch_Plugins_Item, using the provided AgentConfigPatchPlugins1
+func (t *AgentConfigPatch_Plugins_Item) MergeAgentConfigPatchPlugins1(v AgentConfigPatchPlugins1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AgentConfigPatch_Plugins_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AgentConfigPatch_Plugins_Item) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsAgentConfigRequestPlugins0 returns the union data inside the AgentConfigRequest_Plugins_Item as a AgentConfigRequestPlugins0
+func (t AgentConfigRequest_Plugins_Item) AsAgentConfigRequestPlugins0() (AgentConfigRequestPlugins0, error) {
+	var body AgentConfigRequestPlugins0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigRequestPlugins0 overwrites any union data inside the AgentConfigRequest_Plugins_Item as the provided AgentConfigRequestPlugins0
+func (t *AgentConfigRequest_Plugins_Item) FromAgentConfigRequestPlugins0(v AgentConfigRequestPlugins0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigRequestPlugins0 performs a merge with any union data inside the AgentConfigRequest_Plugins_Item, using the provided AgentConfigRequestPlugins0
+func (t *AgentConfigRequest_Plugins_Item) MergeAgentConfigRequestPlugins0(v AgentConfigRequestPlugins0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAgentConfigRequestPlugins1 returns the union data inside the AgentConfigRequest_Plugins_Item as a AgentConfigRequestPlugins1
+func (t AgentConfigRequest_Plugins_Item) AsAgentConfigRequestPlugins1() (AgentConfigRequestPlugins1, error) {
+	var body AgentConfigRequestPlugins1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigRequestPlugins1 overwrites any union data inside the AgentConfigRequest_Plugins_Item as the provided AgentConfigRequestPlugins1
+func (t *AgentConfigRequest_Plugins_Item) FromAgentConfigRequestPlugins1(v AgentConfigRequestPlugins1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigRequestPlugins1 performs a merge with any union data inside the AgentConfigRequest_Plugins_Item, using the provided AgentConfigRequestPlugins1
+func (t *AgentConfigRequest_Plugins_Item) MergeAgentConfigRequestPlugins1(v AgentConfigRequestPlugins1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AgentConfigRequest_Plugins_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AgentConfigRequest_Plugins_Item) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
 
 // AsTextContentPart returns the union data inside the ContentPart as a TextContentPart
 func (t ContentPart) AsTextContentPart() (TextContentPart, error) {
@@ -11002,22 +11255,22 @@ func (t *MessageContent) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsPluginEntry0 returns the union data inside the PluginEntry as a PluginEntry0
-func (t PluginEntry) AsPluginEntry0() (PluginEntry0, error) {
-	var body PluginEntry0
+// AsSyncAgentRequestPlugins0 returns the union data inside the SyncAgentRequest_Plugins_Item as a SyncAgentRequestPlugins0
+func (t SyncAgentRequest_Plugins_Item) AsSyncAgentRequestPlugins0() (SyncAgentRequestPlugins0, error) {
+	var body SyncAgentRequestPlugins0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromPluginEntry0 overwrites any union data inside the PluginEntry as the provided PluginEntry0
-func (t *PluginEntry) FromPluginEntry0(v PluginEntry0) error {
+// FromSyncAgentRequestPlugins0 overwrites any union data inside the SyncAgentRequest_Plugins_Item as the provided SyncAgentRequestPlugins0
+func (t *SyncAgentRequest_Plugins_Item) FromSyncAgentRequestPlugins0(v SyncAgentRequestPlugins0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergePluginEntry0 performs a merge with any union data inside the PluginEntry, using the provided PluginEntry0
-func (t *PluginEntry) MergePluginEntry0(v PluginEntry0) error {
+// MergeSyncAgentRequestPlugins0 performs a merge with any union data inside the SyncAgentRequest_Plugins_Item, using the provided SyncAgentRequestPlugins0
+func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins0(v SyncAgentRequestPlugins0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11028,22 +11281,22 @@ func (t *PluginEntry) MergePluginEntry0(v PluginEntry0) error {
 	return err
 }
 
-// AsPluginWithOptions returns the union data inside the PluginEntry as a PluginWithOptions
-func (t PluginEntry) AsPluginWithOptions() (PluginWithOptions, error) {
-	var body PluginWithOptions
+// AsSyncAgentRequestPlugins1 returns the union data inside the SyncAgentRequest_Plugins_Item as a SyncAgentRequestPlugins1
+func (t SyncAgentRequest_Plugins_Item) AsSyncAgentRequestPlugins1() (SyncAgentRequestPlugins1, error) {
+	var body SyncAgentRequestPlugins1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromPluginWithOptions overwrites any union data inside the PluginEntry as the provided PluginWithOptions
-func (t *PluginEntry) FromPluginWithOptions(v PluginWithOptions) error {
+// FromSyncAgentRequestPlugins1 overwrites any union data inside the SyncAgentRequest_Plugins_Item as the provided SyncAgentRequestPlugins1
+func (t *SyncAgentRequest_Plugins_Item) FromSyncAgentRequestPlugins1(v SyncAgentRequestPlugins1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergePluginWithOptions performs a merge with any union data inside the PluginEntry, using the provided PluginWithOptions
-func (t *PluginEntry) MergePluginWithOptions(v PluginWithOptions) error {
+// MergeSyncAgentRequestPlugins1 performs a merge with any union data inside the SyncAgentRequest_Plugins_Item, using the provided SyncAgentRequestPlugins1
+func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins1(v SyncAgentRequestPlugins1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11054,12 +11307,12 @@ func (t *PluginEntry) MergePluginWithOptions(v PluginWithOptions) error {
 	return err
 }
 
-func (t PluginEntry) MarshalJSON() ([]byte, error) {
+func (t SyncAgentRequest_Plugins_Item) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *PluginEntry) UnmarshalJSON(b []byte) error {
+func (t *SyncAgentRequest_Plugins_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -11679,7 +11932,7 @@ type ClientInterface interface {
 
 	// ListConnectionTools List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12058,6 +12311,17 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 	ListKnowledgeDocumentPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UploadKnowledgeFileWithBody Upload a file to a knowledge base, to be read in the background
+	//
+	// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+	// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+	// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+	UploadKnowledgeFileWithBody(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListKnowledgeUrls The pages a knowledge base is kept filled from
 	//
@@ -12836,7 +13100,7 @@ type ClientInterface interface {
 
 	// UpdateUserWithBody Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -12847,7 +13111,7 @@ type ClientInterface interface {
 
 	// UpdateUser Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -13163,6 +13427,26 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadPageWithBody Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReadPage Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPage(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetBusinessProfile Get the business profile
 	//
@@ -13899,7 +14183,7 @@ type ClientInterface interface {
 
 	// GetLimitUsage Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -14068,7 +14352,7 @@ type ClientInterface interface {
 
 	// ListUsageEvents List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -15236,7 +15520,7 @@ func (c *Client) ExportConnectionToken(ctx context.Context, id string, reqEditor
 
 // ListConnectionTools List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -16006,6 +16290,27 @@ func (c *Client) GetKnowledgeDocument(ctx context.Context, id string, reqEditors
 // Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 func (c *Client) ListKnowledgeDocumentPassages(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListKnowledgeDocumentPassagesRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UploadKnowledgeFileWithBody Upload a file to a knowledge base, to be read in the background
+//
+// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+func (c *Client) UploadKnowledgeFileWithBody(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUploadKnowledgeFileRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -17643,7 +17948,7 @@ func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, r
 
 // UpdateUserWithBody Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -17664,7 +17969,7 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 
 // UpdateUser Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -18311,6 +18616,46 @@ func (c *Client) GenerateImageWithBody(ctx context.Context, contentType string, 
 // Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 func (c *Client) GenerateImage(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGenerateImageRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadPageWithBody Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *Client) ReadPageWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadPageRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ReadPage Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *Client) ReadPage(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReadPageRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -19876,7 +20221,7 @@ func (c *Client) UnrevokeLimitGrant(ctx context.Context, grantId int64, body Unr
 
 // GetLimitUsage Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -20235,7 +20580,7 @@ func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, r
 
 // ListUsageEvents List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //
@@ -23841,6 +24186,70 @@ func NewListKnowledgeDocumentPassagesRequest(server string, id string) (*http.Re
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewUploadKnowledgeFileRequestWithBody constructs an http.Request for the UploadKnowledgeFile method, with any body, and a specified content type
+func NewUploadKnowledgeFileRequestWithBody(server string, params *UploadKnowledgeFileParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/knowledge/files")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if queryFrag, err := runtime.StyleParamWithOptions("form", true, "namespace", params.Namespace, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			return nil, err
+		} else {
+			for _, qp := range strings.Split(queryFrag, "&") {
+				rawQueryFragments = append(rawQueryFragments, qp)
+			}
+		}
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -27892,6 +28301,46 @@ func NewGenerateImageRequestWithBody(server string, contentType string, body io.
 	return req, nil
 }
 
+// NewReadPageRequest calls the generic ReadPage builder with application/json body
+func NewReadPageRequest(server string, body ReadPageJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReadPageRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReadPageRequestWithBody constructs an http.Request for the ReadPage method, with any body, and a specified content type
+func NewReadPageRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/ocr")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewGetBusinessProfileRequest constructs an http.Request for the GetBusinessProfile method
 func NewGetBusinessProfileRequest(server string) (*http.Request, error) {
 	var err error
@@ -30141,9 +30590,9 @@ func NewListLimitsRequest(server string, params *ListLimitsParams) (*http.Reques
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -30331,9 +30780,9 @@ func NewListLimitGrantsRequest(server string, params *ListLimitGrantsParams) (*h
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -30611,9 +31060,9 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -31060,9 +31509,9 @@ func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, e
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -31564,9 +32013,9 @@ func NewListUsageEventsRequest(server string, params *ListUsageEventsParams) (*h
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -32605,7 +33054,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectionToolsWithResponse List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -33028,6 +33477,17 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /v1/agents/knowledge/documents/{id}/passages (the `ListKnowledgeDocumentPassages` operationId).
 	ListKnowledgeDocumentPassagesWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*ListKnowledgeDocumentPassagesResponse, error)
+
+	// UploadKnowledgeFileWithBodyWithResponse Upload a file to a knowledge base, to be read in the background
+	//
+	// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+	// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+	// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+	UploadKnowledgeFileWithBodyWithResponse(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKnowledgeFileResponse, error)
 
 	// ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
 	//
@@ -33888,7 +34348,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateUserWithBodyWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -33899,7 +34359,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateUserWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -34243,6 +34703,26 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /v1/image/generations (the `GenerateImage` operationId).
 	GenerateImageWithResponse(ctx context.Context, body GenerateImageJSONRequestBody, reqEditors ...RequestEditorFn) (*GenerateImageResponse, error)
+
+	// ReadPageWithBodyWithResponse Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPageResponse, error)
+
+	// ReadPageWithResponse Read the text of one page, and return it as Markdown
+	//
+	// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+	// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+	ReadPageWithResponse(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPageResponse, error)
 
 	// GetBusinessProfileWithResponse Get the business profile
 	//
@@ -35047,7 +35527,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetLimitUsageWithResponse Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -35238,7 +35718,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListUsageEventsWithResponse List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -43131,6 +43611,114 @@ func (r ListKnowledgeDocumentPassagesResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ListKnowledgeDocumentPassagesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// UploadKnowledgeFileResponse202Headers the declared response headers of an HTTP 202 response for UploadKnowledgeFile
+type UploadKnowledgeFileResponse202Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// UploadKnowledgeFileResponse402Headers the declared response headers of an HTTP 402 response for UploadKnowledgeFile
+type UploadKnowledgeFileResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type UploadKnowledgeFileResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON202 the response for an HTTP 202 `application/json` response
+	JSON202 *IndexedKnowledgeDocument
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON413 the response for an HTTP 413 `application/json` response
+	JSON413 *ErrorResponse
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *ErrorResponse
+	// Headers202 the parsed response headers for an HTTP 202 response
+	Headers202 *UploadKnowledgeFileResponse202Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *UploadKnowledgeFileResponse402Headers
+}
+
+// GetJSON202 returns the response for an HTTP 202 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON202() *IndexedKnowledgeDocument {
+	return r.JSON202
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON413 returns the response for an HTTP 413 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON413() *ErrorResponse {
+	return r.JSON413
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r UploadKnowledgeFileResponse) GetJSON503() *ErrorResponse {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r UploadKnowledgeFileResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UploadKnowledgeFileResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UploadKnowledgeFileResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UploadKnowledgeFileResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -52181,6 +52769,114 @@ func (r GenerateImageResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r GenerateImageResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ReadPageResponse200Headers the declared response headers of an HTTP 200 response for ReadPage
+type ReadPageResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// ReadPageResponse402Headers the declared response headers of an HTTP 402 response for ReadPage
+type ReadPageResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type ReadPageResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *OcrResult
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *NotFound
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *ReadPageResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *ReadPageResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ReadPageResponse) GetJSON200() *OcrResult {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r ReadPageResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ReadPageResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r ReadPageResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ReadPageResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ReadPageResponse) GetJSON404() *NotFound {
+	return r.JSON404
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r ReadPageResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r ReadPageResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r ReadPageResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ReadPageResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReadPageResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ReadPageResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -61259,7 +61955,7 @@ func (c *ClientWithResponses) ExportConnectionTokenWithResponse(ctx context.Cont
 
 // ListConnectionToolsWithResponse List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -61921,6 +62617,23 @@ func (c *ClientWithResponses) ListKnowledgeDocumentPassagesWithResponse(ctx cont
 		return nil, err
 	}
 	return ParseListKnowledgeDocumentPassagesResponse(rsp)
+}
+
+// UploadKnowledgeFileWithBodyWithResponse Upload a file to a knowledge base, to be read in the background
+//
+// A PDF, a Word document (DOCX or DOC), an Excel workbook (XLSX), an RTF or OpenDocument text file, or Markdown or plain text, of at most 50 MB, sent as multipart/form-data in a part named file. It is read by its bytes, whatever it is called. A file whose first bytes are none of these, such as a photo, is refused at once.
+// The answer is 202 once the file is kept: the document is pending, and is read in the background into Markdown that keeps its headings, lists and tables, each passage saying the page it is from. A page that is only a scan is read from its picture through the router's ocr-default, billed per page. Poll `getKnowledgeDocument` until its state is indexed, or failed with an error saying why: a password, a damaged file, or no text at all.
+// The passages are keyed by `source`, the file's name unless it is given, so uploading the same source again replaces the document; its old passages are still looked up until the new file has been read. The file itself is deleted once read. Server-side only.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/agents/knowledge/files (the `UploadKnowledgeFile` operationId).
+func (c *ClientWithResponses) UploadKnowledgeFileWithBodyWithResponse(ctx context.Context, params *UploadKnowledgeFileParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UploadKnowledgeFileResponse, error) {
+	rsp, err := c.UploadKnowledgeFileWithBody(ctx, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUploadKnowledgeFileResponse(rsp)
 }
 
 // ListKnowledgeUrlsWithResponse The pages a knowledge base is kept filled from
@@ -63292,7 +64005,7 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 
 // UpdateUserWithBodyWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -63309,7 +64022,7 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 
 // UpdateUserWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -63856,6 +64569,38 @@ func (c *ClientWithResponses) GenerateImageWithResponse(ctx context.Context, bod
 		return nil, err
 	}
 	return ParseGenerateImageResponse(rsp)
+}
+
+// ReadPageWithBodyWithResponse Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *ClientWithResponses) ReadPageWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReadPageResponse, error) {
+	rsp, err := c.ReadPageWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadPageResponse(rsp)
+}
+
+// ReadPageWithResponse Read the text of one page, and return it as Markdown
+//
+// Routed like detection: a target or a priority list picks the model, failover and billing work as they do everywhere else, and one page is one stat row. ocr-default asks Mistral OCR and fails over to vision language models that transcribe the page, and to nothing that cannot read one; ocr-vision asks only those. With figures set, charts, diagrams and pictures are summarised too, which only a vision model can do; ocr-figures asks the ones that do it best. Mistral OCR is billed per page and a vision model by the tokens it took.
+// A candidate that fails, or takes longer than 45 seconds, hands the page to the next one. A reading that got as far as a provider answers 200 whether it read anything or not: a failed one carries status failed, an error_code and the error, and costs nothing. A page with no text on it is completed with empty markdown. Nothing is stored, so the id cannot be fetched again.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /v1/ocr (the `ReadPage` operationId).
+func (c *ClientWithResponses) ReadPageWithResponse(ctx context.Context, body ReadPageJSONRequestBody, reqEditors ...RequestEditorFn) (*ReadPageResponse, error) {
+	rsp, err := c.ReadPage(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReadPageResponse(rsp)
 }
 
 // GetBusinessProfileWithResponse Get the business profile
@@ -65153,7 +65898,7 @@ func (c *ClientWithResponses) UnrevokeLimitGrantWithResponse(ctx context.Context
 
 // GetLimitUsageWithResponse Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -65458,7 +66203,7 @@ func (c *ClientWithResponses) GetTurnStatsWithResponse(ctx context.Context, para
 
 // ListUsageEventsWithResponse List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //
@@ -74626,6 +75371,132 @@ func ParseListKnowledgeDocumentPassagesResponse(rsp *http.Response) (*ListKnowle
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers ListKnowledgeDocumentPassagesResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUploadKnowledgeFileResponse parses an HTTP response from a UploadKnowledgeFileWithResponse call
+func ParseUploadKnowledgeFileResponse(rsp *http.Response) (*UploadKnowledgeFileResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UploadKnowledgeFileResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 202:
+		var dest IndexedKnowledgeDocument
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON202 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 413:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON413 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 202:
+		var headers UploadKnowledgeFileResponse202Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers202 = &headers
+	case rsp.StatusCode == 402:
+		var headers UploadKnowledgeFileResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
@@ -85248,6 +86119,132 @@ func ParseGenerateImageResponse(rsp *http.Response) (*GenerateImageResponse, err
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers GenerateImageResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseReadPageResponse parses an HTTP response from a ReadPageWithResponse call
+func ParseReadPageResponse(rsp *http.Response) (*ReadPageResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReadPageResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest OcrResult
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest NotFound
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers ReadPageResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers ReadPageResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

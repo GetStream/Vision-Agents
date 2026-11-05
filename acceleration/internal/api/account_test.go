@@ -307,10 +307,8 @@ func (s *AccountSuite) TestUsageEventsFilter() {
 	s.Equal([]string{support.UsageID.String()}, usageIDs(s.events(window.Encode())), "from inclusive, to exclusive")
 }
 
-// The dashboard sends its own key in the X-Api-Key header and its server token, so api_key and
-// user_id in the query are only filters: the key is read from the query only when no header
-// names one, and a server-side caller's user_id names who it acts for, which no account read
-// looks at.
+// The key filter is api_key_id, since api_key in the query is the caller's credential; a
+// server-side caller's user_id names who it acts for, which no account read looks at.
 func (s *AccountSuite) TestUsageEventsFilterByAnotherKeyAndAUserInTheQuery() {
 	other := "key-other-" + s.utils.uuid()
 	wanted := s.spend(1_000, func(event *usage.Event) { event.APIKey, event.UserID = other, "u1" })
@@ -318,12 +316,38 @@ func (s *AccountSuite) TestUsageEventsFilterByAnotherKeyAndAUserInTheQuery() {
 	s.spend(1_000, func(event *usage.Event) { event.APIKey, event.UserID = s.app.key, "u1" })
 	s.spend(1_000, func(event *usage.Event) { event.APIKey = "hook:chat" })
 
-	page := s.events("api_key=" + url.QueryEscape(other) + "&user_id=u1")
+	page := s.events("api_key_id=" + url.QueryEscape(other) + "&user_id=u1")
 
 	s.Equal([]string{wanted.UsageID.String()}, usageIDs(page))
 	s.Equal(other, page.Items[0].ApiKey)
-	s.Len(s.events("api_key=hook%3Achat").Items, 1, "an origin no key started")
+	s.Len(s.events("api_key_id=hook%3Achat").Items, 1, "an origin no key started")
 	s.Len(s.events("user_id=u1").Items, 2)
+}
+
+// Stream's proxy requires the app's key as api_key in every call's query and forwards it, so a
+// list through the proxy always carries it: it is the credential, and narrows nothing (AI-2684).
+func (s *AccountSuite) TestUsageEventsWithTheCallersKeyInTheQueryListEveryKey() {
+	other := "key-other-" + s.utils.uuid()
+	own := s.spend(1_000, func(event *usage.Event) { event.APIKey = s.app.key })
+	another := s.spend(1_000, func(event *usage.Event) { event.APIKey = other })
+	hook := s.spend(1_000, func(event *usage.Event) { event.APIKey = "hook:chat" })
+	proxied := "api_key=" + url.QueryEscape(s.app.key)
+
+	s.ElementsMatch([]string{own.UsageID.String(), another.UsageID.String(), hook.UsageID.String()},
+		usageIDs(s.events(proxied)))
+	s.Equal([]string{hook.UsageID.String()}, usageIDs(s.events(proxied+"&api_key_id=hook%3Achat")))
+	s.Equal([]string{another.UsageID.String()}, usageIDs(s.events(proxied+"&api_key_id="+url.QueryEscape(other))))
+}
+
+// A list with no key in the query lists every key's events, an origin's among them, as before
+// api_key_id (AI-2684).
+func (s *AccountSuite) TestUsageEventsWithNoKeyInTheQueryListEveryKey() {
+	own := s.spend(1_000, func(event *usage.Event) { event.APIKey = s.app.key })
+	another := s.spend(1_000, func(event *usage.Event) { event.APIKey = "key-other-" + s.utils.uuid() })
+	hook := s.spend(1_000, func(event *usage.Event) { event.APIKey = "hook:chat" })
+
+	s.ElementsMatch([]string{own.UsageID.String(), another.UsageID.String(), hook.UsageID.String()},
+		usageIDs(s.events("")))
 }
 
 func (s *AccountSuite) TestUsageEventsPage() {

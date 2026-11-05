@@ -16,6 +16,15 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.agent_calls import AgentCalls
     from ..models.agent_channels import AgentChannels
+    from ..models.agent_config_request_mcp_servers_item import (
+        AgentConfigRequestMcpServersItem,
+    )
+    from ..models.agent_config_request_plugin_events_item import (
+        AgentConfigRequestPluginEventsItem,
+    )
+    from ..models.agent_config_request_plugins_item_type_1 import (
+        AgentConfigRequestPluginsItemType1,
+    )
     from ..models.agent_config_request_tags import AgentConfigRequestTags
     from ..models.agent_connector_binding import AgentConnectorBinding
     from ..models.agent_dispatch import AgentDispatch
@@ -23,9 +32,6 @@ if TYPE_CHECKING:
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
     from ..models.greeting import Greeting
-    from ..models.mcp_server import McpServer
-    from ..models.plugin_event import PluginEvent
-    from ..models.plugin_with_options import PluginWithOptions
     from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
     from ..models.session_video import SessionVideo
@@ -56,9 +62,12 @@ class AgentConfigRequest:
             agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id.
             On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the
             person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a
-            summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that
-            anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did.
-            Left out on an update, the stored setting stays.
+            summary, or the last lines of the episode's channel while there is none. So does a session the person's own app
+            opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members
+            or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a
+            member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth
+            checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting
+            stays.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
@@ -72,16 +81,18 @@ class AgentConfigRequest:
         knowledge_namespace (str | Unset): What the agent may look things up in. Empty means it knows only what it was
             told.
         llm (str | Unset): The model holding the conversation.
-        mcp_servers (list[McpServer] | Unset): No longer read: a server named by URL is now a custom connector, so
-            create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names
-            nothing.
+        mcp_servers (list[AgentConfigRequestMcpServersItem] | Unset): No longer read: a server named by URL is now a
+            custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an
+            empty one names nothing.
         mode (AgentMode | Unset): Whether the agent is spoken to or written to. A voice agent joins a call, transcribes
             what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither
             speech target and a session created from it needs no call to join.
-        plugin_events (list[PluginEvent] | Unset): No longer read: plugins were replaced by connectors, so name the
-            provider under connectors. A non-empty list is refused (400); an empty one names nothing.
-        plugins (list[PluginWithOptions | str] | Unset): No longer read: plugins were replaced by connectors, so name
-            the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
+        plugin_events (list[AgentConfigRequestPluginEventsItem] | Unset): No longer read: plugins were replaced by
+            connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names
+            nothing.
+        plugins (list[AgentConfigRequestPluginsItemType1 | str] | Unset): No longer read: plugins were replaced by
+            connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names
+            nothing.
         region (str | Unset): Where the agent's work is done: us or eu for now. Every model its sessions run, its
             knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a
             model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there
@@ -145,10 +156,10 @@ class AgentConfigRequest:
     keyterms: list[str] | Unset = UNSET
     knowledge_namespace: str | Unset = UNSET
     llm: str | Unset = UNSET
-    mcp_servers: list[McpServer] | Unset = UNSET
+    mcp_servers: list[AgentConfigRequestMcpServersItem] | Unset = UNSET
     mode: AgentMode | Unset = UNSET
-    plugin_events: list[PluginEvent] | Unset = UNSET
-    plugins: list[PluginWithOptions | str] | Unset = UNSET
+    plugin_events: list[AgentConfigRequestPluginEventsItem] | Unset = UNSET
+    plugins: list[AgentConfigRequestPluginsItemType1 | str] | Unset = UNSET
     region: str | Unset = UNSET
     resume_history: ResumeHistory | Unset = UNSET
     review: AgentReview | Unset = UNSET
@@ -170,7 +181,9 @@ class AgentConfigRequest:
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        from ..models.plugin_with_options import PluginWithOptions
+        from ..models.agent_config_request_plugins_item_type_1 import (
+            AgentConfigRequestPluginsItemType1,
+        )
 
         name = self.name
 
@@ -238,7 +251,7 @@ class AgentConfigRequest:
             plugins = []
             for plugins_item_data in self.plugins:
                 plugins_item: dict[str, Any] | str
-                if isinstance(plugins_item_data, PluginWithOptions):
+                if isinstance(plugins_item_data, AgentConfigRequestPluginsItemType1):
                     plugins_item = plugins_item_data.to_dict()
                 else:
                     plugins_item = plugins_item_data
@@ -384,6 +397,15 @@ class AgentConfigRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.agent_calls import AgentCalls
         from ..models.agent_channels import AgentChannels
+        from ..models.agent_config_request_mcp_servers_item import (
+            AgentConfigRequestMcpServersItem,
+        )
+        from ..models.agent_config_request_plugin_events_item import (
+            AgentConfigRequestPluginEventsItem,
+        )
+        from ..models.agent_config_request_plugins_item_type_1 import (
+            AgentConfigRequestPluginsItemType1,
+        )
         from ..models.agent_config_request_tags import AgentConfigRequestTags
         from ..models.agent_connector_binding import AgentConnectorBinding
         from ..models.agent_dispatch import AgentDispatch
@@ -391,9 +413,6 @@ class AgentConfigRequest:
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
         from ..models.greeting import Greeting
-        from ..models.mcp_server import McpServer
-        from ..models.plugin_event import PluginEvent
-        from ..models.plugin_with_options import PluginWithOptions
         from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
         from ..models.session_video import SessionVideo
@@ -458,11 +477,13 @@ class AgentConfigRequest:
         llm = d.pop("llm", UNSET)
 
         _mcp_servers = d.pop("mcp_servers", UNSET)
-        mcp_servers: list[McpServer] | Unset = UNSET
+        mcp_servers: list[AgentConfigRequestMcpServersItem] | Unset = UNSET
         if _mcp_servers is not UNSET:
             mcp_servers = []
             for mcp_servers_item_data in _mcp_servers:
-                mcp_servers_item = McpServer.from_dict(mcp_servers_item_data)
+                mcp_servers_item = AgentConfigRequestMcpServersItem.from_dict(
+                    mcp_servers_item_data
+                )
 
                 mcp_servers.append(mcp_servers_item)
 
@@ -474,32 +495,36 @@ class AgentConfigRequest:
             mode = AgentMode(_mode)
 
         _plugin_events = d.pop("plugin_events", UNSET)
-        plugin_events: list[PluginEvent] | Unset = UNSET
+        plugin_events: list[AgentConfigRequestPluginEventsItem] | Unset = UNSET
         if _plugin_events is not UNSET:
             plugin_events = []
             for plugin_events_item_data in _plugin_events:
-                plugin_events_item = PluginEvent.from_dict(plugin_events_item_data)
+                plugin_events_item = AgentConfigRequestPluginEventsItem.from_dict(
+                    plugin_events_item_data
+                )
 
                 plugin_events.append(plugin_events_item)
 
         _plugins = d.pop("plugins", UNSET)
-        plugins: list[PluginWithOptions | str] | Unset = UNSET
+        plugins: list[AgentConfigRequestPluginsItemType1 | str] | Unset = UNSET
         if _plugins is not UNSET:
             plugins = []
             for plugins_item_data in _plugins:
 
-                def _parse_plugins_item(data: object) -> PluginWithOptions | str:
+                def _parse_plugins_item(
+                    data: object,
+                ) -> AgentConfigRequestPluginsItemType1 | str:
                     try:
                         if not isinstance(data, dict):
                             raise TypeError()
-                        componentsschemas_plugin_entry_type_1 = (
-                            PluginWithOptions.from_dict(data)
+                        plugins_item_type_1 = (
+                            AgentConfigRequestPluginsItemType1.from_dict(data)
                         )
 
-                        return componentsschemas_plugin_entry_type_1
+                        return plugins_item_type_1
                     except (TypeError, ValueError, AttributeError, KeyError):
                         pass
-                    return cast(PluginWithOptions | str, data)
+                    return cast(AgentConfigRequestPluginsItemType1 | str, data)
 
                 plugins_item = _parse_plugins_item(plugins_item_data)
 

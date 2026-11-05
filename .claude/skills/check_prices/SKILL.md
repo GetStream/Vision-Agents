@@ -36,10 +36,10 @@ Pages to start from. A subagent that finds one moved, or a provider missing, fix
 
 | Provider | Pricing page |
 | --- | --- |
-| `openai` | https://platform.openai.com/docs/pricing |
-| `anthropic` | https://docs.anthropic.com/en/docs/about-claude/pricing |
+| `openai` | https://developers.openai.com/api/docs/pricing (each model's page under https://developers.openai.com/api/docs/models/) |
+| `anthropic` | https://platform.claude.com/docs/en/about-claude/pricing |
 | `gemini`, `google` | https://ai.google.dev/gemini-api/docs/pricing |
-| `xai`, `grok` | https://docs.x.ai/docs/models |
+| `xai`, `grok` | https://docs.x.ai/developers/pricing |
 | `deepgram` | https://deepgram.com/pricing |
 | `elevenlabs` | https://elevenlabs.io/pricing/api |
 | `cartesia` | https://cartesia.ai/pricing |
@@ -47,8 +47,11 @@ Pages to start from. A subagent that finds one moved, or a provider missing, fix
 | `inworld` | https://inworld.ai/pricing |
 | `together`, `together-*` | https://www.together.ai/pricing |
 | `openrouter` | https://openrouter.ai/models (each model's page). Decision models are often not listed: check them with step 4b |
-| `perplexity` | https://docs.perplexity.ai/getting-started/pricing |
-| `deepseek` | https://api-docs.deepseek.com/quick_start/pricing |
+| `perplexity` | https://docs.perplexity.ai/docs/getting-started/pricing |
+| `deepseek`, `baseten` | https://www.baseten.co/library/ (each model's page): the `deepseek` provider calls Baseten's Model APIs unless `DEEPSEEK_BASE_URL` names another endpoint, so DeepSeek's own prices do not apply |
+| `qwen` | https://www.alibabacloud.com/help/en/model-studio/model-pricing (International) |
+| `fish` | https://docs.fish.audio/developer-guide/models-pricing/pricing-and-rate-limits |
+| `meta` (WhatsApp) | https://developers.facebook.com/documentation/business-messaging/whatsapp/pricing |
 | `exa` | https://exa.ai/pricing |
 | `tavily` | https://www.tavily.com/pricing |
 | `fal` | https://fal.ai/pricing (each model's page) |

@@ -47,8 +47,9 @@ id: github
 # GitHub's REST API with the connection's token. 7 (AI-1576) adds github.com to sandbox.hosts,
 # so git over HTTPS reaches it through both brokers. 8 adds sandbox.reads: under the proxy
 # broker code in the sandbox reads only, and git clone and fetch read with a POST. 9 adds the
-# GraphQL endpoint as a read of queries alone, so gh reads through it.
-revision: 9
+# GraphQL endpoint as a read of queries alone, so gh reads through it. 10 lists the tools that
+# only read.
+revision: 10
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -159,6 +160,51 @@ sources:
     # «default,actions» 53, the 49 and the 4.
     headers:
       X-MCP-Toolsets: default,actions
+    # The tools that only read, of the toolsets the header asks for: the default ones
+    # (context, repos, issues, pull_requests and users, the README's «"default" toolset»; the
+    # copilot toolset is Default: true in pkg/github/tools.go there too, and its tools write) and
+    # actions, read in github/github-mcp-server at 99d6d6503a7b2a133e2f8a595d6d0ba24b4086d3
+    # (opened 2026-11-05). Each name is in that toolset's list in README.md there, and its
+    # definition in pkg/github sets «ReadOnlyHint: true», as its snapshot in
+    # pkg/github/__toolsnaps__ does. [toolsets] calls those the tools «that enable read
+    # access», the only ones its /readonly path serves. The issue_read, pull_request_read and actions_get
+    # methods all get. get_job_logs and actions_get's download_workflow_run_artifact may
+    # return a GitHub download URL, which brings data in, as linear.yaml's get_attachment
+    # does; the search_ tools send their query to GitHub's own search. Left out: every tool of
+    # those toolsets whose ReadOnlyHint is false (actions_run_trigger and the tools that
+    # create, update, merge, push, fork, delete, comment, review or assign Copilot), as is a
+    # tool added later.
+    read_only_tools:
+      - get_me
+      - get_team_members
+      - get_teams
+      - ui_get
+      - get_commit
+      - get_file_contents
+      - get_latest_release
+      - get_release_by_tag
+      - get_tag
+      - list_branches
+      - list_commits
+      - list_releases
+      - list_repository_collaborators
+      - list_tags
+      - search_code
+      - search_commits
+      - search_repositories
+      - get_label
+      - issue_read
+      - list_issue_fields
+      - list_issue_types
+      - list_issues
+      - search_issues
+      - list_pull_requests
+      - pull_request_read
+      - search_pull_requests
+      - search_users
+      - actions_get
+      - actions_list
+      - get_job_logs
 # Code in a session's sandbox reads a placeholder from GITHUB_TOKEN, and the sandbox's egress
 # puts the connection's token in its place only in a request to these hosts ([secrets]). It is
 # the env var name GitHub's own tools read the token from (gh: «GH_TOKEN, GITHUB_TOKEN»,

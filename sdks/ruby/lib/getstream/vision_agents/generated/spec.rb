@@ -610,7 +610,7 @@ module GetStream
         }.freeze,
         "getLimitUsage" => {
           method: :get, path: "/v1/spend/limits/usage",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -700,7 +700,7 @@ module GetStream
         }.freeze,
         "getSpend" => {
           method: :get, path: "/v1/stats/spend",
-          path_params: [].freeze, query: %w[group_by limit scope granularity from to tag api_key user_id team category].freeze,
+          path_params: [].freeze, query: %w[group_by limit scope granularity from to tag api_key_id user_id team category].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -934,13 +934,13 @@ module GetStream
         }.freeze,
         "listLimitGrants" => {
           method: :get, path: "/v1/spend/limits/grants",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category state limit cursor].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category state limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "listLimits" => {
           method: :get, path: "/v1/spend/limits",
-          path_params: [].freeze, query: %w[subject level app_id api_key user_id team category interval limit cursor].freeze,
+          path_params: [].freeze, query: %w[subject level app_id api_key_id user_id team category interval limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1054,7 +1054,7 @@ module GetStream
         }.freeze,
         "listUsageEvents" => {
           method: :get, path: "/v1/usage/events",
-          path_params: [].freeze, query: %w[scope app_id from to meter api_key user_id team category limit cursor].freeze,
+          path_params: [].freeze, query: %w[scope app_id from to meter api_key_id user_id team category limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1120,19 +1120,19 @@ module GetStream
         }.freeze,
         "manageGetLimitUsage" => {
           method: :get, path: "/v1/manage/spend/limits/usage",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category organization_id].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category organization_id].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "manageListLimitGrants" => {
           method: :get, path: "/v1/manage/spend/limits/grants",
-          path_params: [].freeze, query: %w[subject app_id api_key user_id team category state limit cursor organization_id].freeze,
+          path_params: [].freeze, query: %w[subject app_id api_key_id user_id team category state limit cursor organization_id].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
         "manageListLimits" => {
           method: :get, path: "/v1/manage/spend/limits",
-          path_params: [].freeze, query: %w[subject level app_id api_key user_id team category interval limit cursor organization_id].freeze,
+          path_params: [].freeze, query: %w[subject level app_id api_key_id user_id team category interval limit cursor organization_id].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1279,6 +1279,12 @@ module GetStream
           path_params: [].freeze, query: [].freeze,
           body: "SessionQuery", body_required: false,
           socket: false, client_accessible: true
+        }.freeze,
+        "readPage" => {
+          method: :post, path: "/v1/ocr",
+          path_params: [].freeze, query: [].freeze,
+          body: "OcrRequest", body_required: true,
+          socket: false, client_accessible: false
         }.freeze,
         "receiveCallMachine" => {
           method: :post, path: "/v1/phone/machine/{token}",
@@ -1658,6 +1664,12 @@ module GetStream
           body: "VoiceRequest", body_required: true,
           socket: false, client_accessible: false
         }.freeze,
+        "uploadKnowledgeFile" => {
+          method: :post, path: "/v1/agents/knowledge/files",
+          path_params: [].freeze, query: %w[namespace source].freeze,
+          body: nil, body_required: true,
+          socket: false, client_accessible: false
+        }.freeze,
         "validateConnection" => {
           method: :post, path: "/v1/agents/connections/{id}/validate",
           path_params: %w[id].freeze, query: [].freeze,
@@ -1988,8 +2000,8 @@ module GetStream
           required: %w[connection_id header value].freeze, open: false
         }.freeze,
         "ConnectionTool" => {
-          properties: %w[description input_schema name needs_scopes schema_digest].freeze,
-          required: %w[name description input_schema schema_digest].freeze, open: false
+          properties: %w[description input_schema name needs_scopes read_only schema_digest].freeze,
+          required: %w[name description input_schema schema_digest read_only].freeze, open: false
         }.freeze,
         "ConnectionToolApproval" => {
           properties: %w[name schema_digest].freeze,
@@ -2116,7 +2128,7 @@ module GetStream
           required: %w[recipient channel].freeze, open: false
         }.freeze,
         "CreateResponseRequest" => {
-          properties: %w[audio images max_output_tokens reasoning_effort request_id text videos].freeze,
+          properties: %w[audio images max_output_tokens reasoning_effort request_id text ui_action videos].freeze,
           required: %w[text].freeze, open: false
         }.freeze,
         "CreateRunRequest" => {
@@ -2264,8 +2276,8 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "IndexedKnowledgeDocument" => {
-          properties: %w[created_at id namespace passages source text updated_at].freeze,
-          required: %w[created_at id namespace passages source updated_at].freeze, open: false
+          properties: %w[bytes content_type created_at error id namespace pages passages source state text updated_at].freeze,
+          required: %w[bytes content_type created_at id namespace pages passages source state updated_at].freeze, open: false
         }.freeze,
         "IngestKnowledgeRequest" => {
           properties: %w[chunk_size documents namespace].freeze,
@@ -2391,14 +2403,6 @@ module GetStream
           properties: %w[actor name].freeze,
           required: %w[actor].freeze, open: false
         }.freeze,
-        "McpServer" => {
-          properties: %w[branding name needs_login scopes tools url user].freeze,
-          required: %w[name url].freeze, open: false
-        }.freeze,
-        "McpServerBranding" => {
-          properties: %w[description icon_url title version website_url].freeze,
-          required: [].freeze, open: false
-        }.freeze,
         "ModelCallTiming" => {
           properties: %w[duration_ms error_code input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
           required: %w[model provider started_at success].freeze, open: false
@@ -2414,6 +2418,18 @@ module GetStream
         "NumberSearchResult" => {
           properties: %w[numbers skipped].freeze,
           required: %w[numbers skipped].freeze, open: false
+        }.freeze,
+        "OcrOptions" => {
+          properties: %w[data_policy figures providers target].freeze,
+          required: [].freeze, open: false
+        }.freeze,
+        "OcrRequest" => {
+          properties: %w[image options tags].freeze,
+          required: %w[image].freeze, open: false
+        }.freeze,
+        "OcrResult" => {
+          properties: %w[cost_micros error error_code id markdown model provider status].freeze,
+          required: %w[cost_micros id markdown status].freeze, open: false
         }.freeze,
         "OfferedTool" => {
           properties: %w[description name parameters tokens].freeze,
@@ -2450,14 +2466,6 @@ module GetStream
         "PlacedCall" => {
           properties: %w[session_id status vendor vendor_call_id].freeze,
           required: %w[status vendor_call_id].freeze, open: false
-        }.freeze,
-        "PluginEvent" => {
-          properties: %w[arguments event instructions plugin].freeze,
-          required: %w[plugin event].freeze, open: false
-        }.freeze,
-        "PluginWithOptions" => {
-          properties: %w[name readonly scopes tools toolsets user].freeze,
-          required: %w[name].freeze, open: false
         }.freeze,
         "Policy" => {
           properties: %w[allowed_models balance_warning_micros budget data_policy prompt_injection quota require_own_stream_app resume_history tags tool_output_retention].freeze,
