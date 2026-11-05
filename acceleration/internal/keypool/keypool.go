@@ -54,7 +54,8 @@ func Parse(raw ...string) []string {
 }
 
 // Env reads the keys of the first of names that holds any: NAME itself, then NAME_1,
-// NAME_2 and on in numeric order.
+// NAME_2 and on in numeric order. It remembers that variable as where those keys come from, which the
+// vendor metrics name a pool by.
 func Env(names ...string) []string {
 	for _, name := range names {
 		if name == "" {
@@ -126,7 +127,9 @@ const (
 var outOfFundsStatus = strconv.Itoa(http.StatusPaymentRequired)
 
 // FromEnv is the shared pool for explicit when it names any key, or else for the keys Env
-// finds under envVars. The first of envVars names the pool's key variable in its metrics.
+// finds under envVars. The first of envVars names the pool's key variable in its refusal
+// counter; the vendor metrics name it by the variable Env read its keys from, and keep none for
+// keys never read from one.
 func FromEnv(explicit string, envVars ...string) *Pool {
 	keys := Parse(explicit)
 	if len(keys) == 0 {
