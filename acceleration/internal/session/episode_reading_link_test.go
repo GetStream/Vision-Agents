@@ -8,6 +8,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -79,8 +80,7 @@ func (s *EpisodeReadingSuite) TestALinkedUsersChatReadsNoneOfTheNumbersTextsFrom
 		chat := s.chatChannel(user)
 		s.write(chat, user, "hello", nil)
 		s.summarize(s.chatEpisode(user, chat, 0), "Said hello.")
-		s.Require().NoError(s.store.LinkUserPhone(s.ctx, &store.UserPhone{CustomerID: s.customerID,
-			StreamAppPK: suiteDeploymentApp, UserID: user, Phone: s.phone(c.number).Address}))
+		s.linkAt(user, s.phone(c.number).Address, -3000)
 		s.textFrom(c.number, thread, -60, "my dog is Pepper")
 		s.at(0)
 		next := s.chatChannel(user)
@@ -138,4 +138,79 @@ func (s *EpisodeReadingSuite) TestAChatCardInProgressHasOnlyItsOwnEpisodesLines(
 	s.Equal([]string{"my cat is Saffron"}, cardLines(handed[0]), "the earlier run, ended")
 	s.Equal(inProgress, handed[1]["status"])
 	s.Equal([]string{"my dog is Pepper"}, cardLines(handed[1]), "the run in progress, from its start")
+}
+
+// linkAt links user to number as the customer's backend does (store.LinkUserPhone), dated
+// seconds after the test's start, where the test's story puts it: the suite dates what is said
+// before now.
+func (s *EpisodeReadingSuite) linkAt(user, number string, seconds int) {
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &store.UserPhone{CustomerID: s.customerID,
+		StreamAppPK: suiteDeploymentApp, UserID: user, Phone: number}))
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE user_phones SET created_at = ?0, updated_at = ?0 WHERE customer_id = ?1 AND user_id = ?2",
+		s.now.Add(time.Duration(seconds)*time.Second), s.customerID, user)
+	s.Require().NoError(err)
+}
+
+// Defect: a number linked to anya while her agent's config had episode_cards off keeps its rows
+// (the link sets a number's history aside only under a config with the cards on), so once the
+// config turns them on, every session that reads her omni-channel reads what the number said
+// before the link: its SMS summarized, its SMS still in progress and its call. Her app chat,
+// her own device's text session and call, the number's next call and its SMS thread read none
+// of it. Each reads her chat card and the number's SMS after the link, whose card in progress
+// holds only its own episode's lines.
+func (s *EpisodeReadingSuite) TestCardsTurnedOnAfterALinkReadNoneOfTheNumbersEpisodesFromBeforeIt() {
+	config := store.AgentConfig{CustomerID: s.customerID, Name: "cards-" + uuid.NewString(), Mode: store.AgentModeText}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, &config))
+	s.configID = config.ID
+	number, user := s.phone("+15550100103").Address, "anya-"+uuid.NewString()
+	first := s.thread("sms-author")
+	s.summarize(s.textFrom(number, first, -7200, "my cat is Saffron"), "Has a cat called Saffron.")
+	call := "call-" + uuid.NewString()
+	callChannel := s.channel(call, "agent-user")
+	s.at(-5400)
+	s.endEpisode(s.episode(omnichannel.Episode{Person: s.phone(number), Source: store.EpisodeCall, ThreadChannel: callChannel,
+		CallID: call, SessionID: "session-" + uuid.NewString(), StartedAt: s.now.Add(-5400 * time.Second), StreamAppPK: suiteDeploymentApp}))
+	s.at(-5390)
+	s.write(callChannel, "sip-"+number, "my parrot is Kiwi", said(false))
+	open := s.thread("sms-author")
+	s.textFrom(number, open, -4000, "my rabbit is Clover")
+	s.at(-3600)
+	chat := s.chatChannel(user)
+	s.write(chat, user, "hello", nil)
+	s.summarize(s.chatEpisode(user, chat, 0), "Said hello.")
+	s.linkAt(user, number, -3000)
+	config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, &config))
+	s.textFrom(number, first, -60, "my dog is Pepper")
+	s.at(0)
+
+	next := s.chatChannel(user)
+	s.write(next, user, "what are my pets called?", nil)
+	s.readsOnlyAfterTheLink("her app chat", s.deploymentChat(next, user, true, "what are my pets called?"))
+	_, params := s.deviceSession(signedIn(user), "", true, "and my pets? "+uuid.NewString())
+	s.readsOnlyAfterTheLink("her device's text session", params)
+	_, params = s.deviceCall(signedIn(user), "my pets? "+uuid.NewString())
+	s.readsOnlyAfterTheLink("her device's call", params)
+	params, _ = s.voiceSession("sip-"+number, true, "pets? "+uuid.NewString())
+	s.readsOnlyAfterTheLink("the number's call", params)
+	s.readsOnlyAfterTheLink("the number's SMS thread", s.textSession(open, true, "pets please "+uuid.NewString()))
+}
+
+// readsOnlyAfterTheLink checks a session of TestCardsTurnedOnAfterALinkReadNoneOfTheNumbersEpisodesFromBeforeIt
+// was handed the cards of the linked person from after the link alone.
+func (s *EpisodeReadingSuite) readsOnlyAfterTheLink(reader string, params llm.ResponseParams) {
+	handed := s.handed(params)
+	told, err := json.Marshal(handed)
+	s.Require().NoError(err)
+	for _, before := range []string{"Saffron", "Kiwi", "Clover"} {
+		s.NotContains(string(told), before, reader)
+	}
+	s.Contains(string(told), "Said hello.", "%s reads her chat card", reader)
+	var pepper []any
+	for _, card := range handed {
+		if card["source"] == store.EpisodeSMS {
+			pepper = append(pepper, card["status"], cardLines(card))
+		}
+	}
+	s.Equal([]any{inProgress, []string{"my dog is Pepper"}}, pepper, "%s reads the SMS after the link, from its start", reader)
 }

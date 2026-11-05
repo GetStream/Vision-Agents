@@ -379,7 +379,8 @@ type CardsQuery struct {
 
 // EpisodeCards are the newest episodes of one person, for one agent of a customer: those of
 // the contact map rows of that customer and agent that point at the person's omni-channel,
-// never another customer's or another agent's.
+// never another customer's or another agent's, and none a number linked to a user started
+// before its link (UserPhone.UpdatedAt).
 func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCard, error) {
 	if query.CustomerID == "" || query.AgentConfigID == "" || query.ConversationID == "" || query.Limit <= 0 {
 		return nil, stack.Wrap(errors.New("store: a customer, an agent config, an omni-channel and a limit are required"))
@@ -399,6 +400,13 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 		Where("cm.conversation_id = ?", query.ConversationID).
 		Where("ep.thread_channel <> ?", query.ExceptThread).
 		Where("ep.session_id IS DISTINCT FROM ?", query.ExceptSession).
+		// What a linked number said before its link is not the user's, however the config came
+		// to have episode_cards on: retireHistory sets it aside only under a config with them on
+		// at the link. The link is found as linkOf finds a number's; no other kind of row has an
+		// E.164 address.
+		Where(`NOT EXISTS (SELECT 1 FROM user_phones AS up WHERE up.customer_id = cm.customer_id
+			AND up.stream_app_pk = COALESCE(NULLIF(cm.stream_app_pk, ?), 0) AND up.phone = cm.address
+			AND ep.started_at < up.updated_at)`, s.streamPins().deployment()).
 		OrderExpr("ep.started_at DESC").
 		Limit(query.Limit).
 		Scan(ctx)

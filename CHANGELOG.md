@@ -390,6 +390,19 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A short video is sampled into the frames it has
 
 `responses.create` with a video of fewer frames than `max_frames` (8 by default) failed with `video: reading the frame at 812.5ms` when the clip ended inside its last frame: a one second clip at 4 frames a second could not be sampled at its default. The router now picks the frame showing at each sampling moment, which it reads from the clip, and shows a frame once however many moments fall in it, so that clip gives its four frames. A clip with more frames than `max_frames` gives `max_frames` frames as before, each now the frame on screen at its time rather than the next to begin (AI-2658, #1767).
+
+### `git lfs pull` works in a sandbox behind the egress proxy
+
+Under `code_sandbox.broker: proxy`, Git LFS's batch request was refused as a write, so `git lfs pull` failed. GitHub's connector (revision 11) now lets a batch that asks to download through, and fetches the objects from the host GitHub names with no token; an upload is still refused (#1768).
+
+### A video question that would be refused is refused before its videos are fetched
+
+A response with videos that its conversation would refuse to begin, because an answer is still running, the conversation is not open or the text is past 1 MiB, was refused only after up to two videos of 50 MB each were fetched and sampled. It is now refused first, with the same error (AI-2657, #1764).
+
+### A linked user never reads what the number said before the link, whenever the cards were turned on
+
+A number linked to a user (`PUT /v1/agents/users/{user_id}`) under an agent with `episode_cards` off kept its earlier SMS and call episodes on the user's omni-channel. Once the agent turned the cards on, the user's app chat, their own device and the number's later calls and SMS read those cards. Now no session reads an episode that a linked number started before the link, and sending the same number again no longer moves the time of the link (#1772).
+
 ### No app chat episode card in an app that checks no tokens
 
 With auth checks off, a Stream app lets any client send as any user, so an app chat message there no longer opens an episode or writes a card in that user's omni-channel. The same applies when Stream cannot say whether the app checks tokens. The message is answered as before (AI-2763, #1769).
