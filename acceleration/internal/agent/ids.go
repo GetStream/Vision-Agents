@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"html"
 	"maps"
 	"net/url"
 	"regexp"
@@ -63,7 +64,10 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		case llm.User:
 			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
 			said.WriteString(" " + heard)
-			pasted = append(pasted, linkParts(message.Content)...)
+			// A link is read as the person wrote it: a shared channel passes their text on in
+			// a JSON envelope, which writes & as \u0026, and a chat may pass it on escaped for
+			// HTML, & as &amp;. Either way a link would end, or its query split, at the escape.
+			pasted = append(pasted, linkParts(html.UnescapeString(asWritten(message.Content)))...)
 			if question != "" {
 				answers = append(answers, answer{strings.ToLower(question), alphanumeric(heard)})
 			}
