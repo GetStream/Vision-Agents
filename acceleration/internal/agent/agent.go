@@ -743,6 +743,11 @@ func New(options Options) (*Agent, error) {
 		agent.decisionStore = newDecisionRecorder(options.Live, owner, logger)
 		record = agent.decisionStore.Record
 	}
+	if agent.audioFloor.asksOnPauses() {
+		// Acting on chorus-asr, its transcriber's final is the end the agent's end-of-turn
+		// point ruled, which is answered at once.
+		settling.endedBy = audiofloor.ProviderName
+	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
 	agent.converse.onHeard = options.OnHeard
 	agent.turns = newTurnTracker(owner, agent.finishTurn)

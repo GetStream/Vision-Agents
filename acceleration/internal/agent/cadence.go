@@ -80,6 +80,11 @@ type cadence struct {
 	// marksEnds says the transcriber has sent a final, so it is one that says when a turn
 	// has ended.
 	marksEnds bool
+	// endedBy is the transcriber whose finals are the model's end of the turn, the
+	// chorus-asr transcriber an agent acting on the model has ask about each pause, empty
+	// when there is none. Its final is the end the agent's end-of-turn point ruled, and the
+	// words never change after it, so it is put at once (endedLocked).
+	endedBy string
 }
 
 type cadenceSpeaker struct {
@@ -265,11 +270,14 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 	current.ended = transcript.Mode == stt.ModeFinal
 	c.marksEnds = c.marksEnds || current.ended
 	final := transcript.Mode == stt.ModeFinal && !incompleteIdentifier(text)
+	ruled := c.endedLocked(transcript)
 	if sameWords(current.text, text) {
 		// The transcriber finalizing words already waited on means they have stopped, so
 		// the wait is cut short. It is never lengthened: a final that arrives late must
 		// not hold back words that already held still.
-		if final && current.timer != nil && current.candidateID == "" {
+		if ruled && current.timer != nil && current.candidateID == "" {
+			c.scheduleLocked(current, 0)
+		} else if final && current.timer != nil && current.candidateID == "" {
 			c.scheduleLocked(current, c.finalGapLocked())
 		}
 		return "", ""
@@ -307,6 +315,9 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		// Member IDs, PINs and clock times arrive a digit at a time, and answering before
 		// the last digit lands passes a tool the identifier without it.
 		delay = c.retry
+	}
+	if ruled {
+		delay = 0
 	}
 	c.scheduleLocked(current, delay)
 	c.logger.Debug("heard more, waiting for the words to stop changing",
@@ -509,6 +520,14 @@ func (c *cadence) Close() {
 			current.timer.Stop()
 		}
 	}
+}
+
+// endedLocked reports whether transcript is a final the model ended its turn on, which is put
+// at once: the end-of-turn policy has had its wait, a number dictated with pauses included,
+// which its points were measured on, and the transcriber writes one final an utterance, so
+// the words will not change. The caller holds the lock.
+func (c *cadence) endedLocked(transcript stt.Transcript) bool {
+	return c.endedBy != "" && transcript.Final() && transcript.Provider == c.endedBy
 }
 
 // finalGapLocked is the wait for words a transcriber has finalized, with any grace still owed
