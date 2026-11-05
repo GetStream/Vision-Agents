@@ -6,6 +6,18 @@
 
 `router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #1781).
 
+### The router counts each vendor failover
+
+`router_failovers_total` counts each time the router moved work off a provider that failed, by `modality`, the `provider` that failed, `stage` (`start` and `use` at request start in the walk, `session` for an STT session, a voice or an LLM response another candidate took over mid-session) and `reason` (`vendor`, or `request`, `customer_key` (the customer's own key or `custom` model) and `cancelled` for failures that are not the vendor's). A failure nothing replaced is no failover (AI-2781, #1785).
+
+### Turn latency on /metrics
+
+`router_agent_turn_latency_seconds{leg,pipeline}` is a histogram of how long a caller waited for the agent's reply. `leg` is `roundtrip` (last transcript revision to first audio published), `speech_end_to_audio` (that plus the transcriber's endpointing) or `speech_end_to_audible` (to the first frame the call's track took); `pipeline` is `cascade` or `native`, the one the turn started on; under `native`, `roundtrip` runs from the model's speech-stopped signal and `speech_end_to_audio` equals it. Only caller turns are observed, and a leg a turn never reached, such as a reply interrupted before its audio, is left out rather than counted as zero. Buckets run 200 ms to 10 s with a line at 1.2 s. `turn_latency_hourly` is unchanged (AI-2826, #1780).
+
+### The router's metrics show its own API requests
+
+`/metrics` has `router_http_requests_total{method,route,status}`, every request the API answered by route template and status class, and `router_http_request_seconds`, how long request/response answers took to begin. Sockets and streams are counted but not timed (#1786).
+
 ### Usage reads name who started the work `origin`
 
 A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names stay for one release, deprecated: the query's `api_key_id` (and `api_key` on the usage service) is still read and must name the same value when given beside `origin`, else 400; events still carry `api_key` with the same value; `who:api_key` still groups. Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). Both specs mark each old query name `deprecated` on the parameter itself, so the generated JavaScript and Go clients flag it (AI-2812).

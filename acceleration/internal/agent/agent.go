@@ -731,6 +731,7 @@ func New(options Options) (*Agent, error) {
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
 	agent.converse.onHeard = options.OnHeard
 	agent.turns = newTurnTracker(owner, agent.finishTurn)
+	agent.turns.native = agent.native
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
@@ -765,6 +766,11 @@ func (a *Agent) finishTurn(turn Turn) {
 		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
 		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
+	// Only a caller's turn is timed from when they stopped: the agent's own lines, a tool's
+	// answer among them, start the clock when the agent starts them.
+	if started.kind == kindCaller {
+		observeTurnLatency(turn, started.pipeline)
+	}
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
