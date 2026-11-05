@@ -383,12 +383,19 @@ func (s *Service) Refused(ctx context.Context, customer string, app int64, callT
 	}
 }
 
+// refusedReadTimeout bounds reading a leg's refusal mark, so a Redis that answers nothing
+// leaves the rest of outcomeTimeout to keeping the leg's end. One read of one key is answered
+// in well under a millisecond by a Redis that is up; a second is long past that.
+const refusedReadTimeout = time.Second
+
 // refused reports whether the call of an inbound leg was marked Refused. One that cannot be
-// read is logged, and taken as not refused.
+// read in refusedReadTimeout is logged, and taken as not refused.
 func (s *Service) refused(ctx context.Context, leg store.CallLeg) bool {
 	if s.redis == nil {
 		return false
 	}
+	ctx, cancel := context.WithTimeout(ctx, refusedReadTimeout)
+	defer cancel()
 	command := s.redis.B().Exists().Key(refusedKey(leg.CustomerID, leg.StreamAppPK, leg.CallType, leg.CallID, leg.StreamSessionID)).Build()
 	found, err := s.redis.Do(ctx, command).AsInt64()
 	if err != nil {
