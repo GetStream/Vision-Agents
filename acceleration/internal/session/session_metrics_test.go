@@ -297,6 +297,44 @@ func (s *SessionSuite) TestASessionWhoseAgentDroppedOutBeforeItTimedOutEndsAsAFa
 	s.Equal(TimeoutHangup, created.endReason(), "the row's end reason changed")
 }
 
+func (s *SessionSuite) TestACreateTurnedAwayIsNoFailedCreate() {
+	// Catches a redelivered hook that lost the race for its session's id, or a create a
+	// router shutting down turned away, counted as a session that failed to open: an alert
+	// on failed="true" would fire on every redelivery and deploy.
+	s.manages()
+	before := s.allEnds()
+
+	first := newJoiningEdge()
+	lost := make(chan error, 1)
+	go func() {
+		_, err := s.manager.Create(s.ctx, Spec{
+			ID: "session-dup", CallID: "call-1", CustomerID: "acme", Edge: first,
+			LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
+		})
+		lost <- err
+	}()
+	<-first.entered
+	s.joins(Spec{ID: "session-dup", CallID: "call-2"})
+	close(first.allowed)
+	s.Require().ErrorIs(<-lost, ErrSessionExists)
+	s.Equal(before, s.allEnds(), "the create that lost the race was counted")
+
+	late := newJoiningEdge()
+	go func() {
+		_, err := s.manager.Create(s.ctx, Spec{
+			CallID: "call-3", CustomerID: "acme", Edge: late,
+			LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
+		})
+		lost <- err
+	}()
+	<-late.entered
+	s.Require().NoError(s.manager.Shutdown())
+	close(late.allowed)
+	s.Require().ErrorContains(<-lost, "the manager is shut down")
+	s.Equal(before["create_failed"], s.ends("create_failed"), "the create the shutdown turned away was counted")
+	s.Equal(before["shutdown"]+1, s.ends("shutdown"))
+}
+
 func (s *SessionSuite) TestEveryEndSeriesIsADocumentedReason() {
 	// Catches a reason outside the documented set, or one whose failed value moved, which a
 	// dashboard or an alert would miss.
@@ -321,6 +359,24 @@ func (s *SessionSuite) TestEveryEndSeriesIsADocumentedReason() {
 		}
 	}
 	s.Equal(documentedEnds, seen)
+}
+
+// joiningEdge is a call that the agent joins only once allowed, saying on entered that it
+// is joining.
+type joiningEdge struct {
+	*quietEdge
+	entered chan struct{}
+	allowed chan struct{}
+}
+
+func newJoiningEdge() joiningEdge {
+	return joiningEdge{quietEdge: newQuietEdge(), entered: make(chan struct{}, 1), allowed: make(chan struct{})}
+}
+
+func (e joiningEdge) Join(ctx context.Context) error {
+	e.entered <- struct{}{}
+	<-e.allowed
+	return e.quietEdge.Join(ctx)
 }
 
 // refusedEdge is a call that will not have the agent.
