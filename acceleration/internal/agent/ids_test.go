@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
@@ -360,6 +362,131 @@ func TestAnIDAJSONResultEchoesOrWritesBesideAnotherWordIsNotPassedOn(t *testing.
 
 	_, _, _, unfound := unfoundID(answered(`{"query":"help"}`, `{"results":"1. #help (C0HELP002) - public_channel"}`), call(`{"channel_id":"C0HELP002"}`), tools, "")
 	assert.False(t, unfound, "a channel the search was not sent and lists as one is returned")
+}
+
+func TestOnlyALinkPartOfLettersAndDigitsIsAnIDOfAnyKind(t *testing.T) {
+	// A number alone in a link is as often a page, a year or a size as an ID, and a word alone
+	// is a name or a section: neither is an ID of a kind the link does not name.
+	tools := []string{"read_channel", "open_case"}
+	user := func(text string) []llm.Message { return []llm.Message{{Role: llm.User, Content: text}} }
+	call := func(arguments string) llm.ToolCall { return llm.ToolCall{Name: "some_tool", Arguments: arguments} }
+	cases := []struct {
+		name      string
+		history   []llm.Message
+		arguments string
+		unfound   bool
+	}{
+		{"a page number in the query", user("see https://team.example.com/list?page=1 thanks"), `{"case_id":"1"}`, true},
+		{"a year in the path", user("https://team.example.com/docs/2024/intro"), `{"case_id":"2024"}`, true},
+		{"a word in the path", user("https://team.example.com/archives/general"), `{"channel_id":"general"}`, true},
+		{"a number in a link whose words name its kind", user("https://team.example.com/cases/48213"), `{"case_id":"48213"}`, false},
+		{"letters and digits in the path", user("https://team.example.com/archives/C0EX4MPL1"), `{"channel_id":"C0EX4MPL1"}`, false},
+		{"letters and digits in the query", user("https://team.example.com/view?cid=C0EX4MPL1"), `{"channel_id":"C0EX4MPL1"}`, false},
+	}
+	for _, c := range cases {
+		_, _, _, unfound := unfoundID(c.history, call(c.arguments), tools, "")
+		assert.Equal(t, c.unfound, unfound, c.name)
+	}
+}
+
+func TestALinkIsReadAsThePersonWroteIt(t *testing.T) {
+	// A shared channel passes the person's text on inside a JSON envelope, which writes & as
+	// \u0026, and a chat may send it escaped for HTML, & as &amp;: every value of the link's
+	// query is still one the person gave.
+	tools := []string{"read_channel"}
+	channel := llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":"C0EX4MPL1"}`}
+	link := "https://team.example.com/view?thread=1793120000.000100&cid=C0EX4MPL1"
+	envelope, err := json.Marshal(struct {
+		Author struct {
+			ID string `json:"user_id"`
+		} `json:"author"`
+		Text string `json:"text"`
+	}{Text: "what does " + link + " say"})
+	require.NoError(t, err)
+	require.Contains(t, string(envelope), `\u0026cid=`, "the envelope escapes the link's &")
+	user := func(text string) []llm.Message { return []llm.Message{{Role: llm.User, Content: text}} }
+	cases := []struct {
+		name    string
+		history []llm.Message
+		unfound bool
+	}{
+		{"a link in a JSON envelope", user(string(envelope)), false},
+		{"a link escaped for HTML", user("what does https://team.example.com/view?thread=1793120000.000100&amp;cid=C0EX4MPL1 say"), false},
+		{"a link in HTML-escaped angle brackets", user("&lt;https://team.example.com/archives/C0EX4MPL1&gt;"), false},
+		{"a link under a key of a JSON object", user(`{"https://team.example.com/archives/C0EX4MPL1":"the thread"}`), false},
+		{"a JSON envelope with no link", user(`{"author":{"user_id":"C0EX4MPL1"},"text":"read C0EX4MPL1"}`), true},
+		{"an HTML-escaped link the agent wrote", []llm.Message{
+			{Role: llm.Assistant, Content: "Is it https://team.example.com/view?a=1&amp;cid=C0EX4MPL1 you mean?"},
+			{Role: llm.User, Content: "yes"},
+		}, true},
+	}
+	for _, c := range cases {
+		_, _, _, unfound := unfoundID(c.history, channel, tools, "")
+		assert.Equal(t, c.unfound, unfound, c.name)
+	}
+}
+
+func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
+	// A line written for people names a thing by its kind, its name and its ID side by side.
+	// Another ID on the line, the creator's or the sender's, is not one of that kind.
+	tools := []string{"search_channels", "read_channel", "lookup_phone_number"}
+	answered := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.User, Content: "What's new?"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "search_channels", Arguments: `{"query":"help"}`}}},
+			{Role: llm.ToolResult, ToolCallID: "c1", Content: result},
+		}
+	}
+	call := func(arguments string) llm.ToolCall { return llm.ToolCall{Name: "some_tool", Arguments: arguments} }
+	cases := []struct {
+		name      string
+		result    string
+		arguments string
+		unfound   bool
+	}{
+		{"a listed channel with its creator", `{"results":"1. #help (C0HELP002) - public_channel - Creator: Ana Lind - 2026-01-02 - Not Archived"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after its kind and name", `{"messages":"Channel: #help (C0HELP002)\nhello"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after its kind, name and the word ID", `{"messages":"Channel: #help (ID: C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after a name and a dash", `{"messages":"Channel #help - C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a kind of two words", `{"results":"Phone number P0NUM001 - active"}`, `{"phone_number_id":"P0NUM001"}`, false},
+		{"a person by a channel's name", `{"messages":"Channel #x by U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a creator at the end of a listed channel", `{"results":"1. #help (C0HELP002) - public_channel - created by U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a channel's name and a person's ID after it", `{"messages":"Channel #help Ana U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"the word ID and a person's ID after a name", `{"messages":"Channel #help by ID U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+	}
+	for _, c := range cases {
+		_, _, _, unfound := unfoundID(answered(c.result), call(c.arguments), tools, "")
+		assert.Equal(t, c.unfound, unfound, c.name)
+	}
+}
+
+func TestAnArgumentSentEscapedIsStillAnEcho(t *testing.T) {
+	// The model may write an argument with JSON escapes; a result writing it back still only
+	// echoes it.
+	tools := []string{"search_channels", "read_channel"}
+	answered := func(arguments, result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.User, Content: "Can you help?"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "search_channels", Arguments: arguments}}},
+			{Role: llm.ToolResult, ToolCallID: "c1", Content: result},
+		}
+	}
+	listed := func(id string) string { return `{"results":"1. #fake (` + id + `) - public_channel"}` }
+	cases := []struct {
+		name      string
+		arguments string
+		id        string
+		unfound   bool
+	}{
+		{"a query written in unicode escapes", `{"query":"\u0043\u0030FAKE01"}`, "C0FAKE01", true},
+		{"a query that is a number", `{"query":12345678}`, "12345678", true},
+		{"arguments that are not JSON", `C0FAKE01`, "C0FAKE01", true},
+		{"a query that does not hold the ID", `{"query":"\u0068elp"}`, "C0FAKE01", false},
+	}
+	for _, c := range cases {
+		_, _, _, unfound := unfoundID(answered(c.arguments, listed(c.id)), llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":"` + c.id + `"}`}, tools, "")
+		assert.Equal(t, c.unfound, unfound, c.name)
+	}
 }
 
 func TestAnIDListedUnderAPluralKeyIsPassedOn(t *testing.T) {

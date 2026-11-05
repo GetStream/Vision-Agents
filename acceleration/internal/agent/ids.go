@@ -130,12 +130,11 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				}
 			})
 		}
-		// A line written out gives an ID only beside the word for what it is, and only one
-		// the call it answers was not sent: "No bookings found for Ana at 7pm" does not
-		// return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
+		// A line written out gives an ID only beside the word for what it is (besideKind), and
+		// only one the call it answers was not sent: "No bookings found for Ana at 7pm" does
+		// not return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
 		returned = returned || slices.ContainsFunc(lines, func(written line) bool {
-			return holdsValue(written.text, wanted) && !strings.Contains(alphanumeric(written.sent), wanted) &&
-				strings.Contains(strings.ToLower(written.text), entityOf(name))
+			return besideKind(written.text, wanted, entityOf(name)) && !strings.Contains(alphanumeric(written.sent), wanted)
 		})
 		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
 			return name, text, ids, true
@@ -855,9 +854,51 @@ func prose(value any) []string {
 // holdsValue reports whether a result written as text gives wanted as one of its words, as
 // a bare ID answered alone does. wanted is already alphanumeric.
 func holdsValue(result, wanted string) bool {
-	return slices.ContainsFunc(strings.FieldsFunc(result, func(r rune) bool {
+	return slices.ContainsFunc(idWords(result), func(word string) bool { return alphanumeric(word) == wanted })
+}
+
+// idWords are the words of text an ID can be, its _, - and # kept: "T-6631" is one word.
+func idWords(text string) []string {
+	return strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("_-#", r)
-	}), func(word string) bool { return alphanumeric(word) == wanted })
+	})
+}
+
+// besideKind reports whether a line written for people gives wanted as the ID of kind. A line
+// names a thing by its kind, its name and its ID side by side: "Channel: #help (ID: C0…)",
+// "#help (C0…) - public_channel". So between the word for the kind and the ID stands at most
+// one word, the thing's name, besides the word "ID". Any more ties the ID to another word: in
+// "Channel #x by U0…", U0… is whoever made the channel.
+func besideKind(line, wanted, kind string) bool {
+	var words []string
+	for _, word := range idWords(line) {
+		// A mark alone, the dash in "#help - C0…", is no word.
+		if alphanumeric(word) != "" {
+			words = append(words, strings.ToLower(word))
+		}
+	}
+	// A kind may take more than one word: "phone number" for phone_number_id.
+	size := len(strings.Fields(kind))
+	for at, word := range words {
+		if alphanumeric(word) != wanted {
+			continue
+		}
+		for start := 0; start+size <= len(words); start++ {
+			if !strings.Contains(strings.Join(words[start:start+size], " "), kind) {
+				continue
+			}
+			var between []string
+			if at < start {
+				between = words[at+1 : start]
+			} else if at >= start+size {
+				between = words[start+size : at]
+			}
+			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= 1 {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // alphanumeric lowercases text and drops everything but letters and digits, so "T-6631"
