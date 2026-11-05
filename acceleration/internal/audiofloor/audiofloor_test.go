@@ -89,6 +89,9 @@ type fakeServer struct {
 	// it.
 	decideAfter time.Duration
 	wordsAfter  time.Duration
+	// unfinishedAfter is how long a decision about words still coming, a check over the
+	// agent, takes on top of decideAfter.
+	unfinishedAfter time.Duration
 	// withWords counts the decisions asked for their words too, and agents the agents each
 	// decision was about.
 	withWords int
@@ -193,9 +196,9 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.turns = append(f.turns, turn)
 		f.agents = append(f.agents, r.URL.Query().Get("agent"))
-		if f.decideAfter > 0 {
+		if after := f.decideAfter + map[bool]time.Duration{true: f.unfinishedAfter}[turn.Unfinished]; after > 0 {
 			f.mu.Unlock()
-			time.Sleep(f.decideAfter)
+			time.Sleep(after)
 			f.mu.Lock()
 		}
 		_, _ = w.Write([]byte(f.decision + "\n"))

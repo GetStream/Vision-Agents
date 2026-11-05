@@ -272,18 +272,19 @@ func (p pauseAsker) Speaking() bool {
 // (overlapRuled): its own voice heard back on the caller's line is dropped from the words
 // first, as from any chorus-asr transcript, and an echo alone, or a murmur, is no reason to
 // stop.
-func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) {
+func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) bool {
 	a := p.a
 	left, ok := a.droppingEcho(transcriptOf(participant, ruled), "a check over the agent")
 	if !ok {
-		return
+		return false
 	}
 	if !takesFloor(left) {
 		a.logger.Debug("a check over the agent ruled on a murmur, which is no reason to stop",
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
-		return
+		return false
 	}
 	a.act(a.converse.Overheard(ruled.Ruling, participant, left, a.floor()))
+	return false
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's
