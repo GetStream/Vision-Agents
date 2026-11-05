@@ -362,6 +362,19 @@ func (s *CloserSuite) TestACardIsSummarizedAsItsAuthorAfterTheNumberWasUnlinked(
 	s.Equal(store.EpisodeSummarized, s.status(texted))
 }
 
+// A card that cannot be read has no author to update it as: the episode is summary_failed
+// at once, with no LLM response paid for a summary nobody could write into it.
+func (s *CloserSuite) TestACardThatIsGoneFailsTheSummaryWithoutAskingTheModel() {
+	opened, _ := s.idleThread("where is my order 12?")
+	// As Stream answers for a card hard-deleted since («message … doesn't exist», staging).
+	s.chat.FailWith(http.MethodGet, "/messages/"+opened.Episode.CardMessageID, http.StatusNotFound)
+
+	s.Require().NoError(s.closer.Sweep(s.ctx))
+
+	s.Equal(store.EpisodeSummaryFailed, s.status(opened))
+	s.Empty(s.fast.requests(), "no summary was asked for")
+}
+
 // The card is updated in place, which Stream sends as message.updated: no new message, so
 // nothing reaches the message hook, which asks for message.new only.
 func (s *CloserSuite) TestACardUpdateWritesNoNewMessage() {

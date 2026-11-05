@@ -341,9 +341,6 @@ func (c *Closer) authorOf(ctx context.Context, episode store.ClosedEpisode) (str
 	if err != nil {
 		return "", stack.Wrap(fmt.Errorf("omnichannel: read the card of episode %s: %w", episode.ID, err))
 	}
-	if !writtenAsCard(r.Data.Message) {
-		return "", stack.Wrap(fmt.Errorf("omnichannel: the message of episode %s is not its card", episode.ID))
-	}
 	return r.Data.Message.User.ID, nil
 }
 
