@@ -19877,7 +19877,10 @@ export interface operations {
     readonly getSpend: {
         readonly parameters: {
             readonly query: {
-                /** @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin. */
+                /**
+                 * @deprecated
+                 * @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+                 */
                 readonly api_key_id?: string;
                 /** @description Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several. */
                 readonly category?: readonly string[];
@@ -20178,7 +20181,10 @@ export interface operations {
     readonly listUsageEvents: {
         readonly parameters: {
             readonly query?: {
-                /** @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin. */
+                /**
+                 * @deprecated
+                 * @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+                 */
                 readonly api_key_id?: string;
                 /** @description With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused. */
                 readonly app_id?: string;
