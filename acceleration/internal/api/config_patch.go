@@ -28,9 +28,9 @@ type AgentConfigPatch struct {
 	Greeting           *Greeting                `json:"greeting,omitempty" doc:"Replaces the greeting whole. An empty text removes it."`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail."`
 	Skills             *[]string                `json:"skills,omitempty"`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
 	Keyterms           *[]string                `json:"keyterms,omitempty"`
@@ -137,8 +137,6 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	original := config
 	heard := config.STT
 	was := sandboxOfConfig(config)
-	// The row may still name them from before they were refused; a patch writes none.
-	config.Plugins, config.PluginEvents, config.MCPServers = nil, nil, nil
 
 	if message, ok := configComplaint(ctx, AgentConfigRequest{
 		Name:           override(config.Name, patch.Name),

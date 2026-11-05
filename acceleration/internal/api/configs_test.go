@@ -16,6 +16,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/stretchr/testify/require"
 )
 
 type ConfigsSuite struct {
@@ -554,25 +555,31 @@ func (s *ConfigsSuite) TestAConfigStoredNamingPluginsAndMCPServersReadsWithoutTh
 	for _, key := range []string{"id", "created_at", "updated_at", "sync_hash", "duration"} {
 		delete(read, key)
 	}
-	var saved AgentConfig
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config.ID, read, &saved))
-	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.ID)
-	s.Require().NoError(err)
-	s.Empty(stored.Plugins, "a save writes none")
-	s.Empty(stored.PluginEvents)
-	s.Empty(stored.MCPServers)
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut, "/v1/agents/configs/"+config.ID, read, nil))
 }
 
 // storedWithPlugins is a config whose row names a plugin, a plugin event and an MCP server, as
-// one saved before they were refused does: written by the store, as no request can now.
+// one saved before they were refused does: written into the columns, as no request can now.
 func (s *ConfigsSuite) storedWithPlugins() store.AgentConfig {
 	config := store.AgentConfig{CustomerID: s.customerID(), Name: "legacy-" + s.utils.uuid(), Mode: "text",
-		Instructions: "Be brief.",
-		Plugins:      []store.PluginEntry{{Name: "linear"}},
-		PluginEvents: []store.PluginEvent{{Plugin: "linear", Event: "issue.created"}},
-		MCPServers:   []store.MCPServer{{Name: "wwsd", URL: "https://mcp.wwsd.invalid/mcp"}}}
+		Instructions: "Be brief."}
 	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+	nameRetired(s.T(), s.store, config.ID)
 	return config
+}
+
+// nameRetired writes a plugin, a plugin event and an MCP server into the columns of config's
+// row, which the model no longer has, as a save before they were refused left them.
+func nameRetired(t *testing.T, stored *store.Store, config string) {
+	t.Helper()
+	result, err := stored.DB().ExecContext(context.Background(), `UPDATE agent_configs
+		SET plugins = '["linear"]', plugin_events = '[{"plugin":"linear","event":"issue.created"}]',
+		    mcp_servers = '[{"name":"wwsd","url":"https://mcp.wwsd.invalid/mcp"}]'
+		WHERE id = ?`, config)
+	require.NoError(t, err)
+	written, err := result.RowsAffected()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, written)
 }
 
 func (s *ConfigsSuite) TestAVoiceConfigPinnedToABatchTranscriberIsRefused() {

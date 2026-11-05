@@ -512,7 +512,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         [System.Obsolete]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -528,7 +528,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
         /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
@@ -674,7 +674,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         [System.Obsolete]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -690,7 +690,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
         /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
@@ -7988,105 +7988,6 @@ namespace GetStream.VisionAgents.Models
 
     }
 
-    /// <summary>
-    /// An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class McpServer
-    {
-
-        /// <summary>
-        /// How the server described itself when the config was saved. Absent when it did not answer.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("branding")]
-        public McpServerBranding? Branding { get; set; } = default!;
-
-        /// <summary>
-        /// What its tools are prefixed with, as &lt;name&gt;__&lt;tool&gt;. Lowercase, without __, and not a catalog plugin's id.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("needs_login")]
-        public bool? NeedsLogin { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes")]
-        public System.Collections.Generic.List<string>? Scopes { get; set; } = default!;
-
-        /// <summary>
-        /// Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("tools")]
-        public System.Collections.Generic.List<string>? Tools { get; set; } = default!;
-
-        /// <summary>
-        /// Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("url")]
-        public string Url { get; set; } = default!;
-
-        /// <summary>
-        /// Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class McpServerBranding
-    {
-
-        [System.Text.Json.Serialization.JsonPropertyName("description")]
-        public string? Description { get; set; } = default!;
-
-        /// <summary>
-        /// Its first icon served over https, as the server links it.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("icon_url")]
-        public string? IconUrl { get; set; } = default!;
-
-        /// <summary>
-        /// Its display title, or its name when it gives none.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("title")]
-        public string? Title { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("version")]
-        public string? Version { get; set; } = default!;
-
-        [System.Text.Json.Serialization.JsonPropertyName("website_url")]
-        public string? WebsiteUrl { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
     [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
     public partial class MessageContent
     {
@@ -8815,117 +8716,6 @@ namespace GetStream.VisionAgents.Models
 
         [System.Text.Json.Serialization.JsonPropertyName("vendor_call_id")]
         public string VendorCallId { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginEntry
-    {
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginEvent
-    {
-
-        /// <summary>
-        /// The event's filters, as its inputSchema describes them.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("arguments")]
-        public System.Collections.Generic.Dictionary<string, object>? Arguments { get; set; } = default!;
-
-        /// <summary>
-        /// The event's name, as the server's events/list gives it, such as comment.created.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("event")]
-        public string Event { get; set; } = default!;
-
-        /// <summary>
-        /// What the agent does with the event when it arrives, added to its instructions for that conversation.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("instructions")]
-        public string? Instructions { get; set; } = default!;
-
-        /// <summary>
-        /// A catalog plugin the config names under plugins.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("plugin")]
-        public string Plugin { get; set; } = default!;
-
-        private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
-
-        [System.Text.Json.Serialization.JsonExtensionData]
-        public System.Collections.Generic.IDictionary<string, object> AdditionalProperties
-        {
-            get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
-            set { _additionalProperties = value; }
-        }
-
-    }
-
-    /// <summary>
-    /// One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class PluginWithOptions
-    {
-
-        /// <summary>
-        /// A catalog plugin id, such as linear.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("name")]
-        public string Name { get; set; } = default!;
-
-        /// <summary>
-        /// Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("readonly")]
-        public bool? Readonly { get; set; } = default!;
-
-        /// <summary>
-        /// The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("scopes")]
-        public System.Collections.Generic.List<string>? Scopes { get; set; } = default!;
-
-        /// <summary>
-        /// Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("tools")]
-        public System.Collections.Generic.List<string>? Tools { get; set; } = default!;
-
-        /// <summary>
-        /// Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("toolsets")]
-        public System.Collections.Generic.List<string>? Toolsets { get; set; } = default!;
-
-        /// <summary>
-        /// Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("user")]
-        public bool? User { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
@@ -13746,7 +13536,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("mcp_servers")]
         [System.Obsolete]
-        public System.Collections.Generic.List<McpServer>? McpServers { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? McpServers { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("mode")]
         public string? Mode { get; set; } = default!;
@@ -13762,7 +13552,7 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("plugin_events")]
         [System.Obsolete]
-        public System.Collections.Generic.List<PluginEvent>? PluginEvents { get; set; } = default!;
+        public System.Collections.Generic.List<System.Collections.Generic.Dictionary<string, object>>? PluginEvents { get; set; } = default!;
 
         /// <summary>
         /// No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.

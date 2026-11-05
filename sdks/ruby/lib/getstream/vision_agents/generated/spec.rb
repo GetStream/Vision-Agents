@@ -2403,14 +2403,6 @@ module GetStream
           properties: %w[actor name].freeze,
           required: %w[actor].freeze, open: false
         }.freeze,
-        "McpServer" => {
-          properties: %w[branding name needs_login scopes tools url user].freeze,
-          required: %w[name url].freeze, open: false
-        }.freeze,
-        "McpServerBranding" => {
-          properties: %w[description icon_url title version website_url].freeze,
-          required: [].freeze, open: false
-        }.freeze,
         "ModelCallTiming" => {
           properties: %w[duration_ms error_code input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
           required: %w[model provider started_at success].freeze, open: false
@@ -2474,14 +2466,6 @@ module GetStream
         "PlacedCall" => {
           properties: %w[session_id status vendor vendor_call_id].freeze,
           required: %w[status vendor_call_id].freeze, open: false
-        }.freeze,
-        "PluginEvent" => {
-          properties: %w[arguments event instructions plugin].freeze,
-          required: %w[plugin event].freeze, open: false
-        }.freeze,
-        "PluginWithOptions" => {
-          properties: %w[name readonly scopes tools toolsets user].freeze,
-          required: %w[name].freeze, open: false
         }.freeze,
         "Policy" => {
           properties: %w[allowed_models balance_warning_micros budget data_policy prompt_injection quota require_own_stream_app resume_history tags tool_output_retention].freeze,

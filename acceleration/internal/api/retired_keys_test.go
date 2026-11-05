@@ -130,9 +130,9 @@ func (s *ConfigsSuite) TestARetiredKeyThatNamesNothingSavesAsOnBase() {
 	}
 }
 
-// TestAPatchAndASyncOfARowStillNamingThemSaveAndWriteNone: what the row names from before the
-// refusal neither refuses nor survives a patch or a sync that leaves the keys out.
-func (s *ConfigsSuite) TestAPatchAndASyncOfARowStillNamingThemSaveAndWriteNone() {
+// TestAPatchAndASyncOfARowStillNamingThemSaveAndShowNone: what the row names from before the
+// refusal neither refuses a patch or a sync that leaves the keys out nor shows in a read.
+func (s *ConfigsSuite) TestAPatchAndASyncOfARowStillNamingThemSaveAndShowNone() {
 	patched := s.storedWithPlugins()
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+patched.ID,
 		map[string]any{"instructions": "Be briefer."}, nil))
@@ -144,9 +144,11 @@ func (s *ConfigsSuite) TestAPatchAndASyncOfARowStillNamingThemSaveAndWriteNone()
 		stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.ID)
 		s.Require().NoError(err)
 		s.Equal("Be briefer.", stored.Instructions)
-		s.Empty(stored.Plugins)
-		s.Empty(stored.PluginEvents)
-		s.Empty(stored.MCPServers)
+		status, read := s.fields(http.MethodGet, "/v1/agents/configs/"+config.ID, nil, "")
+		s.Equal(http.StatusOK, status)
+		for _, retired := range retiredKeys {
+			s.NotContains(read.keys, retired.key)
+		}
 	}
 }
 
@@ -173,6 +175,37 @@ func (s *ConfigsSuite) TestARetiredKeyOfTheWrongShapeIsRefusedByTheSchema() {
 			s.Equal(http.StatusBadRequest, status)
 			s.Contains(string(raw), codeValidationFailed)
 		})
+	}
+}
+
+// TestAnEntryOfEitherShapeABaseSaveTookIsRefusedAsRetired: a plugins entry may be a catalog id
+// or an object, as the base took either, and both get the refusal rather than a schema error
+// (probe on dd9794408: 400 invalid_request with the retired text for each).
+func (s *ConfigsSuite) TestAnEntryOfEitherShapeABaseSaveTookIsRefusedAsRetired() {
+	for label, entry := range map[string]any{"an id": "sentry", "an object": map[string]any{"name": "linear", "readonly": true}} {
+		s.Run(label, func() {
+			status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+				map[string]any{"name": "refused-" + s.utils.uuid(), "plugins": []any{entry}})
+
+			s.Equal(http.StatusBadRequest, status)
+			s.Equal(retiredKeys[0].refusal, failure)
+		})
+	}
+}
+
+// An entry of plugin_events or mcp_servers that is not an object is refused by the schema, as
+// on the base (probe on dd9794408: 400 validation_failed for each).
+func (s *ConfigsSuite) TestAPluginEventOrMCPServerThatIsNotAnObjectIsRefusedByTheSchema() {
+	for _, key := range []string{"plugin_events", "mcp_servers"} {
+		for label, sent := range map[string]any{"a number": []any{5}, "a string": []any{"linear"}, "not a list": "linear"} {
+			s.Run(key+"/"+label, func() {
+				status, raw := s.serverClient.call(http.MethodPost, "/v1/agents/configs",
+					map[string]any{"name": "refused-" + s.utils.uuid(), key: sent})
+
+				s.Equal(http.StatusBadRequest, status)
+				s.Contains(string(raw), codeValidationFailed)
+			})
+		}
 	}
 }
 

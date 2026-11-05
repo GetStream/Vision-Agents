@@ -3,6 +3,7 @@ package api
 import (
 	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"maps"
@@ -50,9 +51,20 @@ var (
 		"custom connector, so create one for its URL and name it under connectors")
 )
 
+// retiredPlugin is one entry of a request's plugins: a catalog id or an object, as a client
+// sent before connectors. Nothing in it is read, but its shape is still checked, so an entry
+// that never was one, such as a number, is refused by the schema (validation_failed) as before.
+type retiredPlugin struct{ json.RawMessage }
+
+func (retiredPlugin) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{OneOf: []*huma.Schema{{Type: huma.TypeString}, {Type: huma.TypeObject}}}
+}
+
 // retiredComplaint is the refusal of a save naming any plugin, plugin event or MCP server, or
-// nil. An empty list names nothing, so a client that sends one saves as before.
-func retiredComplaint(plugins *[]PluginEntry, events *[]PluginEvent, servers *[]McpServer) error {
+// nil. An empty list names nothing, so a client that sends one saves as before. The entries
+// of plugin_events and mcp_servers are objects, as they were: a non-object one is refused by
+// the schema.
+func retiredComplaint(plugins *[]retiredPlugin, events, servers *[]map[string]any) error {
 	switch {
 	case plugins != nil && len(*plugins) > 0:
 		return errPluginsRetired
@@ -63,10 +75,6 @@ func retiredComplaint(plugins *[]PluginEntry, events *[]PluginEvent, servers *[]
 	}
 	return nil
 }
-
-// mcpBrandingTimeout is how long saving a config waits for its MCP servers to describe
-// themselves.
-const mcpBrandingTimeout = 5 * time.Second
 
 // listAgentConfigs returns the calling customer's configs, newest first.
 func (s *Server) listAgentConfigs(ctx context.Context, request *listAgentConfigsRequest) (*listAgentConfigsResponse, error) {
@@ -1884,9 +1892,9 @@ type AgentConfigRequest struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
-	Plugins            *[]PluginEntry           `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	PluginEvents       *[]PluginEvent           `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
-	McpServers         *[]McpServer             `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
+	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" maxItems:"64" doc:"The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused."`
 	Channels           *AgentChannels           `json:"channels,omitempty" doc:"Lines this agent answers on besides Stream Chat: a WhatsApp number, a number to text, an iMessage line. Each must be connected with POST /v1/agents/channels."`
 	Sandbox            *Sandbox                 `json:"sandbox,omitempty"`
@@ -2282,7 +2290,7 @@ func (ConnectorOnInterrupt) Schema(registry huma.Registry) *huma.Schema {
 }
 
 // ConnectorBindingEvent is one MCP event a binding subscribes to on its connection's server.
-// The cap of 32 on a binding's events is plugin_events', a choice that is unverified.
+// The cap of 32 on a binding's events, the maxItems on its Events field, is a choice that is unverified.
 type ConnectorBindingEvent struct {
 	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as issue.created."`
 	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`
