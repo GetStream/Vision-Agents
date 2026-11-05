@@ -409,7 +409,9 @@ func (s *DataMoveSuite) cursorOf(exported string) int64 {
 // which refuses to be one when ROUTER_POSTGRES_SHARD_DSN gives it shards (see the refusal tests
 // below).
 func (s *DataMoveSuite) skipOnARouterWithShards() {
-	if s.store.HasShards() {
+	// Sharded, not HasShards: the refusal is what HasShards decides, and a test that skipped on
+	// it would skip, rather than fail, if it said true for every router.
+	if s.store.Sharded() {
 		s.T().Skip("a router with shards refuses to be a move's source")
 	}
 }
