@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -409,9 +410,15 @@ func (s *Server) endCallEpisodes(r *http.Request, origin hookOrigin, event callE
 //
 // It is empty when the caller has not been added to the session yet, which is normal: the
 // call is dispatched the moment it starts, and the agent joining it will see the participant
-// whether or not this did.
+// whether or not this did. A number written with 00 for the plus is handed over in E.164, as
+// every other number in the API is; one that does not say it is international is handed over
+// as it came, since its country cannot be told.
 func callerOf(event callEvent) string {
-	return phoneCallerOf(event).number
+	number := phoneCallerOf(event).number
+	if person, err := omnichannel.Phone(number); err == nil {
+		return person.Address
+	}
+	return number
 }
 
 // phoneCaller is the phone in a call, and its user session there.
