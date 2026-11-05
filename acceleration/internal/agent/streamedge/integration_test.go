@@ -56,8 +56,9 @@ func (s *StreamEdgeIntegrationSuite) join(userID string) *Edge {
 
 func (s *StreamEdgeIntegrationSuite) TestTheAgentsConnectionComingUpEndsItsStartUp() {
 	// Catches the publisher's connection coming up and the media stage of the start-up the
-	// edge joined with never timed, or timed again by the subscriber's.
-	timed, failed, err := mediaStartups()
+	// edge joined with never timed, timed again by the subscriber's, or timed from another
+	// instant than the connection's, such as the start of the join, which reads as no wait.
+	timed, waited, failed, err := mediaStartups()
 	s.Require().NoError(err)
 	startup := agent.NewStartup(agent.StartupPhone, time.Now())
 	edge, err := New(Options{CallID: s.callID, User: User{ID: "agent", Name: "agent"},
@@ -65,17 +66,23 @@ func (s *StreamEdgeIntegrationSuite) TestTheAgentsConnectionComingUpEndsItsStart
 	s.Require().NoError(err)
 	startup.JoinStarted(time.Now())
 	s.Require().NoError(edge.Join(agent.WithStartup(s.ctx, startup)))
-	startup.JoinEnded(time.Now())
+	joined := time.Now()
+	startup.JoinEnded(joined)
 	s.T().Cleanup(func() { _ = edge.Leave() })
 
 	s.Eventually(func() bool {
-		now, _, err := mediaStartups()
+		now, _, _, err := mediaStartups()
 		return err == nil && now == timed+1
 	}, audioArrivesWithin, 50*time.Millisecond, "the connection coming up was not timed")
-	now, failedNow, err := mediaStartups()
+	since := time.Since(joined)
+	now, waitedNow, failedNow, err := mediaStartups()
 	s.Require().NoError(err)
 	s.Equal(timed+1, now)
 	s.Equal(failed, failedNow)
+	// The publisher's connection comes up hundreds of ms after the join (its connected_ms
+	// less join_ms in the edge's logs).
+	s.Greater(waitedNow-waited, 0.0, "the media stage was timed at no wait")
+	s.LessOrEqual(waitedNow-waited, since.Seconds(), "the media stage began before the join ended")
 }
 
 // tone is a second of 440 Hz at the rate a voice provider produces, which is loud enough to

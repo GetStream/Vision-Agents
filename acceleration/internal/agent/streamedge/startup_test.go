@@ -11,12 +11,12 @@ import (
 )
 
 // mediaStartups is, from the registry /metrics serves, how many phone start-ups
-// router_agent_startup_seconds timed in the media stage and how many
-// router_agent_startup_failures_total counted there, by cause.
-func mediaStartups() (timed uint64, failed map[string]float64, err error) {
+// router_agent_startup_seconds timed in the media stage and the seconds they took, and how
+// many router_agent_startup_failures_total counted there, by cause.
+func mediaStartups() (timed uint64, waited float64, failed map[string]float64, err error) {
 	families, err := prometheus.DefaultGatherer.Gather()
 	if err != nil {
-		return 0, nil, err
+		return 0, 0, nil, err
 	}
 	failed = map[string]float64{}
 	for _, family := range families {
@@ -31,16 +31,17 @@ func mediaStartups() (timed uint64, failed map[string]float64, err error) {
 			switch family.GetName() {
 			case "router_agent_startup_seconds":
 				timed = metric.GetHistogram().GetSampleCount()
+				waited = metric.GetHistogram().GetSampleSum()
 			case "router_agent_startup_failures_total":
 				failed[labels["cause"]] = metric.GetCounter().GetValue()
 			}
 		}
 	}
-	return timed, failed, nil
+	return timed, waited, failed, nil
 }
 
 func (s *StreamEdgeSuite) startupSeries() (uint64, map[string]float64) {
-	timed, failed, err := mediaStartups()
+	timed, _, failed, err := mediaStartups()
 	s.Require().NoError(err)
 	return timed, failed
 }
@@ -90,8 +91,32 @@ func (s *StreamEdgeSuite) TestAnOutgoingConnectionThatNeverComesUpIsAMediaTimeou
 }
 
 func (s *StreamEdgeSuite) TestAnEdgeLeftBeforeItsConnectionCameUpCountsNothing() {
-	// Catches a session that ended for its own reason before the connection was up, such as a
-	// caller hanging up at once, counted as a start-up that timed out.
+	// Catches an agent that left the call before its connection was up, such as on a caller
+	// hanging up at once, counted as a start-up that timed out.
+	edge, ctx := s.unconnected()
+	timed, failed := s.startupSeries()
+
+	watched := make(chan struct{})
+	go func() {
+		edge.reportICE(ctx, time.Now())
+		close(watched)
+	}()
+	// What Leave does first: leaving a call this edge never joined would panic in the SDK.
+	close(edge.leftDone)
+	select {
+	case <-watched:
+	case <-time.After(5 * time.Second):
+		s.FailNow("the watch did not stop when the edge left")
+	}
+
+	timedAfter, failedAfter := s.startupSeries()
+	s.Equal(timed, timedAfter)
+	s.Equal(failed, failedAfter)
+}
+
+func (s *StreamEdgeSuite) TestASessionEndedBeforeItsConnectionCameUpCountsNothing() {
+	// Catches a session whose context ended before the connection was up counted as a
+	// start-up that timed out.
 	edge, ctx := s.unconnected()
 	timed, failed := s.startupSeries()
 	ctx, cancel := context.WithCancel(ctx)
