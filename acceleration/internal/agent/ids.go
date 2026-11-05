@@ -868,8 +868,13 @@ func idWords(text string) []string {
 // names a thing by its kind, its name and its ID side by side: "Channel: #help (ID: C0…)",
 // "#help (C0…) - public_channel". So between the word for the kind and the ID stands at most
 // one word, the thing's name, besides the word "ID". Any more ties the ID to another word: in
-// "Channel #x by U0…", U0… is whoever made the channel.
+// "Channel #x by U0…", U0… is whoever made the channel. A label ends that doubt: in
+// "Channel: Group DM (ID: C0…)" the label "Channel:" opens a field whose value is the name
+// and the ID in brackets, so a name of any length stands between them (labelledName).
 func besideKind(line, wanted, kind string) bool {
+	if labelledName(line, wanted, kind) {
+		return true
+	}
 	var words []string
 	for _, word := range idWords(line) {
 		// A mark alone, the dash in "#help - C0…", is no word.
@@ -896,6 +901,31 @@ func besideKind(line, wanted, kind string) bool {
 			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= 1 {
 				return true
 			}
+		}
+	}
+	return false
+}
+
+// bracketedID is an ID in brackets, with or without the word "ID": "(C0…)", "(ID: C0…)".
+var bracketedID = regexp.MustCompile(`\((?:(?i:id):\s*)?([\w-]+)\)`)
+
+// labelledName reports whether line has a field "<kind>: <name> (<wanted>)": the label of kind,
+// then the name, then wanted in brackets. The field ends at a " - " or another label or
+// bracket, so "Creator: Ana Lind (<@U0…)" and "Channel #x by U0…" give no channel.
+func labelledName(line, wanted, kind string) bool {
+	for _, found := range bracketedID.FindAllStringSubmatchIndex(line, -1) {
+		if alphanumeric(line[found[2]:found[3]]) != wanted {
+			continue
+		}
+		field := strings.ToLower(line[:found[0]])
+		if cut := strings.LastIndexAny(field, "()\n"); cut >= 0 {
+			field = field[cut+1:]
+		}
+		if cut := strings.LastIndex(field, " - "); cut >= 0 {
+			field = field[cut+3:]
+		}
+		if at := strings.LastIndex(field, kind+":"); at >= 0 && !strings.Contains(field[at+len(kind)+1:], ":") {
+			return true
 		}
 	}
 	return false
