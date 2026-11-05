@@ -140,10 +140,15 @@ sources:
     # opened 2026-11-04), names these, each as «An AI app searched ...» or «An AI app read
     # ...» on behalf of a user. It names slack_send_message, slack_create_canvas and
     # slack_update_canvas as sending, creating and updating, so they are left out with every
-    # other tool that sends, schedules, drafts, reacts, creates, updates or uploads. Left out
-    # too, with no vendor page naming what they do: slack_read_file (which [mcp] does not
-    # say returns the content or a URL), slack_read_list, slack_list_channel_members,
-    # slack_list_user_channels and slack_search_emojis, as is a tool added later.
+    # other tool that sends, schedules, drafts, reacts, creates, updates or uploads, as is a
+    # tool added later. The audit page names no more, so the rest come from the server's
+    # tools/list descriptions, read 2026-11-04: slack_read_list reads a list's schema and
+    # records, slack_list_channel_members lists a channel's members, slack_list_user_channels
+    # lists the channels the person is in and slack_search_emojis searches the workspace's
+    # custom emojis; each says it reads and nothing else. slack_read_file returns the file's
+    # content in the reply (text, or base64 for a binary file) and no URL, so it brings data
+    # in as google_drive.yaml's download_file_content does, and is listed. Of the 26 tools the
+    # server lists, the 13 left out all send, schedule, draft, react, create, update or upload.
     read_only_tools:
       - slack_search_public
       - slack_search_public_and_private
@@ -153,6 +158,11 @@ sources:
       - slack_read_thread
       - slack_read_canvas
       - slack_read_user_profile
+      - slack_read_list
+      - slack_read_file
+      - slack_list_channel_members
+      - slack_list_user_channels
+      - slack_search_emojis
 # Slack tells the app about its grants as Events API events to the app's Request URL
 # ([revoked], [uninstalled]), which for the operator's app is
 # POST /v1/agents/connectors/events/slack. Nobody writes to this connector, so the block has

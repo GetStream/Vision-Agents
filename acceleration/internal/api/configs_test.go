@@ -1969,7 +1969,8 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfGmailCalendarLinearA
 
 	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
 		sessionNessy("customers"),
-		sessionGranting("gmail", "mail", "list_drafts", "get_thread", "get_message", "search_threads", "list_labels"),
+		sessionGranting("gmail", "mail", "list_drafts", "get_draft", "get_thread", "get_message", "search_threads",
+			"list_labels"),
 		sessionGranting("google_calendar", "calendar", "list_events", "get_event", "list_calendars",
 			"suggest_time", "search_events"),
 		sessionGranting("linear", "tracker", "get_attachment", "list_agent_skills", "get_agent_skill",
@@ -1983,15 +1984,15 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfGmailCalendarLinearA
 			"list_initiative_labels", "get_status_updates"),
 		sessionGranting("slack", "chat", "slack_search_public", "slack_search_public_and_private",
 			"slack_search_channels", "slack_search_users", "slack_read_channel", "slack_read_thread",
-			"slack_read_canvas", "slack_read_user_profile"),
+			"slack_read_canvas", "slack_read_user_profile", "slack_read_list", "slack_read_file",
+			"slack_list_channel_members", "slack_list_user_channels", "slack_search_emojis"),
 	}})
 
 	s.Len(value(created.Connectors), 5)
 }
 
-// A tool the four sources leave out of read_only_tools may send data out: one that writes, a
-// read no vendor page describes (gmail's get_draft, slack_read_file), and linear's
-// extract_images, which fetches URLs from markdown the model passes. A binding granting one
+// A tool the four sources leave out of read_only_tools may send data out: one that writes, and
+// linear's extract_images, which fetches URLs from markdown the model passes. A binding granting one
 // is refused and named; a binding granting only listed tools is not, and the same write tool
 // held by require_approval is accepted.
 func (s *ConfigsSuite) TestNessyBesideAToolGmailCalendarLinearOrSlackLeaveOutNamesEachBindingGrantingOne() {
@@ -2003,13 +2004,13 @@ func (s *ConfigsSuite) TestNessyBesideAToolGmailCalendarLinearOrSlackLeaveOutNam
 			sessionNessy("customers"),
 			sessionGranting("gmail", "mail_read", "search_threads", "get_thread"),
 			trash,
-			sessionGranting("gmail", "mail_draft", "get_draft"),
+			sessionGranting("gmail", "mail_draft", "create_draft"),
 			sessionGranting("google_calendar", "calendar_create", "list_events", "create_event"),
 			sessionGranting("google_calendar", "calendar_respond", "respond_to_event"),
 			sessionGranting("linear", "linear_save", "get_issue", "save_issue"),
 			sessionGranting("linear", "linear_images", "extract_images"),
 			sessionGranting("slack", "slack_send", "slack_read_channel", "slack_send_message"),
-			sessionGranting("slack", "slack_file", "slack_read_file"),
+			sessionGranting("slack", "slack_file", "slack_schedule_message"),
 		},
 	})
 
@@ -2107,10 +2108,10 @@ func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOf
 // «Control probe»).
 func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfGmailCalendarLinearAndSlack() {
 	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
-		sessionGranting("gmail", "mail", "trash_thread", "create_draft", "get_draft"),
+		sessionGranting("gmail", "mail", "trash_thread", "create_draft"),
 		sessionGranting("google_calendar", "calendar", "create_event", "delete_event"),
 		sessionGranting("linear", "tracker", "save_issue", "extract_images"),
-		sessionGranting("slack", "chat", "slack_send_message", "slack_read_file"),
+		sessionGranting("slack", "chat", "slack_send_message", "slack_add_reaction"),
 	}})
 
 	s.Len(value(created.Connectors), 4)

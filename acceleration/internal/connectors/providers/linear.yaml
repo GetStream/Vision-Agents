@@ -62,9 +62,9 @@ sources:
     endpoint: mcp
     # The tools that only read. Linear's page ([mcp], opened 2026-11-04) names no tools, so
     # each name and what it does is from the tool's own description in the tools/list of
-    # https://mcp.linear.app/mcp, read on 2026-11-04 through Anthropic's claude.ai Linear
-    # connector: each one gets, lists or searches («Retrieve ...», «List ...», «Search ...»)
-    # and none says it changes anything. get_attachment takes an attachment id and returns
+    # https://mcp.linear.app/mcp, read on 2026-11-04 through the router's own connection to
+    # that server (84 tools; every name below is one of them): each one gets, lists or
+    # searches («Retrieve ...», «List ...», «Search ...») and none says it changes anything. get_attachment takes an attachment id and returns
     # the file or its download URL, signed for five minutes; that brings data in, as
     # google_drive.yaml's download_file_content does, and only a tool that writes could send
     # the URL on. Left out: every save_, create_, delete_, retire_, restore_, share_, unshare_,

@@ -93,10 +93,14 @@ sources:
     # updated 2026-07-21»): each tool's page under tools_list/ marks it «Read Only Hint».
     # list_drafts reads the person's own drafts and sends nothing. create_draft, the label
     # tools and create_label change the mailbox, so they are left out. The server also offers
-    # tools that page does not list (get_draft, the trash, spam and sensitive-label tools);
-    # with no vendor page saying what they do, they are left out too, as is a tool added later.
+    # tools that page does not list (the trash, spam and sensitive-label tools); with no
+    # vendor page saying what they do, they are left out, as is a tool added later. get_draft
+    # is on none of those pages either; the server's tools/list, read 2026-11-04, describes it
+    # as retrieving one draft by id, in the format asked for, with a link to open it in Gmail,
+    # so it reads the same drafts list_drafts does and is listed.
     read_only_tools:
       - list_drafts
+      - get_draft
       - get_thread
       - get_message
       - search_threads

@@ -98,7 +98,9 @@ sources:
     # https://developers.google.com/workspace/calendar/api/v3/reference/mcp (opened 2026-11-04,
     # «Last updated 2026-07-17»): each tool's page under tools_list/ marks it «Read Only
     # Hint». create_event, update_event, delete_event and respond_to_event change a calendar
-    # (each page: «Read Only Hint: ❌»), so they are left out, as is a tool added later.
+    # (each page: «Read Only Hint: ❌»), so they are left out, as is a tool added later. The
+    # server's tools/list, read 2026-11-04, names these nine tools and no other, and describes
+    # each listed one as returning or suggesting, never changing anything.
     read_only_tools:
       - list_events
       - get_event
