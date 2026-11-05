@@ -1096,7 +1096,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if policies != nil {
 		dlcGate.Charging(policies).Limiting(settings.Limits.Mode)
 	}
-	telephony, err := buildPhone(settings, vendorConfig, pgStore, phoneRecorder, streamClients, dlcGate, secrets, logger)
+	telephony, err := buildPhone(settings, vendorConfig, pgStore, liveClient, phoneRecorder, streamClients, dlcGate, secrets, logger)
 	if err != nil {
 		return err
 	}
@@ -2352,6 +2352,7 @@ func buildPhone(
 	settings config.Config,
 	vendorConfig phone.Config,
 	pgStore *store.Store,
+	liveClient *live.Client,
 	recorder *routing.Recorder,
 	stream *streamapp.Clients,
 	gate *dlc.Gate,
@@ -2371,8 +2372,15 @@ func buildPhone(
 		logger.Info("no key encryption key, calls through customers' own sip trunks are off")
 	}
 
+	// The Redis of every shard: the node that ends a refused call's leg need not be the one
+	// that refused it.
+	var refusals rueidis.Client
+	if liveClient != nil {
+		refusals = liveClient.Redis()
+	}
 	return phone.NewService(phone.ServiceOptions{
 		Registry:  vendors.Registry(vendorConfig),
+		Redis:     refusals,
 		Store:     pgStore,
 		Apps:      phone.AppsOf(stream),
 		Recorder:  recorder,

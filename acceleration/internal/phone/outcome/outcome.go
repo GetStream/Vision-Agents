@@ -40,11 +40,13 @@ type Key struct {
 }
 
 // Leg is what a call's legs know of the leg that ended: the vendor that carried it, whether
-// the call arrived rather than was placed, and when its phone joined, nil if it never did.
+// the call arrived rather than was placed, when its phone joined, nil if it never did, and
+// whether the router refused the arriving call, so no agent answered it.
 type Leg struct {
 	Vendor     string
 	Inbound    bool
 	AnsweredAt *time.Time
+	Refused    bool
 }
 
 // Call is one placed call and what is known of how it ended.

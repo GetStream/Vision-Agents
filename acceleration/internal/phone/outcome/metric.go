@@ -25,7 +25,7 @@ var callOutcomes = promauto.NewCounterVec(prometheus.CounterOpts{
 	Name:      "phone_call_outcomes_total",
 	Help: "Phone calls, each counted once when its leg first ends, by vendor (one the router knows, else other), direction " +
 		"(inbound, or outbound for a call the router placed; a transfer's leg is not counted) and outcome: the stored " +
-		"one (completed, busy, no_answer, failed, canceled, unknown; an inbound call is completed), or dropped for an " +
+		"one (completed, busy, no_answer, failed, canceled, unknown; an inbound call is completed, or failed when the router refused it), or dropped for an " +
 		"answered call whose agent left it without ending it (internal/phone/outcome/AGENTS.md)",
 }, []string{"vendor", "direction", "outcome"})
 

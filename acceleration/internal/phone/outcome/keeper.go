@@ -83,12 +83,15 @@ func (k *Keeper) Answered(ctx context.Context, key Key, at time.Time) error {
 
 // Ended is the call's leg ending at at. A leg with no row is nothing to keep, as in Answered.
 // A placed call is counted the first time its leg ends, and an inbound one each time, since the
-// store ends a leg once. A transfer's leg is not counted.
+// store ends a leg once: failed when the router refused it, else completed or dropped. A
+// transfer's leg is not counted.
 func (k *Keeper) Ended(ctx context.Context, key Key, at time.Time, leg Leg) error {
 	call, first, err := k.decide(ctx, where(key), event{kind: endedEvent, at: at})
 	switch {
 	case err != nil && !errors.Is(err, store.ErrNoPhoneCall):
 		return err
+	case leg.Inbound && leg.Refused:
+		k.count(ctx, key, leg.Vendor, inbound, Failed, false, at)
 	case leg.Inbound:
 		k.count(ctx, key, leg.Vendor, inbound, Completed, leg.AnsweredAt != nil, at)
 	case first:

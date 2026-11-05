@@ -377,6 +377,9 @@ func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumbe
 		return
 	}
 	ctx = context.WithoutCancel(ctx)
+	// Its leg ends with the call, on whichever node Stream's events reach, and is counted
+	// failed there. Beside the end, so a slow Redis does not keep the caller on the line.
+	go s.phone.Refused(ctx, number.CustomerID, number.StreamAppPK, callType, callID)
 	go func() {
 		ctx, cancel := context.WithTimeout(ctx, endRefusedTimeout)
 		defer cancel()

@@ -372,6 +372,16 @@ func (s *KeeperSuite) TestAStoreThatFailsFailsTheEndAndCountsNothing() {
 	s.Zero(s.total() - before)
 }
 
+// TestAnInboundCallTheRouterRefusedIsCountedFailed catches a refused arriving call, which no
+// agent answered, counted completed.
+func (s *KeeperSuite) TestAnInboundCallTheRouterRefusedIsCountedFailed() {
+	leg := Leg{Vendor: s.vendor, Inbound: true, AnsweredAt: new(s.at(1)), Refused: true}
+
+	s.Require().NoError(s.keeper.Ended(s.ctx, s.call.Key, s.at(5), leg))
+
+	s.countedOnce(inbound, string(Failed))
+}
+
 func (s *KeeperSuite) TestASessionThatCannotBeReadLeavesTheCallCountedAsStored() {
 	s.call.CustomerID = ""
 
