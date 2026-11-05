@@ -353,8 +353,8 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 
 // inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
 // GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it
-// says; to an LFS read, a download). It reads the grants again for each, and after a dry run, so after Delete no request
-// goes out on a tunnel the credential opened.
+// says; to an LFS read, a download). It reads the grants again for each, and after a dry run, so
+// after Delete no request goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		host := strings.ToLower(r.Host)
