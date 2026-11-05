@@ -387,9 +387,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A repeat copy keeps a phone number attached where it moved to
+
+`router replicate --once`, `--follow` and `POST /v1/data/import` wrote the source's row of a phone number over the destination's, so a number attached on the destination lost its trunk, route, call and agent and stopped ringing it. A number on a trunk on the destination now keeps them, while its other columns still take the source's edits; a number not on a trunk there takes the source's row as before (AI-2844).
+
 ### The agent passes on only an ID a source gave it as that kind
 
 A link a tool returns now gives an ID only of a kind that its line, the keys above it or the tool's name names. A person's profile link from a user lookup is no channel ID, and a message link's timestamp is no case ID; a channel search's permalink still gives the channel. A link or line that a tool reads back and that holds a line the agent wrote earlier, in a reply or in a message it posted, is no source for the IDs in it. An ID before its kind word counts only where that word ends its phrase. So `Ana Lind (U…) - channel owner` and `Owner U… channel admin` give no channel, while `#help (C…) - public_channel` and `C… (channel)` still do (AI-2852, AI-2853, AI-2854).
+
 ### A short video is sampled into the frames it has
 
 `responses.create` with a video of fewer frames than `max_frames` (8 by default) failed with `video: reading the frame at 812.5ms` when the clip ended inside its last frame: a one second clip at 4 frames a second could not be sampled at its default. The router now picks the frame showing at each sampling moment, which it reads from the clip, and shows a frame once however many moments fall in it, so that clip gives its four frames. A clip with more frames than `max_frames` gives `max_frames` frames as before, each now the frame on screen at its time rather than the next to begin (AI-2658, #1767).

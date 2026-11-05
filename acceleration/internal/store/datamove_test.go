@@ -2250,6 +2250,159 @@ func (s *DataMoveSuite) TestAMovedNumberIsHeldWhereItArrives() {
 	s.Equal("plivo", held.Vendor)
 }
 
+func (s *DataMoveSuite) TestCopyingAgainKeepsANumberAttachedOnTheDestination() {
+	attached := s.numberAttachedHere("+15550000130")
+	s.retag(s.source, "+15550000130")
+
+	s.move("acme", "acme")
+
+	s.assertLineKept(attached)
+}
+
+func (s *DataMoveSuite) TestAChangeAppliedLaterKeepsANumberAttachedOnTheDestination() {
+	s.capture("acme")
+	attached := s.numberAttachedHere("+15550000131")
+	// The source attaches it too, to another agent, and its row says so in the change.
+	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000131", NumberAttachment{
+		TrunkID: "trunk-there", RouteID: "route-there", CallType: "default", CallID: "call-there",
+		ConfigID: s.seedAgentConfig(s.source, "acme", "there"), BridgeURI: "sip:there.example.com",
+	}))
+	s.retag(s.source, "+15550000131")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", 0, 100)
+	s.Require().NoError(err)
+	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "acme", changes))
+
+	s.assertLineKept(attached)
+}
+
+func (s *DataMoveSuite) TestCopyingAgainKeepsANumbersLineOnTheDestination() {
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000132", Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.move("acme", "acme")
+	// On a trunk to place calls, not attached.
+	s.Require().NoError(s.destination.InTrunkGroup(s.ctx, TrunkGroup{CustomerID: "acme", StreamAppPK: 42, Vendor: "telnyx"},
+		func(_ context.Context, tx *TrunkGroupTx) error {
+			return tx.SetLine("+15550000132", "trunk-here", "route-here", NumberBridge{
+				URI: "sip:here.example.com", Username: "agent-here", PasswordSealed: []byte("sealed here"), KEKVersion: 1,
+			})
+		}))
+	lined, err := s.destination.Number(s.ctx, "acme", "+15550000132")
+	s.Require().NoError(err)
+	s.retag(s.source, "+15550000132")
+
+	s.move("acme", "acme")
+
+	s.assertLineKept(lined)
+}
+
+func (s *DataMoveSuite) TestCopyingAgainStillUpdatesANumberNotOnATrunkOnTheDestination() {
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000133", Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.move("acme", "acme")
+	there := s.seedAgentConfig(s.source, "acme", "there")
+	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000133", NumberAttachment{
+		TrunkID: "trunk-there", RouteID: "route-there", StreamAppPK: 42, CallType: "default", CallID: "call-there",
+		ConfigID: there, BridgeURI: "sip:there.example.com", BridgeUsername: "agent-there",
+	}))
+	s.retag(s.source, "+15550000133")
+
+	s.move("acme", "acme")
+
+	// What the source's row says, as before a number on a trunk here kept its line.
+	moved, err := s.destination.Number(s.ctx, "acme", "+15550000133")
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"team": "sales"}, moved.Tags)
+	s.Equal(there, moved.ConfigID)
+	s.Equal(ForeignStreamApp, moved.StreamAppPK)
+	s.Nil(moved.AttachedAt)
+	s.Empty(moved.StreamTrunkID)
+	s.Empty(moved.StreamCallID)
+	s.Empty(moved.BridgeURI)
+}
+
+func (s *DataMoveSuite) TestCopyingAgainBringsTheSourcesAgentToANumberOnlyOnALineOnTheDestination() {
+	first := s.seedAgentConfig(s.source, "acme", "first")
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000134", Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000134", NumberAttachment{
+		TrunkID: "trunk-there", RouteID: "route-there", CallType: "default", CallID: "call-there", ConfigID: first,
+	}))
+	s.move("acme", "acme")
+	// On a line to place calls, which never wrote an agent.
+	s.Require().NoError(s.destination.InTrunkGroup(s.ctx, TrunkGroup{CustomerID: "acme", StreamAppPK: 42, Vendor: "telnyx"},
+		func(_ context.Context, tx *TrunkGroupTx) error {
+			return tx.SetLine("+15550000134", "trunk-here", "route-here", NumberBridge{})
+		}))
+	second := s.seedAgentConfig(s.source, "acme", "second")
+	s.Require().NoError(s.source.SetNumberAgent(s.ctx, "acme", "+15550000134", second))
+
+	s.move("acme", "acme")
+
+	moved, err := s.destination.Number(s.ctx, "acme", "+15550000134")
+	s.Require().NoError(err)
+	s.Equal(second, moved.ConfigID, "the source's agent arrives")
+	s.Equal("trunk-here", moved.StreamTrunkID, "the line stays")
+}
+
+func (s *DataMoveSuite) TestCopyingAgainDoesNotKeepTheLineOfANumberTheSourceGaveBack() {
+	attached := s.numberAttachedHere("+15550000135")
+	s.Require().NoError(s.source.ReleaseNumber(s.ctx, "acme", "+15550000135", time.Now()))
+
+	s.move("acme", "acme")
+
+	numbers, err := s.destination.CustomerNumbers(s.ctx, "acme", true)
+	s.Require().NoError(err)
+	var moved *PhoneNumber
+	for i := range numbers {
+		if numbers[i].E164 == attached.E164 {
+			moved = &numbers[i]
+		}
+	}
+	s.Require().NotNil(moved)
+	s.NotNil(moved.ReleasedAt)
+	s.Nil(moved.AttachedAt)
+	s.Empty(moved.StreamTrunkID)
+	s.Empty(moved.StreamRouteID)
+	s.Empty(moved.ConfigID)
+}
+
+// numberAttachedHere is a number the source holds, copied here and attached here, as it reads
+// here once attached.
+func (s *DataMoveSuite) numberAttachedHere(e164 string) PhoneNumber {
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: e164, Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.move("acme", "acme")
+	s.Require().NoError(s.destination.AttachNumber(s.ctx, "acme", e164, NumberAttachment{
+		TrunkID: "trunk-here", RouteID: "route-here", StreamAppPK: 42, CallType: "default", CallID: "call-here",
+		ConfigID: s.seedAgentConfig(s.destination, "acme", "here"), BridgeURI: "sip:here.example.com",
+		BridgeUsername: "agent-here", BridgePasswordSealed: []byte("sealed here"), BridgePasswordKEKVersion: 1,
+	}))
+	attached, err := s.destination.Number(s.ctx, "acme", e164)
+	s.Require().NoError(err)
+	return attached
+}
+
+// retag edits a number on the source the way its owner would, in a column of its own.
+func (s *DataMoveSuite) retag(store *Store, e164 string) {
+	_, err := store.DB().ExecContext(s.ctx, `UPDATE phone_numbers SET tags = '{"team": "sales"}' WHERE e164 = ?`, e164)
+	s.Require().NoError(err)
+}
+
+// assertLineKept checks the number reads here as it did before the source's row came again,
+// except for the source's edit, which arrives.
+func (s *DataMoveSuite) assertLineKept(before PhoneNumber) {
+	after, err := s.destination.Number(s.ctx, "acme", before.E164)
+	s.Require().NoError(err)
+	s.Equal(map[string]string{"team": "sales"}, after.Tags, "the source's edit arrives")
+	before.Tags = after.Tags
+	s.Equal(before, after)
+}
+
 func (s *DataMoveSuite) TestANumberInAnotherFormIsNotImported() {
 	s.Require().NoError(s.destination.RecordNumber(s.ctx, &PhoneNumber{
 		E164: "+15550000112", Vendor: "plivo", Country: "US", CustomerID: "acme",
