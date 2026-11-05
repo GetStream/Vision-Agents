@@ -54,6 +54,30 @@ func (s *StreamEdgeIntegrationSuite) join(userID string) *Edge {
 	return edge
 }
 
+func (s *StreamEdgeIntegrationSuite) TestTheAgentsConnectionComingUpEndsItsStartUp() {
+	// Catches the publisher's connection coming up and the media stage of the start-up the
+	// edge joined with never timed, or timed again by the subscriber's.
+	timed, failed, err := mediaStartups()
+	s.Require().NoError(err)
+	startup := agent.NewStartup(agent.StartupPhone, time.Now())
+	edge, err := New(Options{CallID: s.callID, User: User{ID: "agent", Name: "agent"},
+		APIKey: os.Getenv("STREAM_API_KEY"), APISecret: os.Getenv("STREAM_API_SECRET")})
+	s.Require().NoError(err)
+	startup.JoinStarted(time.Now())
+	s.Require().NoError(edge.Join(agent.WithStartup(s.ctx, startup)))
+	startup.JoinEnded(time.Now())
+	s.T().Cleanup(func() { _ = edge.Leave() })
+
+	s.Eventually(func() bool {
+		now, _, err := mediaStartups()
+		return err == nil && now == timed+1
+	}, audioArrivesWithin, 50*time.Millisecond, "the connection coming up was not timed")
+	now, failedNow, err := mediaStartups()
+	s.Require().NoError(err)
+	s.Equal(timed+1, now)
+	s.Equal(failed, failedNow)
+}
+
 // tone is a second of 440 Hz at the rate a voice provider produces, which is loud enough to
 // tell from the silence a published track sends when nobody is talking.
 func tone(sampleRate int) audio.PcmData {

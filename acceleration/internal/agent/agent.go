@@ -830,9 +830,12 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.mu.Unlock()
 
 	if !a.options.Text {
+		startup := StartupOf(ctx)
+		startup.JoinStarted(time.Now())
 		if err := a.options.Edge.Join(a.ctx); err != nil {
 			return stack.Wrap(fmt.Errorf("agent: join edge: %w", err))
 		}
+		startup.JoinEnded(time.Now())
 		a.running.Add(1)
 		go a.consumeEdge()
 

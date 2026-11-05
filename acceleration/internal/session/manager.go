@@ -373,6 +373,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 // that is already listening. A failure anywhere unwinds what was opened: a half-joined
 // session would hold a model session and a place in a call that nobody holds a handle to.
 func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
+	began := time.Now()
 	if err := spec.Normalize(); err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -636,9 +637,11 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// unless it was turned away for a router shutting down or for a session already held
 	// under its id (a redelivered hook): neither is a session that failed.
 	turnedAway := false
+	startup := newStartup(spec, began)
 	defer func() {
 		if !opened && !turnedAway {
 			endCounter(endCreateFailed).Inc()
+			startup.Failed()
 		}
 	}()
 	fail := func() {
@@ -923,7 +926,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// Join takes the background rather than the request's context: the conversation
 	// outlives the HTTP call that asked for it, and a session cancelled when the request
 	// returned would hang up on the caller immediately.
-	if err := built.Join(context.WithoutCancel(ctx)); err != nil {
+	if err := built.Join(agent.WithStartup(context.WithoutCancel(ctx), startup)); err != nil {
 		fail()
 		return nil, stack.Wrap(err)
 	}

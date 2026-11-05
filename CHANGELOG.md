@@ -2,6 +2,10 @@
 
 ## Features
 
+### Voice start-up latency and failures per stage
+
+`router_agent_startup_seconds{stage, kind}` times each stage of a voice session's start-up once: `create` (from `Manager.Create` to the agent starting to join), `join` (the edge joining the call) and `media` (from the join to the agent's outgoing connection being up). The stages follow each other, so their sum is the wait until the agent can be heard. `kind` is `phone` or `web`. `router_agent_startup_failures_total{stage, kind, cause}` counts the stage a start-up stopped in: `error` where a session is counted as `create_failed`, `timeout` for an outgoing connection not up within 30 s. Text sessions are not counted (AI-2832, #PR).
+
 ### The router counts how phone calls end
 
 `/metrics` serves `router_phone_call_outcomes_total{vendor, direction, outcome}`: each inbound and placed call once, when its leg first ends, under its stored outcome or as `dropped`, an answered call whose agent left it on the line (stopped, failed, or the router shut down) before the caller hung up. A network or vendor cut is not told apart from the caller hanging up. What a dropped call is, and what is not detected, is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2780, #1783).
