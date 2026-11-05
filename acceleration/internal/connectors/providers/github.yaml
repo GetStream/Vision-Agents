@@ -22,6 +22,9 @@
 #   [smart]   https://git-scm.com/docs/gitprotocol-http
 #   [graphql] https://docs.github.com/en/graphql/guides/forming-calls-with-graphql
 #   [ghapi]   https://cli.github.com/manual/gh_api
+# Opened November 5, 2026:
+#   [lfsbatch] https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md
+#   [lfsurl]   https://github.com/git-lfs/git-lfs/blob/main/docs/api/server-discovery.md
 # Opened October 22, 2026:
 #   [remotes] https://docs.github.com/en/get-started/git-basics/about-remote-repositories
 #   [install] https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/authenticating-as-a-github-app-installation
@@ -48,8 +51,9 @@ id: github
 # so git over HTTPS reaches it through both brokers. 8 adds sandbox.reads: under the proxy
 # broker code in the sandbox reads only, and git clone and fetch read with a POST. 9 adds the
 # GraphQL endpoint as a read of queries alone, so gh reads through it. 10 lists the tools that
-# only read.
-revision: 10
+# only read. 11 adds Git LFS's batch API as a read of downloads alone, so git lfs pull reads
+# through it.
+revision: 11
 # [proto]:78-80
 name: GitHub
 category: Developer tools
@@ -251,3 +255,18 @@ sandbox:
     - host: api.github.com
       path: /graphql
       graphql: true
+    # [lfsbatch]: «All Batch API requests use the POST verb», its body's «operation - Should be
+    # download or upload», and the batch URL is the remote's with .git/info/lfs/objects/batch
+    # ([lfsurl]: «Git LFS will append .git/info/lfs to the end of a Git remote url»), which *
+    # matches. The proxy lets that POST through only when its body asks to download; git lfs push
+    # asks to upload, so it is refused. An LFS read names no method: a router before revision
+    # 11's code refuses the POST.
+    - host: github.com
+      path: /*/*/info/lfs/objects/batch
+      lfs: true
+      # The answer's actions.download.href names this host, a presigned URL whose
+      # authorization is in its query, with no header to send: a batch for a public repository
+      # asked to download one object on 2026-11-05T17:15:08Z, and its href's GET answered the
+      # object. The proxy reaches it for GET and HEAD and gives it no token. Which host a
+      # private repository's answer names is unverified.
+      downloads: [github-cloud.githubusercontent.com]
