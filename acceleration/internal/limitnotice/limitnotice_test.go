@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -122,12 +123,21 @@ func TestTheMessageSaysWhetherTheWorkWasRefused(t *testing.T) {
 		OrganizationID: "org-1", Kind: store.LimitSpendHardLimit, AppID: "app-1", Tier: "free",
 		Enforced: true, Message: "the organization's day spend hard limit of $5.00 is reached",
 	}
-	require.Equal(t, ":no_entry: [production] Organization `org-1` was refused for the first time at Stream's spend hard limit."+
-		"\nTier: free\nApp: `app-1`\n> the organization's day spend hard limit of $5.00 is reached", Message("production", notice))
+	require.Equal(t, ":no_entry: Organization `org-1` was refused for the first time at Stream's spend hard limit."+
+		"\nTier: free\nApp: `app-1`\n> the organization's day spend hard limit of $5.00 is reached", Message("prod", notice))
 
 	notice.Enforced = false
-	require.Contains(t, Message("staging", notice), "[staging]")
+	require.True(t, strings.HasPrefix(Message("staging", notice), "[STAGING] :eyes: Organization `org-1`"))
 	require.Contains(t, Message("staging", notice), "limits are in shadow, so the work was admitted")
+}
+
+func TestOnlyProductionIsNotTagged(t *testing.T) {
+	for environment, tag := range map[string]string{
+		"prod": "", "production": "", "Production": "",
+		"staging": "[STAGING] ", "benchmark": "[BENCHMARK] ", "": "[DEVELOPMENT] ",
+	} {
+		require.Equal(t, tag, EnvironmentTag(environment), environment)
+	}
 }
 
 func TestSlackPostsToTheChannel(t *testing.T) {
