@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"log/slog"
 	"slices"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -18,17 +19,27 @@ type ResumeHistories interface {
 }
 
 // restoring is ctx with the session's resume_history applied to every conversation it
-// reads back. A session asking for nothing gets ctx as it was, and the default with it.
-func (m *Manager) restoring(ctx context.Context, spec Spec) context.Context {
+// reads back, and a thread channel's history cut at the boundary of its number's link
+// (store.ThreadHistorySince). A session asking for nothing, on no linked number's thread, gets
+// ctx as it was, and the default with it. The boundary that cannot be read refuses the session:
+// it is the linked user's word on what they may be told.
+func (m *Manager) restoring(ctx context.Context, spec Spec) (context.Context, error) {
 	asked := spec.ResumeHistory
-	if asked == (store.ResumeHistory{}) {
-		return ctx
+	var since time.Time
+	if spec.Thread && m.options.Store != nil {
+		var err error
+		if since, _, err = m.options.Store.ThreadHistorySince(ctx, spec.CustomerID, spec.ConversationID); err != nil {
+			return nil, err
+		}
 	}
-	restore := persistent.Restore{MaxMessages: asked.MaxMessages, MaxRunes: asked.MaxCharacters}
+	if asked == (store.ResumeHistory{}) && since.IsZero() {
+		return ctx, nil
+	}
+	restore := persistent.Restore{MaxMessages: asked.MaxMessages, MaxRunes: asked.MaxCharacters, Since: since}
 	if asked.Tools() && m.options.Store != nil {
 		restore.Recorded = recordedConversation{store: m.options.Store, customerID: spec.CustomerID, logger: m.logger}
 	}
-	return persistent.WithRestore(ctx, restore)
+	return persistent.WithRestore(ctx, restore), nil
 }
 
 // recordedConversation is what a customer's sessions recorded about a conversation.

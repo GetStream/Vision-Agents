@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"time"
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -21,6 +22,9 @@ type Restore struct {
 	// returned. Over MaxRunes, the oldest results are cut to ResultTrimmed before any turn
 	// is left out, and the conversation's first message is kept.
 	Recorded Recorded
+	// Since, when set, leaves out every message started before it: what a thread's number said
+	// before its link's boundary is not the linked user's.
+	Since time.Time
 }
 
 // Recorded is what a conversation's sessions recorded about the replies in it.
@@ -47,6 +51,9 @@ func WithRestore(ctx context.Context, r Restore) context.Context {
 // restored is the history of a page as ctx asks for it.
 func restored(ctx context.Context, cid string, p Page) ([]llm.Message, bool) {
 	r, _ := ctx.Value(restoreKey{}).(Restore)
+	if !r.Since.IsZero() {
+		p.Messages = slices.DeleteFunc(slices.Clone(p.Messages), func(m Message) bool { return m.StartedAt.Before(r.Since) })
+	}
 	if r.Recorded == nil {
 		return r.history(p, nil, "")
 	}
