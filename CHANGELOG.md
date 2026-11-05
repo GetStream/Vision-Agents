@@ -387,6 +387,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A repeat copy keeps a phone number attached where it moved to
+
+`router replicate --once`, `--follow` and `POST /v1/data/import` wrote the source's row of a phone number over the destination's, so a number attached on the destination lost its trunk, route, call and agent and stopped ringing it. A number on a trunk on the destination now keeps them, while its other columns still take the source's edits; a number not on a trunk there takes the source's row as before (AI-2844).
+
 ### `git lfs pull` works in a sandbox behind the egress proxy
 
 Under `code_sandbox.broker: proxy`, Git LFS's batch request was refused as a write, so `git lfs pull` failed. GitHub's connector (revision 11) now lets a batch that asks to download through, and fetches the objects from the host GitHub names with no token; an upload is still refused (#1768).
