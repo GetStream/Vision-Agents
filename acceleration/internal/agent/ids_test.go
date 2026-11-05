@@ -653,6 +653,8 @@ func TestALinkAToolReturnedGivesOnlyAnIDOfTheKindItsWordsName(t *testing.T) {
 		{"a link written again without its scheme, the copy alone after the first", "search", `{"results":"see https://team.example.com/view/U0ANA001 (team.example.com/view/U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a link written again without its scheme, on a line that names the kind", "search", `{"results":"Channel link: <https://team.example.com/archives/C0HELP002|team.example.com/archives/C0HELP002>"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a link written again without its scheme, under a key that names the kind", "search", `{"channel":"[team.example.com/archives/C0HELP002](https://team.example.com/archives/C0HELP002)"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a link written again without its scheme, after a word, in a chat's form", "search", `{"results":"see <https://team.example.com/channel/U0ANA001|team.example.com/channel/U0ANA001>"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a link written again without its scheme, as a label's text", "search", `{"results":"<https://team.example.com/channel|team.example.com/channel>: Ana Lind (U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a link whose host names the kind, from a tool whose name names it", "read_channel", `{"results":"see https://channels.example.com/archives/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
 	}
 	for _, c := range cases {
