@@ -78,6 +78,8 @@ type turnTracker struct {
 	// the one before the words it murmurs over; the turn a tool call answers is on the
 	// tool's own line.
 	caller string
+	// native says whether the agent is on a speech-to-speech model now; nil is a cascade.
+	native func() bool
 }
 
 // originsKept is how many turns' origins are kept. An utterance is logged within seconds of
@@ -106,6 +108,9 @@ const (
 type origin struct {
 	kind   string
 	parent string
+	// pipeline is the pipeline the agent ran when the turn started: a settings change may
+	// swap it while the turn is still open, and the turn finishes on the one it began on.
+	pipeline string
 }
 
 // openTurn is a turn that has not finished yet.
@@ -169,12 +174,16 @@ func newTurnTracker(owner routing.Owner, finished func(Turn)) *turnTracker {
 func (t *turnTracker) started(turnID, kind string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	pipeline := pipelineCascade
+	if t.native != nil && t.native() {
+		pipeline = pipelineNative
+	}
 	if kind == kindCaller {
 		t.caller = turnID
-		t.remember(turnID, origin{kind: kind})
+		t.remember(turnID, origin{kind: kind, pipeline: pipeline})
 		return
 	}
-	t.remember(turnID, origin{kind: kind, parent: t.caller})
+	t.remember(turnID, origin{kind: kind, parent: t.caller, pipeline: pipeline})
 }
 
 // remember keeps the origin of a turn, letting the oldest go past originsKept.
@@ -459,6 +468,29 @@ func speechEndToAudible(current *openTurn) float64 {
 		return 0
 	}
 	return msBetween(current.transcriptAt, current.pulledAt) + current.sttLatencyMs
+}
+
+// The pipelines a turn latency is labelled with, named as the session's mode is.
+const (
+	pipelineCascade = "cascade"
+	pipelineNative  = "native"
+)
+
+// observeTurnLatency records a caller turn's waits. A leg that did not happen is zero, and is
+// left out rather than counted as an instant reply.
+func observeTurnLatency(turn Turn, pipeline string) {
+	for _, observed := range []struct {
+		leg string
+		ms  float64
+	}{
+		{"roundtrip", turn.RoundtripMs},
+		{"speech_end_to_audio", turn.SpeechEndToAudioMs},
+		{"speech_end_to_audible", turn.SpeechEndToAudibleMs},
+	} {
+		if observed.ms > 0 {
+			turnLatency.WithLabelValues(observed.leg, pipeline).Observe(observed.ms / 1000)
+		}
+	}
 }
 
 func msBetween(from, to time.Time) float64 {
