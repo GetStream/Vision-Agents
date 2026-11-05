@@ -289,6 +289,8 @@ func TestAnIDAJSONResultWritesOutIsPassedOn(t *testing.T) {
 	assert.False(t, unfound, "two words are written out")
 	_, _, _, unfound = unfoundID(history(`{"user_id":"u-77","channel":"C0HELP002"}`), read("C0HELP002"), tools, "")
 	assert.True(t, unfound, "one word under a key that names no ID is not written out")
+	_, _, _, unfound = unfoundID(history(`{"permalink":"https://team.example.com/channels/C0HELP002"}`), read("C0HELP002"), tools, "")
+	assert.True(t, unfound, "a link a tool wrote is one word, not written out, even where it names the channel")
 	_, _, _, unfound = unfoundID(history(`{"ok":false,"error":"channel C0HELP002 was not found"}`), read("C0HELP002"), tools, "")
 	assert.True(t, unfound, "a failure quoting the ID does not make it returned")
 }
