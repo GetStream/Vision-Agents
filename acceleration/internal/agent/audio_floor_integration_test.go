@@ -31,6 +31,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -251,6 +252,15 @@ func (h *floorHarness) backchannel(t *testing.T) {
 // the agent's own voice heard back on the caller's line, as a phone with no echo
 // cancellation sends it. What the transcriber wrote and what the conversation heard of it are
 // checked apart: [transcriber] is every transcript, [conversation] the turns the agent took.
+//
+// With the reply echoed, the transcriber hears the agent's voice on the caller's line and
+// writes it, as any transcriber would. In an agent's call the agent drops it (withoutEcho)
+// before the conversation, the model or anyone watching sees it, so what the transcriber wrote
+// of it is logged as an observation, and the contract is what they see: one turn of the
+// caller's, none of the agent's voice. Transcribing alone (mode off), the router does not know
+// the app's voice, and cancelling the echo is the edge's to do; the contract is the
+// transcriber's: the caller's words are one final of their own, and the agent's voice, when
+// written, is a final of its own rather than part of theirs.
 func (h *floorHarness) oneFinal(t *testing.T, mode audiofloor.Mode, bed []float64, echo float64) {
 	c := h.start(t, mode, replayInstructions, []string{"en"})
 	c.edge.background(bed, echo)
@@ -261,24 +271,47 @@ func (h *floorHarness) oneFinal(t *testing.T, mode audiofloor.Mode, bed []float6
 	defer c.report()
 
 	finals := c.finals()
-	assert.Len(t, finals, 1, "[transcriber] one final transcript")
-	if len(finals) > 0 {
-		after := c.wordsBetween(finals[0].At.Add(time.Nanosecond), time.Now())
-		assert.Empty(t, after, "[transcriber] nothing written after the final")
+	utterances := map[int64]bool{}
+	for _, w := range c.words.all() {
+		utterances[w.T.Utterance] = true
 	}
-	for _, f := range finals {
-		_, echo := echoed(f.T.Text, replyText)
-		assert.Zero(t, echo, "[transcriber] the agent's voice written as the caller's: %q", f.T.Text)
+	if echo == 0 {
+		assert.Len(t, finals, 1, "[transcriber] one final transcript")
+		if len(finals) > 0 {
+			after := c.wordsBetween(finals[0].At.Add(time.Nanosecond), time.Now())
+			assert.Empty(t, after, "[transcriber] nothing written after the final")
+		}
+		for _, f := range finals {
+			_, echo := echoed(f.T.Text, replyText)
+			assert.Zero(t, echo, "[transcriber] the agent's voice written as the caller's: %q", f.T.Text)
+		}
+		assert.Len(t, utterances, 1, "[transcriber] one utterance")
+		assert.Equal(t, 1, c.wordRequests(), "one request for the words of the turn")
+	} else {
+		callers, voice, both := byEcho(finals)
+		t.Logf("[transcriber] with the agent's voice echoed, %d finals in %d utterances: the caller's %q, the agent's voice alone %q, the caller's with the agent's voice on the end %q",
+			len(finals), len(utterances), finalTexts(callers), finalTexts(voice), finalTexts(both))
+		if mode == "" {
+			assert.Len(t, callers, 1, "[transcriber] one final of the caller's words")
+			assert.Empty(t, both, "[transcriber] the agent's voice written into the caller's final rather than as a final of its own: %q", finalTexts(both))
+		}
+	}
+
+	// After the agent has dropped its own voice: what arrives (Hearing), what was heard
+	// (Heard) and what the model is told (the history) hold one turn of the caller's and none
+	// of the agent's voice.
+	for _, hearing := range all[Hearing](c) {
+		_, echo := echoed(hearing.E.Text, replyText)
+		assert.Zero(t, echo, "[conversation] the agent's voice arriving as the caller's: %q", hearing.E.Text)
 	}
 	for _, heard := range all[Heard](c) {
 		_, echo := echoed(heard.E.Text, replyText)
 		assert.Zero(t, echo, "[conversation] the agent's voice heard as the caller's: %q", heard.E.Text)
 	}
-	utterances := map[int64]bool{}
-	for _, w := range c.words.all() {
-		utterances[w.T.Utterance] = true
+	if lines := c.callerLines(); assert.Len(t, lines, 1, "[conversation] one line of the caller's in the history: %q", lines) {
+		_, echo := echoed(lines[0], replyText)
+		assert.Zero(t, echo, "[conversation] the agent's voice in the caller's line of the history: %q", lines[0])
 	}
-	assert.Len(t, utterances, 1, "[transcriber] one utterance")
 	answered := c.answered(said)
 	h.measured(t, "2", answered)
 	assert.True(t, answered.ok, "[conversation] the question was answered")
@@ -292,12 +325,49 @@ func (h *floorHarness) oneFinal(t *testing.T, mode audiofloor.Mode, bed []float6
 	if mode == audiofloor.Act {
 		assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
 	}
-	if echo == 0 {
-		assert.Equal(t, 1, c.wordRequests(), "one request for the words of the turn")
-	}
 }
 
 func echoAt(db float64) float64 { return math.Pow(10, db/20) }
+
+// byEcho sorts finals by what they are of: the caller's words, the agent's voice heard back
+// alone, or the caller's words with the agent's voice on the end of them, as the agent tells
+// them apart (echoed).
+func byEcho(finals []heardWords) (callers, voice, both []heardWords) {
+	for _, f := range finals {
+		left, echo := echoed(f.T.Text, replyText)
+		switch {
+		case echo == 0:
+			callers = append(callers, f)
+		case strings.TrimSpace(left) == "":
+			voice = append(voice, f)
+		default:
+			both = append(both, f)
+		}
+	}
+	return callers, voice, both
+}
+
+func finalTexts(finals []heardWords) []string {
+	out := []string{}
+	for _, f := range finals {
+		out = append(out, f.T.Text)
+	}
+	return out
+}
+
+// callerLines are the caller's lines of the agent's history, as the model is told them.
+func (c *call) callerLines() []string {
+	c.agent.mu.Lock()
+	history := harness.WithoutNotes(slices.Clone(c.agent.history))
+	c.agent.mu.Unlock()
+	var out []string
+	for _, message := range history {
+		if message.Role == llm.User {
+			out = append(out, message.Content)
+		}
+	}
+	return out
+}
 
 // 3. A question followed by a breath, and another by a burst of noise: nothing written in a
 // script the caller doesn't speak.

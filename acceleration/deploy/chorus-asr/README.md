@@ -286,6 +286,15 @@ stt: stream/chorus-asr
 It registers no agent and asks for no decision: each request is `POST /v1/transcribe`,
 so a server started without a policy transcribes as well, and so it does in `shadow`.
 
+**Echo cancellation is the edge's.** The transcriber writes what is on the caller's line,
+and a line with no acoustic echo cancellation carries the app's own voice back: a phone's
+speaker into its microphone, or a browser without AEC. In an agent's call the router knows
+what its agent said and drops the echo before the conversation sees it (Fallbacks, below).
+Transcribing alone it does not know the app's voice, so the echo comes back as words, as it
+does from any transcriber: a final of its own, after the caller's, rather than part of
+theirs. Run AEC on the device or the media server (WebRTC's, or the SFU's), as every STT
+over a loudspeaker needs.
+
 ### The audio
 
 Each participant's audio is encoded once, as it arrives: one Opus encoder per participant

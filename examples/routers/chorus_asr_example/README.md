@@ -35,6 +35,13 @@ The two agent programs sync their folder under `agents/`, join a Stream call and
 to talk on it, then the conversation. `transcribe_only` syncs `routers/` and streams the
 realtime STT example's clip through it.
 
+Transcribing alone, the router does not know what your pipeline says, so anything of your
+own voice that comes back down the caller's line is written as words, as with any STT: a
+final of its own after the caller's. Cancel the echo at the edge, on the device or the media
+server, as a loudspeaker needs for every transcriber. The two agent programs need no such
+care from you for the router's own agent: it drops its own voice before the conversation
+hears it.
+
 ## Choosing how eager turn-taking is
 
 The two agents end their turns by the server's default. An agent chooses otherwise with
