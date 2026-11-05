@@ -385,7 +385,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### An episode left open when its config turns the cards off still closes
 
-On a router with connectors off, the idle sweeper started only if a config had `episode_cards` on when the router started. A chat episode that was opened while the cards were on stayed in progress forever if its config turned them off and the router then restarted. It also got no summary. The sweeper now also starts for an episode still to close or summarize. Turning the cards off still opens no new episode (AI-2771, #1766).
+On a router with connectors off, the idle sweeper started only if a config had `episode_cards` on when the router started. A chat episode that was opened while the cards were on stayed in progress forever if its config turned them off and the router then restarted. It also got no summary. The sweeper now also starts for an episode still to close or summarize. Turning the cards off still opens no new call or app chat episode. A card is now also updated as its own author: a card written before its number was unlinked stayed in progress and lost its summary, because the update named a user Stream did not have (AI-2771, #1766).
 
 ### An export no longer misses a write that was in progress when it started
 
