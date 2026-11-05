@@ -20,6 +20,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -355,7 +356,7 @@ func (s *ChatEpisodesSuite) TestAMessageInAnAppThatChecksNoTokensWritesNoCard() 
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.handedTo(worker)
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
 }
 
@@ -368,8 +369,36 @@ func (s *ChatEpisodesSuite) TestAMessageInAnAppStreamCannotBeAskedAboutWritesNoC
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.handedTo(worker)
 	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
+// Defect: a Stream slow to say whether the app checks tokens holds the message for as long as
+// a request to Stream may take (streamapp's requestTimeout, 30 s), twice. It is handed on once
+// omnichannel.ReadTimeout has passed, with no card.
+func (s *ChatEpisodesSuite) TestAStreamSlowToSayWhetherTheAppChecksTokensHoldsTheMessageNoLongerThanTheReadTimeout() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	asked, release := s.chat.Hold("/api/v2/app")
+	defer release()
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	status := make(chan int, 1)
+	go func() { status <- s.writes(config.ID, "where is my order?") }()
+
+	select {
+	case <-asked:
+	case <-time.After(settleFor):
+		s.FailNow("Stream was not asked whether the app checks tokens")
+	}
+	select {
+	case <-worker:
+	case <-time.After(omnichannel.ReadTimeout + settleFor):
+		s.FailNow("the message was not handed on once the read timeout passed")
+	}
+	s.Equal(http.StatusOK, <-status)
+	s.Zero(s.contacts())
+	s.Zero(s.episodeCount())
 }
 
 // Defect: a message from an app the customer does not act in taken as one from an app that
@@ -398,7 +427,7 @@ func (s *ChatEpisodesSuite) TestAMessageInAnAppThatChecksTokensWritesACard() {
 
 	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
-	s.True(s.reachesWorker(worker), "the message is answered")
+	s.handedTo(worker)
 	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
 	s.Equal(store.EpisodeChat, custom["source"])
 	s.Equal(1, s.episodeCount())

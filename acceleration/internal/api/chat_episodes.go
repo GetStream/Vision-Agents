@@ -97,8 +97,11 @@ func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messa
 
 // checksTokens reports whether Stream says the app a hook came from, as the customer acts in
 // it, checks the tokens it is sent (streamapp.Clients.ChecksTokens). An app that could not be
-// asked is taken as one that does not.
+// asked is taken as one that does not. Asking takes at most omnichannel.ReadTimeout, as a
+// session's read of the cards does: the message is handed on after it.
 func (s *Server) checksTokens(ctx context.Context, origin hookOrigin, customer string) bool {
+	ctx, cancel := context.WithTimeout(ctx, omnichannel.ReadTimeout)
+	defer cancel()
 	bound, err := s.streamForApp(ctx, customer, origin.app, false)
 	checks := false
 	if err == nil {
