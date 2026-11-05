@@ -165,8 +165,8 @@ class AgentChat private constructor(
         return try {
             request()
             true
-        } catch (e: AgentsException) {
-            failedTurn.value = e.message
+        } catch (_: AgentsException) {
+            failedTurn.value = UNANSWERED
             askedAfter.value = null
             false
         }
@@ -239,11 +239,17 @@ private val AgentEvent.isFailedReply: Boolean
     get() = kind == AgentEvent.Kind.Error && string("context") == "llm"
 
 /**
- * Why the latest question went unanswered once [event] is in: a reply that failed says why, and
- * the next reply starting means the agent is answering again.
+ * What a turn that went unanswered shows. The router's reason is a provider's raw error, with
+ * its billing links and response body, so it isn't shown.
+ */
+internal const val UNANSWERED: String = "Juno couldn't answer."
+
+/**
+ * Whether the latest question went unanswered once [event] is in: a reply that failed leaves it
+ * unanswered, and the next reply starting means the agent is answering again.
  */
 internal fun String?.unansweredAfter(event: AgentEvent): String? = when {
-    event.isFailedReply -> event.errorText.ifEmpty { "Juno could not answer that." }
+    event.isFailedReply -> UNANSWERED
     event.kind == AgentEvent.Kind.Responding -> null
     else -> this
 }

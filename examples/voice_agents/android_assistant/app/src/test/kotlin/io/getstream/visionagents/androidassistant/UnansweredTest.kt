@@ -10,19 +10,19 @@ private fun event(json: String): AgentEvent = requireNotNull(AgentEvent.decode(j
 
 class UnansweredTest {
     @Test
-    fun `a reply the model could not write leaves the question unanswered, with why`() {
+    fun `a reply the model could not write leaves the question unanswered, without the raw error`() {
         val unanswered = null.unansweredAfter(
             event("""{"type":"error","context":"llm","error":"gemini: 402 Payment Required"}"""),
         )
 
-        assertEquals("gemini: 402 Payment Required", unanswered)
+        assertEquals(UNANSWERED, unanswered)
     }
 
     @Test
     fun `a failed reply that says nothing still leaves the question unanswered`() {
         val unanswered = null.unansweredAfter(event("""{"type":"error","context":"llm","error":""}"""))
 
-        assertEquals("Juno could not answer that.", unanswered)
+        assertEquals(UNANSWERED, unanswered)
     }
 
     @Test
@@ -37,15 +37,15 @@ class UnansweredTest {
     @Test
     fun `the reply that ends a failed turn keeps why it failed`() {
         // The router reports the failure and then ends the turn with an empty reply.
-        val unanswered = "gemini: 402 Payment Required"
+        val unanswered = UNANSWERED
             .unansweredAfter(event("""{"type":"responded","turn_id":"t1","text":"","pending_work":false}"""))
 
-        assertEquals("gemini: 402 Payment Required", unanswered)
+        assertEquals(UNANSWERED, unanswered)
     }
 
     @Test
     fun `the next reply starting clears the failure`() {
-        val unanswered = "gemini: 402 Payment Required"
+        val unanswered = UNANSWERED
             .unansweredAfter(event("""{"type":"responding","turn_id":"t2","participant":null,"prompt":"hi"}"""))
 
         assertNull(unanswered)
