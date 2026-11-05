@@ -375,6 +375,25 @@ func (s *CloserSuite) TestACardThatIsGoneFailsTheSummaryWithoutAskingTheModel() 
 	s.Empty(s.fast.requests(), "no summary was asked for")
 }
 
+// A message that is not a card has no agent user to update it as: an episode whose card id
+// names a person's line is summary_failed at once, the line is left as written, and no LLM
+// response is paid for.
+func (s *CloserSuite) TestAMessageThatIsNotACardIsNeverUpdatedAsItsAuthor() {
+	opened, thread := s.idleThread("where is my order 12?")
+	lines := s.chat.Stored(thread)
+	s.Require().Len(lines, 1)
+	line, _ := lines[0]["id"].(string)
+	s.Require().NotEmpty(line)
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE episodes SET card_message_id = ? WHERE id = ?", line, opened.Episode.ID)
+	s.Require().NoError(err)
+
+	s.Require().NoError(s.closer.Sweep(s.ctx))
+
+	s.Equal(store.EpisodeSummaryFailed, s.status(opened))
+	s.Empty(s.fast.requests(), "no summary was asked for")
+	s.Equal("where is my order 12?", s.chat.Stored(thread)[0]["text"], "the person's line is left as written")
+}
+
 // The card is updated in place, which Stream sends as message.updated: no new message, so
 // nothing reaches the message hook, which asks for message.new only.
 func (s *CloserSuite) TestACardUpdateWritesNoNewMessage() {

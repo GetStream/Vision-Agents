@@ -326,7 +326,8 @@ func (c *Closer) ask(ctx context.Context, config store.AgentConfig, episode stor
 }
 
 // authorOf is who an episode's card is updated as: its author, the agent user of the
-// omni-channel it was written in (Write). Not the omni-channel the person's row points at now:
+// omni-channel it was written in (Write). A message that is not a card as Write writes it has
+// no such author, as one that cannot be read has none: it is never updated as whoever wrote it. Not the omni-channel the person's row points at now:
 // an unlink gives the number's row a new one (store.UnlinkUserPhone), whose agent user is made
 // only with its first card, and Stream refuses an update by a user it does not have («the user
 // omni-… does not exist», staging, AI-2771).
@@ -341,7 +342,11 @@ func (c *Closer) authorOf(ctx context.Context, episode store.ClosedEpisode) (str
 	if err != nil {
 		return "", stack.Wrap(fmt.Errorf("omnichannel: read the card of episode %s: %w", episode.ID, err))
 	}
-	return r.Data.Message.User.ID, nil
+	message := r.Data.Message
+	if !writtenAsCard(message) {
+		return "", stack.Wrap(fmt.Errorf("omnichannel: message %s of episode %s is not a card", episode.CardMessageID, episode.ID))
+	}
+	return message.User.ID, nil
 }
 
 // mark sets fields of an episode's card with a partial update, as its author (authorOf).
