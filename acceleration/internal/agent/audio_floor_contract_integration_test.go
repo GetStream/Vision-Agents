@@ -224,7 +224,8 @@ func (k *contract) shortened(t *testing.T, name string) {
 	}
 	gave := over.began().Add(took)
 	answered := c.answered(over)
-	last := c.edge.heardBetween(gave, answered.replied)
+	// What the caller heard of the agent from its giving way to the item being answered.
+	last := c.edge.heardBetween(gave, answered.decided)
 	t.Logf("the model %s the reply %s after the first word; the agent was last heard %d frames after", how, took.Round(time.Millisecond), len(last))
 	bound := shortenedWithin + frameSlack
 	if how == "stop" {
@@ -245,7 +246,7 @@ func (k *contract) checkInTalkedOver(t *testing.T) {
 	c := k.start(t, audiofloor.Act, replayInstructions, []string{"en"})
 	c.model.mu.Lock()
 	c.model.reply = []string{questionReply}
-	c.model.then = []string{replyText}
+	c.model.composes = []string{replyText}
 	c.model.mu.Unlock()
 	c.edge.pause(time.Second)
 	c.edge.say("weather", k.weather)
@@ -267,8 +268,8 @@ func (k *contract) checkInTalkedOver(t *testing.T) {
 		gave := over.began().Add(took)
 		t.Logf("the model %s the check-in %s after the first word", how, took.Round(time.Millisecond))
 		next := time.Now()
-		if answered := c.answered(over); answered.ok && !answered.replied.IsZero() {
-			next = answered.replied
+		if answered := c.answered(over); answered.ok {
+			next = answered.decided
 		}
 		last := c.edge.heardBetween(gave, next)
 		if len(last) > 0 {
@@ -359,7 +360,9 @@ func (k *contract) dictation(t *testing.T) {
 	assert.Empty(t, c.decisionsBetween(said.began(), said.ended(), string(ActAnswer)), "answered before the caller finished")
 	answers := c.answers()
 	if assert.Len(t, answers, 1, "one answer") {
-		assert.Contains(t, strings.ReplaceAll(wordsOfText(answers[0].E.Text), " ", ""), "027", "the answer has the ID's end")
+		// The model writes the digits as figures or as words.
+		said := strings.ReplaceAll(wordsOfText(answers[0].E.Text), " ", "")
+		assert.True(t, strings.Contains(said, "027") || strings.Contains(said, "zerotwoseven"), "the answer has the ID's end: %q", answers[0].E.Text)
 	}
 	k.measured(t, "C6 member ID", c.answered(said))
 }
