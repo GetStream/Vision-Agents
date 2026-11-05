@@ -12,6 +12,7 @@
 package video
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -24,6 +25,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"syscall"
@@ -70,6 +73,7 @@ type Frame struct {
 }
 
 // Frames samples a clip into count evenly spaced frames, and says how long the clip is.
+// A clip with fewer frames than count gives the frames it has, each once.
 //
 // source is an HTTP(S) URL or a base64 data URI of a video.
 func Frames(ctx context.Context, source string, count int) ([]Frame, time.Duration, error) {
@@ -111,18 +115,53 @@ func frames(ctx context.Context, client *http.Client, source string, count int) 
 	if err != nil {
 		return nil, 0, stack.Wrap(err)
 	}
-	sampled := make([]Frame, 0, count)
-	for i := range count {
-		// The middle of each slice rather than its start, so the first frame is not the
-		// black one a clip so often opens on and the last is not past the end.
-		at := time.Duration(float64(length) * (float64(i) + 0.5) / float64(count))
-		jpeg, err := frameAt(ctx, file.Name(), at)
+	times, err := frameTimes(ctx, file.Name())
+	if err != nil {
+		return nil, 0, stack.Wrap(err)
+	}
+	picked := pick(times, length, count)
+	sampled := make([]Frame, 0, len(picked))
+	for _, slot := range picked {
+		jpeg, err := frameAt(ctx, file.Name(), slot.seek)
 		if err != nil {
 			return nil, 0, stack.Wrap(err)
 		}
-		sampled = append(sampled, Frame{At: at, Image: llm.ImagePart{MIME: "image/jpeg", Data: jpeg, Video: true}})
+		sampled = append(sampled, Frame{At: slot.at, Image: llm.ImagePart{MIME: "image/jpeg", Data: jpeg, Video: true}})
 	}
 	return sampled, length, nil
+}
+
+// slot is one sample of a clip: the moment it stands for, and where to seek to get the
+// frame showing then.
+type slot struct{ at, seek time.Duration }
+
+// pick chooses the frames to show of a clip whose frames show at times, which are sorted.
+//
+// A slice's moment is its middle rather than its start, so the first frame is not the
+// black one a clip so often opens on and the last is not past the end. The frame wanted
+// is the one showing then, the last that began by it. ffmpeg's -ss gives the first frame
+// that begins at or after the time asked, so a moment inside the last frame's display
+// time, past where it began, finds no frame at all (a one second clip at 4 frames a
+// second has none after 750ms). Seeking to the middle of the gap before the wanted frame
+// finds that frame and no other. Two moments in the same frame are one sample, which is
+// how a clip of fewer frames than asked gives the frames it has.
+func pick(times []time.Duration, length time.Duration, count int) []slot {
+	var picked []slot
+	last := -1
+	for i := range count {
+		at := time.Duration(float64(length) * (float64(i) + 0.5) / float64(count))
+		frame := max(sort.Search(len(times), func(j int) bool { return times[j] > at })-1, 0)
+		if frame == last {
+			continue
+		}
+		last = frame
+		var seek time.Duration
+		if frame > 0 {
+			seek = (times[frame-1] + times[frame]) / 2
+		}
+		picked = append(picked, slot{at: at, seek: seek})
+	}
+	return picked
 }
 
 // load reads a clip's bytes out of a data URI or off the network.
@@ -186,12 +225,63 @@ func duration(ctx context.Context, path string) (time.Duration, error) {
 	return time.Duration(seconds * float64(time.Second)), nil
 }
 
-// frameAt is the frame showing at a moment of the clip, as a JPEG.
+// frameTimes is when each frame of the clip at path begins to show, in order, counted from
+// the clip's start as ffmpeg's -ss counts. ffprobe's lines are read as they come, so a clip
+// of millions of frames costs the router only the times, not ffprobe's whole listing.
+func frameTimes(ctx context.Context, path string) ([]time.Duration, error) {
+	errNotAVideo := errors.New("video: not a video ffmpeg can read")
+	args := append([]string{"-v", "error", "-select_streams", "v:0"}, readOnlyAClip...)
+	command := exec.CommandContext(ctx, "ffprobe", append(args,
+		"-show_entries", "format=start_time:packet=pts_time", "-of", "csv", path)...)
+	stdout, err := command.StdoutPipe()
+	if err != nil {
+		return nil, stack.Wrap(err)
+	}
+	if err := command.Start(); err != nil {
+		return nil, stack.Wrap(errNotAVideo)
+	}
+	var start time.Duration
+	var times []time.Duration
+	lines := bufio.NewScanner(stdout)
+	for lines.Scan() {
+		kind, value, _ := strings.Cut(lines.Text(), ",")
+		seconds, err := strconv.ParseFloat(value, 64)
+		switch {
+		case err != nil:
+		case kind == "format":
+			start = time.Duration(seconds * float64(time.Second))
+		case kind == "packet":
+			times = append(times, time.Duration(seconds*float64(time.Second)))
+		}
+	}
+	if lines.Err() != nil {
+		// ffprobe blocked on a full pipe would never exit; closing it ends its writes.
+		_ = stdout.Close()
+	}
+	// Wait closes the pipe, so it comes after the last read. It runs even when the read
+	// failed, or ffprobe is never reaped.
+	waitErr := command.Wait()
+	if lines.Err() != nil || waitErr != nil || len(times) == 0 {
+		return nil, stack.Wrap(errNotAVideo)
+	}
+	for i := range times {
+		times[i] -= start
+	}
+	slices.Sort(times)
+	return times, nil
+}
+
+// seekTime is a moment as ffmpeg's -ss takes it, to the microsecond.
+func seekTime(at time.Duration) string {
+	return strconv.FormatFloat(at.Seconds(), 'f', 6, 64)
+}
+
+// frameAt is the first frame showing from a moment of the clip on, as a JPEG.
 func frameAt(ctx context.Context, path string, at time.Duration) ([]byte, error) {
 	var stderr bytes.Buffer
 	args := append([]string{"-v", "error"}, readOnlyAClip...)
 	command := exec.CommandContext(ctx, "ffmpeg", append(args,
-		"-ss", strconv.FormatFloat(at.Seconds(), 'f', 3, 64), "-i", path,
+		"-ss", seekTime(at), "-i", path,
 		"-frames:v", "1", "-vf", fmt.Sprintf("scale='min(%d,iw)':-2", frameWidth),
 		"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-")...)
 	command.Stderr = &stderr

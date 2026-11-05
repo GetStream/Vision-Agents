@@ -387,6 +387,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A short video is sampled into the frames it has
+
+`responses.create` with a video of fewer frames than `max_frames` (8 by default) failed with `video: reading the frame at 812.5ms` when the clip ended inside its last frame: a one second clip at 4 frames a second could not be sampled at its default. The router now picks the frame showing at each sampling moment, which it reads from the clip, and shows a frame once however many moments fall in it, so that clip gives its four frames. A clip with more frames than `max_frames` gives `max_frames` frames as before, each now the frame on screen at its time rather than the next to begin (AI-2658, #1767).
+
 ### `git lfs pull` works in a sandbox behind the egress proxy
 
 Under `code_sandbox.broker: proxy`, Git LFS's batch request was refused as a write, so `git lfs pull` failed. GitHub's connector (revision 11) now lets a batch that asks to download through, and fetches the objects from the host GitHub names with no token; an upload is still refused (#1768).
