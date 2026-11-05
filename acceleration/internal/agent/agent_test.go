@@ -3864,6 +3864,44 @@ func (s *AgentSuite) TestAskingWhetherAnythingElseIsNeededIsSomethingTheAgentSai
 	s.Empty(s.model.requests(), "asking for a line is not a turn")
 }
 
+// A stop a check over the agent ruled while the caller talked on is no turn: the agent says
+// it stopped, and the utterance's final, the words the stop was ruled on, is heard and not
+// answered. What the caller says after, the next utterance, is answered. Answered, the stop's
+// words had the agent talk again after every "stop".
+func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "tell me a long story")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	asker := pauseAsker{s.agent}
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: "Stop.", Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2}
+	s.True(asker.Overheard(participant, stop), "the agent stopped")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
+
+	stop.Stopped = true
+	asker.Ruled(participant, stop)
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "Stop.",
+		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+	s.eventually(func() bool {
+		return slices.ContainsFunc(s.reported(), func(event Event) bool {
+			d, ok := event.(Decided)
+			return ok && d.Kind == string(ActIgnore) && d.Text == "Stop."
+		})
+	}, "the stop's words were not set aside")
+	s.eventually(func() bool { return countOf[Heard](s.reported()) == 2 }, "the stop's words were not heard")
+	time.Sleep(3 * defaultCadenceGap)
+	s.Len(s.model.requests(), 1, "the stop's words were answered")
+
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 3, Text: "What about Porto?",
+		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
+}
+
 // A check-in is a turn the agent took, not a murmur: a caller who talks over it and is ruled
 // to have the floor stops it, as they would a reply. Said as a murmur, it played to its end
 // over a caller the model had ruled should have the floor.

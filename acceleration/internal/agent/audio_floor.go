@@ -247,6 +247,12 @@ func (p pauseAsker) Hearer() *audiofloor.Hearer { return p.a.audioFloor.hearer }
 // agent's own voice heard back dropped from their end as it is from the final (consumeSTT),
 // which is what the turn's words are matched against (findRuled).
 func (p pauseAsker) Ruled(participant stt.Participant, ruled audiofloor.Ruled) {
+	if ruled.Stopped {
+		// The words a stop was ruled on, which the agent acted on as they were said: there is
+		// no ruling to keep, and their final is no turn.
+		p.a.converse.Spent(participant, ruled.Utterance)
+		return
+	}
 	ruled.Words, _ = p.a.withoutEcho(transcriptOf(participant, ruled))
 	p.a.audioFloor.keep(participant.ID, ruled)
 }
@@ -271,7 +277,8 @@ func (p pauseAsker) Speaking() bool {
 // the caller talked on, as the agent does on a provisional ruling about a revision's words
 // (overlapRuled): its own voice heard back on the caller's line is dropped from the words
 // first, as from any chorus-asr transcript, and an echo alone, or a murmur, is no reason to
-// stop.
+// stop. It says whether the agent stopped: a shortening leaves the caller's words a turn,
+// the item they added.
 func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) bool {
 	a := p.a
 	left, ok := a.droppingEcho(transcriptOf(participant, ruled), "a check over the agent")
@@ -283,8 +290,9 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return false
 	}
-	a.act(a.converse.Overheard(ruled.Ruling, participant, left, a.floor()))
-	return false
+	actions := a.converse.Overheard(ruled.Ruling, participant, left, a.floor())
+	a.act(actions)
+	return slices.ContainsFunc(actions, func(action Action) bool { return action.Kind == ActInterrupt })
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's

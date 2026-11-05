@@ -246,6 +246,9 @@ type converse struct {
 	// open line. Words that follow in a run of speech of their own go after it rather
 	// than over it: the turn is still owed, and its words are still the line's.
 	queuedSaid map[string]string
+	// spent is each participant's utterance whose words a stop over the agent was ruled on
+	// as they were said (Spent): its final is no turn.
+	spent map[string]int64
 }
 
 // overlapState is what has been asked about a participant's in-progress utterance.
@@ -340,7 +343,49 @@ func newConverse(
 		lastHeard:    map[string]string{},
 		queuedSaid:   map[string]string{},
 		repeated:     map[string]string{},
+		spent:        map[string]int64{},
 	}
+}
+
+// Spent says a participant's utterance is the words a stop over the agent was ruled on while
+// they talked on, which the agent has acted on: a stop ruled so is not a turn (its disposition
+// is wait), so its final is heard and not answered. What they said after those words is an
+// utterance of its own.
+func (c *converse) Spent(participant stt.Participant, utterance int64) {
+	if utterance == 0 {
+		return
+	}
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.spent[participant.ID] = utterance
+}
+
+// spentOn hears the final of an utterance a stop was ruled on (Spent): the caller said it, and
+// the agent did what it asked, so it is shown and heard, and nothing more is done about it.
+func (c *converse) spentOn(transcript stt.Transcript) (Action, bool) {
+	participantID := transcript.Participant.ID
+	c.mu.Lock()
+	if !transcript.Final() || transcript.Utterance == 0 || c.spent[participantID] != transcript.Utterance {
+		c.mu.Unlock()
+		return Action{}, false
+	}
+	delete(c.spent, participantID)
+	text := strings.TrimSpace(transcript.Text)
+	line := c.lineLocked(participantID)
+	shown := c.lineTextLocked(participantID, text)
+	c.mu.Unlock()
+	if shown != "" {
+		c.emitter.Send(Hearing{Participant: transcript.Participant, Text: shown, Language: transcript.Language, LineID: line})
+	}
+	shown, line = c.closeLine(participantID, text, true)
+	sendHeard(c.emitter, c.onHeard, Heard{Participant: transcript.Participant, Text: shown, Language: transcript.Language, LineID: line})
+	return c.decide(Action{
+		Kind:        ActIgnore,
+		Reason:      "the words a stop over the agent was ruled on as they were said, which it has acted on: there is nothing more in them to answer",
+		Participant: transcript.Participant,
+		Text:        shown,
+		LineID:      line,
+	}), true
 }
 
 // Observe takes a transcript revision and says what it changed.
@@ -348,6 +393,9 @@ func newConverse(
 // Two things can come of hearing more words: they may be worth acknowledging out loud,
 // and they may make a ruling already in flight about the words as they were pointless.
 func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
+	if spent, ok := c.spentOn(transcript); ok {
+		return []Action{spent}
+	}
 	var actions []Action
 
 	if phrase := c.duplex.Heard(transcript.Participant, transcript.Text, state.Quiet); phrase != "" {
