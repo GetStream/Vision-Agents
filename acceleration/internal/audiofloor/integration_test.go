@@ -47,7 +47,7 @@ func streamed(t *testing.T, format Format, pcm []int16) harness.Audio {
 }
 
 // A real audio floor server rules on a caller's question, in Opus as in PCM, and writes it
-// down.
+// down with no decision.
 func TestARealServerRulesAndTranscribes(t *testing.T) {
 	url, pcm := recording(t)
 	// The caller has been quiet a while when the turn is put.
@@ -84,17 +84,17 @@ func TestARealServerRulesAndTranscribes(t *testing.T) {
 	}
 
 	took := []time.Duration{}
-	var said Answer
+	var said string
 	for range 3 {
 		start := time.Now()
 		var err error
-		said, err = client.Decide(ctx, Agent{}, Turn{}, streamed(t, Opus, pcm), true)
+		said, err = client.Transcribe(ctx, streamed(t, Opus, pcm), []string{"en"})
 		require.NoError(t, err)
 		took = append(took, time.Since(start))
 	}
 	slices.Sort(took)
-	t.Logf("transcript: median %v over %d, of %.2f s: %q", took[len(took)/2], len(took), float64(len(pcm))/SampleRate, said.Transcript)
-	require.NotEmpty(t, said.Transcript)
+	t.Logf("transcript: median %v over %d, of %.2f s: %q", took[len(took)/2], len(took), float64(len(pcm))/SampleRate, said)
+	require.NotEmpty(t, said)
 }
 
 // The transcriber writes the caller's question at its pauses and ends it at the cap.

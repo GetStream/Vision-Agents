@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thesyncim/gopus"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -19,12 +21,22 @@ const (
 	DefaultModel = "audio-floor"
 )
 
+// A frame is speech when it is loud enough and the speech detector, Opus's neural speech
+// analysis, scores it as speech: the level says when the voice stops, as the detector's
+// score lingers for about 200 ms after it, and the score tells speech from noise, hum and
+// clicks, however loud.
 const (
 	// voiceLevel is the root mean square, as a fraction of full scale, from which a frame
-	// counts as voice: about -48 dBFS, below quiet speech and above a phone line's hiss.
-	// It is the gate the model's reference client uses, not one measured on these calls.
-	// It says where the pauses are; what is noise is the server's to say.
+	// can be speech: about -48 dBFS, below quiet speech and above a phone line's hiss.
 	voiceLevel = 0.004
+	// speechScore is the detector's score from which a frame is speech, and detectorWarmup
+	// the windows it adapts for first, as the server's speech gate reads them.
+	speechScore    = 0.5
+	detectorWarmup = 10
+	// writeAfter is the pause at which the utterance so far is written, and endAfter the
+	// pause that ends it: the end-of-turn policies' first check and cap.
+	writeAfter = 200 * time.Millisecond
+	endAfter   = 2500 * time.Millisecond
 	// preroll is the audio kept ahead of an utterance's first voiced frame, so that a gate
 	// that opens late doesn't cut the first sound off.
 	preroll = 300 * time.Millisecond
@@ -40,35 +52,43 @@ const (
 
 // Transcriber writes what a participant says with the audio floor server's model, so a call
 // needs no other speech-to-text provider. It is an stt.STT that writes the whole utterance
-// so far at each of its pauses, once the pause reaches the policy's first check, as a
-// replacement of the words before, and ends the utterance when a pause reaches the policy's
-// cap. When to answer is the flow controller's to say, as it is with any transcriber. The
+// so far at each of its pauses, once the pause reaches writeAfter, as a replacement of the
+// words before, and ends the utterance at a pause of endAfter with one final transcript.
+// It asks for an utterance's words only when speech has come since it last did, so audio
+// is never written twice, and the next utterance begins after the last one ended. When to
+// answer is the flow controller's to say, as it is with any transcriber. It asks the
+// server for the words alone (POST /v1/transcribe): no agent, decision or policy. The
 // server writes nothing of noise, and empty words are nothing heard.
 //
 // A server that fails to answer is a fatal error, which hands the call to the next
 // transcriber the routing target names. The words since the last ones written are lost.
 type Transcriber struct {
-	client   *Client
-	model    string
-	agent    Agent
-	logger   *slog.Logger
-	emitter  *stt.Emitter
-	requests chan request
+	client    *Client
+	model     string
+	languages []string
+	logger    *slog.Logger
+	emitter   *stt.Emitter
+	requests  chan request
 	// ctx is the session's lifetime, made in Start, and done closes when transcribe returns.
 	ctx    context.Context
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	// The utterance being heard, kept by ProcessAudio on the session's own goroutine: heard
-	// holds its audio from frame start on.
-	first, cap time.Duration
-	heard      *Stream
-	start      int64
-	voiced     bool
-	quiet      time.Duration
-	// asked says the pause going on has had its words asked for.
-	asked     bool
-	utterance int64
+	// What ProcessAudio keeps, on the session's own goroutine: the frame being filled, the
+	// detector that scores each, and the stream of them.
+	detector *gopus.SpeechDetector
+	frame    [frameSamples]int16
+	filled   int
+	windows  int
+	heard    *Stream
+	// The utterance being heard: its audio is heard's from frame start on, and no earlier
+	// than the frame ended, where the last one ended. voiced says it has had speech, fresh
+	// that speech has come since its words were last asked for, and quiet how long the
+	// pause going on has lasted.
+	start, ended  int64
+	voiced, fresh bool
+	quiet         time.Duration
+	utterance     int64
 }
 
 // request is an utterance's words to write, or with no audio its end on the words last
@@ -86,28 +106,27 @@ func NewTranscriber(client *Client, model string, languages []string, logger *sl
 	if model == "" {
 		model = DefaultModel
 	}
-	return &Transcriber{client: client, model: model, agent: Agent{Languages: languages}, logger: logger,
+	return &Transcriber{client: client, model: model, languages: languages, logger: logger,
 		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
 
-// Start reads the server's policy, which says which pauses are written and which end an
-// utterance.
-func (t *Transcriber) Start(ctx context.Context) error {
-	policy, err := t.client.Policy(ctx)
-	if err != nil {
-		return err
-	}
+// Start opens the session. It asks the server nothing.
+func (t *Transcriber) Start(context.Context) error {
+	var err error
 	if t.heard, err = t.client.NewStream(maxUtterance); err != nil {
 		return err
 	}
-	t.first, t.cap = policy.FirstCheck(), policy.Cap()
+	if t.detector, err = gopus.NewSpeechDetector(SampleRate); err != nil {
+		return stack.Wrap(err)
+	}
 	t.ctx, t.cancel = context.WithCancel(context.Background())
 	go t.transcribe()
 	t.emitter.Send(stt.Connected{Provider: ProviderName, Model: t.model, At: time.Now()})
 	return nil
 }
 
-// ProcessAudio keeps one frame of the utterance, and asks for its words at its pauses.
+// ProcessAudio keeps the utterance's audio, 20 ms at a time, and asks for its words at its
+// pauses.
 func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 	if t.ctx == nil {
 		return stack.Wrap(errors.New("audiofloor: the session is not open"))
@@ -115,32 +134,51 @@ func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant)
 	if err := pcm.Validate(stt.SampleRate); err != nil {
 		return err
 	}
-	if err := t.heard.Write(pcm.Samples); err != nil {
-		return err
+	for samples := pcm.Samples; len(samples) > 0; {
+		n := copy(t.frame[t.filled:], samples)
+		samples, t.filled = samples[n:], t.filled+n
+		if t.filled < frameSamples {
+			break
+		}
+		t.filled = 0
+		if err := t.heard.Write(t.frame[:]); err != nil {
+			return err
+		}
+		score, err := t.detector.AnalyzeInt16(t.frame[:])
+		if err != nil {
+			return stack.Wrap(err)
+		}
+		t.windows++
+		t.step(t.windows > detectorWarmup && score >= speechScore && level(t.frame[:]) >= voiceLevel, participant)
 	}
-	if level(pcm.Samples) >= voiceLevel {
-		t.voiced, t.quiet, t.asked = true, 0, false
+	return nil
+}
+
+// step reads one frame, speech or not, and asks for the utterance's words: at a pause after
+// speech that came since they were last asked for, and once more at its end.
+func (t *Transcriber) step(speech bool, participant stt.Participant) {
+	if speech {
+		t.voiced, t.fresh, t.quiet = true, true, 0
 	} else {
-		t.quiet += time.Duration(pcm.DurationMs() * float64(time.Millisecond))
+		t.quiet += frame
 	}
 	heard := t.heard.Frames()
+	utterance := func() harness.Audio { return t.heard.Last(time.Duration(heard-t.start) * frame) }
 	switch {
 	case !t.voiced:
-		t.start = heard - int64(preroll/frame)
-	case t.quiet >= t.cap || heard-t.start >= int64(maxUtterance/frame):
+		t.start = max(heard-int64(preroll/frame), t.ended)
+	case t.quiet >= endAfter || heard-t.start >= int64(maxUtterance/frame):
 		end := request{participant: participant, utterance: t.utterance + 1, final: true}
-		if !t.asked {
-			end.audio = t.heard.Last(time.Duration(heard-t.start) * frame)
+		if t.fresh {
+			end.audio = utterance()
 		}
 		t.ask(end)
 		t.utterance++
-		// The next utterance begins with the end of this one, quiet as it is.
-		t.start, t.voiced, t.quiet, t.asked = heard-int64(preroll/frame), false, 0, false
-	case t.quiet >= t.first && !t.asked:
-		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: t.heard.Last(time.Duration(heard-t.start) * frame)})
-		t.asked = true
+		t.start, t.ended, t.voiced, t.fresh, t.quiet = heard, heard, false, false, 0
+	case t.quiet >= writeAfter && t.fresh:
+		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
+		t.fresh = false
 	}
-	return nil
 }
 
 func (t *Transcriber) ask(r request) {
@@ -168,7 +206,7 @@ func (t *Transcriber) transcribe() {
 		var words string
 		if r.audio.Data != nil {
 			ctx, cancel := context.WithTimeout(t.ctx, transcribeTimeout)
-			answer, err := t.client.Decide(ctx, t.agent, Turn{}, r.audio, true)
+			said, err := t.client.Transcribe(ctx, r.audio, t.languages)
 			cancel()
 			if t.ctx.Err() != nil {
 				return
@@ -177,7 +215,7 @@ func (t *Transcriber) transcribe() {
 				t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Err: err, Context: "transcribe", Fatal: true})
 				return
 			}
-			words = strings.TrimSpace(answer.Transcript)
+			words = strings.TrimSpace(said)
 		}
 		if words != "" {
 			last = words
@@ -227,9 +265,6 @@ func (t *Transcriber) Model() string { return t.model }
 
 // level is a frame's root mean square, as a fraction of full scale.
 func level(samples []int16) float64 {
-	if len(samples) == 0 {
-		return 0
-	}
 	var sum float64
 	for _, sample := range samples {
 		sum += float64(sample) * float64(sample)

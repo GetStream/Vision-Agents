@@ -4,8 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"net/http"
-	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -667,14 +665,10 @@ func (s *STTRouterSuite) TestTheMockIsStreamedAtByNameAndReachedByNoShortcut() {
 // An agent reaches the audio floor transcriber by naming it, whatever languages it hints
 // at, and no shortcut reaches it.
 func (s *STTRouterSuite) TestTheAudioFloorIsStreamedAtByNameAndReachedByNoShortcut() {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}}}}`))
-	}))
-	s.T().Cleanup(srv.Close)
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 	registry := NewRegistry()
-	RegisterAudioFloor(registry, audiofloor.New(srv.URL, audiofloor.Opus, srv.Client()))
+	RegisterAudioFloor(registry, audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil))
 	router, err := New(Options{Config: config[routing.STT], Registry: registry})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)

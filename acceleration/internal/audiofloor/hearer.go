@@ -87,7 +87,7 @@ func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	if err != nil {
 		return Check{}, err
 	}
-	answer, err := h.client.Decide(ctx, Agent{Instructions: turn.Instructions, Tools: turn.Tools}, turnOf(turn), turn.Audio, false)
+	answer, err := h.client.Decide(ctx, Agent{Instructions: turn.Instructions, Tools: turn.Tools}, turnOf(turn), turn.Audio)
 	if err != nil {
 		return Check{}, err
 	}

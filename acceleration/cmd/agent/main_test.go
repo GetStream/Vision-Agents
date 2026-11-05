@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
@@ -14,22 +15,25 @@ import (
 )
 
 // The audio floor server the router's settings name is a transcriber an agent can name here
-// too, and the flow controller asks it as the mode says.
-func TestTheAudioFloorIsTheRoutersSettings(t *testing.T) {
+// too, with the flow controller's mode off: it asks the server nothing until there are
+// words to write, and then for the words alone.
+func TestTheAudioFloorTranscribesWithTheModeOff(t *testing.T) {
+	var asked atomic.Int32
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write([]byte(`{"end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}}}}`))
+		asked.Add(1)
+		w.WriteHeader(http.StatusNotImplemented)
 	}))
 	t.Cleanup(srv.Close)
 	for _, name := range []string{postgresEnvVar, redisEnvVar, configEnvVar} {
 		t.Setenv(name, "")
 	}
 	t.Setenv("ROUTER_AUDIO_FLOOR_URL", srv.URL)
-	t.Setenv("ROUTER_AUDIO_FLOOR_MODE", "shadow")
+	t.Setenv("ROUTER_AUDIO_FLOOR_MODE", "off")
 
 	floor, mode, err := openAudioFloor()
 	require.NoError(t, err)
 	require.NotNil(t, floor)
-	require.Equal(t, audiofloor.Shadow, mode)
+	require.Equal(t, audiofloor.Mode("off"), mode)
 
 	routers, cleanup, err := buildRouters(context.Background(), 0, 0, floor, slog.New(slog.DiscardHandler))
 	require.NoError(t, err)
@@ -38,6 +42,7 @@ func TestTheAudioFloorIsTheRoutersSettings(t *testing.T) {
 	require.NoError(t, err)
 	t.Cleanup(func() { _ = session.Close() })
 	require.Equal(t, audiofloor.DefaultModel, session.Model())
+	require.Zero(t, asked.Load(), "no agent, policy or decision")
 }
 
 func TestWithoutAServerThereIsNoAudioFloor(t *testing.T) {

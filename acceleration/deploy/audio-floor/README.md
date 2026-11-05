@@ -13,8 +13,8 @@ It plugs in twice, and each is optional:
   about the audio, in the words it was trained on, which only its server can write.
 - **Transcripts.** The `audiofloor/audio-floor` transcriber, an `stt.STT` like any other,
   chosen by an agent that names it as its STT. With it a call runs no other transcriber.
-  At each pause of `first_check_ms` it writes the whole utterance so far, as a replacement
-  of the words before, and it ends the utterance at a pause of `cap_ms`. When to answer
+  At each pause of 200 ms it writes the whole utterance so far, as a replacement of the
+  words before, and it ends the utterance at a pause of 2.5 s. When to answer
   stays the flow controller's.
 
 ## Configure
@@ -56,9 +56,8 @@ calls:
 `POST /v1/agents`: an agent, by what it was told and its customer tools. The router's own
 tools (ending or transferring the call, pressing keys, the knowledge and web lookups,
 confirming a tool call, video frames) are left out: listing them changes the model's
-answers. The transcriber's agent is told nothing and names the session's language hints
-as `languages`, the languages its callers speak. The ID follows the content, so an agent
-registers once and again only when it changes or the server restarts (a 404).
+answers. The ID follows the content, so an agent registers once and again only when it
+changes or the server restarts (a 404).
 
 ```
 {"instructions":"You answer the phone for a weather service.","tools":[{"name":"get_weather","description":"Get the forecast for a city.","parameters":{"type":"object","required":["city"]}}]}
@@ -68,12 +67,18 @@ registers once and again only when it changes or the server restarts (a 404).
 `POST /v1/decide?agent=ID`: a `multipart/form-data` body of a `turn` part, the moment of
 the call as UTF-8 JSON, then an `audio` part: Ogg Opus (`audio/ogg`), or with
 `ROUTER_AUDIO_FLOOR_AUDIO=pcm` 16 kHz mono PCM (`audio/pcm;rate=16000;channels=1;format=s16le`).
-`transcript=true` adds a second line, whose text is empty when nothing was said.
 
 ```
 turn: {"conversation":[{"agent":true,"text":"Weather line, how can I help?"}]}
 
 {"answer":"get_weather","answer_probability":0.9988813,"p_eot":0.9999969,"options":[{"name":"respond","p":0.00015754762},{"name":"wait","p":0.0000031085704},{"name":"clarify","p":0.00080397225},{"name":"ignore","p":0.0000036620925},{"name":"cannot","p":0.00015045748},{"name":"get_weather","p":0.9988813}],"sample_rate":16000,"samples":35364,"window_samples":35364,"decide_ms":102.45,"ruling":{"disposition":"respond","floor":"continue","tool":"get_weather"}}
+```
+
+`POST /v1/transcribe?languages=en`: the audio as the body, as a decision's audio part, and
+the languages the callers speak, the session's language hints. The answer is what was
+said, of all of the audio, with no agent, decision or policy:
+
+```
 {"transcript":{"text":"Hi, what's the weather like in Lisbon tomorrow?","language":"English"},"transcript_ms":311.4}
 ```
 
@@ -84,6 +89,22 @@ lines of the last six turns, and each line's last 40 words. The turn goes in the
 because the longest, 800 characters of reply and six lines of 40 words, escapes to 10,285
 bytes in Hindi and 12,035 in Russian as JSON in a header, past the 8 KiB a proxy allows one
 header line.
+
+## Transcription alone
+
+The transcriber needs only `ROUTER_AUDIO_FLOOR_URL`. With `ROUTER_AUDIO_FLOOR_MODE=off`,
+an agent that names `audiofloor/audio-floor` as its `stt` gets the model's words and the
+flow controller it would have had anyway:
+
+```yaml
+stt: audiofloor/audio-floor
+```
+
+It registers no agent and asks for no decision: each request is `POST /v1/transcribe`,
+so a server started without a policy transcribes as well. With the mode on, the Hearer
+still asks for its decisions on its own, and the transcriber still asks for the words
+alone: keeping the words a decision could carry would tie the transcriber's pauses to the
+flow controller's turns, for one request saved a pause.
 
 ### The audio
 
@@ -135,10 +156,15 @@ approval is untouched. Acting, a decision's `Ruler` is `heard`.
   The words since the last ones written are lost. A target that names this transcriber
   alone has no next one.
 - **Noise.** The transcriber drops nothing itself. The server returns empty text for audio
-  with no speech in it, for words in a language the callers don't speak, and for a few words
-  of audio its decision ruled `ignore`, which is how a cough or a breath comes out. Empty
-  text is nothing heard: it writes nothing, and an utterance ends on the last words that
-  weren't empty. The transcriber's level gate only finds the pauses.
+  with no speech in it and for words in a language the callers don't speak, and cuts a
+  fragment in a script they don't write from either end of the words. Empty text is nothing
+  heard: it writes nothing, and an utterance ends on the last words that weren't empty.
+- **An utterance's life.** A frame is speech when it is at least -48 dBFS and Opus's speech
+  detector (gopus) scores it 0.5 or more: the level says when the voice stops, and the
+  score tells speech from steady noise and hum. The transcriber asks for an utterance's
+  words at a pause only when speech has come since it last did, so no audio is written
+  twice; it ends the utterance with one final, and the next begins after it, with none of
+  its audio.
 - **A restart.** A 404 has the router register again and read `/v1/info` again, once.
 
 ## Measured
@@ -169,31 +195,39 @@ Encoding at complexity 5 rather than the default 10 costs 78 µs a frame, and ag
 well on these 20; at 24 kb/s `p_eot` moved by up to 0.19. The server decodes 16 s of Opus
 in 4.9 ms, or 6.3 ms built with `GOEXPERIMENT=simd`.
 
-**The server.** CPU, one lane, weights in f16, each including its request, 5 decisions and
-3 transcripts:
+**The server.** CPU, one lane, weights in f16, each including its request, median of 5:
 
 | | Opus | PCM |
 | --- | --- | --- |
 | Decision, 3.4 s of audio | 91.7 ms, 9,397 bytes | 90.9 ms, 90,005 bytes |
 | Decision, a full 16 s window | 373 ms, 15,568 bytes | 372 ms, 512,405 bytes |
-| Decision and transcript, 3.4 s | 353 ms | |
-| Decision and transcript, 16.6 s | 848 ms | |
 
-Each answer was the same in both. The transcriber, on a recorded "Hi, what's the weather
-like in Lisbon tomorrow?", wrote "Hi." at the pause after it (860 ms of audio, in 193 ms),
-the whole question at its end (2,680 ms, in 329 ms), and ended the utterance 2.5 s later.
+Each answer was the same in both. In a later run on a busier machine, where the 3.4 s
+decision took 173 ms, the words alone (`POST /v1/transcribe`, median of 3) took 724 ms
+for 3.4 s of audio and 1.12 s for 16.6 s, and the transcriber, on a recorded "Hi, what's
+the weather like in Lisbon tomorrow?", wrote "Hi." at the pause after it (880 ms of audio,
+in 258 ms), the whole question at its end (2,680 ms, in 655 ms), and ended the utterance
+2.5 s later. Audio with no speech in it is answered without the model, in under a
+millisecond.
+
+**The transcriber's life.** The same recorded question, then 10 s of silence, in real time
+against that server: with digital silence, and with the recording's own room tone, the
+transcriber before this change and after it each wrote 2 replacements and 1 final. With 10 s
+of line noise at -48 dBFS, the level the old gate took for voice, the old one wrote "Hi." and
+never ended the utterance; the new one wrote both replacements and the final.
 
 ## Limits
 
 - The pause is timed from the transcript's last change, which lags the caller's last sound
   by the transcriber's own delay. The policy was fitted to pauses timed from the voice.
-- The transcriber's level gate, 0.004 of full scale, which finds its pauses, was not
-  measured on calls. It writes words only at pauses, so words said over the agent reach
+- The transcriber's speech gate was not measured on calls. Over noise as loud as -48 dBFS
+  a pause is heard about 200 ms late, once the detector's score has let go of the voice,
+  and a sudden loud noise can score as speech. It writes words only at pauses, so words said over the agent reach
   the flow controller at the caller's next pause. It rewrites the whole utterance at each
   pause, ends one at 60 s if the caller never pauses, and drops a ninth request waiting on
   a slow server.
-- With both modes on, a pause costs two requests: the transcript asked for the default
-  agent, and the decision asked for the agent's own.
+- With the transcriber and the Hearer both on, a pause costs two requests: the words, and
+  the decision.
 - With unified replies the reply rules on its own words and no flow controller is asked,
   so acting has nothing to stand in for; shadow compares the model with the reply's ruling.
 - A CPU decision over a full window, 373 ms here, does not fit the 250 ms an overlap

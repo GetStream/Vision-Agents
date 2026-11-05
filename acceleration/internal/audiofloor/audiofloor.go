@@ -7,20 +7,22 @@
 //	                          with the floor free says the conversation, the most tools an
 //	                          agent can have, the audio a decision hears, and end_of_turn,
 //	                          the policy fitted to its model for ending a turn
-//	POST /v1/agents           {"instructions","tools","languages"}: registers an agent by
-//	                          its content and answers {"agent": ID}. More tools than the
-//	                          model has answers for is a 422
+//	POST /v1/agents           {"instructions","tools"}: registers an agent by its content
+//	                          and answers {"agent": ID}. More tools than the model has
+//	                          answers for is a 422
 //	POST /v1/decide?agent=ID  a multipart body: a "turn" part, the moment of the call as
 //	                          JSON, then an "audio" part, Ogg Opus or 16 kHz mono PCM. The
 //	                          answer is every option's probability, p_eot = 1 - p(wait)
 //	                          with the floor free, and the ruling to act on once the turn
-//	                          has ended. With transcript=true a second line follows with
-//	                          what was said, empty when the server heard noise
+//	                          has ended
+//	POST /v1/transcribe       audio, and ?languages= the callers speak: what was said,
+//	                          empty when nothing was or the server heard noise
 //
 // The server writes the model's prompt, because the model knows only the words it was
 // trained on. The server says what to do with the words; whether a turn with the floor free
 // has ended is the router's to say, from p_eot, the pause and the policy. A server started
-// without a policy for its model answers 501 to all three.
+// without a policy for its model answers 501 to the first three, and transcribes all the
+// same.
 package audiofloor
 
 import (
@@ -36,6 +38,7 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"slices"
 	"strings"
 	"sync"
@@ -63,7 +66,7 @@ const (
 	// maxAgents bounds the IDs a client remembers. A router's agents are few, and one
 	// forgotten costs a registration.
 	maxAgents = 1024
-	// responseLimit bounds an answer, which is two small JSON lines.
+	// responseLimit bounds an answer, a small JSON line.
 	responseLimit = 1 << 20
 )
 
@@ -143,17 +146,14 @@ func (p Policy) valid() bool {
 	return true
 }
 
-// FirstCheck, Interval and Cap are the policy's times.
-func (p Policy) FirstCheck() time.Duration { return time.Duration(p.FirstCheckMs) * time.Millisecond }
-func (p Policy) Interval() time.Duration   { return time.Duration(p.IntervalMs) * time.Millisecond }
-func (p Policy) Cap() time.Duration        { return time.Duration(p.CapMs) * time.Millisecond }
+// Interval and Cap are the policy's times.
+func (p Policy) Interval() time.Duration { return time.Duration(p.IntervalMs) * time.Millisecond }
+func (p Policy) Cap() time.Duration      { return time.Duration(p.CapMs) * time.Millisecond }
 
-// Agent is what an agent was told and what it can do, and the languages its callers speak,
-// the only ones the server writes their words in.
+// Agent is what an agent was told and what it can do.
 type Agent struct {
 	Instructions string
 	Tools        []llm.Tool
-	Languages    []string
 }
 
 // Line is one line of the conversation so far.
@@ -187,9 +187,6 @@ type Answer struct {
 	PEOT              *float64 `json:"p_eot"`
 	DecideMs          float64  `json:"decide_ms"`
 	Ruling            *Ruling  `json:"ruling"`
-	// Transcript is what was said, when asked for: empty when nothing was, or when the
-	// server heard noise.
-	Transcript string `json:"-"`
 }
 
 // Client asks one server. It is safe for concurrent use.
@@ -238,7 +235,7 @@ func (c *Client) Policy(ctx context.Context) (Policy, error) {
 	var info struct {
 		EndOfTurn Policy `json:"end_of_turn"`
 	}
-	if _, err := c.do(req, &info, nil); err != nil {
+	if _, err := c.do(req, &info); err != nil {
 		return Policy{}, err
 	}
 	if !info.EndOfTurn.valid() {
@@ -250,10 +247,9 @@ func (c *Client) Policy(ctx context.Context) (Policy, error) {
 	return info.EndOfTurn, nil
 }
 
-// Decide asks about audio under the moment turn, and for what was said in it when
-// transcript is set. The agent is registered first if it is new, and again if the server
-// has forgotten it.
-func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harness.Audio, transcript bool) (Answer, error) {
+// Decide asks about audio under the moment turn. The agent is registered first if it is
+// new, and again if the server has forgotten it.
+func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harness.Audio) (Answer, error) {
 	if len(audio.Data) == 0 {
 		return Answer{}, stack.Wrap(errors.New("audiofloor: no audio heard yet"))
 	}
@@ -265,28 +261,18 @@ func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harne
 	if err != nil {
 		return Answer{}, err
 	}
-	query := "?agent="
-	if transcript {
-		query = "?transcript=true&agent="
-	}
 	for attempt := 0; ; attempt++ {
 		id, err := c.register(ctx, key, spec)
 		if err != nil {
 			return Answer{}, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/v1/decide"+query+id, bytes.NewReader(body))
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/v1/decide?agent="+id, bytes.NewReader(body))
 		if err != nil {
 			return Answer{}, stack.Wrap(err)
 		}
 		req.Header.Set("Content-Type", contentType)
-		var (
-			answer Answer
-			words  *string
-		)
-		if transcript {
-			words = &answer.Transcript
-		}
-		status, err := c.do(req, &answer, words)
+		var answer Answer
+		status, err := c.do(req, &answer)
 		if status == http.StatusNotFound && attempt == 0 {
 			// A restarted server knows no agent, and may serve another model.
 			c.mu.Lock()
@@ -302,6 +288,36 @@ func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harne
 	}
 }
 
+// Transcribe is what was said in audio, by callers who speak languages, BCP 47 tags, or any
+// language when there are none: empty when nothing was, or when the server heard noise.
+func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages []string) (string, error) {
+	if len(audio.Data) == 0 {
+		return "", stack.Wrap(errors.New("audiofloor: no audio heard yet"))
+	}
+	target := c.url + "/v1/transcribe"
+	if len(languages) > 0 {
+		target += "?languages=" + url.QueryEscape(strings.Join(languages, ","))
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(audio.Data))
+	if err != nil {
+		return "", stack.Wrap(err)
+	}
+	req.Header.Set("Content-Type", audio.Type)
+	var said struct {
+		Transcript *struct {
+			Text string `json:"text"`
+		} `json:"transcript"`
+		Error string `json:"transcript_error"`
+	}
+	if _, err := c.do(req, &said); err != nil {
+		return "", err
+	}
+	if said.Transcript == nil {
+		return "", stack.Wrap(fmt.Errorf("audiofloor: transcribe: %s", said.Error))
+	}
+	return said.Transcript.Text, nil
+}
+
 type toolJSON struct {
 	Name        string         `json:"name"`
 	Description string         `json:"description"`
@@ -311,11 +327,10 @@ type toolJSON struct {
 type agentJSON struct {
 	Instructions string     `json:"instructions"`
 	Tools        []toolJSON `json:"tools,omitempty"`
-	Languages    []string   `json:"languages,omitempty"`
 }
 
 func agentKey(agent Agent) ([sha256.Size]byte, []byte, error) {
-	spec := agentJSON{Instructions: agent.Instructions, Languages: agent.Languages}
+	spec := agentJSON{Instructions: agent.Instructions}
 	for _, tool := range agent.Tools {
 		spec.Tools = append(spec.Tools, toolJSON{tool.Name, tool.Description, tool.Parameters})
 	}
@@ -342,7 +357,7 @@ func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byt
 	var registered struct {
 		Agent string `json:"agent"`
 	}
-	status, err := c.do(req, &registered, nil)
+	status, err := c.do(req, &registered)
 	result := registration{id: registered.Agent}
 	switch {
 	case status == http.StatusUnprocessableEntity:
@@ -359,45 +374,28 @@ func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byt
 	return result.id, result.refused
 }
 
-// do sends req and reads the answer's first JSON line into into, and the transcript's text
-// from the second into words, when words is set.
-func (c *Client) do(req *http.Request, into any, words *string) (int, error) {
+// do sends req and reads the answer, a JSON line, into into.
+func (c *Client) do(req *http.Request, into any) (int, error) {
 	resp, err := c.http.Do(req)
 	if err != nil {
 		return 0, stack.Wrap(err)
 	}
 	defer resp.Body.Close()
-	lines := json.NewDecoder(io.LimitReader(resp.Body, responseLimit))
+	answer := json.NewDecoder(io.LimitReader(resp.Body, responseLimit))
 	if resp.StatusCode != http.StatusOK {
 		var failed struct {
 			Error string `json:"error"`
 		}
-		_ = lines.Decode(&failed)
+		_ = answer.Decode(&failed)
 		err := fmt.Errorf("audiofloor: %s %s: %s: %s", req.Method, req.URL.Path, resp.Status, failed.Error)
 		if resp.StatusCode == http.StatusNotImplemented {
 			err = fmt.Errorf("%w: %w", ErrUnsupported, err)
 		}
 		return resp.StatusCode, stack.Wrap(err)
 	}
-	if err := lines.Decode(into); err != nil {
+	if err := answer.Decode(into); err != nil {
 		return resp.StatusCode, stack.Wrap(fmt.Errorf("audiofloor: %s: %w", req.URL.Path, err))
 	}
-	if words == nil {
-		return resp.StatusCode, nil
-	}
-	var said struct {
-		Transcript *struct {
-			Text string `json:"text"`
-		} `json:"transcript"`
-		Error string `json:"transcript_error"`
-	}
-	if err := lines.Decode(&said); err != nil {
-		return resp.StatusCode, stack.Wrap(fmt.Errorf("audiofloor: transcript: %w", err))
-	}
-	if said.Transcript == nil {
-		return resp.StatusCode, stack.Wrap(fmt.Errorf("audiofloor: transcript: %s", said.Error))
-	}
-	*words = said.Transcript.Text
 	return resp.StatusCode, nil
 }
 
