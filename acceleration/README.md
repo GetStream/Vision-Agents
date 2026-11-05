@@ -582,10 +582,11 @@ sums the request rows this month when there is no usage service. Staff read the 
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
 `getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:origin`
-(`who:api_key` is its old name, still read for one release), `who:user`, `who:team` (work with no team under the empty value) or `who:category` (the team
-left out, and a request counted once in each of its categories). A cost label key holds no
-`:`, so a label named `app` is still `group_by=app`. `scope=organization` counts every app of
-the caller's organization, and there a user is `<app_id>/<user_id>`.
+(`who:api_key` is its old name, still read for one release), `who:user`, `who:team` (work with no
+team under the empty value) or `who:category` (the team left out, and a request counted once in each
+of its categories). A cost label key holds no `:`, so a label named `app` is still `group_by=app`.
+`scope=organization` counts every app of the caller's organization, and there a user is
+`<app_id>/<user_id>`.
 
 ### Admission
 

@@ -2173,7 +2173,8 @@ func (s *Server) registerServer(api huma.API) {
 			"series are: \"modality\" for where the money went, who asked for it (\"who:app\", " +
 			"\"who:origin\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
 			"was spent on. \"who:origin\" groups by the key the work was started with, or the origin of work " +
-			"no key started, such as hook:chat; \"who:api_key\" is its old name, still read for one release. A label key holds no ':', so a label named app is still grouped by as " +
+			"no key started, such as hook:chat; \"who:api_key\" is its old name, still read for one " +
+			"release. A label key holds no ':', so a label named app is still grouped by as " +
 			"group_by=app. \"who:team\" groups by the team the user's token named, work with none under the " +
 			"empty value; \"who:category\" by the other usage categories, and a request carrying several " +
 			"counts once in each, so those rows add up to more than the total.\n" +
