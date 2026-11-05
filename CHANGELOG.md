@@ -2,6 +2,10 @@
 
 ## Features
 
+### Vendor rate limits per key: refusals and headroom
+
+`router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #PRNUM).
+
 ### Usage reads name who started the work `origin`
 
 A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names stay for one release, deprecated: the query's `api_key_id` (and `api_key` on the usage service) is still read and must name the same value when given beside `origin`, else 400; events still carry `api_key` with the same value; `who:api_key` still groups. Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). Both specs mark each old query name `deprecated` on the parameter itself, so the generated JavaScript and Go clients flag it (AI-2812).
