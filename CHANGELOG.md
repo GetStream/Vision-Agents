@@ -391,6 +391,30 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 A response with videos that its conversation would refuse to begin, because an answer is still running, the conversation is not open or the text is past 1 MiB, was refused only after up to two videos of 50 MB each were fetched and sampled. It is now refused first, with the same error (AI-2657, #1764).
 
+### A linked user never reads what the number said before the link, whenever the cards were turned on
+
+A number linked to a user (`PUT /v1/agents/users/{user_id}`) under an agent with `episode_cards` off kept its earlier SMS and call episodes on the user's omni-channel. Once the agent turned the cards on, the user's app chat, their own device and the number's later calls and SMS read those cards. Now no session reads an episode that a linked number started before the link, and sending the same number again no longer moves the time of the link (#1772).
+
+### No app chat episode card in an app that checks no tokens
+
+With auth checks off, a Stream app lets any client send as any user, so an app chat message there no longer opens an episode or writes a card in that user's omni-channel. The same applies when Stream cannot say whether the app checks tokens. The message is answered as before (AI-2763, #1769).
+
+### An episode left open when its config turns the cards off still closes
+
+On a router with connectors off, the idle sweeper started only if a config had `episode_cards` on when the router started. A chat episode that was opened while the cards were on stayed in progress forever if its config turned them off and the router then restarted. It also got no summary. The sweeper now also starts for an episode still to close or summarize. Turning the cards off still opens no new call or app chat episode. A card is now also updated as its own author: a card written before its number was unlinked stayed in progress and lost its summary, because the update named a user Stream did not have (AI-2771, #1766).
+
+### An outbound call's episode card goes to who it rang, and a late caller still gets one
+
+Under an agent config with `episode_cards` on, a call placed through `POST /v1/phone/calls` filed its card under the line's own number, so every person the line rang shared one omni-channel. Its card now goes to the omni-channel of the number it rang. An inbound caller who joins the call after the agent now gets their card too; before, they got none. (#1770)
+
+### A custom connector deleted while a session opens no longer fails it with a 500
+
+When a custom connector was force-deleted while a session that binds it was opening, the session failed with a 500. Now an optional binding is left out, or opens with no sandbox access, and a required one is refused with `connection_unavailable`. A delete a moment earlier already got these answers. (#1765)
+
+### A router with shards refuses to be a move's source
+
+A router whose calls, sessions, responses, requests and stats are kept in shard databases recorded no changes to them after an export, so `router replicate` from it lost those writes and said nothing. `GET /v1/data/export` and `GET /v1/data/changes` on such a router now answer 400 `not_configured` and say that moving off a router with shards is not supported yet. An unsharded router moves as before, and a router with shards can still be a move's target (AI-2813).
+
 ### An export no longer misses a write that was in progress when it started
 
 A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).
@@ -446,6 +470,10 @@ After `PUT /v1/agents/users/{user_id}` linked a user to a number, the card of th
 ### A WhatsApp photo reaches the agent
 
 A WhatsApp photo now reaches the agent itself, with or without a caption, and the agent answers from the photo and its caption. Before, the agent read the caption alone, and a photo without one got no reply. The router downloads the photo with the business number's access token and stores a copy on the thread channel in Stream Chat. It sends that token to Graph and `lookaside.fbsbx.com` only. If the photo cannot be downloaded or stored, its caption is still answered, and a photo sent alone gets no reply. The router downloads no video or document; their captions are answered as before. A connection takes `whatsapp` revision 3 at its next credential save. A channel manifest can name a file by its id (`media.id`), give an `also` kind its own `media`, and say where such a file is with `messages.media_lookup` (AI-2740).
+
+### A WhatsApp photo tried again keeps its first copy
+
+When the router stored a WhatsApp photo in Stream Chat and then failed to write or answer the message, every retry downloaded and stored the photo again, which left extra copies on the thread channel. A photo sent alone could also get no reply: when the retry could no longer download it, the router took the message as one with nothing to answer. Now the router keeps where it stored the photo, and a retry answers with that copy without downloading it again (AI-2757).
 
 ### A WhatsApp photo's, video's and document's caption is answered
 

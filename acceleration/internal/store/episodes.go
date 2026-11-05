@@ -323,15 +323,25 @@ func (s *Store) FinishEpisodeSummary(ctx context.Context, customerID, id, status
 	return nil
 }
 
-// AnyEpisodeCards reports whether an agent config of any customer has episode_cards on, so
-// its calls may have episodes to close.
-func (s *Store) AnyEpisodeCards(ctx context.Context) (bool, error) {
-	var on bool
-	err := s.db.NewRaw("SELECT EXISTS (SELECT 1 FROM agent_configs WHERE episode_cards AND deleted_at IS NULL)").Scan(ctx, &on)
-	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: any episode cards: %w", err))
+// anyEpisodeToSweepQuery is whether the idle sweeper has, or may get, an episode to close or
+// summarize: an agent config with episode_cards on, whose calls and app chats open episodes;
+// a thread or chat episode still in progress (episodes_open_thread), whatever its config says
+// now; or a summary lease still held (episode_activity_summary_lease).
+const anyEpisodeToSweepQuery = `
+SELECT EXISTS (SELECT 1 FROM agent_configs WHERE episode_cards AND deleted_at IS NULL)
+    OR EXISTS (SELECT 1 FROM episodes WHERE status = 'in_progress' AND session_id IS NULL)
+    OR EXISTS (SELECT 1 FROM episode_activity WHERE summary_lease_until IS NOT NULL)`
+
+// AnyEpisodeToSweep reports whether an agent config of any customer has episode_cards on, so
+// its calls and app chats may open episodes, or whether an episode opened before is still to
+// close or to summarize: one that a config opened with the cards on and has turned them off
+// since closes as any other (AI-2771).
+func (s *Store) AnyEpisodeToSweep(ctx context.Context) (bool, error) {
+	var due bool
+	if err := s.db.NewRaw(anyEpisodeToSweepQuery).Scan(ctx, &due); err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: any episode to sweep: %w", err))
 	}
-	return on, nil
+	return due, nil
 }
 
 // EpisodeCard is an episode as a session reads its card: the episode, and until when its
@@ -369,7 +379,8 @@ type CardsQuery struct {
 
 // EpisodeCards are the newest episodes of one person, for one agent of a customer: those of
 // the contact map rows of that customer and agent that point at the person's omni-channel,
-// never another customer's or another agent's.
+// never another customer's or another agent's, and none a number linked to a user started
+// before its link (UserPhone.UpdatedAt).
 func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCard, error) {
 	if query.CustomerID == "" || query.AgentConfigID == "" || query.ConversationID == "" || query.Limit <= 0 {
 		return nil, stack.Wrap(errors.New("store: a customer, an agent config, an omni-channel and a limit are required"))
@@ -389,6 +400,13 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 		Where("cm.conversation_id = ?", query.ConversationID).
 		Where("ep.thread_channel <> ?", query.ExceptThread).
 		Where("ep.session_id IS DISTINCT FROM ?", query.ExceptSession).
+		// What a linked number said before its link is not the user's, however the config came
+		// to have episode_cards on: retireHistory sets it aside only under a config with them on
+		// at the link. The link is found as linkOf finds a number's; no other kind of row has an
+		// E.164 address.
+		Where(`NOT EXISTS (SELECT 1 FROM user_phones AS up WHERE up.customer_id = cm.customer_id
+			AND up.stream_app_pk = COALESCE(NULLIF(cm.stream_app_pk, ?), 0) AND up.phone = cm.address
+			AND ep.started_at < up.updated_at)`, s.streamPins().deployment()).
 		OrderExpr("ep.started_at DESC").
 		Limit(query.Limit).
 		Scan(ctx)

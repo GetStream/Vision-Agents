@@ -167,6 +167,24 @@ func (s *UserPhonesSuite) TestAConfigWithoutCardsLinksAsBefore() {
 	s.Equal([]string{s.person}, s.links())
 }
 
+// Catches a link made while the config had episode_cards off, which set none of the number's
+// SMS aside: once the config turns the cards on, the user's chat would read the SMS the number
+// sent before the link. It reads its own card, and the number's SMS after the link.
+func (s *UserPhonesSuite) TestCardsTurnedOnAfterTheLinkReadNoneOfTheNumbersSMSFromBeforeIt() {
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	s.textedBeforeTheLink()
+	s.chatCard()
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+
+	s.Equal([]string{store.EpisodeChat}, s.chatReads(s.user), "the user's own chat card alone")
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
+	s.Contains(s.took(2)[1].text, chatSummary)
+	s.ElementsMatch([]string{store.EpisodeSMS, store.EpisodeChat}, s.chatReads(s.user), "the SMS after the link is the user's")
+}
+
 // The control: without a link the SMS reads no chat card and keeps its own omni-channel, as
 // the probe of this test at 13e088981 (the chat card's PR, before this one) answered.
 func (s *UserPhonesSuite) TestWithoutALinkAnSMSReadsNoChatCard() {
