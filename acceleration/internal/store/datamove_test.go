@@ -622,6 +622,30 @@ func (s *DataMoveSuite) TestANumberRolledBackRightAfterAnExportCursorIsNotAPrune
 	s.Equal([]string{committed}, handed)
 }
 
+// The lock naming a number is keyed by its two 32-bit halves, so a number whose low half
+// has the sign bit set, or whose high half is not 0, is held back as well as a small one.
+func (s *DataMoveSuite) TestAChangeInFlightIsHeldBackWhateverTheHalvesOfItsNumber() {
+	s.capture("acme")
+	for _, start := range []int64{1<<31 + 5, 1<<32 + 3, 1<<32 + 1<<31 + 7} {
+		_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval('data_changes_seq_seq', ?, true)", start)
+		s.Require().NoError(err)
+		cursor := s.export("acme").cursor
+		older := s.begin()
+		first := s.writeIn(older, "acme", fmt.Sprintf("older, first, from %d", start))
+		newer := s.begin()
+		late := s.writeIn(newer, "acme", fmt.Sprintf("newer, in flight, from %d", start))
+		second := s.writeIn(older, "acme", fmt.Sprintf("older, second, from %d", start))
+		s.Require().NoError(older.Commit())
+
+		handed, next := s.follow("acme", cursor)
+		s.Equal([]string{first}, handed, "numbers from %d", start)
+
+		s.Require().NoError(newer.Commit())
+		rest, _ := s.follow("acme", next)
+		s.Equal([]string{late, second}, rest, "numbers from %d", start)
+	}
+}
+
 func (s *DataMoveSuite) TestAQuietFeedHandsOutEveryChangeUpToTheNewest() {
 	s.capture("acme")
 	cursor := s.export("acme").cursor
