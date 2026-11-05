@@ -17249,7 +17249,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description This deployment has no database to export from. */
+            /** @description This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;

@@ -379,6 +379,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### An export no longer misses a write that was in progress when it started
+
+A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).
+
 ### The usage service filters its usage list by `api_key_id`
 
 The usage service's `listUsage` (`GET /v1/manage/accounts/{organization_id}/usage`) and its customer view `readAccountUsage` silently ignored `api_key_id`, and answered every key's events. Stream's staff gateway refuses `api_key` in the query, so staff could not filter by key at all. Both operations now take the key as `api_key_id`. `api_key` is still read for one release; given with `api_key_id`, it must name the same key, or the call is a 400 (AI-2797).

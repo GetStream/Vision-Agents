@@ -2381,6 +2381,13 @@ Three endpoints move a customer between two deployments, all server-side only:
 `cmd/router replicate` is both halves at once: the copy, and everything that happens after
 the copy, which is what makes the switchover free of a window where writes are lost.
 
+An export starts recording the app's changes, then waits until every write transaction open in
+the source's shared database when recording started has ended, and only then reads its snapshot.
+So every write of the app to a table the export carries is in the export or in the changes after its cursor,
+including one that was in progress when the export started. A shard's tables record no changes:
+their rows come across as the export read them. A transaction still open after 30 seconds makes the
+export answer 503: run it again.
+
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]

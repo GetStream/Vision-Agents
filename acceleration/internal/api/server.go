@@ -375,6 +375,7 @@ type Server struct {
 	authenticator      auth.Authenticator
 	authMode           auth.Mode
 	dataRetention      time.Duration
+	exportWritesWait   time.Duration
 	quota              *quota.Limiter
 	policies           *policy.Enforcer
 	connectors         core.Registry
@@ -562,6 +563,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		authenticator:      authenticator,
 		authMode:           authMode,
 		dataRetention:      retention,
+		exportWritesWait:   exportWritesWait,
 		quota:              options.Quota,
 		policies:           options.Policies,
 		connectors:         options.Connectors,

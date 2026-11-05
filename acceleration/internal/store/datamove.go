@@ -224,6 +224,58 @@ ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
 	return nil
 }
 
+// ErrWritesOpen says a transaction that wrote before a capture started was still open when
+// WaitForOpenWrites gave up on it.
+var ErrWritesOpen = errors.New("store: a write from before the capture started is still open")
+
+// WaitForOpenWrites returns once every transaction that had written to the shared database
+// when it was called has ended, or ErrWritesOpen past within. Called right after
+// StartDataCapture, it is what lets an export read nothing short.
+//
+// The trigger asks whether its customer is moving in a query of its own, after its row is
+// written: record_data_change is VOLATILE, so under READ COMMITTED, the level every write
+// here runs at, each of its queries takes a new snapshot
+// (https://www.postgresql.org/docs/current/xfunc-volatility.html). A write whose query ran
+// before the capture committed records nothing, and if it is still open when the export
+// reads, it is in neither. Such a transaction took its transaction id, and the lock on it,
+// before its row and so before that query, so it holds that lock now. A transaction whose
+// query comes later sees the capture and records its change. The lock goes once the commit
+// is visible, as record_data_change's notes on CommitTransaction say, so a snapshot taken
+// after this returns holds every row of the ones waited for.
+//
+// Only this database's transactions: ids are counted across the whole Postgres server, whose
+// other databases write nothing of this one's. A shard's tables record no changes
+// (watchDataChanges), so a shard has nothing to wait for.
+func (s *Store) WaitForOpenWrites(ctx context.Context, within time.Duration) error {
+	deadline := time.Now().Add(within)
+	var open []string
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COALESCE(array_agg(l.transactionid::text), '{}') FROM pg_locks l
+JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'transactionid'
+  AND a.datid = (SELECT oid FROM pg_database WHERE datname = current_database())`,
+	).Scan(pgdialect.Array(&open)); err != nil {
+		return fmt.Errorf("store: open writes: %w", err)
+	}
+	for pause := migrateLockFirst; len(open) > 0; pause = min(2*pause, migrateLockMost) {
+		if time.Now().After(deadline) {
+			return ErrWritesOpen
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(min(pause, time.Until(deadline))):
+		}
+		if err := s.db.QueryRowContext(ctx, `
+SELECT COALESCE(array_agg(transactionid::text), '{}') FROM pg_locks
+WHERE locktype = 'transactionid' AND transactionid::text = ANY(?)`,
+			pgdialect.Array(open)).Scan(pgdialect.Array(&open)); err != nil {
+			return fmt.Errorf("store: open writes: %w", err)
+		}
+	}
+	return nil
+}
+
 // ExportCustomer writes every row belonging to a customer and returns the cursor their
 // changes carry on from.
 //
@@ -235,6 +287,9 @@ ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
 // the same place as applying it once. It is not the watermark itself: with no change kept
 // at or below it, Changes would read a number rolled back right after it as a change
 // pruned, and refuse the cursor.
+//
+// Call it after StartDataCapture and WaitForOpenWrites, in that order: on its own it still misses
+// a write that was open when the capture started and commits after the snapshot.
 //
 // What is not here: the audio behind a voice sample and a call recording, which live in
 // an object bucket rather than in Postgres. The rows naming them come across, and copying
