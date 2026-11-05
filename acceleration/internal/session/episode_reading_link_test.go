@@ -147,15 +147,16 @@ func (s *EpisodeReadingSuite) linkAt(user, number string, seconds int) {
 	s.linkWith(user, number, seconds, nil)
 }
 
-// linkWith is linkAt with what the link request says of the number's past: a boundary at the
-// link's own time is dated with it.
+// linkWith is linkAt with what the link request says of the number's past: the link's time its
+// history row was written for is dated with it, and so is a boundary at the link's own time.
 func (s *EpisodeReadingSuite) linkWith(user, number string, seconds int, history *store.PhoneHistory) {
 	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &store.UserPhone{CustomerID: s.customerID,
 		StreamAppPK: suiteDeploymentApp, UserID: user, Phone: number, History: history}))
 	at := s.now.Add(time.Duration(seconds) * time.Second)
-	_, err := s.store.DB().ExecContext(s.ctx, `UPDATE user_phone_history AS h SET since = ?0 FROM user_phones AS up
+	_, err := s.store.DB().ExecContext(s.ctx, `UPDATE user_phone_history AS h
+SET since = CASE WHEN h.since = up.updated_at THEN ?0 ELSE h.since END, linked_at = ?0 FROM user_phones AS up
 WHERE up.customer_id = h.customer_id AND up.stream_app_pk = h.stream_app_pk AND up.user_id = h.user_id
-	AND h.since = up.updated_at AND up.customer_id = ?1 AND up.user_id = ?2`, at, s.customerID, user)
+	AND h.linked_at = up.updated_at AND up.customer_id = ?1 AND up.user_id = ?2`, at, s.customerID, user)
 	s.Require().NoError(err)
 	_, err = s.store.DB().ExecContext(s.ctx, "UPDATE user_phones SET created_at = ?0, updated_at = ?0 WHERE customer_id = ?1 AND user_id = ?2",
 		at, s.customerID, user)

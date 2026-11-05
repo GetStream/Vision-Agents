@@ -7,9 +7,9 @@
 -- (store.EpisodeCards, store.ThreadHistorySince).
 --
 --   - One row per link, keyed as user_phones is; an unlink deletes it with the link.
---   - phone is the number the row is of. A row of another number than the link's is not read:
---     a router that knows no such row (v0.6.284) may move a link to a new number, and then the
---     link's time (user_phones.updated_at) is the boundary, as with no row.
+--   - linked_at is the link's time (user_phones.updated_at) the row was written for. A row of
+--     another time is not read: a router that knows no such row (v0.6.284) may move a link to
+--     another number and back, and then the link's own time is the boundary, as with no row.
 --
 -- Not a column of user_phones: v0.6.284 upserts it with RETURNING *, which a new column would
 -- break. A new table and a new index no deployed router reads or writes: expand-only. Outside
@@ -19,14 +19,15 @@ CREATE TABLE IF NOT EXISTS user_phone_history (
     customer_id TEXT NOT NULL,
     stream_app_pk BIGINT NOT NULL,
     user_id TEXT NOT NULL,
-    phone TEXT NOT NULL,
+    linked_at TIMESTAMPTZ NOT NULL,
     since TIMESTAMPTZ,
     PRIMARY KEY (customer_id, stream_app_pk, user_id),
     FOREIGN KEY (customer_id, stream_app_pk, user_id) REFERENCES user_phones ON DELETE CASCADE
 );
 
--- A link whose boundary is before it finds the number's rows a link set aside
--- (retired:<row id>:<number>) by their number (store.joinLinked, store.detachLinked).
+-- A link whose boundary is before it reads the number's rows a link set aside
+-- (retired:<row id>:<number>) by their number (store.EpisodeCards). The rows stay where they
+-- are, so v0.6.284 reads none of them.
 CREATE INDEX CONCURRENTLY IF NOT EXISTS contact_map_retired
     ON contact_map (customer_id, (regexp_replace(address, '^retired:[^:]*:', '')))
     WHERE address LIKE 'retired:%';

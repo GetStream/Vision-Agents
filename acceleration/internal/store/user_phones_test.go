@@ -140,10 +140,12 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.Equal(s.omniOf(chat), s.made(next).ConversationID, "the number seen again joins anya")
 }
 
-// Catches a set-aside row whose thread, call and cards no longer name the number: a Linq
-// chat's replies would check opt-outs, the sandbox and the limits against retired:<id>
+// Catches a set-aside row whose thread and call no longer name the number: a Linq chat's
+// replies would check opt-outs, the sandbox and the limits against retired:<id>
 // (ThreadContact, channelbridge.replyTo), and a call going on at the link would close with no
 // caller its lines are said by (the closed episodes' contact_address, omnichannel.callerOf).
+// Its cards started before the link, so no session reads them; the cards of a set-aside row a
+// link gives the user name the number (TestALinkWithAllOfTheHistoryReadsWhatTheNumberSaidBeforeIt).
 func (s *StoreSuite) TestASetAsideRowIsStillReachedAtItsNumber() {
 	s.agentConfigs()
 	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true")
@@ -552,13 +554,14 @@ func (s *StoreSuite) smsAt(row *ContactMapEntry, at time.Time) string {
 	return episode.ID
 }
 
-// linkDated links a user to a number as LinkUserPhone does, dated at linkedAt: its boundary too,
-// when the link is bounded at its own time.
+// linkDated links a user to a number as LinkUserPhone does, dated at linkedAt: the link's time its
+// history row was written for too, and its boundary when the link is bounded at its own time.
 func (s *StoreSuite) linkDated(link *UserPhone) {
 	s.Require().NoError(s.store.LinkUserPhone(s.ctx, link))
-	_, err := s.store.db.ExecContext(s.ctx, `UPDATE user_phone_history AS h SET since = ? FROM user_phones AS up
+	_, err := s.store.db.ExecContext(s.ctx, `UPDATE user_phone_history AS h
+SET since = CASE WHEN h.since = up.updated_at THEN ?0 ELSE h.since END, linked_at = ?0 FROM user_phones AS up
 WHERE up.customer_id = h.customer_id AND up.stream_app_pk = h.stream_app_pk AND up.user_id = h.user_id
-	AND h.since = up.updated_at AND up.customer_id = ? AND up.user_id = ?`, linkedAt, link.CustomerID, link.UserID)
+	AND h.linked_at = up.updated_at AND up.customer_id = ?1 AND up.user_id = ?2`, linkedAt, link.CustomerID, link.UserID)
 	s.Require().NoError(err)
 	_, err = s.store.db.ExecContext(s.ctx, "UPDATE user_phones SET updated_at = ? WHERE customer_id = ? AND user_id = ?",
 		linkedAt, link.CustomerID, link.UserID)
