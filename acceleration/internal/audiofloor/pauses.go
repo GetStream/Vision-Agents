@@ -108,6 +108,9 @@ type pause struct {
 	utterance   int64
 	// failed says a check could not be made, and the pause ends as it would with no agent.
 	failed bool
+	// resumed says speech came while a check was out (resumed): the pause is over unless
+	// that check ended the turn.
+	resumed bool
 	// words are the first check's, once written, and audioMs and wordsMs how much audio
 	// they are of and how long they took.
 	words            *string
@@ -123,6 +126,7 @@ type pause struct {
 // much of the utterance so far was speech, and length how long it is, the pause included.
 type pauseCheck struct {
 	epoch          int64
+	utterance      int64
 	first          bool
 	firstPause     bool
 	paused         time.Duration
@@ -183,7 +187,7 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 		t.pauses++
 		t.spoken = 0
 	}
-	c := pauseCheck{epoch: p.epoch, first: p.checks == 1, firstPause: t.pauses == 1, paused: t.quiet, at: heard,
+	c := pauseCheck{epoch: p.epoch, utterance: p.utterance, first: p.checks == 1, firstPause: t.pauses == 1, paused: t.quiet, at: heard,
 		voiced: time.Duration(t.talked) * frame, length: time.Duration(heard-t.start) * frame,
 		participant: participant, asked: time.Now()}
 	// The check that asks for words sends the whole utterance: the model decides on its
@@ -201,14 +205,23 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 // resumed is speech in the utterance: a pause that had been asked about is over, unless a
 // check has ended the turn on it. That turn is over whatever comes next, the caller going on
 // or somebody else in the room: its words go out as its final when they are written, and
-// the speech is the next utterance's (endedOnCheck). A pause whose words failed falls to the
-// words alone, and the next pause is asked about afresh.
+// the speech is the next utterance's (endedOnCheck). A check still out is waited for: the
+// model was asked about the pause as it was, and its answer stands (check). A pause whose
+// words failed falls to the words alone, and the next pause is asked about afresh.
 func (t *Transcriber) resumed() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.pause.checks > 0 && !t.pause.done && (t.pause.ended == nil || t.pause.failed) {
-		t.pause = pause{epoch: t.pause.epoch + 1}
+	p := &t.pause
+	switch {
+	case p.checks == 0 || p.done:
+		return
+	case p.ended != nil && !p.failed:
+		return
+	case p.inFlight:
+		p.resumed = true
+		return
 	}
+	t.pause = pause{epoch: p.epoch + 1}
 }
 
 // endedOnCheck says a check ended the utterance and its words have gone out, and where its
@@ -436,6 +449,9 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	p.inFlight = false
 	if err != nil {
 		p.failed = true
+		if p.resumed {
+			t.pause = pause{epoch: p.epoch + 1}
+		}
 		// A server that will never rule, with no policy for its model or refusing the
 		// request, is asked no more on the transcriber's own behalf: every pause would
 		// otherwise cost a request that fails. An agent asking keeps asking, as it chose to.
@@ -454,6 +470,10 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	}
 	if checked.Ended {
 		p.ended, p.endedAt = &Ruled{Check: checked, Speaking: turn.Speaking, Paused: c.paused}, c.at
+	} else if p.resumed {
+		// Speech came while the check was out, and it did not end the turn: the pause is
+		// over. Its words, if asked for, are still the utterance's so far (await).
+		t.pause = pause{epoch: p.epoch + 1}
 	}
 	t.mu.Unlock()
 	if said != nil {
@@ -492,14 +512,16 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	case <-t.ctx.Done():
 		return
 	}
+	audioMs, wordsMs := float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
 	t.mu.Lock()
 	p := &t.pause
-	if p.epoch != c.epoch {
-		t.mu.Unlock()
-		return
-	}
+	// The pause may be over, the caller having gone on: its words are still the utterance's
+	// so far, to show and to say what language it is in, though no final is made of them.
+	same := p.epoch == c.epoch && p.utterance == c.utterance
 	if words.Err != nil {
-		p.failed = true
+		if same {
+			p.failed = true
+		}
 		t.mu.Unlock()
 		transcribeFailures.WithLabelValues(failure(words.Err)).Inc()
 		t.logger.Warn("the chorus-asr server did not write a pause's words, they are asked for alone",
@@ -507,8 +529,11 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 		return
 	}
 	text := strings.TrimSpace(words.Text)
-	p.words, p.audioMs, p.wordsMs = &text, float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
-	waiting, utterance, audioMs, wordsMs := p.ended == nil, p.utterance, p.audioMs, p.wordsMs
+	waiting := true
+	if same {
+		p.words, p.audioMs, p.wordsMs = &text, audioMs, wordsMs
+		waiting = p.ended == nil
+	}
 	t.mu.Unlock()
 	if text == "" {
 		t.finish(c.epoch)
@@ -517,13 +542,13 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	// The utterance's first words at a pause say what language it is spoken in, which its
 	// interims are held to: a pause's words in another are kept for the final, not shown.
 	// Nor are they shown before the utterance before has had its final.
-	spoken := t.sent.establish(utterance, words.Language)
-	if waiting && t.interims && (words.Language == "" || words.Language == spoken) && t.sent.over(utterance-1) {
+	spoken := t.sent.establish(c.utterance, words.Language)
+	if waiting && t.interims && (words.Language == "" || words.Language == spoken) && t.sent.over(c.utterance-1) {
 		t.send(stt.Transcript{
 			Participant:      c.participant,
 			Mode:             stt.ModeReplacement,
 			Interim:          true,
-			Utterance:        utterance,
+			Utterance:        c.utterance,
 			Text:             text,
 			Provider:         ProviderName,
 			Model:            t.model,

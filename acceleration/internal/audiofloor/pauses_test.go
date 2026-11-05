@@ -184,6 +184,44 @@ func (s *PausesSuite) TestACallerTalkingOverTheAgentIsAskedAboutWithoutAPause() 
 	s.Len(s.agent.rulings(), 1)
 }
 
+// A check still out when speech resumes is waited for, the model having been asked about the
+// pause as it was: a ruling that ended the turn stands, the final goes out with its words,
+// and the speech is the next utterance's; one that did not ends the pause as speech does,
+// and the next pause is asked about afresh, its words with it. Either way the words written
+// at a pause the caller spoke through are shown as the words so far.
+func (s *PausesSuite) TestACheckOutWhenSpeechResumesIsWaitedFor() {
+	s.transcriber.interims = true
+	s.server.mu.Lock()
+	s.server.decideAfter = 150 * time.Millisecond
+	s.server.mu.Unlock()
+	s.ending(0.1)
+	s.say(1000, true)
+	s.True(next[stt.Transcript](&s.transcribing).Interim)
+	s.say(220, false)
+	s.say(400, true)
+	s.answered()
+	shown := next[stt.Transcript](&s.transcribing)
+	s.True(shown.Interim, "the pause's words, though the caller went on")
+	s.InDelta(float64(300+1000+200), shown.AudioDurationMs, 40)
+	s.say(220, false)
+	s.answered()
+	decisions, withWords, _ := s.counts()
+	s.Equal([2]int{2, 2}, [2]int{decisions, withWords}, "the next pause is asked about afresh, with its words")
+	s.True(next[stt.Transcript](&s.transcribing).Interim)
+
+	s.ending(0.999)
+	s.say(400, true)
+	s.say(220, false)
+	s.say(400, true)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance, "the ruling that ended the turn stands, though the caller went on before it came")
+	s.say(400, true)
+	s.say(220, false)
+	again := next[stt.Transcript](&s.transcribing)
+	s.Equal(int64(2), again.Utterance, "the speech that resumed is the next utterance")
+}
+
 // A turn a check ended is over whatever comes next. Speech that resumes before its words are
 // written, the caller going on or somebody else in the room, is the next utterance's: the
 // final goes out with the words when they come, rather than being thrown away with the pause
