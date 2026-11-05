@@ -387,6 +387,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A Slack mention is answered when a reply that waited for it can no longer be read
+
+A Slack reply that is not to the bot, in a thread nobody linked yet, waits for the mention that starts the thread. When the connection was pinned meanwhile to a revision that does not read the reply, the mention failed with a 500 on every retry and was never answered. Now that reply is dropped and logged at warn, and the mention is answered. Any other failure to take a waiting reply still fails the mention, and Slack's retry takes both (AI-2743).
+
 ### A repeat copy keeps a phone number attached where it moved to
 
 `router replicate --once`, `--follow` and `POST /v1/data/import` wrote the source's row of a phone number over the destination's, so a number attached on the destination lost its trunk, route, call and agent and stopped ringing it. A number on a trunk on the destination now keeps them, while its other columns still take the source's edits; a number not on a trunk there takes the source's row as before (AI-2844).
