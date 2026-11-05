@@ -323,15 +323,25 @@ func (s *Store) FinishEpisodeSummary(ctx context.Context, customerID, id, status
 	return nil
 }
 
-// AnyEpisodeCards reports whether an agent config of any customer has episode_cards on, so
-// its calls may have episodes to close.
-func (s *Store) AnyEpisodeCards(ctx context.Context) (bool, error) {
-	var on bool
-	err := s.db.NewRaw("SELECT EXISTS (SELECT 1 FROM agent_configs WHERE episode_cards AND deleted_at IS NULL)").Scan(ctx, &on)
-	if err != nil {
-		return false, stack.Wrap(fmt.Errorf("store: any episode cards: %w", err))
+// anyEpisodeToSweepQuery is whether the idle sweeper has, or may get, an episode to close or
+// summarize: an agent config with episode_cards on, whose calls and app chats open episodes;
+// a thread or chat episode still in progress (episodes_open_thread), whatever its config says
+// now; or a summary lease still held (episode_activity_summary_lease).
+const anyEpisodeToSweepQuery = `
+SELECT EXISTS (SELECT 1 FROM agent_configs WHERE episode_cards AND deleted_at IS NULL)
+    OR EXISTS (SELECT 1 FROM episodes WHERE status = 'in_progress' AND session_id IS NULL)
+    OR EXISTS (SELECT 1 FROM episode_activity WHERE summary_lease_until IS NOT NULL)`
+
+// AnyEpisodeToSweep reports whether an agent config of any customer has episode_cards on, so
+// its calls and app chats may open episodes, or whether an episode opened before is still to
+// close or to summarize: one that a config opened with the cards on and has turned them off
+// since closes as any other (AI-2771).
+func (s *Store) AnyEpisodeToSweep(ctx context.Context) (bool, error) {
+	var due bool
+	if err := s.db.NewRaw(anyEpisodeToSweepQuery).Scan(ctx, &due); err != nil {
+		return false, stack.Wrap(fmt.Errorf("store: any episode to sweep: %w", err))
 	}
-	return on, nil
+	return due, nil
 }
 
 // EpisodeCard is an episode as a session reads its card: the episode, and until when its

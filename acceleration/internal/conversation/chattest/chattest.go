@@ -41,6 +41,9 @@ type store struct {
 	now      func() time.Time
 	app      App
 	appReads int
+	// knownAuthors refuses a message update by a user the server does not hold; see
+	// KnownAuthors.
+	knownAuthors bool
 	// oneTrunkPerNumber refuses a trunk naming a number another trunk already has; see
 	// OneTrunkPerNumber.
 	oneTrunkPerNumber bool
@@ -448,6 +451,16 @@ func (s *Server) FailWith(method, suffix string, status int) {
 		s.db.failing[method] = map[string]int{}
 	}
 	s.db.failing[method][suffix] = status
+}
+
+// KnownAuthors refuses a partial update of a message by a user the server does not hold, as
+// Stream does: «the user <id> does not exist» (staging logs, AI-2771). A user is held once it
+// is created or updated (POST /users). Off unless asked: other tests update as users they
+// never created.
+func (s *Server) KnownAuthors() {
+	s.db.mu.Lock()
+	defer s.db.mu.Unlock()
+	s.db.knownAuthors = true
 }
 
 // Heal serves requests of method ending in suffix again.
@@ -1046,6 +1059,10 @@ func (db *store) serve(w http.ResponseWriter, r *http.Request) {
 		if id == "ephemeral" {
 			id = parts[len(parts)-2]
 		} else if r.Method == http.MethodPut {
+			if author, _ := body["user_id"].(string); db.knownAuthors && db.users[author] == nil {
+				refuse(w, "UpdateMessagePartial failed with error: \"the user "+author+" does not exist\"")
+				return
+			}
 			stored := db.messages[id]
 			// The custom fields are set on a copy, not in place: Stored hands a test the
 			// message's custom map, which a later update must not write under it.
