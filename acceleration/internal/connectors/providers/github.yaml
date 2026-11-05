@@ -161,7 +161,8 @@ sources:
     headers:
       X-MCP-Toolsets: default,actions
     # The tools that only read, of the toolsets the header asks for: the default ones
-    # (context, repos, issues, pull_requests and users, the README's «"default" toolset») and
+    # (context, repos, issues, pull_requests and users, the README's «"default" toolset»; the
+    # copilot toolset is Default: true in pkg/github/tools.go there too, and its tools write) and
     # actions, read in github/github-mcp-server at 99d6d6503a7b2a133e2f8a595d6d0ba24b4086d3
     # (opened 2026-11-05). Each name is in that toolset's list in README.md there, and its
     # definition in pkg/github sets «ReadOnlyHint: true», as its snapshot in

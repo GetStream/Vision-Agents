@@ -91,13 +91,14 @@ sources:
     # or stops (notion-create-file-upload makes an upload URL); notion-ai-search and
     # notion-connector-search, which send the model's question to the person's connected
     # apps, «such as Slack, Google Drive, GitHub, Jira, mail, and calendar», outside Notion;
-    # and notion-calendar-list-contacts, which searches by name or email «across your
-    # connected Calendar accounts», for the same reason. A tool added later is left out too.
+    # notion-search, which on a workspace-owned connection «runs AI search across Notion and
+    # connected sources», for the same reason; and the Notion Calendar tools that reach the
+    # person's connected Google or Outlook calendars, outside Notion: notion-calendar-list-
+    # contacts searches «across your connected Calendar accounts», and -list-calendars,
+    # -list-calendar-resources, -list-events and -list-coworkers-events read those
+    # calendars (the last two take the people, rooms and times the model picks), as
+    # google_calendar.yaml lists its own read tools instead. A tool added later is left out too.
     read_only_tools:
-      - notion-calendar-list-calendar-resources
-      - notion-calendar-list-calendars
-      - notion-calendar-list-coworkers-events
-      - notion-calendar-list-events
       - notion-download-attachment
       - notion-download-skill
       - notion-fetch
@@ -125,7 +126,6 @@ sources:
       - notion-query-multiple-data-sources
       - notion-query-sessions
       - notion-read-session-event
-      - notion-search
       - notion-search-agents
       - notion-search-sessions
       - notion-view-version

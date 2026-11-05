@@ -56,10 +56,8 @@ sources:
     endpoint: mcp
     # The tools that only read: the three [about] (opened again 2026-11-05) names under «MCP
     # server tools», which says «The MCP server is read-only and does not create, update, or
-    # delete data in Gong or the CRM». ask_account and ask_deal take the model's question,
-    # which goes to Gong, whose own analysis answers it from the account's calls and emails.
+    # delete data in Gong or the CRM». Left out: ask_account and ask_deal, which send the
+    # model's question to Gong's AI, as Sentry's natural-language search tools are out.
     # Named here rather than outbound: false, so a tool added later is left out.
     read_only_tools:
-      - ask_account
-      - ask_deal
       - generate_brief

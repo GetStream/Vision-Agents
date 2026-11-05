@@ -2241,7 +2241,7 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfTheOtherMCPConnector
 			"list_issue_types", "list_issues", "search_issues", "list_pull_requests",
 			"pull_request_read", "search_pull_requests", "search_users", "actions_get",
 			"actions_list", "get_job_logs"),
-		sessionGranting("gong", "calls", "ask_account", "ask_deal", "generate_brief"),
+		sessionGranting("gong", "calls", "generate_brief"),
 		sessionGranting("hubspot", "crm", "get_user_details", "get_organization_details",
 			"discover_hubspot_schema", "search_crm_objects", "get_crm_objects",
 			"search_properties", "get_properties", "search_owners",
@@ -2252,9 +2252,7 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfTheOtherMCPConnector
 		sessionGranting("metabase", "analytics", "browse_collection", "browse_data",
 			"execute_query", "get_content", "get_parameter_values", "glossary", "learn",
 			"render_drill_through", "run_saved_question", "search", "visualize_query"),
-		sessionGranting("notion", "docs", "notion-calendar-list-calendar-resources",
-			"notion-calendar-list-calendars", "notion-calendar-list-coworkers-events",
-			"notion-calendar-list-events", "notion-download-attachment", "notion-download-skill",
+		sessionGranting("notion", "docs", "notion-download-attachment", "notion-download-skill",
 			"notion-fetch", "notion-get-async-task", "notion-get-comments",
 			"notion-get-enabled-skills", "notion-get-file-download-urls", "notion-get-groups",
 			"notion-get-self", "notion-get-session-status", "notion-get-suggested-edit",
@@ -2264,7 +2262,7 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfTheOtherMCPConnector
 			"notion-list-session-events", "notion-list-shared-pages", "notion-memory-search",
 			"notion-query-data-sources", "notion-query-meeting-notes",
 			"notion-query-multiple-data-sources", "notion-query-sessions",
-			"notion-read-session-event", "notion-search", "notion-search-agents",
+			"notion-read-session-event", "notion-search-agents",
 			"notion-search-sessions", "notion-view-version", "notion-wait-session"),
 		sessionGranting("sentry", "errors", "find_alert_rules", "find_dashboards",
 			"find_dropped_events", "find_dsns", "find_metric_monitors", "find_monitors",
@@ -2287,7 +2285,7 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfTheOtherMCPConnector
 
 // HubSpot, Notion and Sentry have no golden, so this pins every tool their vendors list that
 // their read_only_tools leave out (AI-2777): a binding granting all of them is refused, and the
-// 400 names exactly these. Cal.com, Calendly and GitHub have goldens; their bindings grant the
+// 400 names exactly these. Cal.com, Calendly, GitHub and Gong have goldens; their bindings grant the
 // tools left out for a reason other than a write: a search of public docs or an API catalog, a
 // call of any operation, a routing form response, a booking link anyone may open, a workflow
 // run. A tool added to any list drops out of the message and fails the test.
@@ -2302,15 +2300,18 @@ func (s *ConfigsSuite) TestNessyBesideAToolTheOtherMCPConnectorsLeaveOutNamesExa
 		"manage_custom_properties", "manage_landing_page", "manage_marketing_email",
 		"manage_onboarding", "manage_segment", "manage_website_page", "query_crm_data",
 		"submit_feedback"}
+	gong := []string{"ask_account", "ask_deal"}
 	notion := []string{"notion-ai-search", "notion-calendar-cancel-events",
-		"notion-calendar-create-events", "notion-calendar-list-contacts",
+		"notion-calendar-create-events", "notion-calendar-list-calendar-resources",
+		"notion-calendar-list-calendars", "notion-calendar-list-contacts",
+		"notion-calendar-list-coworkers-events", "notion-calendar-list-events",
 		"notion-calendar-update-events", "notion-connector-search", "notion-convert-page-to-skill",
 		"notion-create-attachment", "notion-create-comment", "notion-create-database",
 		"notion-create-file-upload", "notion-create-folder", "notion-create-pages",
 		"notion-create-suggested-edit", "notion-create-view", "notion-delete-comment",
 		"notion-delete-databases", "notion-delete-pages", "notion-duplicate-page",
 		"notion-move-pages", "notion-resolve-suggested-edit", "notion-restore-pages",
-		"notion-restore-version", "notion-send-message-to-session", "notion-set-comment-reaction",
+		"notion-restore-version", "notion-search", "notion-send-message-to-session", "notion-set-comment-reaction",
 		"notion-set-discussion-resolved", "notion-spawn-session", "notion-stop-session",
 		"notion-update-comment", "notion-update-data-source", "notion-update-enabled-skills",
 		"notion-update-folder", "notion-update-page", "notion-update-view", "notion-upload-skill"}
@@ -2330,6 +2331,7 @@ func (s *ConfigsSuite) TestNessyBesideAToolTheOtherMCPConnectorsLeaveOutNamesExa
 			sessionGranting("calcom", "scheduling", calcom...),
 			sessionGranting("calendly", "booking", calendly...),
 			sessionGranting("github", "code", github...),
+			sessionGranting("gong", "calls", gong...),
 			sessionGranting("hubspot", "crm", hubspot...),
 			sessionGranting("notion", "docs", notion...),
 			sessionGranting("sentry", "errors", sentry...),
@@ -2339,7 +2341,7 @@ func (s *ConfigsSuite) TestNessyBesideAToolTheOtherMCPConnectorsLeaveOutNamesExa
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `or add to each binding's require_approval its tools that do not only read: `+
 		`"scheduling" `+strings.Join(calcom, ", ")+`; "booking" `+strings.Join(calendly, ", ")+
-		`; "code" `+strings.Join(github, ", ")+`; "crm" `+strings.Join(hubspot, ", ")+
+		`; "code" `+strings.Join(github, ", ")+`; "calls" `+strings.Join(gong, ", ")+`; "crm" `+strings.Join(hubspot, ", ")+
 		`; "docs" `+strings.Join(notion, ", ")+`; "errors" `+strings.Join(sentry, ", "))
 }
 
