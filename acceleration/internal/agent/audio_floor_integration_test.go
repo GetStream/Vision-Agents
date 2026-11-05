@@ -120,8 +120,11 @@ func TestAudioFloorReplay(t *testing.T) {
 // floorHarness is what every call shares: the server, one client of it as a router has, and
 // what each call measured.
 type floorHarness struct {
-	url      string
-	client   *audiofloor.Client
+	url    string
+	client *audiofloor.Client
+	// faults sits between the router and the server, for the scenarios that slow it down or
+	// have it shed load, and requests keeps each request that reached it.
+	faults   *faults
 	requests *exchanges
 	policy   audiofloor.Policy
 	logDir   string
@@ -132,6 +135,10 @@ type floorHarness struct {
 
 	weather, uhhuh, rain, pharmacy, long, stop, reply []int16
 	count                                             [][]int16
+	// lines are recordings of the agent's other lines, in its voice, by their text: the voice
+	// speaks the recording of a line it is given, as a voice speaks the words it is given,
+	// and replyText's for any other.
+	lines map[string][]int16
 	// portuguese is somebody else in the room, talking in another language.
 	portuguese []int16
 
@@ -140,9 +147,11 @@ type floorHarness struct {
 }
 
 func newFloorHarness(t *testing.T, url string) *floorHarness {
-	requests := &exchanges{base: http.DefaultTransport}
+	faults := &faults{base: http.DefaultTransport}
+	requests := &exchanges{base: faults}
 	h := &floorHarness{
 		url:      url,
+		faults:   faults,
 		requests: requests,
 		client:   audiofloor.New(url, audiofloor.Opus, &http.Client{Transport: requests}),
 		logDir:   os.Getenv("CHORUS_ASR_REPLAY_LOGS"),
@@ -693,12 +702,15 @@ func median(values []time.Duration) time.Duration {
 
 // call is one replayed call: an agent on an edge playing the caller in real time.
 type call struct {
-	t      *testing.T
-	h      *floorHarness
-	began  time.Time
-	agent  *Agent
-	edge   *replayEdge
-	voice  *replayVoice
+	t     *testing.T
+	h     *floorHarness
+	began time.Time
+	agent *Agent
+	edge  *replayEdge
+	voice *replayVoice
+	// model is the conversation model, which answers every turn with replyText unless a
+	// scenario gives it another line, and flow the flow controller's language model.
+	model  *stubLLM
 	flow   *stubLLM
 	events *timeline
 	words  *wordLog
@@ -731,6 +743,7 @@ func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions st
 
 	model := newStubLLM()
 	model.reply = []string{replyText}
+	c.model = model
 	c.flow = newStubLLM()
 	c.flow.reply = []string{fallbackRuling}
 	models := []*stubLLM{model, c.flow}
@@ -745,7 +758,7 @@ func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions st
 	require.NoError(t, err)
 	t.Cleanup(reasoner.Close)
 
-	c.voice = newReplayVoice(h.reply)
+	c.voice = newReplayVoice(h.reply, h.lines)
 	voices := ttsrouter.NewRegistry()
 	voices.Register("stub", func(routing.Spec) (tts.TTS, error) { return c.voice, nil })
 	speaker, err := ttsrouter.New(ttsrouter.Options{Config: stubConfig(), Registry: voices, Logger: logger})
@@ -1331,10 +1344,12 @@ func (e *replayEdge) heard() time.Duration {
 func (c *cue) began() time.Time { return c.start }
 func (c *cue) ended() time.Time { return c.end }
 
-// replayVoice speaks the recorded reply for the agent: all of it at once, as the reply's
-// length in characters is of the recording's.
+// replayVoice speaks the recorded reply for the agent: the recording of the line it is
+// given when it has one, and otherwise the reply, as much of it as the line's length in
+// characters is of replyText's.
 type replayVoice struct {
 	reply   []int16
+	lines   map[string][]int16
 	emitter *tts.Emitter
 	ctx     context.Context
 	stop    context.CancelFunc
@@ -1346,9 +1361,16 @@ type replayVoice struct {
 	speaking   sync.WaitGroup
 }
 
-func newReplayVoice(reply []int16) *replayVoice {
-	return &replayVoice{reply: trimmed(reply), emitter: tts.NewEmitter(64), pending: map[string]string{}, inFlight: map[string]context.CancelFunc{}}
+func newReplayVoice(reply []int16, lines map[string][]int16) *replayVoice {
+	v := &replayVoice{reply: trimmed(reply), lines: map[string][]int16{}, emitter: tts.NewEmitter(64), pending: map[string]string{}, inFlight: map[string]context.CancelFunc{}}
+	for text, recording := range lines {
+		v.lines[spelling(text)] = trimmed(recording)
+	}
+	return v
 }
+
+// spelling is text as the voice is given it, in sentences with the spaces between them gone.
+func spelling(text string) string { return strings.Join(strings.Fields(text), "") }
 
 func (v *replayVoice) Start(ctx context.Context) error {
 	v.ctx, v.stop = context.WithCancel(context.WithoutCancel(ctx))
@@ -1383,13 +1405,16 @@ func (v *replayVoice) Synthesize(request tts.Request) error {
 func (v *replayVoice) speak(ctx context.Context, id, said string) {
 	started := time.Now()
 	v.emitter.Send(tts.SynthesisStarted{SynthesisID: id, Provider: "stub", Model: "replay", At: started})
-	length := len(v.reply) * utf8.RuneCountInString(said) / utf8.RuneCountInString(replyText)
+	recording, length := v.reply, len(v.reply)*utf8.RuneCountInString(said)/utf8.RuneCountInString(replyText)
+	if line, ok := v.lines[spelling(said)]; ok {
+		recording, length = line, len(line)
+	}
 	length -= length % replayFrame
 	sent := 0
 	for index := 0; sent < length && ctx.Err() == nil; index++ {
 		piece := make([]int16, min(10*replayFrame, length-sent))
 		for i := range piece {
-			piece[i] = v.reply[(sent+i)%len(v.reply)]
+			piece[i] = recording[(sent+i)%len(recording)]
 		}
 		v.emitter.Send(tts.AudioChunk{SynthesisID: id, Index: index, Audio: audio.PcmData{Samples: piece, SampleRate: replayRate, Channels: 1}})
 		sent += len(piece)
