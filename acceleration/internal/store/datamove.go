@@ -318,7 +318,7 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 		return 0, fmt.Errorf("store: export cursor: %w", err)
 	}
 
-	if !s.Sharded() && len(s.peers) == 0 {
+	if !s.HasShards() {
 		for _, table := range dataTables {
 			if err := s.exportTable(ctx, tx, table, customerID, write); err != nil {
 				return 0, err
@@ -1505,8 +1505,8 @@ WHERE at < now() - make_interval(secs => ?)
 // database.
 //
 // Changes are only recorded for a customer StartDataCapture marked, which it does in the shared
-// database, so a shard's own tables record none: a deployment of several shards replicates the
-// shared tables, and a move off it carries the shards' rows as the export read them.
+// database, so a shard's own tables record none, and a deployment with shards (HasShards)
+// refuses to be a move's source rather than lose what its shards write after the export.
 //
 // It runs on every start rather than once in a migration, so a table added later is
 // covered by the deployment reaching it rather than by somebody remembering to write the

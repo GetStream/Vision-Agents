@@ -1577,9 +1577,10 @@ still one session. Migrations run on every database. A socket for a session held
 another shard is proxied to the node holding it, since that shard's relay is not this
 one's. Empty shard settings fall back to the global ones, which is the single-node setup.
 
-Two things are approximate across shards: percentiles merged from several shards' rollups
-are weighted by request count rather than recomputed, and a data move replicates the
-changes of the global tables only, so a customer's calls and sessions are moved by export.
+Percentiles merged from several shards' rollups are approximate: they are weighted by request
+count rather than recomputed. A router with shards cannot be a move's source: its shards'
+tables record no changes after an export, so `GET /v1/data/export` and `GET /v1/data/changes`
+answer 400 `not_configured` there (see [Moving a customer](#moving-a-customer)). It can be a move's target.
 
 ## Agents that are configured rather than spelled out
 
@@ -2390,9 +2391,14 @@ the copy, which is what makes the switchover free of a window where writes are l
 An export starts recording the app's changes, then waits until every write transaction open in
 the source's shared database when recording started has ended, and only then reads its snapshot.
 So every write of the app to a table the export carries is in the export or in the changes after its cursor,
-including one that was in progress when the export started. A shard's tables record no changes:
-their rows come across as the export read them. A transaction still open after 30 seconds makes the
+including one that was in progress when the export started. A transaction still open after 30 seconds makes the
 export answer 503: run it again.
+
+The source must be a router without shards. A shard's tables (calls, call bridges, recordings,
+sessions, responses, requests and their stats) record no changes, so a router with a shard database
+of its own, or with other shards' databases listed in `postgres.shards`, answers the export and the
+changes 400 `not_configured` before it records anything: moving off it is not supported yet. Any router can be the
+target.
 
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \

@@ -89,6 +89,7 @@ def sync_detailed(
     connection has to be authorized again. The audio behind a voice sample and a call recording lives in
     an object bucket rather than in this database; the rows naming those objects are here, and copying
     the bucket is yours to do.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where
     naming a customer is all it takes to be one.
 
@@ -125,6 +126,7 @@ def sync(
     connection has to be authorized again. The audio behind a voice sample and a call recording lives in
     an object bucket rather than in this database; the rows naming those objects are here, and copying
     the bucket is yours to do.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where
     naming a customer is all it takes to be one.
 
@@ -157,6 +159,7 @@ async def asyncio_detailed(
     connection has to be authorized again. The audio behind a voice sample and a call recording lives in
     an object bucket rather than in this database; the rows naming those objects are here, and copying
     the bucket is yours to do.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where
     naming a customer is all it takes to be one.
 
@@ -191,6 +194,7 @@ async def asyncio(
     connection has to be authorized again. The audio behind a voice sample and a call recording lives in
     an object bucket rather than in this database; the rows naming those objects are here, and copying
     the bucket is yours to do.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where
     naming a customer is all it takes to be one.
 
