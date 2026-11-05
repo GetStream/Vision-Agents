@@ -329,7 +329,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### A connection's tools say which only read
 
-`GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when the connector's latest revision lists it in `read_only_tools` or says its source sends nothing out (`outbound: false`). A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
+`GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
 
 ## Breaking Changes
 

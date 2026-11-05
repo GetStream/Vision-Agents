@@ -23,9 +23,10 @@ class ConnectionTool:
         description (str):
         input_schema (ConnectionToolInputSchema): The JSON Schema of its arguments.
         name (str): The tool's name at the provider. An agent config grants it by this name.
-        read_only (bool): Whether the tool only reads, as the connector's latest revision says: its source lists it in
-            read_only_tools, or says outbound: false. A binding may grant such a tool by name beside a sensitive connector
-            without require_approval; any other tool there needs require_approval.
+        read_only (bool): Whether the tool only reads, as the connector's latest revision says: every source of the
+            connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool
+            comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive
+            connector without require_approval; any other tool there needs require_approval.
         schema_digest (str): The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose
             schema changes is not offered until it is granted again.
         needs_scopes (list[str] | None | Unset): The scopes a call of the tool needs, as the connector says. Absent when

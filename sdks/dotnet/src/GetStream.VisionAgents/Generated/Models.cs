@@ -3669,7 +3669,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<string>? NeedsScopes { get; set; } = default!;
 
         /// <summary>
-        /// Whether the tool only reads, as the connector's latest revision says: its source lists it in read_only_tools, or says outbound: false. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+        /// Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("read_only")]
         public bool ReadOnly { get; set; } = default!;

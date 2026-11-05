@@ -146,7 +146,7 @@ type ConnectionTool struct {
 	InputSchema  map[string]any `json:"input_schema" doc:"The JSON Schema of its arguments."`
 	SchemaDigest string         `json:"schema_digest" doc:"The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again."`
 	NeedsScopes  []string       `json:"needs_scopes,omitempty" doc:"The scopes a call of the tool needs, as the connector says. Absent when it says none."`
-	ReadOnly     bool           `json:"read_only" doc:"Whether the tool only reads, as the connector's latest revision says: its source lists it in read_only_tools, or says outbound: false. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval."`
+	ReadOnly     bool           `json:"read_only" doc:"Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval."`
 }
 
 // ConnectionTools is the tools a connection offered when it was last validated.
@@ -730,15 +730,18 @@ func (s *Server) listConnectionTools(ctx context.Context, request *connectionReq
 	}
 	// The latest revision, not the one the connection pins: it is what a config save checks a
 	// binding beside a sensitive connector against (SensitiveBindingsComplaint).
+	// A connector the app can no longer see has no definition: a save skips such a binding, so
+	// no tool of it is a read (read_only false) and the tools are still listed.
 	definition, err := s.store.LatestConnectorDefinition(ctx, connection.CustomerID, connection.ConnectorID)
-	if err != nil {
+	if err != nil && !errors.Is(err, store.ErrNoConnectorDefinition) {
 		return nil, err
 	}
+	known := err == nil
 	tools := make([]ConnectionTool, 0, len(connection.CachedTools))
 	for _, tool := range connection.CachedTools {
 		tools = append(tools, ConnectionTool{Name: tool.Name, Description: tool.Description,
 			InputSchema: maps.Clone(tool.InputSchema), SchemaDigest: tool.SchemaDigest,
-			NeedsScopes: slices.Clone(tool.NeedsScopes), ReadOnly: !definition.Manifest.SendsOutTool(tool.Name)})
+			NeedsScopes: slices.Clone(tool.NeedsScopes), ReadOnly: known && !definition.Manifest.SendsOutTool(tool.Name)})
 	}
 	return &connectionToolsResponse{Body: ConnectionTools{ConnectionID: connection.ID, Tools: tools,
 		Digest: connection.ToolsDigest, CheckedAt: connection.ToolsCheckedAt}}, nil
