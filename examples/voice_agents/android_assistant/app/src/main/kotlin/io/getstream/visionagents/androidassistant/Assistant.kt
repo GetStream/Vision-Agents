@@ -56,7 +56,8 @@ object Assistant {
 
     /**
      * The model a written conversation runs on. Grok streams its reasoning, which is what fills
-     * a reply's thinking panel. A call keeps the agent's faster model.
+     * a reply's thinking panel. A call keeps the agent's faster model. It is sent as a model
+     * overwrite, which the session keeps, so a conversation reopened from the list stays on it.
      */
     const val CHAT_MODEL: String = "xai/grok-4.7"
 
