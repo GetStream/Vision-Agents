@@ -4565,6 +4565,9 @@ type ConnectionTool struct {
 	// NeedsScopes The scopes a call of the tool needs, as the connector says. Absent when it says none.
 	NeedsScopes *[]string `json:"needs_scopes,omitempty"`
 
+	// ReadOnly Whether the tool only reads, as the connector's latest revision says: its source lists it in read_only_tools, or says outbound: false. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+	ReadOnly bool `json:"read_only"`
+
 	// SchemaDigest The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
 	SchemaDigest string `json:"schema_digest"`
 }
@@ -11853,7 +11856,7 @@ type ClientInterface interface {
 
 	// ListConnectionTools List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -15441,7 +15444,7 @@ func (c *Client) ExportConnectionToken(ctx context.Context, id string, reqEditor
 
 // ListConnectionTools List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -32975,7 +32978,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectionToolsWithResponse List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -61876,7 +61879,7 @@ func (c *ClientWithResponses) ExportConnectionTokenWithResponse(ctx context.Cont
 
 // ListConnectionToolsWithResponse List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //

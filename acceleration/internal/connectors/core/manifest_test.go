@@ -115,6 +115,28 @@ func (s *ManifestSuite) TestASourceSendsOutEveryToolItDoesNotListAsReadOnly() {
 	s.False(MCPSource(parsed.Sources).SendsOutTool("update_doc"))
 }
 
+// A tool granted by name does not say which source it comes from, so a manifest sends it out
+// when any of its sources may, and one with no source sends none.
+func (s *ManifestSuite) TestAManifestSendsOutAToolAnyOfItsSourcesMaySend() {
+	reads := SourceRule{Kind: "mcp", ReadOnlyTools: []string{"read_doc"}}
+	writes := SourceRule{Kind: "mcp"}
+	closed := SourceRule{Kind: "mcp", Outbound: new(false)}
+	for name, test := range map[string]struct {
+		sources []SourceRule
+		sends   bool
+	}{
+		"no source":                         {nil, false},
+		"listed in read_only_tools":         {[]SourceRule{reads}, false},
+		"of a source saying outbound false": {[]SourceRule{closed}, false},
+		"of a source that may write":        {[]SourceRule{writes}, true},
+		"listed by one source, not another": {[]SourceRule{reads, writes}, true},
+		"not listed by the first source":    {[]SourceRule{writes, reads}, true},
+		"read only in every source":         {[]SourceRule{reads, closed}, false},
+	} {
+		s.Equal(test.sends, Manifest{Sources: test.sources}.SendsOutTool("read_doc"), name)
+	}
+}
+
 func (s *ManifestSuite) TestAnEmptyReadOnlyToolIsRejected() {
 	_, err := ParseManifest(minimal("endpoints:\n  mcp: https://example.com/mcp\nsources:\n  - kind: mcp\n" +
 		"    endpoint: mcp\n    read_only_tools: [read_doc, \"\"]\n"))

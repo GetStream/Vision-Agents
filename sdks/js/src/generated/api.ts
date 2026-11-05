@@ -871,7 +871,7 @@ export type paths = {
         };
         /**
          * List a connection's tools
-         * @description The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+         * @description The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -5513,6 +5513,8 @@ export type components = {
             readonly name: string;
             /** @description The scopes a call of the tool needs, as the connector says. Absent when it says none. */
             readonly needs_scopes?: readonly string[] | null;
+            /** @description Whether the tool only reads, as the connector's latest revision says: its source lists it in read_only_tools, or says outbound: false. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval. */
+            readonly read_only: boolean;
             /** @description The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again. */
             readonly schema_digest: string;
         };

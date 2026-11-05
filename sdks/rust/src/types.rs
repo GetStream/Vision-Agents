@@ -3102,6 +3102,8 @@ pub struct ConnectionTool {
     ///The scopes a call of the tool needs, as the connector says. Absent when it says none.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub needs_scopes: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///Whether the tool only reads, as the connector's latest revision says: its source lists it in read_only_tools, or says outbound: false. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+    pub read_only: bool,
     ///The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
     pub schema_digest: ::std::string::String,
 }

@@ -17,6 +17,8 @@ final readonly class ConnectionTool
         public array $inputSchema,
         // The tool's name at the provider. An agent config grants it by this name.
         public string $name,
+        // Whether the tool only reads, as the connector's latest revision says: its source lists it in read_only_tool...
+        public bool $readOnly,
         // The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is n...
         public string $schemaDigest,
         // The scopes a call of the tool needs, as the connector says. Absent when it says none.
@@ -34,6 +36,7 @@ final readonly class ConnectionTool
             description: Json::string($data, 'description'),
             inputSchema: Json::object($data, 'input_schema'),
             name: Json::string($data, 'name'),
+            readOnly: Json::bool($data, 'read_only'),
             schemaDigest: Json::string($data, 'schema_digest'),
             needsScopes: array_key_exists('needs_scopes', $data) && $data['needs_scopes'] !== null ? Json::strings($data, 'needs_scopes') : null,
         );
@@ -50,6 +53,7 @@ final readonly class ConnectionTool
         $out['description'] = $this->description;
         $out['input_schema'] = Json::objectValue($this->inputSchema);
         $out['name'] = $this->name;
+        $out['read_only'] = $this->readOnly;
         $out['schema_digest'] = $this->schemaDigest;
         if ($this->needsScopes !== null) {
             $out['needs_scopes'] = $this->needsScopes;
