@@ -228,8 +228,8 @@ ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
 // changes carry on from.
 //
 // The rows are read in one repeatable-read transaction, so what comes out is the customer
-// as they were at one moment rather than a stitch of several. The cursor is taken in the
-// same transaction and is deliberately conservative: a change at or below it is already
+// as they were at one moment rather than a stitch of several. The cursor is taken right
+// before that transaction and is deliberately conservative: a change at or below it is already
 // in these rows, and one above it may or may not be, which is safe because applying a
 // change twice lands in the same place as applying it once.
 //
@@ -242,16 +242,17 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 		return 0, errors.New("store: a customer id is required")
 	}
 
+	// Before the transaction, whose snapshot is taken at its first statement: every change at
+	// or below the cursor has then ended before the snapshot and is in it.
+	cursor, err := s.changeWatermark(ctx)
+	if err != nil {
+		return 0, err
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return 0, fmt.Errorf("store: export: %w", err)
 	}
 	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
-
-	var cursor int64
-	if err := tx.QueryRowContext(ctx, changeWatermark).Scan(&cursor); err != nil {
-		return 0, fmt.Errorf("store: export cursor: %w", err)
-	}
 
 	if !s.Sharded() && len(s.peers) == 0 {
 		for _, table := range dataTables {
@@ -408,16 +409,39 @@ func addNumbers(a, b json.Number) json.Number {
 	return json.Number(strconv.FormatFloat(fx+fy, 'f', -1, 64))
 }
 
-// changeWatermark is the highest sequence number every change at or below has committed.
+// changeWatermark is a sequence number every change at or below has ended: committed and
+// visible to any statement started after it returns, or rolled back.
 //
 // Taking the highest number that can be seen would be wrong: the numbers are handed out
 // when a row is inserted and become visible when its transaction commits, so a reader
 // could step over a lower number belonging to a transaction still in flight and never
-// come back for it. This stops below the oldest transaction still running.
-const changeWatermark = `
-SELECT COALESCE(
-    (SELECT MIN(seq) - 1 FROM data_changes WHERE tx >= pg_snapshot_xmin(pg_current_snapshot())),
-    (SELECT COALESCE(MAX(seq), 0) FROM data_changes))`
+// come back for it. Nor does any committed row bound what a transaction still running
+// holds, whatever the order of their transaction ids. So each transaction recording a
+// change holds a lock naming the highest number handed out before its first one
+// (record_data_change), and this stops at the lowest such lock.
+//
+// The two reads are in this order, each its own statement. A number at or below the
+// first was handed out before it, so its transaction's lock was taken before the second:
+// either the lock is there and the mark is below the number, or its transaction has ended.
+func (s *Store) changeWatermark(ctx context.Context) (int64, error) {
+	var handedOut int64
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END FROM data_changes_seq_seq",
+	).Scan(&handedOut); err != nil {
+		return 0, fmt.Errorf("store: change watermark: %w", err)
+	}
+	var held sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `
+SELECT MIN((classid::bigint << 32) | objid::bigint) FROM pg_locks
+WHERE locktype = 'advisory' AND objsubid = 2
+  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`).Scan(&held); err != nil {
+		return 0, fmt.Errorf("store: change watermark: %w", err)
+	}
+	if held.Valid && held.Int64 < handedOut {
+		return held.Int64, nil
+	}
+	return handedOut, nil
+}
 
 func (s *Store) exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
 	query, args := table.selectRows(customerID)
@@ -1229,12 +1253,17 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		return nil, 0, ErrChangesExpired
 	}
 
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+	// Read before the rows, so the statement reading them sees every change at or below it.
+	mark, err := s.changeWatermark(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+	rows, err := s.db.QueryContext(ctx, `
 SELECT seq, table_name, op, key, payload, at
 FROM data_changes
-WHERE customer_id = ? AND seq > ? AND seq <= (%s)
+WHERE customer_id = ? AND seq > ? AND seq <= ?
 ORDER BY seq
-LIMIT ?`, changeWatermark), customerID, after, limit)
+LIMIT ?`, customerID, after, mark, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
@@ -1361,12 +1390,25 @@ func (s *Store) deleteRow(ctx context.Context, db bun.IDB, customerID string, ch
 
 // PruneDataChanges drops the changes and the capture rows nobody can still use. It
 // returns how many changes it removed.
+//
+// It drops only the oldest numbers, the ones below the first change still young and at
+// or below the watermark, so what is kept is everything from one number on and a cursor
+// before it is told it expired (Changes). By age alone it could keep a lower number and
+// drop a higher one: a change's time is when its transaction started, not when it was
+// numbered, and one still in flight is not seen at all.
 func (s *Store) PruneDataChanges(ctx context.Context, retention time.Duration) (int64, error) {
 	if retention <= 0 {
 		return 0, nil
 	}
-	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM data_changes WHERE at < now() - make_interval(secs => ?)", retention.Seconds())
+	mark, err := s.changeWatermark(ctx)
+	if err != nil {
+		return 0, err
+	}
+	result, err := s.db.ExecContext(ctx, `
+DELETE FROM data_changes
+WHERE at < now() - make_interval(secs => ?) AND seq <= ?
+  AND seq < COALESCE((SELECT MIN(seq) FROM data_changes WHERE at >= now() - make_interval(secs => ?)), ?)`,
+		retention.Seconds(), mark, retention.Seconds(), mark+1)
 	if err != nil {
 		return 0, fmt.Errorf("store: prune data changes: %w", err)
 	}

@@ -566,6 +566,180 @@ func (s *DataMoveSuite) TestPruningDropsWhatNobodyCanResumeFrom() {
 	s.Positive(removed)
 }
 
+// A change is numbered when it is written and seen when its transaction commits, so a
+// transaction that started later can hold a lower number than one that already committed.
+func (s *DataMoveSuite) TestAChangeOfATransactionThatCommitsLateIsNotSteppedOver() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	older := s.begin()
+	first := s.writeIn(older, "acme", "older, first")
+	newer := s.begin()
+	late := s.writeIn(newer, "acme", "newer, in flight")
+	second := s.writeIn(older, "acme", "older, second")
+	s.Require().NoError(older.Commit())
+
+	handed, cursor := s.follow("acme", cursor)
+	s.Equal([]string{first}, handed, "nothing past the change still in flight")
+
+	s.Require().NoError(newer.Commit())
+	rest, _ := s.follow("acme", cursor)
+	s.Equal([]string{late, second}, rest)
+}
+
+func (s *DataMoveSuite) TestAQuietFeedHandsOutEveryChangeUpToTheNewest() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	want := []string{
+		s.seedAgentConfig(s.source, "acme", "one"),
+		s.seedAgentConfig(s.source, "acme", "two"),
+		s.seedAgentConfig(s.source, "acme", "three"),
+	}
+	var newest int64
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx, "SELECT MAX(seq) FROM data_changes").Scan(&newest))
+
+	handed, next := s.follow("acme", cursor)
+
+	s.Equal(want, handed)
+	s.Equal(newest, next)
+	s.Equal(newest, s.export("acme").cursor)
+}
+
+// The numbers are shared by every customer, so another customer's change in flight holds
+// this customer's feed back too, whichever of them commits first.
+func (s *DataMoveSuite) TestChangesInFlightForSeveralCustomersHoldEveryFeedBack() {
+	s.capture("acme")
+	s.capture("other")
+	start := s.export("acme").cursor
+	older := s.begin()
+	first := s.writeIn(older, "acme", "older, first")
+	acme := s.begin()
+	acmeLate := s.writeIn(acme, "acme", "acme, in flight")
+	second := s.writeIn(older, "acme", "older, second")
+	other := s.begin()
+	otherLate := s.writeIn(other, "other", "other, in flight")
+	third := s.writeIn(older, "acme", "older, third")
+	s.Require().NoError(older.Commit())
+
+	handed, acmeCursor := s.follow("acme", start)
+	s.Equal([]string{first}, handed)
+	theirs, otherCursor := s.follow("other", start)
+	s.Empty(theirs)
+
+	s.Require().NoError(other.Commit())
+	handed, acmeCursor = s.follow("acme", acmeCursor)
+	s.Empty(handed, "acme's own change is still in flight")
+	theirs, otherCursor = s.follow("other", otherCursor)
+	s.Empty(theirs, "acme's change in flight holds a lower number")
+
+	s.Require().NoError(acme.Commit())
+	handed, _ = s.follow("acme", acmeCursor)
+	s.Equal([]string{acmeLate, second, third}, handed)
+	theirs, _ = s.follow("other", otherCursor)
+	s.Equal([]string{otherLate}, theirs)
+}
+
+func (s *DataMoveSuite) TestAnOpenTransactionThatRecordsNothingDoesNotHoldTheFeedBack() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	s.writeIn(s.begin(), "not-moving", "open")
+	committed := s.seedAgentConfig(s.source, "acme", "committed")
+
+	handed, _ := s.follow("acme", cursor)
+
+	s.Equal([]string{committed}, handed)
+}
+
+func (s *DataMoveSuite) TestAnExportCursorStaysBelowAChangeInFlight() {
+	s.capture("acme")
+	// A sequence that has handed out nothing yet holds the first number it will hand out.
+	_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval('data_changes_seq_seq', 1, false)")
+	s.Require().NoError(err)
+	inFlight := s.begin()
+	late := s.writeIn(inFlight, "acme", "in flight")
+	s.seedAgentConfig(s.source, "acme", "committed")
+
+	cursor := s.export("acme").cursor
+	s.Require().NoError(inFlight.Commit())
+	handed, _ := s.follow("acme", cursor)
+
+	s.Contains(handed, late)
+}
+
+// A transaction that started earlier and wrote later records an older time under a higher
+// number: pruning by time alone drops it and keeps the lower one, and a cursor between them
+// would carry on past the gap.
+func (s *DataMoveSuite) TestPruningKeepsAChangeNumberedAboveOneStillKept() {
+	s.capture("acme")
+	old := s.seedAgentConfig(s.source, "acme", "aged out")
+	s.seedAgentConfig(s.source, "acme", "young")
+	late := s.seedAgentConfig(s.source, "acme", "started earlier")
+	_, cursor, err := s.source.Changes(s.ctx, "acme", 0, 2)
+	s.Require().NoError(err)
+	s.ageChange(old)
+	s.ageChange(late)
+	s.prune()
+
+	handed, _ := s.follow("acme", cursor)
+
+	s.Equal([]string{late}, handed)
+}
+
+func (s *DataMoveSuite) TestPruningKeepsWhatIsNumberedAboveAChangeInFlight() {
+	s.capture("acme")
+	s.ageChange(s.seedAgentConfig(s.source, "acme", "aged out"))
+	_, cursor := s.follow("acme", 0)
+	inFlight := s.begin()
+	held := s.writeIn(inFlight, "acme", "in flight")
+	after := s.seedAgentConfig(s.source, "acme", "committed above it")
+	s.ageChange(after)
+	s.prune()
+	s.Require().NoError(inFlight.Commit())
+
+	handed, _ := s.follow("acme", cursor)
+
+	s.Equal([]string{held, after}, handed)
+}
+
+// begin opens a transaction on the source that the test commits when it says so.
+func (s *DataMoveSuite) begin() bun.Tx {
+	tx, err := s.source.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = tx.Rollback() })
+	return tx
+}
+
+func (s *DataMoveSuite) writeIn(tx bun.Tx, customerID, name string) string {
+	id := newID()
+	_, err := tx.ExecContext(s.ctx,
+		"INSERT INTO agent_configs (id, customer_id, name, instructions) VALUES (?, ?, ?, ?)",
+		id, customerID, name, "be brief")
+	s.Require().NoError(err)
+	return id
+}
+
+// follow reads a customer's changes after a cursor and returns the ids of the rows they name,
+// oldest first, and the cursor to read on from.
+func (s *DataMoveSuite) follow(customerID string, cursor int64) ([]string, int64) {
+	changes, next, err := s.source.Changes(s.ctx, customerID, cursor, 100)
+	s.Require().NoError(err)
+	var ids []string
+	for _, change := range changes {
+		var key struct {
+			ID string `json:"id"`
+		}
+		s.Require().NoError(json.Unmarshal(change.Key, &key))
+		ids = append(ids, key.ID)
+	}
+	return ids, next
+}
+
+// ageChange makes the change of one row older than the retention prune keeps.
+func (s *DataMoveSuite) ageChange(id string) {
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE data_changes SET at = now() - interval '30 days' WHERE key ->> 'id' = ?", id)
+	s.Require().NoError(err)
+}
+
 func (s *DataMoveSuite) TestChildRowsFollowTheirParent() {
 	voice := s.seedVoice(s.source, "acme", "narrator")
 	_, err := s.source.DB().ExecContext(s.ctx,
