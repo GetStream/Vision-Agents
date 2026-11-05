@@ -197,6 +197,21 @@ func (s *EpisodeReadingSuite) TestACallWhoseCalleeIsNotKnownFilesNoCardUnderItsO
 	s.Zero(s.contactRows(line)(), "the line's own number is nobody's omni-channel")
 }
 
+// Defect: a session a backend opened on a call the router did not place, a worker answering
+// an arriving call, found no placed call and so wrote no card for its caller.
+func (s *EpisodeReadingSuite) TestAWorkersSessionOnAnArrivingCallFilesTheCallersCard() {
+	call := uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-"+lateCaller)
+	spec := s.inboundSpec(call, true)
+	spec.CallerKind = auth.KindServer
+
+	created := s.opens(spec)
+
+	db, callers := s.store, s.contactRows(lateCaller)
+	s.Require().Eventually(func() bool { return len(callEpisodesIn(db, created.ID())) == 1 }, settleFor, 10*time.Millisecond)
+	s.Equal(1, callers())
+}
+
 // Defect: the card read the call once, when the agent joined, so a caller who joined after the
 // agent got no card.
 func (s *EpisodeReadingSuite) TestAnInboundCallerWhoJoinsAfterTheAgentGetsTheirCard() {
