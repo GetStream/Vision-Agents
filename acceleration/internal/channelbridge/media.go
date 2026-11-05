@@ -32,22 +32,38 @@ const maxLookupBytes = 64 << 10
 // It is part of the attempt's writeTimeout, which leaves the rest for the writes.
 const downloadTimeout = 10 * time.Second
 
+// fetched is a photo download fetched: at is its place in the message's media.
+type fetched struct {
+	at   int
+	file sandbox.File
+}
+
 // download fetches the photos of message that its provider names by id (core.Media.ID), as
 // the manifest of the connection's pinned revision finds them (MessageRule.MediaLookup), with
 // the connection's own client, which carries its credential, for upload to store. named is
 // how many files the message names by id, photos or not: another file is not downloaded, as
-// photos writes no other file. A photo that cannot be downloaded is left out and logged with
-// ids only, as is its reason: the message goes on with its text, and the provider's id is no
-// use to the agent. An error is the store failing, which the attempt is tried again for.
-func (b *Bridge) download(ctx context.Context, thread store.ChannelThread, message core.InboundMessage, log *slog.Logger) (files []sandbox.File, named int, err error) {
-	var wanted []core.Media
-	for _, file := range message.Media {
+// photos writes no other file. Nor is a photo an earlier attempt of the row uploaded
+// (core.Media.Uploaded): that upload is written instead. A photo is named by its place among
+// the message's photos named by id, on every attempt. A photo that cannot be downloaded is
+// left out and logged with ids only, as is its reason: the message goes on with its text, and
+// the provider's id is no use to the agent. An error is the store failing, which the attempt
+// is tried again for.
+func (b *Bridge) download(ctx context.Context, thread store.ChannelThread, message core.InboundMessage, log *slog.Logger) (files []fetched, named int, err error) {
+	// at is the photo's place in the message's media, number its place among its photos.
+	type photo struct{ at, number int }
+	var wanted []photo
+	var number int
+	for at, file := range message.Media {
 		if file.ID == "" {
 			continue
 		}
 		named++
-		if strings.HasPrefix(file.MIMEType, "image/") {
-			wanted = append(wanted, file)
+		if !strings.HasPrefix(file.MIMEType, "image/") {
+			continue
+		}
+		number++
+		if file.Uploaded == "" {
+			wanted = append(wanted, photo{at: at, number: number})
 		}
 	}
 	if len(wanted) == 0 {
@@ -74,15 +90,16 @@ func (b *Bridge) download(ctx context.Context, thread store.ChannelThread, messa
 	// must not move the connection to needs_reauthorization (core.Unjudged).
 	downloading, cancel := context.WithTimeout(core.Unjudged(ctx), b.downloadTimeout)
 	defer cancel()
-	for i, file := range wanted {
-		data, err := fetchPhoto(downloading, client, resolved, file.ID)
+	for _, photo := range wanted {
+		data, err := fetchPhoto(downloading, client, resolved, message.Media[photo.at].ID)
 		if err != nil {
 			log.Warn("a photo the provider names by id could not be downloaded: the message goes on without it",
-				"connection", connection.ID, "revision", connection.DefinitionRevision, "photo", i+1, "error", err)
+				"connection", connection.ID, "revision", connection.DefinitionRevision, "photo", photo.number, "error", err)
 			continue
 		}
 		mime := http.DetectContentType(data)
-		files = append(files, sandbox.File{Name: fmt.Sprintf("photo-%d.%s", i+1, strings.TrimPrefix(mime, "image/")), MIME: mime, Data: data})
+		files = append(files, fetched{at: photo.at,
+			file: sandbox.File{Name: fmt.Sprintf("photo-%d.%s", photo.number, strings.TrimPrefix(mime, "image/")), MIME: mime, Data: data}})
 	}
 	return files, named, nil
 }

@@ -83,7 +83,9 @@ type ChannelInboundForward struct {
 // by its field names would empty the media of rows queued before a rename of one. A file named
 // by its id is {"url": "", "mime_type": "", "id", "id_mime_type"} (AI-2740): a build from before
 // it (a rollback, or an older router of a rolling deploy) reads the row as a file with no type,
-// which it writes as no photo, instead of an image whose image_url is empty.
+// which it writes as no photo, instead of an image whose image_url is empty. Once an attempt
+// uploaded it, the file also has "uploaded", where Stream Chat keeps it (AI-2757), which such
+// a build ignores: it downloads and uploads the file again, as it did before.
 type ChannelInboundMedia []core.Media
 
 // channelInboundFile is one file of ChannelInboundMedia as the row holds it.
@@ -92,6 +94,7 @@ type channelInboundFile struct {
 	MIMEType   string `json:"mime_type"`
 	ID         string `json:"id,omitempty"`
 	IDMIMEType string `json:"id_mime_type,omitempty"`
+	Uploaded   string `json:"uploaded,omitempty"`
 }
 
 // MarshalJSON writes the media as the row holds it.
@@ -99,7 +102,7 @@ func (m ChannelInboundMedia) MarshalJSON() ([]byte, error) {
 	files := make([]channelInboundFile, 0, len(m))
 	for _, file := range m {
 		if file.ID != "" {
-			files = append(files, channelInboundFile{URL: file.URL, ID: file.ID, IDMIMEType: file.MIMEType})
+			files = append(files, channelInboundFile{URL: file.URL, ID: file.ID, IDMIMEType: file.MIMEType, Uploaded: file.Uploaded})
 			continue
 		}
 		files = append(files, channelInboundFile{URL: file.URL, MIMEType: file.MIMEType})
@@ -116,7 +119,7 @@ func (m *ChannelInboundMedia) UnmarshalJSON(data []byte) error {
 	*m = nil
 	for _, file := range files {
 		if file.ID != "" {
-			*m = append(*m, core.Media{URL: file.URL, ID: file.ID, MIMEType: file.IDMIMEType})
+			*m = append(*m, core.Media{URL: file.URL, ID: file.ID, MIMEType: file.IDMIMEType, Uploaded: file.Uploaded})
 			continue
 		}
 		*m = append(*m, core.Media{URL: file.URL, MIMEType: file.MIMEType})
@@ -416,6 +419,14 @@ func (s *Store) RetryChannelInbound(ctx context.Context, claimed ChannelInbound,
 	return updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
 		Set("attempts = ?", claimed.Attempts+1).
 		Set("next_attempt_at = ?", next.UTC()))
+}
+
+// SaveChannelInboundMedia records media as a claimed message's, such as with the photos an
+// attempt uploaded (core.Media.Uploaded), so the next attempt reads them. changed is false
+// when the claim's lease is no longer the row's: the worker that took it since writes its own.
+func (s *Store) SaveChannelInboundMedia(ctx context.Context, claimed ChannelInbound, media ChannelInboundMedia) (changed bool, err error) {
+	return updateClaimedChannelInbound(ctx, claimed, s.db.NewUpdate().Model((*ChannelInbound)(nil)).
+		Set("media = ?", media))
 }
 
 func updateClaimedChannelInbound(ctx context.Context, claimed ChannelInbound, update *bun.UpdateQuery) (bool, error) {

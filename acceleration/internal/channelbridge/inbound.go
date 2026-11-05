@@ -241,13 +241,13 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 	log := b.logger.With("connector", message.ConnectorID, "customer", message.CustomerID, "channel", message.ChannelID,
 		"seq", message.Seq)
 	// Before the episode opens: a message that is only files named by id, none of them a
-	// photo that downloaded, has nothing to write or answer, so it opens no episode whose card
-	// nothing would ever write.
+	// photo that downloaded or that an earlier attempt uploaded, has nothing to write or
+	// answer, so it opens no episode whose card nothing would ever write.
 	files, named, err := b.download(ctx, thread, inbound, log)
 	if err != nil {
 		return err
 	}
-	if nothingToWrite(inbound, len(files), named) {
+	if nothingToWrite(inbound, len(files)+len(uploads(inbound.Media)), named) {
 		log.Warn("an inbound message that is only files none of which could be downloaded is not written or answered")
 		return nil
 	}
@@ -256,9 +256,19 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 		return err
 	}
 	// The row's last attempt writes the message without a photo Stream Chat keeps failing.
-	uploaded, err := b.upload(ctx, target, thread, files, message.Attempts+1 > len(b.inboundRetries), log)
+	media, err := b.upload(ctx, target, thread, inbound.Media, files, message.Attempts+1 > len(b.inboundRetries), log)
 	if err != nil {
 		return err
+	}
+	// The row keeps this attempt's uploads before the message is written, so a later attempt,
+	// such as one after a write Stream Chat failed or an answer that was lost, writes them
+	// again instead of downloading and uploading the photos, whose provider URLs may have
+	// expired by then. A lease taken over keeps nothing: the worker that took it writes.
+	uploaded := uploads(media)
+	if len(uploaded) > len(uploads(inbound.Media)) {
+		if _, err := b.store.SaveChannelInboundMedia(ctx, message, media); err != nil {
+			return err
+		}
 	}
 	if nothingToWrite(inbound, len(uploaded), named) {
 		log.Warn("an inbound message that is only files none of which could be stored is not written or answered")
