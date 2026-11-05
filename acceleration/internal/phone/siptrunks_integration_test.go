@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/suite"
 
@@ -62,6 +63,32 @@ func (s *SIPTrunkSuite) SetupTest() {
 		Registry: NewRegistry(config), Store: s.store, Sealer: sealer, SIPTrunks: s.trunks,
 	})
 	s.Require().NoError(err)
+}
+
+func (s *SIPTrunkSuite) TestDigitsOnACallThroughATrunkReachTheTrunkProvider() {
+	s.Require().NoError(s.store.InsertPhoneCall(s.ctx, &store.PhoneCall{
+		Token: "token-" + s.T().Name(), CustomerID: "acme", CallType: "default", CallID: "session-1",
+		Vendor: SIPTrunkVendor, LocalNumber: "+15125550100", RemoteNumber: "+15125550101",
+		VendorCallID: "call-1", PlacedAt: time.Now(),
+	}))
+
+	err := s.service.SendDigits(s.ctx, "acme", SIPTrunkVendor, "call-1", "12")
+	s.EqualError(err, "phone: digits cannot be pressed on a call through a customer's own sip trunk")
+	s.Equal([]string{"call-1:12"}, s.trunks.digits)
+}
+
+func (s *SIPTrunkSuite) TestALineCannotPressDigitsOnACallAnotherCustomerPlaced() {
+	s.Require().NoError(s.store.InsertPhoneCall(s.ctx, &store.PhoneCall{
+		Token: "token-" + s.T().Name(), CustomerID: "acme", CallType: "default", CallID: "session-2",
+		Vendor: SIPTrunkVendor, LocalNumber: "+15125550100", RemoteNumber: "+15125550101",
+		VendorCallID: "call-2", PlacedAt: time.Now(),
+	}))
+	line := s.service.Line(LineOptions{
+		Owner: routing.Owner{CustomerID: "globex"}, Vendor: SIPTrunkVendor, VendorCallID: "call-2",
+	})
+
+	s.ErrorIs(line.SendDigits(s.ctx, "12"), ErrCallNotFound)
+	s.Empty(s.trunks.digits)
 }
 
 func (s *SIPTrunkSuite) create(customerID, password string) store.SIPTrunk {

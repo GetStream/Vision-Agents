@@ -1879,13 +1879,24 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 //
 // The call is named by the id its vendor gave when it was dialled. An inbound call has no
 // such id here, because it arrived at Stream rather than being made from this service, so
-// only calls placed from here can be pressed at.
-func (s *Service) SendDigits(ctx context.Context, vendor, vendorCallID, digits string) error {
+// only calls placed from here can be pressed at. The vendor accounts are shared, so a call
+// customerID did not place is ErrCallNotFound, as one nobody placed is.
+func (s *Service) SendDigits(ctx context.Context, customerID, vendor, vendorCallID, digits string) error {
 	if vendorCallID == "" {
 		return stack.Wrap(errors.New("phone: pressing digits needs the call to press them on"))
 	}
 	if err := ValidateDigits(digits); err != nil {
 		return err
+	}
+	if s.store == nil {
+		return stack.Wrap(errors.New("phone: pressing digits needs a database"))
+	}
+	placed, err := s.store.PlacedPhoneCall(ctx, customerID, vendor, vendorCallID)
+	if err != nil {
+		return err
+	}
+	if !placed {
+		return stack.Wrap(ErrCallNotFound)
 	}
 	provider, err := s.provider(vendor)
 	if err != nil {
