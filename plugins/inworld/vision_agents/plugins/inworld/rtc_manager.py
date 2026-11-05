@@ -53,8 +53,9 @@ class RTCManager:
         self.data_channel: RTCDataChannel | None = None
         self.call_id: str | None = None
 
+        # Sent on our own aiortc connection, which needs one frame every 20 ms.
         self._audio_to_inworld_track: AudioStreamTrack = AudioStreamTrack(
-            sample_rate=48000
+            sample_rate=48000, pace=True
         )
 
         self._audio_callback: Callable[[PcmData], Awaitable[None]] | None = None

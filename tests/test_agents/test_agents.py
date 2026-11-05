@@ -12,6 +12,7 @@ from vision_agents.core import Agent, User
 from vision_agents.core.agents.inference import AudioOutputChunk, AudioOutputStream
 from vision_agents.core.avatars import Avatar
 from vision_agents.core.edge import Call, EdgeTransport
+from vision_agents.core.edge.events import CallEndedEvent
 from vision_agents.core.events import EventManager
 from vision_agents.core.llm.llm import LLM, LLMResponseEvent
 from vision_agents.core.processors.base_processor import AudioPublisher
@@ -89,10 +90,12 @@ class DummyEdge(EdgeTransport):
         return DummyCall(call_id=call_id)
 
     def create_audio_track(self, *args, **kwargs) -> AudioStreamTrack:
+        # Tests read recv() directly, so the track pads with silence like a sender.
         return AudioStreamTrack(
             audio_buffer_size_ms=300_000,
             sample_rate=48000,
             channels=2,
+            pace=True,
         )
 
     async def close(self):
@@ -653,6 +656,22 @@ class TestAgent:
         await agent.authenticate()
         async with agent.join(call):
             assert edge.authenticate_call_count == 1
+
+    async def test_join_exits_after_the_close_started_by_call_end(self, call: Call):
+        edge = DummyEdge()
+        edge.events.register(CallEndedEvent)
+        agent = Agent(
+            llm=DummyLLM(),
+            tts=DummyTTS(),
+            edge=edge,
+            agent_user=User(name="test"),
+        )
+
+        async with agent.join(call):
+            edge.events.send(CallEndedEvent(plugin_name="test", call=call))
+            await agent.finish()
+
+        assert agent.closed
 
     async def test_avatar_wiring(self):
         """Avatar metrics forward to agent metrics after merge, and the

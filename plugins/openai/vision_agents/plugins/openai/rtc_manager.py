@@ -51,8 +51,9 @@ class RTCManager:
         self.data_channel: Optional[RTCDataChannel] = None
 
         # tracks for sharing audio & video
+        # Sent on our own aiortc connection, which needs one frame every 20 ms.
         self._audio_to_openai_track: AudioStreamTrack = AudioStreamTrack(
-            sample_rate=48000
+            sample_rate=48000, pace=True
         )
         self._video_to_openai_track: QueuedVideoTrack = QueuedVideoTrack()
         self._video_sender: Optional[RTCRtpSender] = None

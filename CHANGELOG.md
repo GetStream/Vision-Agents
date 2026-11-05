@@ -2,6 +2,23 @@
 
 ## Breaking Changes
 
+### `getstream` plugin: transport moves to the Rust-based stream-py
+
+`vision-agents` and `vision-agents-plugins-getstream` now require `getstream>=7.0.0`, whose `webrtc` extra runs on the Rust Video SDK ([stream-py#303](https://github.com/GetStream/stream-py/pull/303)) instead of the aiortc transport of 4.x. The Rust part ships as `getstream-rtc`, which has wheels only for macOS arm64 and for Linux x86_64 and aarch64 with glibc 2.28 or later, and no source distribution. Other platforms, such as Windows and Intel macOS, cannot install it. The `StreamEdge` API does not change, but:
+
+- Video tracks from `add_track_subscriber()` read the SDK's decoded frames, and each call returns an independent track.
+- The SDK decodes only VP8 and VP9 video. A participant that publishes only H.264 (for example RTMP or SRT ingress, or an app that forces H.264) gives the agent no video track. The demo link from `open_demo()` now asks the browser for VP8 (was H.264).
+- Published video is sent as VP9 (was H264), at the size of its first frame.
+- `AudioStreamTrack` no longer paces `recv()` by default. Code that sends one on its own aiortc connection must pass `pace=True`; the `openai` and `inworld` Realtime plugins now do.
+
+### `getstream` plugin: `sfu_events` removed
+
+`vision_agents.plugins.getstream.sfu_events` (the protobuf SFU event wrappers) is removed, and `EventManager` no longer converts raw protobuf messages. `StreamEdge` sends only the core edge events from `vision_agents.core.edge.events`: `TrackAddedEvent`, `TrackRemovedEvent`, `ParticipantJoinedEvent`, `ParticipantLeftEvent`, `CallEndedEvent` and `AudioReceivedEvent`. Subscribe to those instead.
+
+### `getstream` plugin: new participant and track ids
+
+`Participant.id` is now `"{user_id}__{session_id}"` (was `"{user_id}__{track_lookup_prefix}"`), and `Participant.original` is a `getstream.video.rtc.RemoteParticipant` instead of a protobuf `Participant`. Track ids in `TrackAddedEvent` and `TrackRemovedEvent` are now `"{session_id}:{track_type}"`, where `track_type` is the protobuf track type number (for example `2` for video).
+
 ### `gemini` plugin: Realtime defaults to `gemini-3.8-live` (#647)
 
 `gemini.Realtime` now defaults to `gemini-3.8-live` (was `gemini-3.1-flash-live-preview`). Pass `model=` explicitly to stay on an older Live model.
@@ -29,6 +46,10 @@ Adds `gemini.STT` using Gemini Live transcription (`gemini-3.5-transcribe-live` 
 Deepgram TTS uses the Flux turn protocol (`Speak` / `Flush` / `SpeechMetadata`) with a persistent websocket. Pass optional `speed` (0.85–1.15 in 0.05 steps) on the constructor. Barge-in sends `Interrupt` instead of Aura's `Clear`. Supported sample rates now include 32000 and 44100.
 
 ## Bug Fixes
+
+### Agent shutdown on call end no longer cuts off the close
+
+When the call ended, the `CallEndedEvent` handler started `Agent.close()`, but the `close()` from `join()` returned at once because a close was already running. `join()` and the session then finished while components were still closing, and `asyncio.run` shut down in the middle of their cleanup. With a Realtime LLM this logged `aclose(): asynchronous generator is already running`. A concurrent `close()` now waits for the running close, and the call-end close runs in its own task, so `events.shutdown()` no longer waits on the handler that waits for the close.
 
 ### `deepgram` plugin: Flux STT handles typed `TurnInfo` from SDK 7.7 (#633)
 
