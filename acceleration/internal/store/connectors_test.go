@@ -212,7 +212,7 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 	delete(was, "slack")
 	delete(now, "slack")
 	s.Equal(was, now)
-	for revision, want := range map[int]bool{1: true, 2: true, 3: true, 4: true, 5: false, 7: false} {
+	for revision, want := range map[int]bool{1: true, 2: true, 3: true, 4: true, 5: false, 6: false, 7: false} {
 		reason, broken, err := s.store.BrokenConnectorRevision(s.ctx, "slack", revision)
 		s.Require().NoError(err)
 		s.Equal(want, broken, "revision %d", revision)

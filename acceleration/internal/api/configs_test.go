@@ -1979,7 +1979,7 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfGmailCalendarLinearA
 			"get_project", "list_project_labels", "list_release_pipelines", "list_releases", "get_release",
 			"list_release_notes", "get_release_note", "list_milestones", "get_milestone", "get_notifications",
 			"list_teams", "get_team", "get_triage_responsibility", "list_templates", "get_template", "list_users",
-			"get_user", "get_workspace", "search_documentation", "get_diff", "list_diffs", "get_diff_threads",
+			"get_user", "get_workspace", "get_diff", "list_diffs", "get_diff_threads",
 			"whoami", "list_customers", "list_customer_needs", "list_initiatives", "get_initiative",
 			"list_initiative_labels", "get_status_updates"),
 		sessionGranting("slack", "chat", "slack_search_public", "slack_search_public_and_private",
@@ -2010,7 +2010,7 @@ func (s *ConfigsSuite) TestNessyBesideAToolGmailCalendarLinearOrSlackLeaveOutNam
 			sessionGranting("linear", "linear_save", "get_issue", "save_issue"),
 			sessionGranting("linear", "linear_images", "extract_images"),
 			sessionGranting("slack", "slack_send", "slack_read_channel", "slack_send_message"),
-			sessionGranting("slack", "slack_file", "slack_schedule_message"),
+			sessionGranting("slack", "slack_schedule", "slack_schedule_message"),
 		},
 	})
 
@@ -2018,10 +2018,34 @@ func (s *ConfigsSuite) TestNessyBesideAToolGmailCalendarLinearOrSlackLeaveOutNam
 	s.Contains(failure, `connector binding "customers" binds "nessy", whose tools read private data, `+
 		`and connector binding "mail_trash", connector binding "mail_draft", connector binding "calendar_create", `+
 		`connector binding "calendar_respond", connector binding "linear_save", connector binding "linear_images", `+
-		`connector binding "slack_send", connector binding "slack_file" can send data out with no person's approval`)
+		`connector binding "slack_send", connector binding "slack_schedule" can send data out with no person's approval`)
 	trash["require_approval"] = []string{"trash_thread"}
 	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{sessionNessy("customers"), trash}})
 	s.Len(value(created.Connectors), 2)
+}
+
+// Gmail and Google Calendar have no golden, so this pins the tools their read_only_tools leave out
+// (AI-2756): a binding granting every other tool of each is refused, and the 400 names exactly these.
+// A tool added to either list drops out of the message and fails the test.
+func (s *ConfigsSuite) TestNessyBesideEveryToolGmailAndCalendarLeaveOutNamesExactlyThoseTools() {
+	s.useInternalApp()
+	gmail := []string{"create_draft", "label_thread", "unlabel_thread", "apply_sensitive_thread_label",
+		"trash_thread", "untrash_thread", "mark_thread_spam", "unmark_thread_spam", "label_message",
+		"update_message_labels", "unlabel_message", "apply_sensitive_message_label", "trash_message",
+		"untrash_message", "mark_message_spam", "unmark_message_spam", "create_label"}
+	calendar := []string{"create_event", "update_event", "delete_event", "respond_to_event"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{
+			sessionNessy("customers"),
+			sessionGranting("gmail", "mail", gmail...),
+			sessionGranting("google_calendar", "calendar", calendar...),
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `or add to each binding's require_approval its tools that do not only read: `+
+		`"mail" `+strings.Join(gmail, ", ")+`; "calendar" `+strings.Join(calendar, ", "))
 }
 
 // nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
@@ -2104,8 +2128,8 @@ func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOf
 }
 
 // TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfGmailCalendarLinearAndSlack is the
-// control: the base, 90167d722, answered 201 to the same request (AI-2756 author-2.md,
-// «Control probe»).
+// control: the base, 90167d722, answered 201 to the same request (checked by running this
+// test on that commit).
 func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfGmailCalendarLinearAndSlack() {
 	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
 		sessionGranting("gmail", "mail", "trash_thread", "create_draft"),
