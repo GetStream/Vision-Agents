@@ -214,9 +214,17 @@ func (s *EpisodeCardsSuite) agentConfigOn(cards bool, model string) AgentConfig 
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{
 		Name: "agent-" + s.utils.uuid(), Llm: pointerTo(model), Instructions: pointerTo("be brief"),
-		EpisodeCards: pointerTo(cards),
+		EpisodeCards: pointerTo(onOrOff(cards)),
 	}, &created))
 	return created
+}
+
+// onOrOff is the episode cards mode on for cards, off without.
+func onOrOff(cards bool) EpisodeCardsMode {
+	if cards {
+		return EpisodeCardsOn
+	}
+	return EpisodeCardsOff
 }
 
 // The call hook ends the call's episode (T55): ended, then summarized by the agent config's
