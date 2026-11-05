@@ -402,12 +402,16 @@ func (s *StoreSuite) TestACallEpisodeInProgressIsNothingToSweep() {
 }
 
 // Catches an ended episode whose router stopped before its summary, under a config that
-// turned the cards off since: its lease is taken by a sweep only.
+// turned the cards off since: its lease is taken by a sweep only. The lease is still running,
+// as when a router starts while another is summarizing and then dies: no sweeper would take it.
 func (s *StoreSuite) TestAnEndedEpisodeWithItsSummaryLeaseHeldIsToSweep() {
 	episode := s.threadAt(s.mapped("+15550100"), "agent:thread-one", s.base)
-	s.Require().Len(s.closeIdle(s.store, s.base.Add(2*time.Hour)), 1)
+	now := s.base.Add(2 * time.Hour)
+	closed, err := s.store.CloseIdleEpisodes(s.ctx, now.Add(-time.Hour), now, 50, time.Now().Add(5*time.Minute))
+	s.Require().NoError(err)
+	s.Require().Len(closed, 1)
 
-	s.True(s.anyToSweep())
+	s.True(s.anyToSweep(), "a lease still running is to sweep once it runs out")
 
 	s.Require().NoError(s.store.FinishEpisodeSummary(s.ctx, "acme-app", episode.ID, EpisodeSummaryFailed))
 	s.False(s.anyToSweep(), "a failed summary drops its lease, and the episode is nothing to sweep")
