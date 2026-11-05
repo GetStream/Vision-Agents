@@ -16,6 +16,7 @@ members = [
     "vision-agents-plugins-assemblyai",
     "vision-agents-plugins-aws",
     "vision-agents-plugins-cartesia",
+    "vision-agents-plugins-cheaperinference",
     "vision-agents-plugins-decart",
     "vision-agents-plugins-deepgram",
     "vision-agents-plugins-elevenlabs",
@@ -6469,6 +6470,9 @@ aws = [
 cartesia = [
     { name = "vision-agents-plugins-cartesia" },
 ]
+cheaperinference = [
+    { name = "vision-agents-plugins-cheaperinference" },
+]
 decart = [
     { name = "vision-agents-plugins-decart" },
 ]
@@ -6610,6 +6614,7 @@ requires-dist = [
     { name = "vision-agents-plugins-assemblyai", marker = "extra == 'assemblyai'", editable = "plugins/assemblyai" },
     { name = "vision-agents-plugins-aws", marker = "extra == 'aws'", editable = "plugins/aws" },
     { name = "vision-agents-plugins-cartesia", marker = "extra == 'cartesia'", editable = "plugins/cartesia" },
+    { name = "vision-agents-plugins-cheaperinference", marker = "extra == 'cheaperinference'", editable = "plugins/cheaperinference" },
     { name = "vision-agents-plugins-decart", marker = "extra == 'decart'", editable = "plugins/decart" },
     { name = "vision-agents-plugins-deepgram", marker = "extra == 'deepgram'", editable = "plugins/deepgram" },
     { name = "vision-agents-plugins-elevenlabs", marker = "extra == 'elevenlabs'", editable = "plugins/elevenlabs" },
@@ -6646,7 +6651,7 @@ requires-dist = [
     { name = "vision-agents-plugins-wizper", marker = "extra == 'wizper'", editable = "plugins/wizper" },
     { name = "vision-agents-plugins-xai", marker = "extra == 'xai'", editable = "plugins/xai" },
 ]
-provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
+provides-extras = ["anam", "anthropic", "assemblyai", "aws", "cartesia", "cheaperinference", "decart", "deepgram", "dev", "elevenlabs", "fast-whisper", "fish", "gemini", "getstream", "huggingface", "inworld", "kokoro", "lemonslice", "liveavatar", "local", "minimax", "mistral", "moondream", "nvidia", "openai", "openrouter", "pocket", "qdrant", "qwen", "redis", "roboflow", "sarvam", "smart-turn", "speechify", "telnyx", "tencent", "turbopuffer", "twelvelabs", "twilio", "ultralytics", "vogent", "wizper", "xai"]
 
 [[package]]
 name = "vision-agents-plugins-anam"
@@ -6778,6 +6783,34 @@ requires-dist = [
     { name = "cartesia", specifier = ">=3.0.2,<3.1" },
     { name = "vision-agents", editable = "agents-core" },
     { name = "websockets", specifier = ">=15.0.1,<16" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.4.1" },
+    { name = "pytest-asyncio", specifier = ">=1.0.0" },
+]
+
+[[package]]
+name = "vision-agents-plugins-cheaperinference"
+source = { editable = "plugins/cheaperinference" }
+dependencies = [
+    { name = "openai" },
+    { name = "vision-agents" },
+    { name = "vision-agents-plugins-openai" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-asyncio" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "openai", specifier = ">=2.26.0,<3" },
+    { name = "vision-agents", editable = "agents-core" },
+    { name = "vision-agents-plugins-openai", editable = "plugins/openai" },
 ]
 
 [package.metadata.requires-dev]
