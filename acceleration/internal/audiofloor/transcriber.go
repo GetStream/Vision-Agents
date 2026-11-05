@@ -5,9 +5,13 @@ import (
 	"errors"
 	"log/slog"
 	"math"
+	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/thesyncim/gopus"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -50,6 +54,12 @@ const (
 	eventBuffer = 64
 )
 
+var transcribeFailures = promauto.NewCounterVec(prometheus.CounterOpts{
+	Namespace: "router",
+	Name:      "chorus_asr_transcribe_failures_total",
+	Help:      "Requests for an utterance's words the chorus-asr server did not answer, by why: its status, timeout or connection. Each is asked again at the utterance's next pause or its end.",
+}, []string{"reason"})
+
 // Transcriber writes what a participant says with the chorus-asr server's model, so a call
 // needs no other speech-to-text provider. It is an stt.STT that writes the whole utterance
 // so far at each of its pauses, once the pause reaches writeAfter, as a replacement of the
@@ -60,8 +70,10 @@ const (
 // server for the words alone (POST /v1/transcribe): no agent, decision or policy. The
 // server writes nothing of noise, and empty words are nothing heard.
 //
-// A server that fails to answer is a fatal error, which hands the call to the next
-// transcriber the routing target names. The words since the last ones written are lost.
+// A server that is busy, down or slow costs a request, not the session: its words are asked
+// for again at the utterance's next pause, or at its end. Only a misconfigured one, which
+// will never answer (Misconfigured), is a fatal error, which hands the call to the next
+// transcriber the routing target names.
 type Transcriber struct {
 	client    *Client
 	model     string
@@ -89,6 +101,10 @@ type Transcriber struct {
 	voiced, fresh bool
 	quiet         time.Duration
 	utterance     int64
+	// missed is the utterance whose words the server failed to write, set by transcribe;
+	// retrying has its audio asked for again at its end, or once more speech has come.
+	missed   atomic.Int64
+	retrying bool
 }
 
 // request is an utterance's words to write, or with no audio its end on the words last
@@ -158,9 +174,14 @@ func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant)
 // speech that came since they were last asked for, and once more at its end.
 func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	if speech {
-		t.voiced, t.fresh, t.quiet = true, true, 0
+		t.voiced, t.fresh, t.retrying, t.quiet = true, true, false, 0
 	} else {
 		t.quiet += frame
+	}
+	if t.missed.CompareAndSwap(t.utterance+1, 0) {
+		// Not at once, which a server failing fast would answer with a request a frame:
+		// at the end, or at the next pause after more speech.
+		t.fresh, t.retrying = true, true
 	}
 	heard := t.heard.Frames()
 	utterance := func() harness.Audio { return t.heard.Last(time.Duration(heard-t.start) * frame) }
@@ -174,8 +195,8 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		}
 		t.ask(end)
 		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.quiet = heard, heard, false, false, 0
-	case t.quiet >= writeAfter && t.fresh:
+		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet = heard, heard, false, false, false, 0
+	case t.quiet >= writeAfter && t.fresh && !t.retrying:
 		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
 		t.fresh = false
 	}
@@ -190,17 +211,23 @@ func (t *Transcriber) ask(r request) {
 }
 
 // transcribe asks for words one request at a time, so that they arrive in the order said.
-// Words that come back empty write nothing, and an utterance ends on the last words that
-// didn't.
+// Words that come back empty write nothing, and an utterance ends on the last words of its
+// own that didn't.
 func (t *Transcriber) transcribe() {
 	defer close(t.done)
 	var last string
+	var lastOf int64
 	for {
 		var r request
 		select {
 		case r = <-t.requests:
 		case <-t.ctx.Done():
 			return
+		}
+		if r.utterance != lastOf {
+			// An utterance whose final was dropped leaves its words behind, which are
+			// not the next one's.
+			last, lastOf = "", r.utterance
 		}
 		start := time.Now()
 		var words string
@@ -211,11 +238,20 @@ func (t *Transcriber) transcribe() {
 			if t.ctx.Err() != nil {
 				return
 			}
-			if err != nil {
+			switch {
+			case err != nil && Misconfigured(err):
 				t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Err: err, Context: "transcribe", Fatal: true})
 				return
+			case err != nil:
+				transcribeFailures.WithLabelValues(failure(err)).Inc()
+				t.logger.Warn("the chorus-asr server did not write an utterance's words, they are asked for again",
+					"participant", r.participant.ID, "utterance", r.utterance, "final", r.final, "error", err)
+				if !r.final {
+					t.missed.Store(r.utterance)
+				}
+			default:
+				words = strings.TrimSpace(said)
 			}
-			words = strings.TrimSpace(said)
 		}
 		if words != "" {
 			last = words
@@ -262,6 +298,18 @@ func (t *Transcriber) Provider() string { return ProviderName }
 
 // Model is the model identifier used in stats.
 func (t *Transcriber) Model() string { return t.model }
+
+// failure is why a request failed, as transcribeFailures counts it.
+func failure(err error) string {
+	var status *StatusError
+	switch {
+	case errors.As(err, &status):
+		return strconv.Itoa(status.Code)
+	case errors.Is(err, context.DeadlineExceeded):
+		return "timeout"
+	}
+	return "connection"
+}
 
 // level is a frame's root mean square, as a fraction of full scale.
 func level(samples []int16) float64 {

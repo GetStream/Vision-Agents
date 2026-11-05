@@ -16,11 +16,13 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/thesyncim/gopus"
@@ -46,9 +48,12 @@ type fakeServer struct {
 	languages  []string
 	// refuse is the status /v1/agents answers an agent with tools, fail has /v1/decide
 	// answer 500, and info is /v1/info's body.
-	refuse   int
-	fail     bool
-	info     string
+	refuse int
+	fail   bool
+	info   string
+	// failing is how many transcription requests to answer failWith, before answering.
+	failing  int
+	failWith int
 	decision string
 	words    string
 }
@@ -83,6 +88,12 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "/v1/transcribe":
 		if f.fail {
 			w.WriteHeader(http.StatusInternalServerError)
+			return
+		}
+		if f.failing > 0 {
+			f.failing--
+			w.WriteHeader(f.failWith)
+			_, _ = w.Write([]byte(`{"error":"every lane is busy"}`))
 			return
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -578,14 +589,72 @@ func (s *TranscriberSuite) TestAnUtteranceEndsOnItsLastWords() {
 	s.Equal("Two tickets to Bilbao, please.", end.Text)
 }
 
-// A server that can't write the words hands the call to the next transcriber.
-func (s *TranscriberSuite) TestAServerThatFailsIsFatal() {
-	s.server.mu.Lock()
-	s.server.fail = true
-	s.server.mu.Unlock()
+// A server that is busy, down or restarting costs a request, not the session: the words it
+// didn't write are asked for again, of the whole utterance, at its end.
+func (s *TranscriberSuite) TestABusyServerCostsARequestNotTheSession() {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusNotFound, http.StatusTooManyRequests} {
+		s.Run(http.StatusText(status), func() {
+			s.SetupTest()
+			failed := testutil.ToFloat64(transcribeFailures.WithLabelValues(strconv.Itoa(status)))
+			s.server.mu.Lock()
+			s.server.failing, s.server.failWith = 1, status
+			s.server.mu.Unlock()
+			s.say(1000, true)
+			s.say(pause, false)
+			s.say(int(endAfter/time.Millisecond), false)
+			end := next[stt.Transcript](s)
+			s.Equal(stt.ModeFinal, end.Mode, "no error, and the utterance ends on its words")
+			s.Equal("Two tickets to Bilbao, please.", end.Text)
+			s.Len(s.requests(), 1, "the failed request carried nothing back, and the end asked again")
+			s.InDelta(float64(300+1000+int(endAfter/time.Millisecond)), float64(s.requests()[0])*1000/SampleRate, 80, "of the whole utterance")
+			s.Equal(failed+1, testutil.ToFloat64(transcribeFailures.WithLabelValues(strconv.Itoa(status))))
+		})
+	}
+}
+
+// A server that isn't there, or doesn't answer in time, is asked again as well.
+func (s *TranscriberSuite) TestAServerThatIsGoneCostsARequestNotTheSession() {
+	failed := testutil.ToFloat64(transcribeFailures.WithLabelValues("connection"))
+	s.client.url = "http://127.0.0.1:1"
 	s.say(1000, true)
-	s.say(pause, false)
-	s.True(next[stt.Error](s).Fatal)
+	s.say(pause+100, false)
+	s.Eventually(func() bool { return testutil.ToFloat64(transcribeFailures.WithLabelValues("connection")) > failed }, 5*time.Second, 10*time.Millisecond)
+	s.none()
+}
+
+// A server the router is misconfigured for will never answer, and hands the call to the
+// next transcriber.
+func (s *TranscriberSuite) TestAMisconfiguredServerIsFatal() {
+	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusUnsupportedMediaType, http.StatusNotImplemented} {
+		s.Run(http.StatusText(status), func() {
+			s.SetupTest()
+			s.server.mu.Lock()
+			s.server.failing, s.server.failWith = 1, status
+			s.server.mu.Unlock()
+			s.say(1000, true)
+			s.say(pause, false)
+			s.True(next[stt.Error](s).Fatal)
+		})
+	}
+}
+
+// An utterance whose final was dropped, for a server too far behind, leaves its words to
+// nothing after it: the next utterance, with no words of its own, writes nothing.
+func (s *TranscriberSuite) TestADroppedFinalLeavesItsWordsBehind() {
+	stream, err := s.client.NewStream(time.Second)
+	s.Require().NoError(err)
+	s.Require().NoError(stream.Write(speech(SampleRate)))
+	heard := stream.Last(time.Second)
+	participant := stt.Participant{ID: "p"}
+	s.transcriber.requests <- request{participant: participant, utterance: 1, audio: heard}
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](s).Text)
+	s.server.mu.Lock()
+	s.server.words = ""
+	s.server.mu.Unlock()
+	// Utterance 1's final never came: the queue was full.
+	s.transcriber.requests <- request{participant: participant, utterance: 2, audio: heard}
+	s.transcriber.requests <- request{participant: participant, utterance: 2, final: true}
+	s.none()
 }
 
 // speech is a voice-like test signal: a falling pitch with its harmonics, swelling and

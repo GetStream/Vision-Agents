@@ -78,6 +78,38 @@ var (
 	ErrUnsupported = errors.New("audiofloor: the server has no policy for its model")
 )
 
+// StatusError is a request the server answered with an error status.
+type StatusError struct {
+	Method, Path string
+	Code         int
+	Status       string
+	// Message is the server's own word on it.
+	Message string
+}
+
+func (e *StatusError) Error() string {
+	return fmt.Sprintf("audiofloor: %s %s: %s: %s", e.Method, e.Path, e.Status, e.Message)
+}
+
+// Misconfigured says err is the router's to fix, and asking again won't help: a server with
+// no policy, or a request it refused as malformed or unauthorised. A server that is busy,
+// down, restarting or slow (5xx, 404, 408, 429, a timeout, a reset connection) may answer
+// the next one.
+func Misconfigured(err error) bool {
+	if errors.Is(err, ErrUnsupported) {
+		return true
+	}
+	var status *StatusError
+	if !errors.As(err, &status) {
+		return false
+	}
+	switch status.Code {
+	case http.StatusNotFound, http.StatusRequestTimeout, http.StatusTooManyRequests:
+		return false
+	}
+	return status.Code >= 400 && status.Code < 500
+}
+
 // The speakers a prompt can name. Training's rows name nobody else, so a participant's own
 // name goes no further than this package.
 const (
@@ -387,7 +419,7 @@ func (c *Client) do(req *http.Request, into any) (int, error) {
 			Error string `json:"error"`
 		}
 		_ = answer.Decode(&failed)
-		err := fmt.Errorf("audiofloor: %s %s: %s: %s", req.Method, req.URL.Path, resp.Status, failed.Error)
+		var err error = &StatusError{Method: req.Method, Path: req.URL.Path, Code: resp.StatusCode, Status: resp.Status, Message: failed.Error}
 		if resp.StatusCode == http.StatusNotImplemented {
 			err = fmt.Errorf("%w: %w", ErrUnsupported, err)
 		}
