@@ -375,6 +375,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 `PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716, #1728).
 
+### A linked user's chat reads none of the number's earlier texts through its next SMS
+
+After `PUT /v1/agents/users/{user_id}` linked a user to a number, the card of the number's next SMS episode joined the user. While that episode was in progress, its card still held the last 20 texts of the number's SMS thread, including those sent before the link. So the user's app chat could read them until the episode was summarized. A card in progress now holds only the lines of its own episode, as a call's card and a summary already did. An app chat card in progress no longer repeats the earlier runs of its channel either (AI-2716, #1741).
+
 ### An app's first `router replicate --once` is not refused as expired
 
 `GET /v1/data/changes` answered 410 to the cursor of an app's own export when other apps that are moving had changes after it, so the first `--once` stopped with "the source no longer keeps the changes since that cursor" and only a rerun went on. Change numbers are shared by every app, so those numbers are not a sign of pruning. Now a cursor gets 410 only when it is older than the oldest change still kept and the app has a change kept (AI-2683).
