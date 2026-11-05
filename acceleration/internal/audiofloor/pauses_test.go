@@ -21,9 +21,36 @@ type asking struct {
 	speaking bool
 	asked    int
 	ruled    []Ruled
+	// overheard are the rulings over the agent handed over at once.
+	overheard []Ruled
 }
 
 func (a *asking) Hearer() *Hearer { return a.hearer }
+
+func (a *asking) Speaking() bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.speaking
+}
+
+func (a *asking) Overheard(_ stt.Participant, ruled Ruled) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.overheard = append(a.overheard, ruled)
+}
+
+func (a *asking) overheardSoFar() []Ruled {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]Ruled(nil), a.overheard...)
+}
+
+// speaks has the agent talking, or not.
+func (a *asking) speaks(speaking bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.speaking = speaking
+}
 
 func (a *asking) Moment(stt.Participant) harness.FlowTurn {
 	a.mu.Lock()
@@ -103,6 +130,58 @@ func (s *PausesSuite) TestAPauseIsOneRequestAndItsWordsTheFinal() {
 	s.none()
 	decisions, _, _ = s.counts()
 	s.Equal(1, decisions, "an ended utterance is asked about no more")
+}
+
+// Over the agent, a caller voiced for overAfter is asked about without waiting for a pause,
+// the decision and the words in one request, then every interval while they talk on and the
+// agent speaks: a ruling to stop is handed over at once with the words (Overheard), the
+// words are shown as an interim, and the utterance goes on, to end at a pause as ever. With
+// the agent quiet nothing is asked until a pause.
+func (s *PausesSuite) TestACallerTalkingOverTheAgentIsAskedAboutWithoutAPause() {
+	s.transcriber.interims = true
+	s.say(1000, true)
+	first := next[stt.Transcript](&s.transcribing)
+	s.True(first.Interim)
+	decisions, _, _ := s.counts()
+	s.Zero(decisions, "nothing asked while the agent is quiet and the caller talks on")
+
+	s.agent.speaks(true)
+	s.server.mu.Lock()
+	s.server.decision = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"wait","floor":"stop"}}`
+	s.server.words = "No, no, stop."
+	s.server.mu.Unlock()
+	s.say(120, true)
+	s.Eventually(func() bool { return len(s.agent.overheardSoFar()) == 1 }, 5*time.Second, time.Millisecond,
+		"asked within overPoll of the agent speaking: the caller has been voiced for overAfter")
+	ruled := s.agent.overheardSoFar()[0]
+	s.True(ruled.Overheard)
+	s.True(ruled.Speaking)
+	s.Equal(harness.Stop, ruled.Ruling.Floor)
+	s.Equal("No, no, stop.", ruled.Words)
+	s.InDelta(float64(300+1100), ruled.AudioMs, 40, "the utterance so far")
+	shown := next[stt.Transcript](&s.transcribing)
+	s.True(shown.Interim)
+	s.Equal("No, no, stop.", shown.Text)
+	decisions, withWords, transcripts := s.counts()
+	s.Equal([3]int{1, 1, 1}, [3]int{decisions, withWords, transcripts}, "the decision and the words in one request; the interim before the agent spoke")
+
+	s.say(220, true)
+	s.none()
+	s.Len(s.agent.overheardSoFar(), 1, "not before the interval")
+	s.say(100, true)
+	s.Eventually(func() bool { return len(s.agent.overheardSoFar()) == 2 }, 5*time.Second, time.Millisecond, "asked again after the interval")
+	s.True(next[stt.Transcript](&s.transcribing).Interim, "each check's words are shown")
+	s.say(300, true)
+	s.Eventually(func() bool { return len(s.agent.overheardSoFar()) == 3 }, 5*time.Second, time.Millisecond)
+	s.True(next[stt.Transcript](&s.transcribing).Interim)
+
+	s.agent.speaks(false)
+	s.ending(0.999)
+	s.say(220, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance, "the utterance went on through the checks over the agent, and ended at its pause")
+	s.Len(s.agent.rulings(), 1)
 }
 
 // A turn a check ended is over whatever comes next. Speech that resumes before its words are

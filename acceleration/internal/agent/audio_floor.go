@@ -4,6 +4,7 @@ import (
 	"context"
 	"log/slog"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -246,6 +247,41 @@ func (p pauseAsker) Hearer() *audiofloor.Hearer { return p.a.audioFloor.hearer }
 // once the transcriber has sent them.
 func (p pauseAsker) Ruled(participant stt.Participant, ruled audiofloor.Ruled) {
 	p.a.audioFloor.keep(participant.ID, ruled)
+}
+
+// Speaking says the agent is talking, as Moment tells the model.
+func (p pauseAsker) Speaking() bool {
+	a := p.a
+	a.mu.Lock()
+	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
+	a.mu.Unlock()
+	return speaking || a.speechPending()
+}
+
+// Overheard acts at once on a check's ruling to stop or shorten over the agent, asked while
+// the caller talked on, as the agent does on a provisional ruling about a revision's words
+// (overlapRuled): its own voice heard back on the caller's line is dropped from the words
+// first, as from any chorus-asr transcript, and an echo alone, or a murmur, is no reason to
+// stop.
+func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) {
+	a := p.a
+	heard := stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: ruled.Words, Provider: audiofloor.ProviderName,
+		ProcessingTimeMs: ruled.WordsMs, AudioDurationMs: ruled.AudioMs}
+	left, echo := a.withoutEcho(heard)
+	if echo > 0 {
+		a.logger.Debug("a check over the agent heard the agent's own voice on the caller's line",
+			"participant", participant.ID, "text", ruled.Words, "echo_words", echo, "left", left)
+		echoes.WithLabelValues(strconv.FormatBool(strings.TrimSpace(left) != "")).Inc()
+		if strings.TrimSpace(left) == "" {
+			return
+		}
+	}
+	if !takesFloor(left) {
+		a.logger.Debug("a check over the agent ruled on a murmur, which is no reason to stop",
+			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
+		return
+	}
+	a.act(a.converse.Overheard(ruled.Ruling, participant, left, a.floor()))
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's

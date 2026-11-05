@@ -159,6 +159,7 @@ type Transcriber struct {
 	asker   Asker
 	pause   pause
 	pauses  int
+	over    overChecks
 	running sync.WaitGroup
 }
 
@@ -273,7 +274,7 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
 		t.fresh, t.spoken = false, 0
 	}
-	if speech {
+	if speech && !t.checksOver(participant, heard) {
 		t.interim(participant, heard)
 	}
 }

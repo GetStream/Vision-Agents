@@ -6222,3 +6222,45 @@ func (s *AgentSuite) TestAnInterimIsShownAndNotActedOn() {
 		s.Equal(shown[0].LineID, heard[0].LineID, "heard under the line it was shown in")
 	}
 }
+
+// A check the chorus-asr transcriber asked over the agent while the caller talked on, with
+// no pause for the flow controller to be asked at, is acted on at once as a provisional
+// ruling is (Overheard): a stop interrupts the reply before the caller's words settle, and
+// answers nothing. The agent's own voice heard back on the caller's line is dropped from the
+// words first, and an echo alone stops nothing; nor does a murmur.
+func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon tomorrow")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	s.agent.mu.Lock()
+	s.agent.history = append(s.agent.history, llm.Message{Role: llm.Assistant, Content: "Tomorrow in Lisbon it will be sunny and warm with a high of twenty four degrees"})
+	s.agent.mu.Unlock()
+	asker := pauseAsker{s.agent}
+	s.True(asker.Speaking())
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Speaking: true, Overheard: true, AudioMs: 1200, WordsMs: 100}
+
+	echo := stop
+	echo.Words = "Tomorrow in Lisbon it will be sunny"
+	asker.Overheard(participant, echo)
+	murmur := stop
+	murmur.Words = "uh-huh"
+	asker.Overheard(participant, murmur)
+	time.Sleep(50 * time.Millisecond)
+	s.Zero(countOf[Interrupted](s.reported()), "an echo alone or a murmur stops nothing")
+	s.Zero(s.voice.interrupted())
+
+	words := stop
+	words.Words = "no no stop that's not what I"
+	asker.Overheard(participant, words)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on at once")
+	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept talking")
+	overlap, _ := firstOf[OverlapDecided](s.reported())
+	s.Equal(string(harness.Stop), overlap.Action)
+	s.Len(s.model.requests(), 1, "nothing answered: the caller's turn has not ended")
+}
