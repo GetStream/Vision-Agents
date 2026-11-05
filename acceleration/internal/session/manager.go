@@ -372,7 +372,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 // The agent is joined before this returns, so a caller that gets a session back has one
 // that is already listening. A failure anywhere unwinds what was opened: a half-joined
 // session would hold a model session and a place in a call that nobody holds a handle to.
-func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
+func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure error) {
 	if err := spec.Normalize(); err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -638,7 +638,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	turnedAway := false
 	defer func() {
 		if !opened && !turnedAway {
-			endCounter(endCreateFailed).Inc()
+			endCounter(createFailure(failure)).Inc()
 		}
 	}()
 	fail := func() {
@@ -958,7 +958,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The turns held until now, the greeting's among them, are written after it.
 	if created.records != nil {
 		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC(), created.endReason())
+			m.records.Closed(created.id, time.Now().UTC(), created.kept())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
 		created.startRecording()
