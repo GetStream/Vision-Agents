@@ -391,6 +391,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 A Slack reply that is not to the bot, in a thread nobody linked yet, waits for the mention that starts the thread. When the connection was pinned meanwhile to a revision that does not read the reply, the mention failed with a 500 on every retry and was never answered. Now that reply is dropped and logged at warn, and the mention is answered. Any other failure to take a waiting reply still fails the mention, and Slack's retry takes both (AI-2743).
 
+### `git lfs pull` works in a sandbox behind the egress proxy
+
+Under `code_sandbox.broker: proxy`, Git LFS's batch request was refused as a write, so `git lfs pull` failed. GitHub's connector (revision 11) now lets a batch that asks to download through, and fetches the objects from the host GitHub names with no token; an upload is still refused (#1768).
+
 ### A video question that would be refused is refused before its videos are fetched
 
 A response with videos that its conversation would refuse to begin, because an answer is still running, the conversation is not open or the text is past 1 MiB, was refused only after up to two videos of 50 MB each were fetched and sampled. It is now refused first, with the same error (AI-2657, #1764).
