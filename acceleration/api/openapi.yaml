@@ -24074,7 +24074,8 @@ paths:
             description: Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
             maxLength: 255
             type: string
-        - description: The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+        - deprecated: true
+          description: The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
           explode: false
           in: query
           name: api_key_id
@@ -24541,7 +24542,8 @@ paths:
             description: Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
             maxLength: 255
             type: string
-        - description: The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+        - deprecated: true
+          description: The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
           explode: false
           in: query
           name: api_key_id
