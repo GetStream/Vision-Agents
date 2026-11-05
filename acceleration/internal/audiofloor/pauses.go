@@ -298,7 +298,7 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	}
 	text := strings.TrimSpace(words.Text)
 	p.words, p.audioMs, p.wordsMs = &text, float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
-	waiting, utterance := p.ended == nil, p.utterance
+	waiting, utterance, audioMs, wordsMs := p.ended == nil, p.utterance, p.audioMs, p.wordsMs
 	t.mu.Unlock()
 	if waiting && t.interims && text != "" {
 		t.send(stt.Transcript{
@@ -309,8 +309,8 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 			Text:             text,
 			Provider:         ProviderName,
 			Model:            t.model,
-			ProcessingTimeMs: p.wordsMs,
-			AudioDurationMs:  p.audioMs,
+			ProcessingTimeMs: wordsMs,
+			AudioDurationMs:  audioMs,
 		})
 	}
 	t.finish(c.epoch)
