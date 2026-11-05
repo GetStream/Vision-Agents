@@ -78,6 +78,11 @@ func (s *ServerSuite) TestARefusalSaysHowLongItTookToRefuse() {
 }
 
 func (s *ServerSuite) TestAnAnswerThatIsNotOneDocumentIsOnlyStamped() {
+	// The export is the one answer of this kind, and a router with shards refuses to give it.
+	if s.store.Sharded() {
+		s.T().Skip("a router with shards refuses to be a move's source")
+	}
+
 	_, response, body := s.timed(http.MethodGet, "/v1/data/export")
 	s.Require().Equal(http.StatusOK, response.StatusCode)
 
