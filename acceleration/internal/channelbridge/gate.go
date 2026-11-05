@@ -141,7 +141,9 @@ func (b *Bridge) silenced(ctx context.Context, thread store.ChannelThread) (bool
 // they are, since a number has no % or : to encode. A Linq thread is a chat, whose id names
 // nobody, so it is the person who started it: the contact map row of the thread's episode
 // (store.ThreadContact), with the agent that answers on the thread's connection (take). A chat
-// with no such row, such as one an email handle started, is "", which no opt-out names and
+// with no episode, as under a config with episode_cards off, is its one person while its
+// latest message says it is no group (ChatPerson), as admit checked them. Any other chat, such
+// as a group with no episode or one an email handle started, is "", which no opt-out names and
 // no sandbox lists.
 func (b *Bridge) replyTo(ctx context.Context, thread store.ChannelThread) (string, error) {
 	source := episodeSources[thread.ConnectorID]
@@ -154,7 +156,10 @@ func (b *Bridge) replyTo(ctx context.Context, thread store.ChannelThread) (strin
 	}
 	contact, err := b.store.ThreadContact(ctx, thread.CustomerID, configs[0].ID, chatlog.ChannelType+":"+thread.ChannelID)
 	if errors.Is(err, store.ErrNoContact) {
-		return "", nil
+		if thread.ChatPerson == "" {
+			return "", nil
+		}
+		return source.recipientOf(thread.ChatPerson), nil
 	}
 	if err != nil {
 		return "", err

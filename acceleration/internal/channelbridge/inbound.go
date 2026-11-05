@@ -280,7 +280,7 @@ func (b *Bridge) writeQueued(ctx context.Context, message store.ChannelInbound) 
 		log.Warn("an inbound message that is only files none of which could be stored is not written or answered")
 		return nil
 	}
-	opened, err := b.episode(ctx, thread, config, inbound, message.CreatedAt)
+	opened, err := b.queuedEpisode(ctx, thread, message, inbound)
 	if err != nil {
 		log.Error("could not open the episode of an inbound message", "error", err)
 	}
