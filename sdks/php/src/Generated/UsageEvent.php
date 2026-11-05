@@ -15,7 +15,7 @@ use GetStream\VisionAgents\Json;
 final readonly class UsageEvent
 {
     public function __construct(
-        // The public API key the work was started with, or the origin of work no key started, such as hook:chat, phon...
+        // The old name of origin, the same value, still answered for one release.
         public string $apiKey,
         // The app the work was for.
         public string $appId,
@@ -27,6 +27,8 @@ final readonly class UsageEvent
         public string $meter,
         // When the work happened.
         public \DateTimeImmutable $occurredAt,
+        // Who started the work: the public API key it was started with, or the origin of work no key started, such as...
+        public string $origin,
         // How much work was done, by what it is priced by: input_tokens, output_tokens, audio_ms, seconds, bytes and...
         /** @var array<string, mixed> */
         public array $quantities,
@@ -78,6 +80,7 @@ final readonly class UsageEvent
             costMicros: Json::int($data, 'cost_micros'),
             meter: Json::string($data, 'meter'),
             occurredAt: Json::date($data, 'occurred_at'),
+            origin: Json::string($data, 'origin'),
             quantities: Json::object($data, 'quantities'),
             success: Json::bool($data, 'success'),
             usageCategories: Json::strings($data, 'usage_categories'),
@@ -111,6 +114,7 @@ final readonly class UsageEvent
         $out['cost_micros'] = $this->costMicros;
         $out['meter'] = $this->meter;
         $out['occurred_at'] = Json::dateValue($this->occurredAt);
+        $out['origin'] = $this->origin;
         $out['quantities'] = Json::objectValue($this->quantities);
         $out['success'] = $this->success;
         $out['usage_categories'] = $this->usageCategories;
