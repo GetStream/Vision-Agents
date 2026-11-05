@@ -371,6 +371,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A tool call with an ID pasted in a link, or listed by a tool, is no longer refused
+
+The agent refused a tool call whose ID the person had only pasted inside a link, such as a channel in a thread's link, unless they also named what the ID was. An ID that is a whole segment of a link's path, or a whole value of its query, in the person's own message now counts as theirs. An ID a tool wrote out in a text field of its JSON answer, as Slack's channel search lists `#help (C…)` under `results`, now counts as returned. An ID the person or a tool never gave is still refused (AI-2791).
+
 ### Gmail, Google Calendar, Linear and Slack tools that only read sit beside a sensitive connector
 
 A config that binds a sensitive connector such as Nessy was refused when it also granted a tool of Gmail, Google Calendar, Linear or Slack, even one that only reads, because their manifests listed no `read_only_tools`. Gmail revision 4, Google Calendar revision 3, Linear revision 3 and Slack revision 7 now list the tools their vendor pages or tool descriptions say only read: Gmail's thread, message, draft and label reads, Calendar's event and calendar reads and `suggest_time`, Linear's get and list tools, and Slack's search, read and list tools. A binding granting only those by name is accepted. Any other tool, such as Gmail's `create_draft`, Linear's `extract_images` and Slack's `slack_send_message`, still needs the binding's `require_approval` (AI-2756).

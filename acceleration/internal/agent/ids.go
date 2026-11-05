@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,8 +21,9 @@ import (
 // Only an ID one of the tools hands out is checked: "case_id" when there is an open_case,
 // "booking_id" when there is a find_booking. Any other ID, such as a card_id, is the
 // caller's to give, and so is one the caller said along with what it is ("my case is
-// 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631").
-// The error code "seven twenty", said where no case was mentioned, is not a case. An ID
+// 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631"),
+// or pasted inside a link, as a whole part of its path or a whole value of its query (linkParts):
+// a link names what each of its parts is by where it stands. The error code "seven twenty", said where no case was mentioned, is not a case. An ID
 // written in told, the instructions the operator gave the agent, is the operator's to give.
 func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
@@ -37,6 +39,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	// the question.
 	type answer struct{ question, said string }
 	var answers []answer
+	// pasted are the parts of the links the caller wrote.
+	var pasted []string
 	var question string
 	for _, message := range history {
 		switch message.Role {
@@ -47,6 +51,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		case llm.User:
 			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
 			said.WriteString(" " + heard)
+			pasted = append(pasted, linkParts(message.Content)...)
 			if question != "" {
 				answers = append(answers, answer{strings.ToLower(question), alphanumeric(heard)})
 			}
@@ -63,6 +68,9 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				texts = append(texts, text)
 			} else {
 				results = append(results, result)
+				// A result may write its answer out under a key of its own: a list of channels
+				// as "1. #general (C0123) - public_channel".
+				texts = append(texts, prose(result)...)
 			}
 		}
 	}
@@ -81,7 +89,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		if wanted == "" {
 			return name, text, collectIDs(results), true
 		}
-		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) {
+		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) ||
+			slices.Contains(pasted, wanted) {
 			continue
 		}
 		if slices.ContainsFunc(answers, func(given answer) bool {
@@ -716,6 +725,57 @@ func allObjects(fields map[string]any) bool {
 		}
 	}
 	return true
+}
+
+// link is a web address written in a message. It ends at the first character a URI cannot
+// hold (RFC 3986 section 2 allows none of space, <, >, ", {, }, |, \, ^ and `), so a link
+// written in brackets or quotes ends at them.
+var link = regexp.MustCompile("(?i)https?://[^\\s<>\"{}|\\\\^`]+")
+
+// linkParts returns every path segment and query value of the links in text, each
+// alphanumeric. Only whole parts are given: the 1793 inside a segment p1793 is not one.
+func linkParts(text string) []string {
+	var parts []string
+	for _, written := range link.FindAllString(text, -1) {
+		address, err := url.Parse(written)
+		if err != nil {
+			continue
+		}
+		for _, segment := range strings.Split(address.Path, "/") {
+			parts = append(parts, alphanumeric(segment))
+		}
+		for _, values := range address.Query() {
+			for _, value := range values {
+				parts = append(parts, alphanumeric(value))
+			}
+		}
+	}
+	return parts
+}
+
+// prose returns the strings of more than one word a JSON result holds, wherever they are. A
+// string of one word under a key that is not an ID's is left out, so that a card listed
+// under "cards" does not pass as an order.
+func prose(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		if len(strings.Fields(typed)) > 1 {
+			return []string{typed}
+		}
+	case []any:
+		var texts []string
+		for _, inner := range typed {
+			texts = append(texts, prose(inner)...)
+		}
+		return texts
+	case map[string]any:
+		var texts []string
+		for _, inner := range typed {
+			texts = append(texts, prose(inner)...)
+		}
+		return texts
+	}
+	return nil
 }
 
 // holdsValue reports whether a result written as text gives wanted as one of its words, as
