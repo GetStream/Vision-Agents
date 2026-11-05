@@ -583,6 +583,7 @@ func (s *Session) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	if errors.As(err, &apiError) && apiError.StatusCode < 500 && apiError.StatusCode != 401 && apiError.StatusCode != 402 && apiError.StatusCode != 403 && apiError.StatusCode != 404 && apiError.StatusCode != 408 && apiError.StatusCode != 429 {
 		return nil, stack.Wrap(err)
 	}
+	routing.CountHandover(routing.LLM, s.config, err)
 	alternate, fallbackErr := s.fallback(ctx, params)
 	if fallbackErr != nil {
 		return nil, stack.Wrap(errors.Join(err, fallbackErr))
