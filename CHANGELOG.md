@@ -383,6 +383,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### An outbound call's episode card goes to who it rang, and a late caller still gets one
+
+Under an agent config with `episode_cards` on, a call placed through `POST /v1/phone/calls` filed its card under the line's own number, so every person the line rang shared one omni-channel. Its card now goes to the omni-channel of the number it rang. An inbound caller who joins the call after the agent now gets their card too; before, they got none. (#1770)
+
 ### An export no longer misses a write that was in progress when it started
 
 A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).
