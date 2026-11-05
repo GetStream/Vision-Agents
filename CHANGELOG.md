@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router counts its sessions and how they end
+
+`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed}`, each session end once: its stored end reason, or `closed`, `shutdown`, `create_failed` or `agent_failed`; `failed` is `true` for `start`, `create_failed` and `agent_failed` (AI-2779, #1782).
+
 ### Usage reads name who started the work `origin`
 
 A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names stay for one release, deprecated: the query's `api_key_id` (and `api_key` on the usage service) is still read and must name the same value when given beside `origin`, else 400; events still carry `api_key` with the same value; `who:api_key` still groups. Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). Both specs mark each old query name `deprecated` on the parameter itself, so the generated JavaScript and Go clients flag it (AI-2812).
