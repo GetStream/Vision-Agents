@@ -787,6 +787,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			JudgeTarget:        m.options.FlowJudge,
 			AudioFloor:         m.options.AudioFloor,
 			AudioFloorMode:     m.options.AudioFloorMode,
+			EndOfTurn:          EndOfTurnOf(spec.EndOfTurn),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),

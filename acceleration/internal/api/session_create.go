@@ -33,6 +33,9 @@ func (s *Server) createSession(ctx context.Context, request *createSessionReques
 	if failure := s.refuseCall(ctx, customerID, *request.Body); failure != nil {
 		return nil, failure
 	}
+	if _, message, ok := s.endOfTurnComplaint(ctx, endOfTurnOr(store.EndOfTurn{}, request.Body.EndOfTurn), store.EndOfTurn{}); !ok {
+		return nil, invalidRequest(message)
+	}
 
 	// A config is read before the session is created rather than inside it, so a caller
 	// naming one that is not theirs is told so instead of getting a session that quietly
@@ -109,6 +112,9 @@ var errDeviceHistory = forbidden("history is sent server-side: an assistant mess
 // errDeviceInstructions refuses instructions sent by an end user's device.
 var errDeviceInstructions = forbidden("instructions are sent server-side: what the agent is " +
 	"told decides who it is, which a device may not")
+
+var errDeviceEndOfTurn = forbidden("end_of_turn is sent server-side: how eager the agent is to " +
+	"answer is the app's to decide, which a device may not")
 
 var errDeviceResumeHistory = forbidden("resume_history is sent server-side: how much of a " +
 	"conversation the model is sent is billed to the app, which a device may not decide")
@@ -230,6 +236,9 @@ func refuseServerSideFields(ctx context.Context, request CreateSessionRequest) (
 	}
 	if request.ResumeHistory != nil && !ServerSideFrom(ctx) {
 		return errDeviceResumeHistory, true
+	}
+	if request.EndOfTurn != nil && !ServerSideFrom(ctx) {
+		return errDeviceEndOfTurn, true
 	}
 	if request.Memory != nil && value(request.Memory.UserId) != "" && !ServerSideFrom(ctx) {
 		if !KindFrom(ctx).Verified() {

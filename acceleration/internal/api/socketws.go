@@ -13,6 +13,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/socketedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -118,6 +119,10 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	}
 	if start.Session.Call != nil {
 		refuseWith(errSocketCall)
+		return
+	}
+	if _, message, ok := s.endOfTurnComplaint(ctx, endOfTurnOr(store.EndOfTurn{}, start.Session.EndOfTurn), store.EndOfTurn{}); !ok {
+		refuseWith(invalidRequest(message))
 		return
 	}
 
