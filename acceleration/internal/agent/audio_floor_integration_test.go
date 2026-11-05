@@ -95,10 +95,13 @@ func TestAudioFloorReplay(t *testing.T) {
 
 	t.Run("7 a new agent registers within the deadline", h.newAgentRegisters)
 	t.Run("1 a backchannel leaves the reply going", h.backchannel)
-	t.Run("2a one final, then silence", func(t *testing.T) { h.oneFinal(t, nil, 0) })
-	t.Run("2b one final, then room tone", func(t *testing.T) { h.oneFinal(t, roomTone(30*time.Second, -60), 0) })
-	t.Run("2c one final, then line noise at -50 dBFS", func(t *testing.T) { h.oneFinal(t, lineNoise(30*time.Second, -50), 0) })
-	t.Run("2d one final, with the reply echoed at -20 dB", func(t *testing.T) { h.oneFinal(t, nil, math.Pow(10, -20.0/20)) })
+	t.Run("2a one final, then silence", func(t *testing.T) { h.oneFinal(t, audiofloor.Act, nil, 0) })
+	t.Run("2b one final, then room tone", func(t *testing.T) { h.oneFinal(t, audiofloor.Act, roomTone(30*time.Second, -60), 0) })
+	t.Run("2c one final, then line noise at -50 dBFS", func(t *testing.T) { h.oneFinal(t, audiofloor.Act, lineNoise(30*time.Second, -50), 0) })
+	t.Run("2d one final, with the reply echoed at -20 dB", func(t *testing.T) { h.oneFinal(t, audiofloor.Act, nil, echoAt(-20)) })
+	t.Run("2e one final, with the reply echoed at -30 dB", func(t *testing.T) { h.oneFinal(t, audiofloor.Act, nil, echoAt(-30)) })
+	t.Run("2f one final, echoed at -20 dB, transcription alone", func(t *testing.T) { h.oneFinal(t, "", nil, echoAt(-20)) })
+	t.Run("2g one final, echoed at -20 dB, in shadow", func(t *testing.T) { h.oneFinal(t, audiofloor.Shadow, nil, echoAt(-20)) })
 	t.Run("3a trailing breath and noise, callers speak en", func(t *testing.T) { h.trailingNoise(t, []string{"en"}) })
 	t.Run("3b trailing breath and noise, no languages", func(t *testing.T) { h.trailingNoise(t, nil) })
 	t.Run("4 a slow count", h.slowCount)
@@ -220,9 +223,11 @@ func (h *floorHarness) backchannel(t *testing.T) {
 
 // 2. A finished question then 10 s of nothing: one final transcript, nothing written of the
 // silence, and the reply played whole. bed is what the line carries under it all, and echo
-// the agent's own voice heard back on the caller's line.
-func (h *floorHarness) oneFinal(t *testing.T, bed []float64, echo float64) {
-	c := h.start(t, audiofloor.Act, replayInstructions, []string{"en"})
+// the agent's own voice heard back on the caller's line, as a phone with no echo
+// cancellation sends it. What the transcriber wrote and what the conversation heard of it are
+// checked apart: [transcriber] is every transcript, [conversation] the turns the agent took.
+func (h *floorHarness) oneFinal(t *testing.T, mode audiofloor.Mode, bed []float64, echo float64) {
+	c := h.start(t, mode, replayInstructions, []string{"en"})
 	c.edge.background(bed, echo)
 	c.edge.pause(time.Second)
 	said := c.edge.say("rain", h.rain)
@@ -231,27 +236,43 @@ func (h *floorHarness) oneFinal(t *testing.T, bed []float64, echo float64) {
 	defer c.report()
 
 	finals := c.finals()
-	assert.Len(t, finals, 1, "one final transcript")
+	assert.Len(t, finals, 1, "[transcriber] one final transcript")
 	if len(finals) > 0 {
 		after := c.wordsBetween(finals[0].At.Add(time.Nanosecond), time.Now())
-		assert.Empty(t, after, "nothing written after the final")
+		assert.Empty(t, after, "[transcriber] nothing written after the final")
+	}
+	for _, f := range finals {
+		_, echo := echoed(f.T.Text, replyText)
+		assert.Zero(t, echo, "[transcriber] the agent's voice written as the caller's: %q", f.T.Text)
+	}
+	for _, heard := range all[Heard](c) {
+		_, echo := echoed(heard.E.Text, replyText)
+		assert.Zero(t, echo, "[conversation] the agent's voice heard as the caller's: %q", heard.E.Text)
 	}
 	utterances := map[int64]bool{}
 	for _, w := range c.words.all() {
 		utterances[w.T.Utterance] = true
 	}
-	assert.Len(t, utterances, 1, "one utterance")
+	assert.Len(t, utterances, 1, "[transcriber] one utterance")
 	answered := c.answered(said)
 	h.measured(t, "2", answered)
-	assert.True(t, answered.ok, "the question was answered")
-	assert.Len(t, all[Responding](c), 1, "one answer")
-	assert.Empty(t, all[Interrupted](c), "the reply was not interrupted")
-	assert.Empty(t, c.decisionsAfter(answered.decided, "supersede", "interrupt", "answer"), "the answer was not superseded")
-	assert.Zero(t, c.edge.dropped(), "none of the reply was thrown away")
+	assert.True(t, answered.ok, "[conversation] the question was answered")
+	assert.Len(t, all[Heard](c), 1, "[conversation] one turn heard")
+	assert.Len(t, all[Responding](c), 1, "[conversation] one answer")
+	assert.Empty(t, all[Interrupted](c), "[conversation] the reply was not interrupted")
+	assert.Empty(t, c.decisionsAfter(answered.decided, "supersede", "interrupt", "answer"), "[conversation] the answer was not superseded")
+	assert.Zero(t, c.edge.dropped(), "[conversation] none of the reply was thrown away")
 	assert.InDelta(t, float64(c.voice.replyLength()), float64(c.edge.heard()), float64(300*time.Millisecond),
-		"the whole reply was heard: %s of %s", c.edge.heard(), c.voice.replyLength())
-	assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
+		"[conversation] the whole reply was heard: %s of %s", c.edge.heard(), c.voice.replyLength())
+	if mode == audiofloor.Act {
+		assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
+	}
+	if echo == 0 {
+		assert.Equal(t, 1, c.wordRequests(), "one request for the words of the turn")
+	}
 }
+
+func echoAt(db float64) float64 { return math.Pow(10, db/20) }
 
 // 3. A question followed by a breath, and another by a burst of noise: nothing written in a
 // script the caller doesn't speak.
@@ -375,23 +396,29 @@ func (h *floorHarness) transcriptionAlone(t *testing.T) {
 func (h *floorHarness) latency(t *testing.T) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	var decided, replied []time.Duration
-	t.Logf("%-6s %12s %12s", "check", "to ruling", "to reply")
+	var ruled, decided, replied []time.Duration
+	t.Logf("%-6s %14s %14s %12s", "check", "server ruled", "turn answered", "reply heard")
 	for _, l := range h.latencies {
 		d, r := l.decided.Sub(l.speechEnd), l.replied.Sub(l.speechEnd)
 		decided, replied = append(decided, d), append(replied, r)
-		t.Logf("%-6s %12s %12s", l.check, d.Round(time.Millisecond), r.Round(time.Millisecond))
+		if !l.ruled.IsZero() {
+			ruled = append(ruled, l.ruled.Sub(l.speechEnd))
+		}
+		t.Logf("%-6s %14s %14s %12s", l.check, since(l.speechEnd, l.ruled), d.Round(time.Millisecond), r.Round(time.Millisecond))
 	}
 	if !assert.NotEmpty(t, decided, "turns measured") {
 		return
 	}
-	t.Logf("end of speech to ruling: p50 %s, max %s, over %d turns", median(decided), slices.Max(decided).Round(time.Millisecond), len(decided))
-	t.Logf("end of speech to reply:  p50 %s, max %s", median(replied), slices.Max(replied).Round(time.Millisecond))
+	if len(ruled) > 0 {
+		t.Logf("end of speech to the server's ruling: p50 %s, max %s, over %d turns", median(ruled), slices.Max(ruled).Round(time.Millisecond), len(ruled))
+	}
+	t.Logf("end of speech to the turn answered:   p50 %s, max %s, over %d turns", median(decided), slices.Max(decided).Round(time.Millisecond), len(decided))
+	t.Logf("end of speech to the reply heard:     p50 %s, max %s", median(replied), slices.Max(replied).Round(time.Millisecond))
 }
 
 type turnLatency struct {
-	check                       string
-	speechEnd, decided, replied time.Time
+	check                              string
+	speechEnd, ruled, decided, replied time.Time
 }
 
 func (h *floorHarness) measured(t *testing.T, check string, answered answer) {
@@ -401,9 +428,17 @@ func (h *floorHarness) measured(t *testing.T, check string, answered answer) {
 	}
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.latencies = append(h.latencies, turnLatency{check: check, speechEnd: answered.speechEnd, decided: answered.decided, replied: answered.replied})
-	t.Logf("latency: end of speech to ruling %s, to reply %s", answered.decided.Sub(answered.speechEnd).Round(time.Millisecond),
+	h.latencies = append(h.latencies, turnLatency{check: check, speechEnd: answered.speechEnd, ruled: answered.ruled, decided: answered.decided, replied: answered.replied})
+	t.Logf("latency: end of speech to the server's ruling %s, to the turn answered %s, to the reply %s",
+		since(answered.speechEnd, answered.ruled), answered.decided.Sub(answered.speechEnd).Round(time.Millisecond),
 		answered.replied.Sub(answered.speechEnd).Round(time.Millisecond))
+}
+
+func since(from, to time.Time) string {
+	if to.IsZero() {
+		return "-"
+	}
+	return to.Sub(from).Round(time.Millisecond).String()
 }
 
 func median(values []time.Duration) time.Duration {
@@ -518,7 +553,7 @@ func (c *call) settle(quiet, limit time.Duration) {
 	deadline := time.Now().Add(limit)
 	var since time.Time
 	for time.Now().Before(deadline) {
-		if c.edge.scripted() || c.edge.SpeechPending() || c.agent.Busy() {
+		if c.edge.scripted() || c.edge.SpeechPending() || c.agent.Busy() || c.asking() {
 			since = time.Time{}
 		} else if since.IsZero() {
 			since = time.Now()
@@ -549,10 +584,12 @@ func (c *call) since(at time.Time) string {
 type answer struct {
 	ok                 bool
 	speechEnd, decided time.Time
-	replied            time.Time
-	replyLength        time.Duration
-	text, reason       string
-	turnID             string
+	// ruled is when the server's decision that ended the turn came back, its first line.
+	ruled        time.Time
+	replied      time.Time
+	replyLength  time.Duration
+	text, reason string
+	turnID       string
 }
 
 func (a answer) replyEnd() time.Time { return a.replied.Add(a.replyLength) }
@@ -569,6 +606,11 @@ func (c *call) answered(said *cue) answer {
 	}
 	if !out.ok {
 		return out
+	}
+	for _, r := range c.requests() {
+		if r.path == "/v1/decide" && !r.firstLine.IsZero() && !r.firstLine.After(out.decided) && r.firstLine.After(out.speechEnd) {
+			out.ruled = r.firstLine
+		}
 	}
 	for _, at := range c.edge.replyStarts() {
 		if at.After(out.decided) {
@@ -629,6 +671,27 @@ func (c *call) requests() []exchange {
 	return out
 }
 
+// asking says a request to the server is still out.
+func (c *call) asking() bool {
+	for _, r := range c.requests() {
+		if r.done.IsZero() {
+			return true
+		}
+	}
+	return false
+}
+
+// wordRequests are the requests for words: transcripts, and decisions that wrote words too.
+func (c *call) wordRequests() int {
+	n := 0
+	for _, r := range c.requests() {
+		if r.path == "/v1/transcribe" || (r.path == "/v1/decide" && strings.Contains(r.query, "transcript=true")) {
+			n++
+		}
+	}
+	return n
+}
+
 func (c *call) requestsTo(path string) []exchange {
 	var out []exchange
 	for _, r := range c.requests() {
@@ -684,7 +747,18 @@ func (c *call) report() {
 		add(at, "DROPPED the agent's speech")
 	}
 	for _, r := range c.requests() {
-		add(r.start, "server  %s %s: %d in %.0f ms %s", r.method, r.path, r.status, float64(r.done.Sub(r.start).Microseconds())/1000, brief(r.body))
+		path := r.path
+		if strings.Contains(r.query, "transcript=true") {
+			path += "+words"
+		}
+		first := ""
+		if !r.firstLine.IsZero() && strings.Contains(r.query, "transcript=true") {
+			first = fmt.Sprintf(", decision in %.0f ms", float64(r.firstLine.Sub(r.start).Microseconds())/1000)
+		}
+		add(r.start, "server  %s %s: %d in %.0f ms%s %s", r.method, path, r.status, float64(r.done.Sub(r.start).Microseconds())/1000, first, brief(r.body))
+	}
+	for _, l := range c.logs.find("the transcriber heard the agent's own voice on the caller's line") {
+		add(l.At, "ECHO    %v words of the agent's dropped from %q, left %q", l.Attrs["echo_words"], l.Attrs["text"], l.Attrs["left"])
 	}
 	for _, l := range c.logs.find("the hearer did not rule, the flow controller will") {
 		add(l.At, "MISSED  the Hearer did not rule on %v: %v", l.Attrs["candidate"], l.Attrs["error"])
@@ -1160,6 +1234,13 @@ func teeWords(inner stt.STT, log *wordLog) *teeSTT {
 
 func (t *teeSTT) Events() <-chan stt.Event { return t.out }
 
+// AskOnPauses passes the agent on to the transcriber, as the router's session does.
+func (t *teeSTT) AskOnPauses(agent audiofloor.Asker) {
+	if pauses, ok := t.STT.(audiofloor.Pauses); ok {
+		pauses.AskOnPauses(agent)
+	}
+}
+
 // timeline is an agent's events, each stamped as it arrived.
 type timeline struct {
 	mu     sync.Mutex
@@ -1211,15 +1292,17 @@ type exchanges struct {
 }
 
 type exchange struct {
-	method, path string
-	status       int
-	start, done  time.Time
-	body         string
-	err          error
+	method, path, query string
+	status              int
+	// firstLine is when the answer's first line was read, which for a decision that writes
+	// its words is the decision.
+	start, firstLine, done time.Time
+	body                   string
+	err                    error
 }
 
 func (x *exchanges) RoundTrip(req *http.Request) (*http.Response, error) {
-	kept := &exchange{method: req.Method, path: req.URL.Path, start: time.Now()}
+	kept := &exchange{method: req.Method, path: req.URL.Path, query: req.URL.RawQuery, start: time.Now()}
 	x.mu.Lock()
 	x.kept = append(x.kept, kept)
 	x.mu.Unlock()
@@ -1258,6 +1341,13 @@ type keptBody struct {
 func (b *keptBody) Read(p []byte) (int, error) {
 	n, err := b.ReadCloser.Read(p)
 	b.buf.Write(p[:n])
+	if bytes.IndexByte(p[:n], '\n') >= 0 {
+		b.x.mu.Lock()
+		if b.kept.firstLine.IsZero() {
+			b.kept.firstLine = time.Now()
+		}
+		b.x.mu.Unlock()
+	}
 	return n, err
 }
 

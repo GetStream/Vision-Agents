@@ -16,6 +16,9 @@ It plugs in twice, and each is optional:
   At each pause of 200 ms it writes the whole utterance so far, as a replacement of the
   words before, and it ends the utterance at a pause of 2.5 s. When to answer
   stays the flow controller's.
+- **Both, acting.** An agent that acts on the model and names it as its STT has the
+  transcriber time the caller's pauses from the audio and ask about each, the decision and
+  the words in one request: [Turns from the audio](#turns-from-the-audio).
 
 ## Configure
 
@@ -39,8 +42,11 @@ router. A server without one answers 501, and the router never acts on it.
 {"template":"v3.5","conversation_on_free_floor":false,"end_of_turn":{"first_check_ms":200,"first_pause_logit":0,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}],"measured":{...}},"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"measured":{...}}}},"max_tools":21,"sample_rate":16000,"window_samples":256000}
 ```
 
-`end_of_turn` is fitted to the server's model. A pause is checked `first_check_ms` into it
-and every `interval_ms` after, and the turn has ended at the first check where `p_eot`
+`end_of_turn` is fitted to the server's model. A pause is checked `first_check_ms` into it,
+counted from the voice's last frame, and every `interval_ms` after, when the transcriber is
+chorus-asr too ([Turns from the audio](#turns-from-the-audio)); with another transcriber the
+first check is when the words have held still for the cadence's gap, 350 ms after they last
+changed, and the rest every `interval_ms` after. The turn has ended at the first check where `p_eot`
 reaches the bar of the last of a preset's `bars` to have begun by then, `from_ms` into the
 pause, raised by `first_pause_logit` in log-odds on the turn's first pause. At `cap_ms` of
 pause it has ended whatever the model says. The presets are how eager turn-taking is, and
@@ -101,10 +107,40 @@ stt: stream/chorus-asr
 ```
 
 It registers no agent and asks for no decision: each request is `POST /v1/transcribe`,
-so a server started without a policy transcribes as well. With the mode on, the Hearer
-still asks for its decisions on its own, and the transcriber still asks for the words
-alone: keeping the words a decision could carry would tie the transcriber's pauses to the
-flow controller's turns, for one request saved a pause.
+so a server started without a policy transcribes as well, and so it does in `shadow`.
+
+## Turns from the audio
+
+Acting (`ROUTER_CHORUS_ASR_MODE=act`) with `stream/chorus-asr` as the agent's STT, the turn
+ends when the model says so, timed from the voice, and a pause costs one request:
+
+- **Pauses from the audio.** The transcriber's speech gate (-48 dBFS and the speech
+  detector, below) says when the voice stopped. The transcriber asks about the pause
+  `first_check_ms` (200 ms) after the voice's last frame, then every `interval_ms`, each
+  once the one before has answered, on the agent's behalf: the moment of the call is the
+  one the flow controller would put (`audiofloor.Asker`, which the agent hands its
+  transcriber when it opens it).
+- **One request a pause.** The first check of a pause is `POST /v1/decide?agent=ID&transcript=true`
+  with the whole utterance: the server decides on its last 16 s, answers that at once, and
+  writes the words of all of it in the same pass. The rechecks ask for the decision alone,
+  on what a decision hears. The agent is registered with the session's languages, for the
+  words.
+- **One final.** A check that ends the turn hands its ruling to the agent, and its words
+  go out as the utterance's one final, to the cadence as any final does (60 ms). The flow
+  controller's Hearer rules on those words as the check did, with no request of its own, and
+  the reply is asked for at once. Over the agent a check has no bar: the model's ruling ends
+  the turn, `stop`, `shorten`, `continue` or `ignore`, and words heard over a reply reach the
+  flow controller as settled words.
+- **Nothing in between.** Words of a pause the model waits on are kept for its end, and
+  nothing is written while the caller talks, so nothing supersedes a ruling or interrupts a
+  reply about audio already ruled on. Speech after a pause the model waited on begins
+  another: its first check writes the whole utterance again.
+
+Any other combination is as it was: other transcribers, `shadow`, and transcription
+alone. A check that fails, or no check ending the pause within 1 s of the transcriber's own
+end at 2.5 s, leaves that pause to the words alone and the flow controller, as before. A
+check that ended the turn is waited on for its words however long they take, which on a
+CPU is seconds for a long turn.
 
 ### The audio
 
@@ -124,20 +160,19 @@ The server says what, and the router says when. `ruling` is what to do once the 
 ended; with the floor free the router has it ended when `p_eot` reaches the bar for this
 check, and otherwise rules wait and puts the same words again after `interval_ms`. The
 first check of a pause is the first time its words are put (`FlowTurn.Waited` false), the
-turn's first pause is one before any wait, and the pause runs from when the words last
-changed.
+turn's first pause is one before any wait, and the pause runs from the voice's last frame
+when the transcriber is chorus-asr too, and otherwise from when the words last changed.
 
 | Model | `Decided.Disposition` | `Decided.Floor` | Also |
 | --- | --- | --- | --- |
 | floor free, `p_eot` under the preset's bar and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
 | `respond`, `clarify`, `ignore` | as said | `continue` | |
-| `cannot` | `respond` | `continue` | `Cannot` |
-| a tool | `respond` | `continue` | `Tool` |
+| `cannot`, or a tool | `respond` | `continue` | |
 | over the agent: `stop`, `shorten` | `wait` while unfinished, else `respond` | as said | |
 | over the agent: `continue`, `ignore` | `ignore` | `continue` | |
 
-`Tool` and `Cannot` are hints on the decision. Nothing runs a tool from them, and a tool's
-approval is untouched. Acting, a decision's `Ruler` is `heard`.
+The tool the caller wants, and `cannot`, are in the shadow log; nothing acts on them, and a
+tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
 
 ## Fallbacks
 
@@ -151,10 +186,21 @@ approval is untouched. Acting, a decision's `Ruler` is `heard`.
   `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
   and the preset, and a debug log line carries `p_end`, the preset and its bar, the pause,
   first check and first pause.
-- **Transcripts.** A server that is down when the session starts, or that fails a
-  request, is a fatal error, which hands the call to the next transcriber the target names.
-  The words since the last ones written are lost. A target that names this transcriber
-  alone has no next one.
+- **Transcripts.** A server that is busy, restarting or slow costs a request, not the
+  session: a 5xx, 404, 408 or 429, a timeout or a reset connection is logged and counted in
+  `router_chorus_asr_transcribe_failures_total` by status, `timeout` or `connection`, and
+  the utterance's words are asked for again, whole, at its end or its next pause after more
+  speech. Only a server the router is misconfigured for (another 4xx, or no policy where
+  one is needed) is fatal, which hands the call to the next transcriber the target names;
+  a target that names this transcriber alone has no next one. A request for words times
+  out at 8 s and the audio's length again.
+- **Echo.** A phone with no echo cancellation sends the agent's voice back down the
+  caller's line, and the model writes it as the caller's words, or adds it to theirs within
+  one utterance. The agent drops a chorus-asr transcript's end that is three or more of its
+  own words, near enough (a quarter of them may be heard wrong), when the audio overlapped
+  its speech or came within 1.5 s of it: what is left is the caller's, and an echo alone is
+  nothing heard (`router_agent_chorus_asr_echoes_total`). It does so in every mode; the
+  transcriber itself still writes what it heard. Other transcribers are left as they are.
 - **Noise.** The transcriber drops nothing itself. The server returns empty text for audio
   with no speech in it and for words in a language the callers don't speak, and cuts a
   fragment in a script they don't write from either end of the words. Empty text is nothing
@@ -216,26 +262,82 @@ transcriber before this change and after it each wrote 2 replacements and 1 fina
 of line noise at -48 dBFS, the level the old gate took for voice, the old one wrote "Hi." and
 never ended the utterance; the new one wrote both replacements and the final.
 
+**The acceptance replay** (`TestAudioFloorReplay`), against one CPU server, f16, 2 lanes,
+on a machine shared with other work: macOS `say` speech at 16 kHz in real time through the
+agent, the voice a recorded 8.8 s reply, and the flow controller's language model answering
+wrong on purpose, so that a check passes only on the model's rulings. Before is the
+transcriber writing at pauses and the Hearer asked 350 ms after the words held still; after
+is turns from the audio.
+
+| Check | Before (`safe`) | After, `safe` | After, `fast` |
+| --- | --- | --- | --- |
+| 1. "Uh-huh" over the reply | reply stopped: the decision took 251 ms of the 250 over the agent, and the fallback ruled | reply whole, no new answer | the same |
+| 2. One final after 10 s of silence, room tone, line noise at -50 dBFS | pass | pass, one request for the words | pass |
+| 2. The reply echoed at -20 dB | two more answers, to its own echo, and three replies interrupted | the conversation as with no echo; the transcriber still writes the echo | the same |
+| 2. Echo at -30 dB acting, -20 dB in `shadow` and transcribing alone | not run | the conversation as with no echo | the same |
+| 3. A breath or a burst of noise after a turn | no other script | no other script | no other script |
+| 4. One to ten, a second apart | answered "One." (p_eot 0.9986 against 0.995) | answered after "ten" | answered "One." (0.857 against 0.8), as `fast` is measured to |
+| 5. 19.8 s with pauses under a second | answered four times mid-turn: the words held still while the caller talked on, and the pause reached the cap | one final with its beginning, one answer, 3.4 s after the voice | the same, 3.1 s |
+| 6. A cough alone | nothing | nothing | nothing |
+| 7. A new agent registers | 265 ms, inside the 1 s | 388 ms | 248 ms |
+| 9. Transcribing alone | pass | pass | pass |
+
+From the end of the caller's voice, "Will it rain in Porto this weekend?" (four calls) and
+"Hi, what's the weather like in Lisbon tomorrow?" (two):
+
+| | Before | After, `safe` | After, `fast` |
+| --- | --- | --- | --- |
+| The server's ruling | | 309 to 328 ms; 539 and 718 ms | 306 to 325 ms; 433 and 584 ms |
+| The turn answered (ruling and words) | 1.08 to 1.10 s; 1.39 and 1.45 s | 664 to 771 ms; 1.03 and 1.20 s | 656 to 804 ms; 0.95 and 1.16 s |
+| Requests a pause | 2: the words, then the decision | 1 | 1 |
+
+The weather question pauses after "Hi", which is asked about first, and the second call is
+a new agent's first turn, registered then. Both questions end with p_eot over 0.995 at the
+first check, so the two presets answer them alike. A breath after a question restarts the
+pause, and a turn is answered 200 ms after the breath, about 1.1 s after the words.
+
 ## Limits
 
-- The pause is timed from the transcript's last change, which lags the caller's last sound
-  by the transcriber's own delay. The policy was fitted to pauses timed from the voice.
+- Without [Turns from the audio](#turns-from-the-audio) the pause is timed from the
+  transcript's last change, which lags the caller's last sound by the transcriber's own
+  delay, and the transcriber writes only at pauses, so a caller who talks on for longer than
+  the cap without a 200 ms pause is cut off. The policy was fitted to pauses timed from the
+  voice.
 - The transcriber's speech gate was not measured on calls. Over noise as loud as -48 dBFS
   a pause is heard about 200 ms late, once the detector's score has let go of the voice,
   and a sudden loud noise can score as speech. It writes words only at pauses, so words said over the agent reach
   the flow controller at the caller's next pause. It rewrites the whole utterance at each
   pause, ends one at 60 s if the caller never pauses, and drops a ninth request waiting on
   a slow server.
-- With the transcriber and the Hearer both on, a pause costs two requests: the words, and
-  the decision.
+- With the transcriber and the Hearer both on but not acting, a pause costs two requests:
+  the words, and the decision. Acting, every pause of speech costs a words-bearing request,
+  the agent's own echoed voice included, and the words of a long utterance hold a lane for
+  seconds on a CPU.
+- Acting with chorus-asr as the transcriber, nothing is written while the caller talks: the
+  words appear when the turn ends.
+- Echo is dropped by its words, not its sound: an echo the model writes too far from what
+  the agent said, or of fewer than three words, is still the caller's; and a caller who
+  repeats three or more of the agent's words while it speaks, or within 1.5 s, loses them.
 - With unified replies the reply rules on its own words and no flow controller is asked,
   so acting has nothing to stand in for; shadow compares the model with the reply's ruling.
-- A CPU decision over a full window, 373 ms here, does not fit the 250 ms an overlap
-  gives it, so words over the agent fall back to the flow controller on such a server.
+- Without turns from the audio, a CPU decision over a full window, 373 ms here, does not fit
+  the 250 ms an overlap gives it, so words over the agent fall back to the flow controller
+  on such a server. Acting with chorus-asr transcribing, a pause over the agent is settled
+  words, with 1 s.
 
 ## Test it
 
 ```bash
 ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 CHORUS_ASR_WAV=caller.wav \
   go test -tags integration -run TestARealServer -v ./internal/audiofloor/
+```
+
+The acceptance replay plays recorded calls into a real agent in real time
+(`internal/agent/audio_floor_integration_test.go`), with chorus-asr transcribing and
+acting, and fails on what a caller would hear go wrong; each call's timeline is in the
+output and its debug log in `CHORUS_ASR_REPLAY_LOGS`:
+
+```bash
+ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 GOEXPERIMENT=simd \
+  go test -tags integration -count=1 -timeout 30m -run TestAudioFloorReplay -v ./internal/agent/
 ```
