@@ -979,6 +979,9 @@ func (s *RouterSuite) channelBridgeOptions(logger *slog.Logger) channelbridge.Op
 		RetryBackoff:   []time.Duration{10 * time.Millisecond, 10 * time.Millisecond},
 		InboundRetries: []time.Duration{10 * time.Millisecond, 10 * time.Millisecond, 500 * time.Millisecond},
 		InboundPoll:    10 * time.Millisecond,
+		// A photo whose download stalls is cut in 2 s, not the production 10 s, well inside
+		// the settleFor a test waits for its caption's answer.
+		DownloadTimeout: 2 * time.Second,
 	}
 	if s.forwarder != nil {
 		options.Unanswered = s.forwarder.ForwardUnanswered

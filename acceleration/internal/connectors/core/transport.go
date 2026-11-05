@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"context"
 	"errors"
 	"io"
 	"net/http"
@@ -194,6 +195,9 @@ type credentialed struct {
 // grant is left as it is: it still works for what it covers, and a step-up consent replaces
 // it only once that consent succeeds (AI-854). The ask is recorded on the call's Exchange
 // (Exchange.ScopeRequired), and the provider's answer is the answer.
+//
+// A 401 or 403 of a request whose context is Unjudged's is the answer as it is: it is not
+// classified, renewed past or told to the Resolver.
 func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) {
 	c.used.Store(c.now().UnixNano())
 	exchange := exchangeOf(request.Context())
@@ -238,7 +242,8 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 				}
 			}
 		}
-		if err != nil || response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden {
+		if err != nil || response.StatusCode != http.StatusUnauthorized && response.StatusCode != http.StatusForbidden ||
+			unjudged(request.Context()) {
 			return response, err
 		}
 		outcome := c.classify(response)
@@ -272,6 +277,23 @@ func (c *credentialed) RoundTrip(request *http.Request) (*http.Response, error) 
 		_ = response.Body.Close()
 		request, credential = again, renewed
 	}
+}
+
+// unjudgedKey marks the context of a request whose refusal is not the credential's (Unjudged).
+type unjudgedKey struct{}
+
+// Unjudged is ctx for a request whose 401 or 403 says nothing of the connection's credential,
+// such as the GET of a file a provider's message names, whose link may have expired: the
+// answer is the caller's, and the Resolver is neither asked to renew the credential nor told
+// it was refused, so the connection stays as it is.
+func Unjudged(ctx context.Context) context.Context {
+	return context.WithValue(ctx, unjudgedKey{}, true)
+}
+
+// unjudged is whether ctx is Unjudged's.
+func unjudged(ctx context.Context) bool {
+	marked, _ := ctx.Value(unjudgedKey{}).(bool)
+	return marked
 }
 
 // resolve asks the Resolver for the request's credential, renewed past refused when it is set.

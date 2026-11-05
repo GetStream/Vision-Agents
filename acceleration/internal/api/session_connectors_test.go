@@ -643,7 +643,7 @@ func (s *SessionConnectorsSuite) TestASlackThreadSessionUsesTheAppsConnectionsOn
 }
 
 // threadChannel is a Slack thread's thread channel, linked and created in Stream Chat as the
-// channel bridge does on the thread's first message (channelbridge.Bridge.writeInto), with
+// channel bridge does on the thread's first message (channelbridge.Bridge.openThread), with
 // two people of the thread writing in it.
 func (s *SessionConnectorsSuite) threadChannel(channel, connector, connection, config string) {
 	ctx := context.Background()
