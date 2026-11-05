@@ -192,6 +192,24 @@ func (s *PausesSuite) TestNoWordsAreNothingHeard() {
 	s.Equal([2]int{1, 0}, [2]int{withWords, transcripts})
 }
 
+// A turn a check ended waits for its words however long they take, past the transcriber's
+// own end: a long utterance takes seconds to write, and asking for its words again would
+// only take longer.
+func (s *PausesSuite) TestATurnACheckEndedWaitsForItsWords() {
+	s.server.mu.Lock()
+	s.server.wordsAfter = 300 * time.Millisecond
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(220, false)
+	s.answered()
+	s.say(int((endAfter+checkGrace)/time.Millisecond)+200, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Len(s.agent.rulings(), 1)
+	_, withWords, transcripts := s.counts()
+	s.Equal([2]int{1, 0}, [2]int{withWords, transcripts})
+}
+
 // A pause the server can't rule on is left to the words alone, as with no agent.
 func (s *PausesSuite) TestAPauseTheServerCantRuleOnIsLeftToTheWordsAlone() {
 	s.server.mu.Lock()

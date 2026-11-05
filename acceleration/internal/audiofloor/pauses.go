@@ -101,7 +101,8 @@ func (t *Transcriber) checkTimes() (time.Duration, time.Duration) {
 // checksPause asks about the pause going on, when an agent has the transcriber do so: at the
 // policy's first check into it, then every interval, each once the one before has answered.
 // It says whether the pause is the checks' to end, which it is until one fails, or none has
-// ended it by endAfter and checkGrace, or the utterance has run to maxUtterance.
+// ended it by endAfter and checkGrace, or the utterance has run to maxUtterance. A check that
+// ended it is waited on for its words, which a long utterance takes seconds to write.
 func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -109,7 +110,7 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 	switch {
 	case t.asker == nil || p.failed || heard-t.start >= int64(maxUtterance/frame):
 		return false
-	case t.quiet >= endAfter+checkGrace && !p.done:
+	case t.quiet >= endAfter+checkGrace && p.ended == nil:
 		t.logger.Warn("no check of a pause ended it, its words are asked for alone", "participant", participant.ID)
 		p.failed = true
 		return false
