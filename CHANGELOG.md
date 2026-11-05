@@ -4,7 +4,7 @@
 
 ### The router counts silent and one-way voice sessions
 
-`/metrics` serves `router_silent_sessions_total{case, kind}`: each voice session somebody besides the agent joined, once at its end under each case it is in. For the caller's side: `no_inbound_audio` (no audio frame came), `silent_inbound_audio` (frames came, none reached about -48 dBFS) or `no_words` (audible audio, but the transcriber wrote no word; not judged on a speech-to-speech model). For the agent's side: `no_audible_outbound` (the reply was queued at the call's track, which took no audible frame of it). `kind` is `phone` or `web`. A muted web microphone and a broken media path both count as `no_inbound_audio`. Calls are not ended or changed. The definition is in `acceleration/internal/agent/silence.go` (AI-2828, #PR).
+`/metrics` serves `router_silent_sessions_total{case, kind}`: each voice session somebody besides the agent joined, once at its end under each case it is in. For the caller's side: `no_inbound_audio` (no audio frame came), `silent_inbound_audio` (frames came, none reached about -48 dBFS) or `no_words` (audible audio, but the transcriber wrote no word; not judged on a speech-to-speech model). For the agent's side: `no_audible_outbound` (the reply was queued at the call's track, which took no audible frame of it). `kind` is `phone` or `web`. A muted web microphone and a broken media path both count as `no_inbound_audio`. Calls are not ended or changed. The definition is in `acceleration/internal/agent/silence.go` (AI-2828, #1792).
 
 ### The router counts how phone calls end
 
