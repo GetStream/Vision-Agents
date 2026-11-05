@@ -187,7 +187,7 @@ func (s *EndOfTurnSuite) hearer(choice EndOfTurn) *Hearer {
 // participant p, the first check of its pause unless waited.
 func (s *EndOfTurnSuite) checkAt(h *Hearer, paused time.Duration, waited bool) Check {
 	s.T().Helper()
-	check, err := h.Check(context.Background(), harness.FlowTurn{Participant: "p", Audio: some, Waited: waited, Paused: paused})
+	check, err := h.Check(context.Background(), harness.FlowTurn{ParticipantID: "p", Participant: "Alex", Audio: some, Waited: waited, Paused: paused})
 	s.Require().NoError(err)
 	return check
 }
@@ -266,14 +266,15 @@ func (s *EndOfTurnSuite) TestARunIsOfOnePausesChecksOneAfterAnother() {
 	s.Equal(1, s.checkAt(under, 1700*time.Millisecond, true).InARow)
 }
 
-// Another participant's checks are a run of their own.
+// Another participant's checks are a run of their own, by the ID that is theirs alone: two
+// callers the flow controller's prompt calls alike are two runs.
 func (s *EndOfTurnSuite) TestEachParticipantHasARunOfTheirOwn() {
 	s.answering(0.999)
 	h := s.hearer(EndOfTurn{MaxWaitMs: 1400})
 	s.Equal(1, s.checkAt(h, 200*time.Millisecond, false).InARow)
-	other, err := h.Check(context.Background(), harness.FlowTurn{Participant: "q", Audio: some, Paused: 500 * time.Millisecond, Waited: true})
+	other, err := h.Check(context.Background(), harness.FlowTurn{ParticipantID: "q", Participant: "Alex", Audio: some, Paused: 500 * time.Millisecond, Waited: true})
 	s.Require().NoError(err)
-	s.Equal(1, other.InARow)
+	s.Equal(1, other.InARow, "the other Alex's first check, not p's second")
 	s.False(other.Ended)
 	s.True(s.checkAt(h, 500*time.Millisecond, true).Ended)
 }

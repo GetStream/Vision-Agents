@@ -98,6 +98,9 @@ type FlowTurn struct {
 	// no earlier pause in the speaker's turn was waited out: what a Hearer ends a turn on.
 	Paused     time.Duration
 	FirstPause bool
+	// ParticipantID is the speaker's own, stable ID, which a Hearer counts their checks by:
+	// Participant is how the prompt calls them, and two speakers may be called alike.
+	ParticipantID string
 }
 
 type flow struct {

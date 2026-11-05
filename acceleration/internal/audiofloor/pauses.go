@@ -175,8 +175,9 @@ func (t *Transcriber) newUtteranceLocked() {
 func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	defer t.running.Done()
 	turn := asker.Moment(c.participant)
-	// The checks in a row a point asks for are counted by participant, from each pause's first.
-	turn.Participant = c.participant.ID
+	// The checks in a row a point asks for are counted by participant, by the ID that is
+	// theirs alone, from each pause's first.
+	turn.ParticipantID = c.participant.ID
 	turn.Audio, turn.Paused, turn.FirstPause, turn.Waited = c.audio, c.paused, c.firstPause, !c.first
 	ctx, cancel := context.WithTimeout(t.ctx, harness.HearDeadline(turn))
 	defer cancel()

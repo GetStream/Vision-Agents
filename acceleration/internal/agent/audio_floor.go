@@ -195,11 +195,14 @@ func (v *audioFloor) forget(participant string) {
 }
 
 // listen gives turn what the model hears: the participant's last 16 s, and the customer's
-// tools, and finds the ruling a pause check made on its words, if one did.
+// tools, and finds the ruling a pause check made on its words, if one did. The turn names
+// the participant by ID, which the model's checks of them are counted by: Participant is
+// how the flow controller's prompt calls them, and two callers may be called alike.
 func (v *audioFloor) listen(turn *harness.FlowTurn, participant string, tools []harness.Tool) {
 	if v == nil {
 		return
 	}
+	turn.ParticipantID = participant
 	turn.Tools = customerTools(tools)
 	v.findRuled(*turn, participant)
 	if stream := v.stream(participant); stream != nil {

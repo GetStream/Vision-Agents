@@ -106,11 +106,13 @@ func TestATurnHearsItsParticipant(t *testing.T) {
 	other := frame(3)
 	other.Participant.ID = "q"
 	v.heard(other)
-	turn := harness.FlowTurn{ID: "t"}
+	turn := harness.FlowTurn{ID: "t", Participant: "Alex"}
 	v.listen(&turn, "p", []harness.Tool{{Name: "book_crossing"}, {Name: toolEndCall}})
 	require.Equal(t, 40*time.Millisecond, turn.Audio.Duration)
 	require.Equal(t, append(frame(1).Audio.Bytes(), frame(2).Audio.Bytes()...), turn.Audio.Data)
 	require.Len(t, turn.Tools, 1)
+	require.Equal(t, "p", turn.ParticipantID, "counted by ID, however the prompt calls them")
+	require.Equal(t, "Alex", turn.Participant)
 }
 
 // A server that never answers costs the caller nothing in shadow mode: asking returns at
