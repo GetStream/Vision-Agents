@@ -2,6 +2,10 @@
 
 ## Features
 
+### The router counts its sessions and how they end
+
+`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed}`, each session end once: its stored end reason, or `closed`, `shutdown`, `create_failed`, `agent_failed` or `model_failed`; `failed` is `true` for `start`, `create_failed`, `agent_failed` and `model_failed` (AI-2779, #1782).
+
 ### Vendor rate limits per key: refusals and headroom
 
 `router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #1781).
