@@ -798,6 +798,29 @@ func (s *EpisodeReadingSuite) TestACallAfterAnSMSThreadStartsWithTheSMSCard() {
 	s.Equal([]any{map[string]any{"from": "person", "display_name": "sms-author", "text": "is the clinic open on Sunday?"}}, handed[0]["lines"])
 }
 
+// record writes the call's card as on does, and the session starts with none of the person's
+// cards though they have one (AI-2856). Catches record read as on, a session handed the SMS
+// card, or as off, a call with no card.
+func (s *EpisodeReadingSuite) TestACallUnderRecordWritesItsCardAndReadsNone() {
+	s.at(-30)
+	s.smsThread("+15550100100", "sms-author", "is the clinic open on Sunday?")
+	s.at(-20)
+	call := "call-" + uuid.NewString()
+	s.chat.PutCall("agent", call, "sip-+15550100100")
+	created, err := s.manager.Create(s.ctx, Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena", EpisodeCardsRecord: true, CallID: call,
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency", Instructions: "be brief",
+	})
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _, _ = s.manager.Close(created.ID(), OwnerOf(created.Spec())) })
+	_, err = created.Respond(s.ctx, "hello", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.Nil(s.handed(s.replyTo("hello")), "no card read")
+	db := s.store
+	s.Require().Eventually(func() bool { return len(callEpisodesIn(db, created.ID())) == 1 }, settleFor, 10*time.Millisecond)
+}
+
 // Rule 2: with episode_cards off a text session is handed exactly what it was before the
 // cards existed, though the person has cards, and Stream is asked nothing of them.
 func (s *EpisodeReadingSuite) TestWithTheCardsOffATextSessionIsAsBefore() {
