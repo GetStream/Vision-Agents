@@ -57,7 +57,7 @@ func TestAudioFloorContract(t *testing.T) {
 	t.Run("C5 no, Porto over the agent: answered at the point, no second wait", func(t *testing.T) { k.oneWait(t, "noporto") })
 	t.Run("C6 no check-in while the caller counts slowly, interims off", k.noCheckInMidTurn)
 	t.Run("C6 a member ID dictated with pauses is one turn", k.dictation)
-	t.Run("C7 one final, one answer, at once, ending at the first check", k.oneFinal)
+	t.Run("C7 a turn ended at the first check is answered as its final arrives", k.answeredAtOnce)
 }
 
 // shortenedWithin is how much of the agent's speech a shortening lets finish (README, "The
@@ -368,9 +368,9 @@ func (k *contract) dictation(t *testing.T) {
 }
 
 // C7. A short question, under bars that end it at the first check ([0 ms: 0.5, 500 ms: 0.3],
-// as a live call chose), then silence: one final, one answer, one reply heard, and the answer
-// decided as the final arrives.
-func (k *contract) oneFinal(t *testing.T) {
+// as a live call chose), then silence: the turn is answered as its final arrives, with no wait
+// the end-of-turn policy did not ask for, and once.
+func (k *contract) answeredAtOnce(t *testing.T) {
 	eager := audiofloor.EndOfTurn{Bars: []audiofloor.PolicyBar{{FromMs: 0, Bar: 0.5}, {FromMs: 500, Bar: 0.3}}}
 	c := k.startWith(t, callSetup{mode: audiofloor.Act, instructions: replayInstructions, languages: []string{"en"}, endOfTurn: &eager})
 	c.edge.pause(time.Second)

@@ -38,8 +38,9 @@ check fails and the failure is the model's, reported as such, not worked around 
   another language: the reply plays whole, nothing is shortened or stopped, and nothing is
   answered afterwards. [1, S7, C1]
 - **Stopped, then quiet.** "Stop", "wait", "hold on": the agent stops within 800 ms of the
-  caller's first word and says nothing more. A stop ruled while the caller is still talking
-  is not a turn (its disposition is `wait`): the words it was ruled on are spent on it. [C2]
+  caller's first word, none of what it was saying is heard after, and it says nothing more.
+  A stop ruled while the caller is still talking is not a turn (its disposition is `wait`):
+  the words it was ruled on are spent on it. [C2]
 - **Stopped, then answered.** A correction or a new request ("no, Porto", "and in Lisbon?",
   "stop, what about Porto?" in one breath, or "stop" and then a question): the agent stops
   within 800 ms of the first word, and what the caller says after the words the stop was
@@ -51,20 +52,15 @@ check fails and the failure is the model's, reported as such, not worked around 
   that let at most 250 ms of the audio playing finish, as its voice had no word timing; the
   router's voices have none either. A line the agent says of its own accord, a greeting, a
   check-in or an update, answers no request, so `shorten` over it stops it. [S4b, S8, C4]
-- **One voice.** The agent never says two things at once, and a stop stops everything it is
-  saying, what is queued at the edge included. [C2, C8]
 
 **After an interruption** the floor is the caller's: their turn ends once, by the agent's
 `end_of_turn` point at its check times from the voice's last frame, and is answered on that
-check's ruling, with no second wait. [S2, C5]
+check's ruling, with no second wait. [S2, C5, C7]
 
 **While the agent listens**, pauses inside a sentence, slow counts and dictation are waited
 through as the agent's `end_of_turn` point was measured to (the table below), and a finished
 turn is answered at that point. The agent says nothing of its own accord, such as a check-in,
 while the model is waiting on the caller to finish. [4, 5, S1a, S6, C6]
-
-**One utterance, one final, one answer.** Each utterance the caller says has one final, and
-each final is answered at most once. [2, C7]
 
 **Waits.** Every wait from the caller's voice to the reply is the policy's (first check,
 interval, bars, cap), the server's time to rule and write the words, or the reply model's. A
@@ -199,13 +195,14 @@ last frame, and a pause costs one request:
   on what a decision hears. The agent is registered with the session's languages, for the
   words.
 - **One final.** A check that ends the turn hands its ruling to the agent, and its words
-  go out as the utterance's one final, to the cadence as any final does (60 ms). The flow
-  controller's Hearer rules on those words as the check did, with no request of its own, and
-  the reply is asked for at once. Over the agent a pause check has no bar: the model's
-  ruling ends the turn, `stop`, `shorten`, `continue` or `ignore`, and words heard over a
-  reply reach the flow controller as settled words. A turn a check ended is over whatever
-  comes next: speech before its words are written, the caller going on or somebody else in
-  the room, is the next utterance's.
+  go out as the utterance's one final, which the conversation takes at once: the policy has
+  had its wait, and the words never change after it. The flow controller's Hearer rules on
+  those words as the check did, with no request of its own, and the reply is asked for at
+  once. Over the agent a pause check has no bar: the model's ruling ends the turn, `stop`,
+  `shorten`, `continue` or `ignore`, and words heard over a reply reach the flow controller
+  as settled words; that ruling stands if the agent has gone quiet before the turn is put. A
+  turn a check ended is over whatever comes next: speech before its words are written, the
+  caller going on or somebody else in the room, is the next utterance's.
 - **Over the agent, without a pause.** While the agent speaks, a caller who has been voiced
   for 350 ms in the utterance is asked about without waiting for a pause, the decision and
   the words of the utterance so far (up to 16 s) in one request, then every `interval_ms`
@@ -217,9 +214,13 @@ last frame, and a pause costs one request:
   (`OverlapDecided`, then the interruption): the agent drops its own echoed voice from the
   check's words first, as from any chorus-asr transcript, and an echo alone or a murmur
   stops nothing. The checks go on every `interval_ms` for as long as the caller's line is
-  voiced over the agent, its own echo included (Limits). The utterance goes on, its words
-  shown as interims, and ends at a pause with the floor free, where the reply to it is asked
-  for. 350 ms is most of an "uh-huh", so the model rules on a
+  voiced over the agent, its own echo included (Limits). A check that stops the agent ends
+  the utterance on the words it was ruled on: a stop ruled while the caller talks on is no
+  turn, so they go out at once as the utterance's final and are heard, not answered, and
+  what the caller says after them is the next utterance, ended at its pauses with the floor
+  free. A check that answers once its utterance has ended, a pause check having ruled on it,
+  is not acted on. Shortened, the utterance goes on, its words shown as interims, and ends at
+  a pause, where the item is answered. 350 ms is most of an "uh-huh", so the model rules on a
   murmur, which it was trained to let the agent talk through, rather than on the first
   syllable of anything, and a word that stops the agent, "no" or "stop", is said inside it.
 - **Live words, acted on at the end.** While the caller talks the transcriber shows the
