@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
+import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -20,6 +21,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
@@ -77,6 +79,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
     val activity by viewModel.activity.collectAsStateWithLifecycle()
     val answering by viewModel.isAnswering.collectAsStateWithLifecycle()
     val failure by viewModel.failure.collectAsStateWithLifecycle()
+    val unanswered by viewModel.unanswered.collectAsStateWithLifecycle()
     val hasOlder by viewModel.hasOlderMessages.collectAsStateWithLifecycle()
     val chat by viewModel.chat.collectAsStateWithLifecycle()
     val approver = chat?.let { rememberApprover(it) }
@@ -107,6 +110,7 @@ fun ChatScreen(viewModel: ChatViewModel, modifier: Modifier = Modifier) {
                             )
                         })
                     }
+                    unanswered?.let { Unanswered(it, onRetry = viewModel::retry) }
                 },
                 emptyContent = { Welcome() },
                 contentPadding = PaddingValues(bottom = barHeight),
@@ -187,6 +191,24 @@ private fun rememberApprover(chat: AgentChat): AIToolApprover {
         AIToolApprover(Assistant.user.id, AIClientIdentity.installId(context), scope, authorizer) { call, allowed ->
             chat.session.decide(call.id, allowed)
         }
+    }
+}
+
+/** Why the latest question went unanswered, under it, and the way to ask it again. */
+@Composable
+private fun Unanswered(reason: String, onRetry: () -> Unit, modifier: Modifier = Modifier) {
+    Row(
+        modifier = modifier.fillMaxWidth().padding(horizontal = 16.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            reason,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.error,
+            modifier = Modifier.weight(1f, fill = false),
+        )
+        TextButton(onClick = onRetry) { Text("Try again") }
     }
 }
 
