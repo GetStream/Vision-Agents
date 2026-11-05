@@ -2288,7 +2288,8 @@ func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfTheOtherMCPConnector
 // 400 names exactly these. Cal.com, Calendly, GitHub and Gong have goldens; their bindings grant the
 // tools left out for a reason other than a write: a search of public docs or an API catalog, a
 // call of any operation, a routing form response, a booking link anyone may open, a workflow
-// run. A tool added to any list drops out of the message and fails the test.
+// run, a question the model sends to Gong's AI. A tool added to any list drops out of the message
+// and fails the test.
 func (s *ConfigsSuite) TestNessyBesideAToolTheOtherMCPConnectorsLeaveOutNamesExactlyThoseTools() {
 	s.useInternalApp()
 	calcom := []string{"search_docs", "find_api_operation", "call_api_operation",
