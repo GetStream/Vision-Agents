@@ -14,7 +14,9 @@
 //	                          JSON, then an "audio" part, Ogg Opus or 16 kHz mono PCM. The
 //	                          answer is every option's probability, p_eot = 1 - p(wait)
 //	                          with the floor free, and the ruling to act on once the turn
-//	                          has ended
+//	                          has ended. With &transcript=true it is two JSON lines: the
+//	                          decision, about the audio's last 16 s, as soon as it is made,
+//	                          then the words of all of it
 //	POST /v1/transcribe       audio, and ?languages= the callers speak: what was said,
 //	                          empty when nothing was or the server heard noise
 //
@@ -68,6 +70,9 @@ const (
 	maxAgents = 1024
 	// responseLimit bounds an answer, a small JSON line.
 	responseLimit = 1 << 20
+	// wordsTimeout bounds the words a decision writes as well, which on a CPU take seconds,
+	// with as long again as the audio lasts.
+	wordsTimeout = 8 * time.Second
 )
 
 var (
@@ -182,10 +187,13 @@ func (p Policy) valid() bool {
 func (p Policy) Interval() time.Duration { return time.Duration(p.IntervalMs) * time.Millisecond }
 func (p Policy) Cap() time.Duration      { return time.Duration(p.CapMs) * time.Millisecond }
 
-// Agent is what an agent was told and what it can do.
+// Agent is what an agent was told and what it can do, and the languages its callers speak,
+// BCP 47 tags, for the words a decision writes: a fragment in a script none of them is
+// written in is noise. None is any language.
 type Agent struct {
 	Instructions string
 	Tools        []llm.Tool
+	Languages    []string
 }
 
 // Line is one line of the conversation so far.
@@ -282,29 +290,57 @@ func (c *Client) Policy(ctx context.Context) (Policy, error) {
 // Decide asks about audio under the moment turn. The agent is registered first if it is
 // new, and again if the server has forgotten it.
 func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harness.Audio) (Answer, error) {
+	answer, _, err := c.decide(ctx, agent, turn, audio, false)
+	return answer, err
+}
+
+// Words is what a decision's pass wrote of its audio: all of it, as POST /v1/transcribe
+// would, empty when nothing was said or the server heard noise.
+type Words struct {
+	Text string
+	Ms   float64
+	Err  error
+}
+
+// DecideWords is Decide that also has the server write the words of all of audio in the
+// same pass, so that a pause costs one request. The answer is back as soon as the decision
+// is, within ctx. The words follow on the channel, once and within wordsTimeout and the
+// audio's length, whatever has become of ctx by then.
+func (c *Client) DecideWords(ctx context.Context, agent Agent, turn Turn, audio harness.Audio) (Answer, <-chan Words, error) {
+	return c.decide(ctx, agent, turn, audio, true)
+}
+
+func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harness.Audio, words bool) (Answer, <-chan Words, error) {
 	if len(audio.Data) == 0 {
-		return Answer{}, stack.Wrap(errors.New("audiofloor: no audio heard yet"))
+		return Answer{}, nil, stack.Wrap(errors.New("audiofloor: no audio heard yet"))
 	}
 	body, contentType, err := decisionBody(turn, audio)
 	if err != nil {
-		return Answer{}, err
+		return Answer{}, nil, err
 	}
 	key, spec, err := agentKey(agent)
 	if err != nil {
-		return Answer{}, err
+		return Answer{}, nil, err
 	}
 	for attempt := 0; ; attempt++ {
 		id, err := c.register(ctx, key, spec)
 		if err != nil {
-			return Answer{}, err
+			return Answer{}, nil, err
 		}
-		req, err := http.NewRequestWithContext(ctx, http.MethodPost, c.url+"/v1/decide?agent="+id, bytes.NewReader(body))
-		if err != nil {
-			return Answer{}, stack.Wrap(err)
-		}
-		req.Header.Set("Content-Type", contentType)
+		target := c.url + "/v1/decide?agent=" + id
 		var answer Answer
-		status, err := c.do(req, &answer)
+		var said <-chan Words
+		var status int
+		if words {
+			answer, said, status, err = c.decideWords(ctx, target+"&transcript=true", body, contentType, wordsTimeout+audio.Duration)
+		} else {
+			var req *http.Request
+			if req, err = http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body)); err != nil {
+				return Answer{}, nil, stack.Wrap(err)
+			}
+			req.Header.Set("Content-Type", contentType)
+			status, err = c.do(req, &answer)
+		}
 		if status == http.StatusNotFound && attempt == 0 {
 			// A restarted server knows no agent, and may serve another model.
 			c.mu.Lock()
@@ -316,8 +352,74 @@ func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harne
 		if err == nil && answer.Ruling == nil {
 			err = stack.Wrap(errors.New("audiofloor: decide: the answer has no ruling"))
 		}
-		return answer, err
+		return answer, said, err
 	}
+}
+
+// decideWords asks for a decision and its words, and reads the words on after the decision
+// has come back: the request outlives ctx, which only bounds the decision.
+func (c *Client) decideWords(ctx context.Context, target string, body []byte, contentType string, timeout time.Duration) (Answer, <-chan Words, int, error) {
+	asking, cancel := context.WithTimeout(context.WithoutCancel(ctx), timeout)
+	stop := context.AfterFunc(ctx, cancel)
+	req, err := http.NewRequestWithContext(asking, http.MethodPost, target, bytes.NewReader(body))
+	if err != nil {
+		cancel()
+		return Answer{}, nil, 0, stack.Wrap(err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	given := func(err error) error {
+		// The decision's deadline, rather than the request's own, is what ran out.
+		if ctx.Err() != nil {
+			return stack.Wrap(fmt.Errorf("audiofloor: decide: %w", ctx.Err()))
+		}
+		return stack.Wrap(err)
+	}
+	resp, err := c.http.Do(req)
+	if err != nil {
+		stop()
+		cancel()
+		return Answer{}, nil, 0, given(err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		stop()
+		defer cancel()
+		defer resp.Body.Close()
+		return Answer{}, nil, resp.StatusCode, stack.Wrap(statusError(req, resp))
+	}
+	lines := json.NewDecoder(io.LimitReader(resp.Body, responseLimit))
+	var answer Answer
+	if err := lines.Decode(&answer); err != nil {
+		stop()
+		cancel()
+		resp.Body.Close()
+		return Answer{}, nil, resp.StatusCode, given(fmt.Errorf("audiofloor: %s: %w", req.URL.Path, err))
+	}
+	if !stop() {
+		cancel()
+		resp.Body.Close()
+		return Answer{}, nil, resp.StatusCode, given(ctx.Err())
+	}
+	said := make(chan Words, 1)
+	go func() {
+		defer cancel()
+		defer resp.Body.Close()
+		var line struct {
+			Transcript *struct {
+				Text string `json:"text"`
+			} `json:"transcript"`
+			Error string  `json:"transcript_error"`
+			Ms    float64 `json:"transcript_ms"`
+		}
+		switch err := lines.Decode(&line); {
+		case err != nil:
+			said <- Words{Err: stack.Wrap(fmt.Errorf("audiofloor: %s: the words: %w", req.URL.Path, err))}
+		case line.Transcript == nil:
+			said <- Words{Err: stack.Wrap(fmt.Errorf("audiofloor: %s: the words: %s", req.URL.Path, line.Error))}
+		default:
+			said <- Words{Text: line.Transcript.Text, Ms: line.Ms}
+		}
+	}()
+	return answer, said, resp.StatusCode, nil
 }
 
 // Transcribe is what was said in audio, by callers who speak languages, BCP 47 tags, or any
@@ -359,10 +461,11 @@ type toolJSON struct {
 type agentJSON struct {
 	Instructions string     `json:"instructions"`
 	Tools        []toolJSON `json:"tools,omitempty"`
+	Languages    []string   `json:"languages,omitempty"`
 }
 
 func agentKey(agent Agent) ([sha256.Size]byte, []byte, error) {
-	spec := agentJSON{Instructions: agent.Instructions}
+	spec := agentJSON{Instructions: agent.Instructions, Languages: agent.Languages}
 	for _, tool := range agent.Tools {
 		spec.Tools = append(spec.Tools, toolJSON{tool.Name, tool.Description, tool.Parameters})
 	}
@@ -413,22 +516,28 @@ func (c *Client) do(req *http.Request, into any) (int, error) {
 		return 0, stack.Wrap(err)
 	}
 	defer resp.Body.Close()
-	answer := json.NewDecoder(io.LimitReader(resp.Body, responseLimit))
 	if resp.StatusCode != http.StatusOK {
-		var failed struct {
-			Error string `json:"error"`
-		}
-		_ = answer.Decode(&failed)
-		var err error = &StatusError{Method: req.Method, Path: req.URL.Path, Code: resp.StatusCode, Status: resp.Status, Message: failed.Error}
-		if resp.StatusCode == http.StatusNotImplemented {
-			err = fmt.Errorf("%w: %w", ErrUnsupported, err)
-		}
-		return resp.StatusCode, stack.Wrap(err)
+		return resp.StatusCode, stack.Wrap(statusError(req, resp))
 	}
+	answer := json.NewDecoder(io.LimitReader(resp.Body, responseLimit))
 	if err := answer.Decode(into); err != nil {
 		return resp.StatusCode, stack.Wrap(fmt.Errorf("audiofloor: %s: %w", req.URL.Path, err))
 	}
 	return resp.StatusCode, nil
+}
+
+// statusError is the server's answer to req, which isn't 200: a StatusError, and
+// ErrUnsupported for a server with no policy.
+func statusError(req *http.Request, resp *http.Response) error {
+	var failed struct {
+		Error string `json:"error"`
+	}
+	_ = json.NewDecoder(io.LimitReader(resp.Body, responseLimit)).Decode(&failed)
+	var err error = &StatusError{Method: req.Method, Path: req.URL.Path, Code: resp.StatusCode, Status: resp.Status, Message: failed.Error}
+	if resp.StatusCode == http.StatusNotImplemented {
+		err = fmt.Errorf("%w: %w", ErrUnsupported, err)
+	}
+	return err
 }
 
 // decisionBody is a decision's multipart body: the turn, then the audio. What a prompt

@@ -3,6 +3,8 @@ package agent
 import (
 	"context"
 	"log/slog"
+	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -13,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // audioFloorPending bounds the turns still waiting on their other side's answer.
@@ -48,7 +51,22 @@ type audioFloor struct {
 	streams map[string]*audiofloor.Stream
 	// turns holds what each side said about a turn until the other has.
 	turns map[string]*audioFloorTurn
+	// checked are the rulings the transcriber's pause checks made, acting, each until the
+	// flow controller asks about its words, and settled the candidates they were found for.
+	checked []ruledWords
+	settled map[string]harness.Decided
 }
+
+// ruledWords is a ruling a pause check made, on a participant's words.
+type ruledWords struct {
+	participant string
+	ruled       audiofloor.Ruled
+	at          time.Time
+}
+
+// ruledFor is how long a pause check's ruling waits for the flow controller to ask about its
+// words, which it does as soon as they settle: a final is settled in tens of milliseconds.
+const ruledFor = 5 * time.Second
 
 // audioFloorTurn is what each side said about a turn, and when the model was asked.
 type audioFloorTurn struct {
@@ -73,15 +91,65 @@ func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, logger *slog
 		cancel:  cancel,
 		streams: map[string]*audiofloor.Stream{},
 		turns:   map[string]*audioFloorTurn{},
+		settled: map[string]harness.Decided{},
 	}
 }
 
-// acting is the flow controller's Hearer, or nil when the model only shadows it.
+// acting is the flow controller's Hearer, or nil when the model only shadows it. It rules on
+// the words a pause check already ruled on as that check did, and asks about any others.
 func (v *audioFloor) acting() harness.Hearer {
 	if v == nil || v.shadow {
 		return nil
 	}
-	return v.hearer
+	return ruledFirst{v}
+}
+
+// ruledFirst is the Hearer of an agent that acts on the model.
+type ruledFirst struct{ v *audioFloor }
+
+func (r ruledFirst) Hear(ctx context.Context, turn harness.FlowTurn) (harness.Decided, error) {
+	r.v.mu.Lock()
+	ruled, ok := r.v.settled[turn.ID]
+	delete(r.v.settled, turn.ID)
+	r.v.mu.Unlock()
+	if ok {
+		return ruled, nil
+	}
+	return r.v.hearer.Hear(ctx, turn)
+}
+
+// asksOnPauses says the transcriber is to ask about each pause for the agent: acting, the
+// model decides when the turn ends, from the audio, and writes its words in the same pass.
+func (v *audioFloor) asksOnPauses() bool { return v != nil && !v.shadow }
+
+// keep holds a pause check's ruling on participant's words for the flow controller.
+func (v *audioFloor) keep(participant string, ruled audiofloor.Ruled) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	v.checked = slices.DeleteFunc(v.checked, func(r ruledWords) bool { return time.Since(r.at) > ruledFor })
+	v.checked = append(v.checked, ruledWords{participant: participant, ruled: ruled, at: time.Now()})
+}
+
+// findRuled finds the pause check's ruling on turn's words, if one made one: the
+// participant's, as the agent was when it was asked, on words the turn's end with.
+func (v *audioFloor) findRuled(turn harness.FlowTurn, participant string) {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	said := strings.ToLower(words(turn.Text))
+	for i, r := range v.checked {
+		if r.participant != participant || r.ruled.Speaking != turn.Speaking || time.Since(r.at) > ruledFor {
+			continue
+		}
+		if heard := strings.ToLower(words(r.ruled.Words)); heard == "" || !strings.HasSuffix(said, heard) {
+			continue
+		}
+		v.checked = slices.Delete(v.checked, i, i+1)
+		if len(v.settled) >= audioFloorPending {
+			clear(v.settled)
+		}
+		v.settled[turn.ID] = r.ruled.Ruling
+		return
+	}
 }
 
 // heard keeps a frame of a participant's audio. It runs once per frame.
@@ -113,15 +181,51 @@ func (v *audioFloor) stream(participant string) *audiofloor.Stream {
 }
 
 // listen gives turn what the model hears: the participant's last 16 s, and the customer's
-// tools.
+// tools, and finds the ruling a pause check made on its words, if one did.
 func (v *audioFloor) listen(turn *harness.FlowTurn, participant string, tools []harness.Tool) {
 	if v == nil {
 		return
 	}
+	turn.Tools = customerTools(tools)
+	v.findRuled(*turn, participant)
 	if stream := v.stream(participant); stream != nil {
 		turn.Audio = stream.Last(audiofloor.Window)
 	}
-	turn.Tools = customerTools(tools)
+}
+
+// pauseAsker is what an acting agent tells its chorus-asr transcriber about the call, for it
+// to ask about each of the caller's pauses (audiofloor.Asker).
+type pauseAsker struct{ a *Agent }
+
+// Moment is the call as ask would put a participant's words to the flow controller now.
+func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
+	a := p.a
+	a.mu.Lock()
+	history := llm.OmitImages(harness.WithoutNotes(a.history))
+	instructions := a.prompted()
+	if line := severalPeople(len(a.speakers), a.writers); line != "" {
+		instructions += "\n\n" + line
+	}
+	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
+	reply := a.saying
+	if reply == "" {
+		reply = lastAssistantSaid(history)
+	}
+	tools := a.options.Tools.Tools
+	a.mu.Unlock()
+	return harness.FlowTurn{
+		Instructions: instructions,
+		History:      history,
+		Speaking:     speaking || a.speechPending(),
+		Reply:        reply,
+		Tools:        customerTools(tools),
+	}
+}
+
+// Ruled keeps a pause check's ruling for the flow controller, which asks about its words
+// once the transcriber has sent them.
+func (p pauseAsker) Ruled(participant stt.Participant, ruled audiofloor.Ruled) {
+	p.a.audioFloor.keep(participant.ID, ruled)
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's
@@ -202,13 +306,18 @@ func (v *audioFloor) settle(candidate string, say func(*audioFloorTurn)) {
 	if answer.PEOT != nil {
 		pEnd = *answer.PEOT
 	}
+	var tool string
+	var cannot bool
+	if answer.Ruling != nil {
+		tool, cannot = answer.Ruling.Tool, answer.Ruling.Cannot
+	}
 	v.logger.Debug("the chorus-asr model beside the flow controller", "candidate", candidate,
 		"controller_disposition", controller.Disposition, "controller_floor", controller.Floor,
 		"model_disposition", model.Disposition, "model_floor", model.Floor,
 		"model_answer", answer.Answer, "model_p", answer.AnswerProbability, "p_end", pEnd,
 		"preset", turn.model.Preset, "bar", turn.model.Bar, "ended", turn.model.Ended, "paused_ms", turn.paused.Milliseconds(),
 		"first_check", turn.firstCheck, "first_pause", turn.firstPause,
-		"tool", model.Tool, "cannot", model.Cannot, "took_ms", turn.took.Milliseconds())
+		"tool", tool, "cannot", cannot, "took_ms", turn.took.Milliseconds())
 }
 
 // close stops a question still out and waits for it.

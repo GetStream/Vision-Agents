@@ -7,6 +7,7 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -47,7 +48,9 @@ const (
 	// maxUtterance bounds one that never pauses, and with it what a session holds: at it,
 	// the utterance ends as it is.
 	maxUtterance = 60 * time.Second
-	// transcribeTimeout bounds one request for words, which on a CPU take seconds.
+	// transcribeTimeout bounds one request for words, which on a CPU take seconds, with
+	// as long again as the audio lasts: the longer the utterance, the longer its words take,
+	// though never as long as it took to say.
 	transcribeTimeout = 8 * time.Second
 	// queued is how many requests may wait for a slow server before the next is dropped.
 	queued      = 8
@@ -105,6 +108,14 @@ type Transcriber struct {
 	// retrying has its audio asked for again at its end, or once more speech has come.
 	missed   atomic.Int64
 	retrying bool
+
+	// With an agent asking (AskOnPauses), its checks of the pause going on, each run on a
+	// goroutine of its own, and how many of the utterance's pauses were asked about.
+	mu      sync.Mutex
+	asker   Asker
+	pause   pause
+	pauses  int
+	running sync.WaitGroup
 }
 
 // request is an utterance's words to write, or with no audio its end on the words last
@@ -173,8 +184,14 @@ func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant)
 // step reads one frame, speech or not, and asks for the utterance's words: at a pause after
 // speech that came since they were last asked for, and once more at its end.
 func (t *Transcriber) step(speech bool, participant stt.Participant) {
+	if at, ok := t.endedOnCheck(); ok {
+		// A pause check ended the utterance on its words: the next begins after its audio.
+		t.utterance++
+		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet = at, at, false, false, false, 0
+	}
 	if speech {
 		t.voiced, t.fresh, t.retrying, t.quiet = true, true, false, 0
+		t.resumed()
 	} else {
 		t.quiet += frame
 	}
@@ -188,14 +205,22 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	switch {
 	case !t.voiced:
 		t.start = max(heard-int64(preroll/frame), t.ended)
+	case t.checksPause(participant, heard):
+		// An agent's checks of the pause end the utterance, with its words.
 	case t.quiet >= endAfter || heard-t.start >= int64(maxUtterance/frame):
 		end := request{participant: participant, utterance: t.utterance + 1, final: true}
 		if t.fresh {
 			end.audio = utterance()
+		} else {
+			// No more to write, but the final is of all of it.
+			end.audio.Duration = time.Duration(heard-t.start) * frame
 		}
 		t.ask(end)
 		t.utterance++
 		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet = heard, heard, false, false, false, 0
+		t.mu.Lock()
+		t.newUtteranceLocked()
+		t.mu.Unlock()
 	case t.quiet >= writeAfter && t.fresh && !t.retrying:
 		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
 		t.fresh = false
@@ -231,8 +256,8 @@ func (t *Transcriber) transcribe() {
 		}
 		start := time.Now()
 		var words string
-		if r.audio.Data != nil {
-			ctx, cancel := context.WithTimeout(t.ctx, transcribeTimeout)
+		if len(r.audio.Data) > 0 {
+			ctx, cancel := context.WithTimeout(t.ctx, transcribeTimeout+r.audio.Duration)
 			said, err := t.client.Transcribe(ctx, r.audio, t.languages)
 			cancel()
 			if t.ctx.Err() != nil {
@@ -287,6 +312,7 @@ func (t *Transcriber) Close() error {
 	if t.cancel != nil {
 		t.cancel()
 		<-t.done
+		t.running.Wait()
 	}
 	t.emitter.Send(stt.Disconnected{Provider: ProviderName, Model: t.model, Clean: true, At: time.Now()})
 	t.emitter.Close()

@@ -51,11 +51,17 @@ type fakeServer struct {
 	refuse int
 	fail   bool
 	info   string
-	// failing is how many transcription requests to answer failWith, before answering.
-	failing  int
-	failWith int
-	decision string
-	words    string
+	// failing is how many transcription requests to answer failWith, before answering, and
+	// failDecide has every decision fail.
+	failing    int
+	failWith   int
+	failDecide bool
+	// withWords counts the decisions asked for their words too, and agents the agents each
+	// decision was about.
+	withWords int
+	agents    []string
+	decision  string
+	words     string
 }
 
 // requests is how many decisions the server was asked for.
@@ -101,7 +107,7 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.languages = append(f.languages, r.URL.Query().Get("languages"))
 		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q}}`+"\n", f.words)
 	case "/v1/decide":
-		if f.fail {
+		if f.fail || f.failDecide {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -127,7 +133,12 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.types = append(f.types, part.Header.Get("Content-Type"))
 		}
 		f.turns = append(f.turns, turn)
+		f.agents = append(f.agents, r.URL.Query().Get("agent"))
 		_, _ = w.Write([]byte(f.decision + "\n"))
+		if r.URL.Query().Get("transcript") == "true" {
+			f.withWords++
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q},"transcript_ms":3}`+"\n", f.words)
+		}
 	}
 }
 
@@ -319,7 +330,8 @@ func (s *HearerSuite) TestATurnHasEndedWhenPEndReachesTheBar() {
 	later, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Waited: true, Paused: 1100 * time.Millisecond})
 	s.Require().NoError(err)
 	s.True(later.Ended)
-	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Continue, Tool: "book"}, later.Ruling)
+	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Continue}, later.Ruling)
+	s.Equal("book", later.Answer.Ruling.Tool, "the tool wanted is the answer's, for the log")
 }
 
 func (s *HearerSuite) TestATurnHasEndedAtTheCapWhateverTheModelSays() {
@@ -348,7 +360,10 @@ func (s *HearerSuite) TestATurnIsSaidInTheModelsTerms() {
 }
 
 // TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet.
-type TranscriberSuite struct {
+type TranscriberSuite struct{ transcribing }
+
+// transcribing is a transcriber of a fake server, and the frames it is sent.
+type transcribing struct {
 	serverSuite
 	transcriber *Transcriber
 	// phase and at keep the voice going from one frame to the next, and noise the line's
@@ -363,7 +378,7 @@ func TestTranscriberSuite(t *testing.T) {
 	suite.Run(t, new(TranscriberSuite))
 }
 
-func (s *TranscriberSuite) SetupTest() {
+func (s *transcribing) SetupTest() {
 	s.serverSuite.SetupTest()
 	s.server.words = "Two tickets to Bilbao, please."
 	s.client.format = Opus
@@ -373,7 +388,7 @@ func (s *TranscriberSuite) SetupTest() {
 
 // open starts the transcriber, and sends the speech detector's warm-up, as a call's first
 // moments.
-func (s *TranscriberSuite) open() {
+func (s *transcribing) open() {
 	s.transcriber = NewTranscriber(s.client, "", []string{"en", "pt-BR"}, slog.New(slog.DiscardHandler))
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
@@ -381,12 +396,12 @@ func (s *TranscriberSuite) open() {
 	s.say(300, false)
 }
 
-// pause is long enough to have the words written: the detector's window ends 10 ms before
+// pauseMs is long enough to have the words written: the detector's window ends 10 ms before
 // the newest sample, so a pause is heard a frame late.
-const pause = int((writeAfter + 2*frame) / time.Millisecond)
+const pauseMs = int((writeAfter + 2*frame) / time.Millisecond)
 
 // requests are the server's transcription requests, by how much audio each carried.
-func (s *TranscriberSuite) requests() []int {
+func (s *transcribing) requests() []int {
 	s.server.mu.Lock()
 	defer s.server.mu.Unlock()
 	var out []int
@@ -397,7 +412,7 @@ func (s *TranscriberSuite) requests() []int {
 }
 
 // say sends ms of 20 ms frames of the line's noise, voiced or quiet.
-func (s *TranscriberSuite) say(ms int, voiced bool) {
+func (s *transcribing) say(ms int, voiced bool) {
 	for range ms / 20 {
 		frame := make([]int16, frameSamples)
 		for i := range frame {
@@ -421,12 +436,12 @@ func (s *TranscriberSuite) say(ms int, voiced bool) {
 	}
 }
 
-func (s *TranscriberSuite) send(frame []int16) {
+func (s *transcribing) send(frame []int16) {
 	s.Require().NoError(s.transcriber.ProcessAudio(audio.PcmData{Samples: frame, SampleRate: SampleRate, Channels: 1}, stt.Participant{ID: "p"}))
 }
 
 // next is the next event of type E.
-func next[E stt.Event](s *TranscriberSuite) E {
+func next[E stt.Event](s *transcribing) E {
 	s.T().Helper()
 	for {
 		select {
@@ -441,7 +456,7 @@ func next[E stt.Event](s *TranscriberSuite) E {
 }
 
 // none says no transcript comes.
-func (s *TranscriberSuite) none() {
+func (s *transcribing) none() {
 	s.T().Helper()
 	for {
 		select {
@@ -462,8 +477,8 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 	s.say(1000, true)
 	s.say(180, false)
 	s.Empty(s.requests())
-	s.say(pause-180, false)
-	said := next[stt.Transcript](s)
+	s.say(pauseMs-180, false)
+	said := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeReplacement, said.Mode)
 	s.Equal(int64(1), said.Utterance)
 	s.Equal("Two tickets to Bilbao, please.", said.Text)
@@ -473,13 +488,13 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 	s.Equal("en,pt-BR", s.server.languages[0])
 
 	s.say(500, true)
-	s.say(pause, false)
-	more := next[stt.Transcript](s)
+	s.say(pauseMs, false)
+	more := next[stt.Transcript](&s.transcribing)
 	s.Equal(int64(1), more.Utterance)
 	s.InDelta(said.AudioDurationMs+float64(500+writeAfter.Milliseconds()), more.AudioDurationMs, 60)
 
 	s.say(int(endAfter/time.Millisecond), false)
-	end := next[stt.Transcript](s)
+	end := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal(int64(1), end.Utterance)
 	s.Len(s.requests(), 2, "a final with no speech since the last words asks for none")
@@ -490,8 +505,8 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 func (s *TranscriberSuite) TestSilenceAfterAFinalWritesNothing() {
 	s.say(1000, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	s.Equal(stt.ModeReplacement, next[stt.Transcript](s).Mode)
-	s.Equal(stt.ModeFinal, next[stt.Transcript](s).Mode)
+	s.Equal(stt.ModeReplacement, next[stt.Transcript](&s.transcribing).Mode)
+	s.Equal(stt.ModeFinal, next[stt.Transcript](&s.transcribing).Mode)
 	s.say(15000, false)
 	s.none()
 	s.Len(s.requests(), 1)
@@ -508,8 +523,8 @@ func (s *TranscriberSuite) TestANoisyLineWritesNothingOfItsOwn() {
 	// Over noise as loud as voiceLevel the pause is heard once the detector's score has let
 	// go of the voice, about 200 ms later.
 	s.say(int(endAfter/time.Millisecond)+400, false)
-	s.Equal(stt.ModeReplacement, next[stt.Transcript](s).Mode)
-	s.Equal(stt.ModeFinal, next[stt.Transcript](s).Mode)
+	s.Equal(stt.ModeReplacement, next[stt.Transcript](&s.transcribing).Mode)
+	s.Equal(stt.ModeFinal, next[stt.Transcript](&s.transcribing).Mode)
 	s.say(15000, false)
 	s.none()
 	s.Len(s.requests(), 1)
@@ -520,11 +535,11 @@ func (s *TranscriberSuite) TestANoisyLineWritesNothingOfItsOwn() {
 func (s *TranscriberSuite) TestNoAudioIsWrittenTwice() {
 	s.say(1000, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	next[stt.Transcript](s)
-	s.True(next[stt.Transcript](s).Final())
+	next[stt.Transcript](&s.transcribing)
+	s.True(next[stt.Transcript](&s.transcribing).Final())
 	s.say(600, true)
-	s.say(pause, false)
-	again := next[stt.Transcript](s)
+	s.say(pauseMs, false)
+	again := next[stt.Transcript](&s.transcribing)
 	s.Equal(int64(2), again.Utterance)
 	s.InDelta(float64(100+600+writeAfter.Milliseconds()), again.AudioDurationMs, 40, "the 100 ms since the final, the new speech and its pause")
 	s.Len(s.requests(), 2, "one pass over each utterance")
@@ -535,13 +550,13 @@ func (s *TranscriberSuite) TestNoAudioIsWrittenTwice() {
 func (s *TranscriberSuite) TestSpeechAfterAFinalIsANewUtterance() {
 	s.say(1000, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	next[stt.Transcript](s)
-	first := next[stt.Transcript](s)
+	next[stt.Transcript](&s.transcribing)
+	first := next[stt.Transcript](&s.transcribing)
 	s.True(first.Final())
 	s.say(800, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
 	for _, mode := range []stt.Mode{stt.ModeReplacement, stt.ModeFinal} {
-		said := next[stt.Transcript](s)
+		said := next[stt.Transcript](&s.transcribing)
 		s.Equal(mode, said.Mode)
 		s.Equal(int64(2), said.Utterance)
 	}
@@ -555,8 +570,8 @@ func (s *TranscriberSuite) TestItNeedsNoAgentNorPolicy() {
 	s.server.info = ""
 	s.server.mu.Unlock()
 	s.say(1000, true)
-	s.say(pause, false)
-	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](s).Text)
+	s.say(pauseMs, false)
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
 	s.Empty(s.server.registered)
 	s.Empty(s.server.turns)
 	s.Zero(s.server.infos)
@@ -577,14 +592,14 @@ func (s *TranscriberSuite) TestEmptyWordsAreNothingHeard() {
 // the utterance ends on those.
 func (s *TranscriberSuite) TestAnUtteranceEndsOnItsLastWords() {
 	s.say(1000, true)
-	s.say(pause, false)
-	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](s).Text)
+	s.say(pauseMs, false)
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
 	s.server.mu.Lock()
 	s.server.words = ""
 	s.server.mu.Unlock()
 	s.say(300, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	end := next[stt.Transcript](s)
+	end := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal("Two tickets to Bilbao, please.", end.Text)
 }
@@ -600,9 +615,9 @@ func (s *TranscriberSuite) TestABusyServerCostsARequestNotTheSession() {
 			s.server.failing, s.server.failWith = 1, status
 			s.server.mu.Unlock()
 			s.say(1000, true)
-			s.say(pause, false)
+			s.say(pauseMs, false)
 			s.say(int(endAfter/time.Millisecond), false)
-			end := next[stt.Transcript](s)
+			end := next[stt.Transcript](&s.transcribing)
 			s.Equal(stt.ModeFinal, end.Mode, "no error, and the utterance ends on its words")
 			s.Equal("Two tickets to Bilbao, please.", end.Text)
 			s.Len(s.requests(), 1, "the failed request carried nothing back, and the end asked again")
@@ -617,7 +632,7 @@ func (s *TranscriberSuite) TestAServerThatIsGoneCostsARequestNotTheSession() {
 	failed := testutil.ToFloat64(transcribeFailures.WithLabelValues("connection"))
 	s.client.url = "http://127.0.0.1:1"
 	s.say(1000, true)
-	s.say(pause+100, false)
+	s.say(pauseMs+100, false)
 	s.Eventually(func() bool { return testutil.ToFloat64(transcribeFailures.WithLabelValues("connection")) > failed }, 5*time.Second, 10*time.Millisecond)
 	s.none()
 }
@@ -632,8 +647,8 @@ func (s *TranscriberSuite) TestAMisconfiguredServerIsFatal() {
 			s.server.failing, s.server.failWith = 1, status
 			s.server.mu.Unlock()
 			s.say(1000, true)
-			s.say(pause, false)
-			s.True(next[stt.Error](s).Fatal)
+			s.say(pauseMs, false)
+			s.True(next[stt.Error](&s.transcribing).Fatal)
 		})
 	}
 }
@@ -647,7 +662,7 @@ func (s *TranscriberSuite) TestADroppedFinalLeavesItsWordsBehind() {
 	heard := stream.Last(time.Second)
 	participant := stt.Participant{ID: "p"}
 	s.transcriber.requests <- request{participant: participant, utterance: 1, audio: heard}
-	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](s).Text)
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
 	s.server.mu.Lock()
 	s.server.words = ""
 	s.server.mu.Unlock()

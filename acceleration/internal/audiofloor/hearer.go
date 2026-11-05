@@ -91,9 +91,14 @@ func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	if err != nil {
 		return Check{}, err
 	}
+	return rule(policy, turn, answer)
+}
+
+// rule reads the model's answer about turn by policy.
+func rule(policy Policy, turn harness.FlowTurn, answer Answer) (Check, error) {
 	r := answer.Ruling
 	check := Check{Answer: answer, Ended: true, Ruling: harness.Decided{
-		Disposition: harness.Disposition(r.Disposition), Floor: harness.Floor(r.Floor), Tool: r.Tool, Cannot: r.Cannot,
+		Disposition: harness.Disposition(r.Disposition), Floor: harness.Floor(r.Floor),
 	}}
 	if !check.Ruling.Disposition.Valid() || !check.Ruling.Floor.Valid() {
 		return Check{}, stack.Wrap(fmt.Errorf("audiofloor: a ruling the flow controller has no word for: %+v", *r))
