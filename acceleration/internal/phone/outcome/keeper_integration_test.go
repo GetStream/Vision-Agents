@@ -358,18 +358,27 @@ func (s *KeeperSuite) TestATransfersLegIsNotCounted() {
 	s.Zero(s.total() - before)
 }
 
+// TestAStoreThatFailsFailsTheEndAndCountsNothing catches an end on a failing store counted and
+// answered nil, for a placed, an arriving and a refused arriving call alike.
 func (s *KeeperSuite) TestAStoreThatFailsFailsTheEndAndCountsNothing() {
 	broken, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "phone_outcome"))
 	s.Require().NoError(err)
 	s.Require().NoError(broken.Close())
 	keeper := NewKeeper(broken, func() time.Time { return s.now }, []string{s.vendor}, slog.New(slog.DiscardHandler))
-	before := s.total()
+	legs := map[string]Leg{
+		"placed":  {Vendor: s.vendor},
+		"inbound": {Vendor: s.vendor, Inbound: true, AnsweredAt: new(s.at(0))},
+		"refused": {Vendor: s.vendor, Inbound: true, AnsweredAt: new(s.at(0)), Refused: true},
+	}
+	for name, leg := range legs {
+		before := s.total()
 
-	err = keeper.Ended(s.ctx, s.call.Key, s.at(1), Leg{Vendor: s.vendor})
+		err = keeper.Ended(s.ctx, s.call.Key, s.at(1), leg)
 
-	s.Error(err)
-	s.NotErrorIs(err, store.ErrNoPhoneCall)
-	s.Zero(s.total() - before)
+		s.Error(err, name)
+		s.NotErrorIs(err, store.ErrNoPhoneCall, name)
+		s.Zero(s.total()-before, name)
+	}
 }
 
 // TestAnInboundCallTheRouterRefusedIsCountedFailed catches a refused arriving call, which no
