@@ -136,7 +136,6 @@ func (m Manifest) checkSandbox(fail func(field, format string, args ...any)) {
 // hostCovers says whether entry, an exact host or *. and a domain, takes host, as the egress
 // matches one: a wildcard takes the domain and every name under it.
 func hostCovers(entry, host string) bool {
-	host = strings.TrimPrefix(host, "*.")
 	if domain, wildcard := strings.CutPrefix(entry, "*."); wildcard {
 		return host == domain || strings.HasSuffix(host, "."+domain)
 	}

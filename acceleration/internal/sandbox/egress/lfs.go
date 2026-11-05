@@ -11,8 +11,9 @@ import (
 )
 
 // maxLFSBody is the most of a Git LFS batch body the proxy reads, 1 MiB, as maxGraphQLBody: git-lfs
-// asks for 100 objects a batch (lfs.transfer.batchSize), each an oid of 64 hex digits and a size,
-// about 10 KiB. A larger body is refused.
+// asks for 100 objects a batch by default (lfs.transfer.batchSize, tq/transfer_queue.go
+// defaultBatchSize), each an oid of 64 hex digits and a size, about 10 KiB. A larger body is
+// refused.
 const maxLFSBody = 1 << 20
 
 // lfsMediaType is the batch API's media type: «Content-Type: application/vnd.git-lfs+json», «The
