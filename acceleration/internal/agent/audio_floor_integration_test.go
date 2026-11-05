@@ -593,7 +593,8 @@ const stopWithin = 700 * time.Millisecond
 // policy's first check, 1.5 s into a 9 s reply echoed at -30 dB with somebody talking in
 // the room at -40 dBFS. The agent stops within stopWithin of the caller's first word, on
 // the model's ruling, and answers what they said. A murmur over the agent, check 1, still
-// leaves the reply going.
+// leaves the reply going. The room falls quiet once the caller has been answered: talking
+// on, it keeps the speech gate open and the call never settles (Limits).
 func (h *floorHarness) talkedOver(t *testing.T) {
 	c := h.start(t, audiofloor.Act, replayInstructions, []string{"en"})
 	c.edge.background(bedAt(h.portuguese, -40), echoAt(-30))
@@ -602,6 +603,8 @@ func (h *floorHarness) talkedOver(t *testing.T) {
 	c.until(func() bool { return len(c.edge.replyStarts()) > 0 }, 20*time.Second, "the reply began")
 	time.Sleep(1500 * time.Millisecond)
 	over := c.edge.say("stop", withGapsUnder(h.stop, 150*time.Millisecond))
+	c.until(func() bool { return c.answered(over).ok }, 30*time.Second, "what the caller said over the agent was answered")
+	c.edge.background(nil, echoAt(-30))
 	c.settle(4*time.Second, time.Minute)
 	defer c.report()
 
