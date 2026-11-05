@@ -25,6 +25,12 @@ from .http.dependencies import (
     can_view_session,
 )
 from .http.options import ServeOptions
+from .simulate import (
+    DEFAULT_JUDGE,
+    DEFAULT_MAX_TURNS,
+    DEFAULT_REPORT_DIR,
+    run_simulation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -55,6 +61,7 @@ class Runner:
 
     Use `.run()` to run a single agent as a console app.
     Use `.serve()` to start a basic HTTP server that spawns agents to calls.
+    Use `.simulate()` to run scenario files against the agent in text mode.
     Use `.cli()` for the CLI interface
 
 
@@ -71,6 +78,7 @@ class Runner:
 
         # `python agent.py serve` will start an HTTP server
         # `python agent.py run` with run a single agent as a console app
+        # `python agent.py simulate scenarios/` runs YAML scenarios and writes a report
         ```
     """
 
@@ -221,6 +229,54 @@ class Runner:
         if debug:
             os.environ.setdefault("PYTHONASYNCIODEBUG", "1")
         uvicorn.run(self.fast_api, host=host, port=port, log_config=None)
+
+    def simulate(
+        self,
+        target: str,
+        repeat: Optional[int] = None,
+        variations: Optional[int] = None,
+        max_turns: int = DEFAULT_MAX_TURNS,
+        judge: str = DEFAULT_JUDGE,
+        report_dir: str = DEFAULT_REPORT_DIR,
+        name_filter: Optional[str] = None,
+        log_level: str = "WARNING",
+    ) -> int:
+        """
+        Run scenario files against the agent in text mode and write a report.
+
+        A simulated user plays every scenario against a fresh agent, a judge
+        model rules on each success criterion, and ``report.json`` /
+        ``report.md`` land in ``report_dir`` with the full transcripts and verdicts.
+
+        Args:
+            target: A scenario file or a directory of ``*.yaml`` scenario files.
+            repeat: How many times to run every variation; overrides the scenario file.
+            variations: Ways of phrasing each scenario; overrides the scenario file.
+            max_turns: Maximum number of simulated-user messages per conversation.
+            judge: Model that plays the user and judges: ``provider/model`` or ``module:attribute``.
+            report_dir: Directory for ``report.json`` and ``report.md``.
+            name_filter: Only run scenarios whose name contains this text.
+            log_level: Logging level while the simulation runs.
+
+        Returns:
+            The exit code: 0 when every scenario passed, 1 when any failed, 2 when
+            a case never reached a verdict.
+
+        Raises:
+            click.ClickException: if the scenarios, ``judge`` or ``report_dir``
+                cannot be used; its exit code is 2.
+        """
+        return run_simulation(
+            self._launcher.launch,
+            target,
+            repeat=repeat,
+            variations=variations,
+            max_turns=max_turns,
+            judge=judge,
+            report_dir=report_dir,
+            name_filter=name_filter,
+            log_level=log_level,
+        )
 
     def _create_fastapi_app(self, options: ServeOptions) -> FastAPI:
         """
@@ -398,5 +454,96 @@ class Runner:
                 http_log_level=http_log_level.upper(),
                 debug=debug,
             )
+
+        @cli_.command()
+        @click.argument(
+            "target",
+            metavar="SCENARIOS",
+            type=click.Path(exists=True, resolve_path=True),
+        )
+        @click.option(
+            "--repeat",
+            type=click.IntRange(min=1),
+            default=None,
+            help="Run every variation this many times. Overrides the scenario file.",
+        )
+        @click.option(
+            "--variations",
+            type=click.IntRange(min=1),
+            default=None,
+            help="Ways of phrasing each scenario; the brief as written is always "
+            "the first. Overrides the scenario file.",
+        )
+        @click.option(
+            "--max-turns",
+            type=click.IntRange(min=1),
+            default=DEFAULT_MAX_TURNS,
+            show_default=True,
+            help="Maximum number of simulated-user messages per conversation.",
+        )
+        @click.option(
+            "--judge",
+            type=str,
+            default=DEFAULT_JUDGE,
+            show_default=True,
+            metavar="MODEL",
+            help="Model that plays the user and judges the transcripts: "
+            "provider/model (e.g. gemini/gemini-2.5-flash) or module:attribute "
+            "naming a callable that returns an LLM.",
+        )
+        @click.option(
+            "--report",
+            "report_dir",
+            type=click.Path(file_okay=False),
+            default=DEFAULT_REPORT_DIR,
+            show_default=True,
+            help="Directory for report.json and report.md.",
+        )
+        @click.option(
+            "--filter",
+            "name_filter",
+            type=str,
+            default=None,
+            metavar="NAME",
+            help="Only run scenarios whose name contains NAME (case-insensitive).",
+        )
+        @click.option(
+            "--log-level",
+            type=click.Choice(
+                ["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"], case_sensitive=False
+            ),
+            default="WARNING",
+            help="Set the logging level",
+        )
+        def simulate_cmd(
+            target: str,
+            repeat: Optional[int],
+            variations: Optional[int],
+            max_turns: int,
+            judge: str,
+            report_dir: str,
+            name_filter: Optional[str],
+            log_level: str,
+        ) -> None:
+            """
+            Run scenario files against the agent and report pass/fail.
+
+            SCENARIOS is a scenario file or a directory of *.yaml scenario files.
+            Exits 0 when every scenario passes, 1 when any fails and 2 when no
+            verdict could be reached (judge or provider error, bad --judge,
+            missing or malformed scenarios), so it can gate CI.
+            """
+            code = self.simulate(
+                target,
+                repeat=repeat,
+                variations=variations,
+                max_turns=max_turns,
+                judge=judge,
+                report_dir=report_dir,
+                name_filter=name_filter,
+                log_level=log_level.upper(),
+            )
+            if code:
+                raise click.exceptions.Exit(code)
 
         cli_(args=args)

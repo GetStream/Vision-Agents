@@ -1,0 +1,18 @@
+name: reschedule-appointment
+mode: text
+persona:
+  impatient: true
+  interruptions: frequent
+context:
+  name: Alice
+  appointment: Tuesday 3pm
+goal: Move appointment to Friday morning.
+constraints:
+  - Don't volunteer confirmation ID unless asked.
+  - Reject anything after 11am.
+success:
+  - appointment_rescheduled
+  - correct_time_confirmed
+  - identity_verified
+variations: 1
+judge_target: gemini-3-flash-preview

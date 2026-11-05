@@ -11,7 +11,14 @@ dependencies = [
     "vision-agents-plugins-getstream",
     "vision-agents-plugins-gemini",
     "getstream",
+    "pytest>=8.0",
+    "pytest-asyncio>=1.0",
 ]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+asyncio_mode = "auto"
+markers = ["integration: marks tests as integration tests"]
 
 [tool.uv.sources]
 "vision-agents" = { path = "../../agents-core", editable = true }

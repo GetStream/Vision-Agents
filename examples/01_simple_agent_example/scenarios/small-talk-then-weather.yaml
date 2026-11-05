@@ -1,0 +1,18 @@
+name: small-talk-then-weather
+mode: text
+persona:
+  friendly: true
+  brief: true
+context:
+  name: Priya
+  city: Tokyo
+goal: Have a short friendly chat, then get today's weather in Tokyo.
+constraints:
+  - Start with a greeting and small talk, do not ask about the weather in the first message.
+  - Give the city name only when asked or when finally asking about the weather.
+success:
+  - friendly_greeting_returned
+  - weather_tool_called_for_tokyo
+  - weather_reported_to_user
+variations: 1
+judge_target: gemini-3-flash-preview

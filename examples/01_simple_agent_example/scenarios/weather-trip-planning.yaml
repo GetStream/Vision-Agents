@@ -1,0 +1,19 @@
+name: weather-trip-planning
+mode: text
+persona:
+  chatty: true
+  indecisive: true
+context:
+  name: Sam
+  destination: Berlin
+  leaving: in an hour
+goal: Find out what the weather is like in Berlin right now and decide whether to take a rain jacket.
+constraints:
+  - Only mention the destination once the agent asks or once it is needed.
+  - Ask a follow-up question about what to pack before ending.
+success:
+  - weather_tool_called_for_berlin
+  - weather_reported_to_user
+  - packing_advice_given
+variations: 1
+judge_target: gemini-3-flash-preview

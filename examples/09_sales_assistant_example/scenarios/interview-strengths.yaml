@@ -1,0 +1,18 @@
+name: interview-strengths
+mode: text
+persona:
+  hesitant: true
+context:
+  role: candidate in a job interview for a backend engineer role
+  interviewer_question: What is your biggest strength?
+  experience: five years building distributed systems in Go
+goal: Get a confident, concrete answer to say to the interviewer's question about strengths.
+constraints:
+  - Share the interviewer's question first, then ask what to say.
+  - Only mention your experience if the coach asks or if the first suggestion is too generic.
+success:
+  - suggestion_answers_strength_question
+  - suggestion_is_phrased_as_words_to_say
+  - coach_stays_invisible_no_self_reference
+variations: 1
+judge_target: gemini-3-flash-preview
