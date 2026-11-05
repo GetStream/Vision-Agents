@@ -409,6 +409,65 @@ func (s *SandboxGrantsSuite) TestARequiredBindingOnTheSandboxRevisionIsGranted()
 	s.Equal([]string{"crm"}, bindings(d.grants))
 }
 
+// pinnedRead is a sandbox connection on revision 2 and the manifest of that revision, read as
+// openBinding reads them before sandboxGrant reads the latest revision.
+func (s *SandboxGrantsSuite) pinnedRead() (store.ConnectorConnection, core.ResolvedManifest) {
+	s.sandboxRevision()
+	connection, err := s.store.ConnectorConnection(s.ctx, s.customerID, s.connection("", "primary"))
+	s.Require().NoError(err)
+	definition, err := s.store.ConnectorDefinition(s.ctx, s.customerID, s.connectorID, connection.DefinitionRevision)
+	s.Require().NoError(err)
+	manifest, err := definition.Manifest.Resolve(connection.AuthScheme, connection.Inputs, connection.Metadata)
+	s.Require().NoError(err)
+	return connection, manifest
+}
+
+// TestAConnectorDeletedAfterThePinnedReadGivesTheSandboxNothing: a forced delete of the custom
+// connector commits between the pinned read and the latest one. The optional binding's sandbox
+// gets no grant and the log says why, as a late grant's does (lateGrant); the required one is
+// refused as one whose connection is gone. Neither is a store failure that fails the session
+// open with a 500.
+func (s *SandboxGrantsSuite) TestAConnectorDeletedAfterThePinnedReadGivesTheSandboxNothing() {
+	connection, manifest := s.pinnedRead()
+	_, err := s.store.DeleteConnectorDefinition(s.ctx, s.customerID, s.connectorID, true)
+	s.Require().NoError(err)
+	optional, needed := &dispatcher{}, &dispatcher{}
+
+	reason, err := s.manager.sandboxGrant(s.ctx, sandboxed(s.fixed("crm", connection.ID, "whoami")), connection, manifest,
+		s.registry.Schemes[bearer.Name], optional)
+	refused, refusedErr := s.manager.sandboxGrant(s.ctx, required(sandboxed(s.fixed("crm", connection.ID, "whoami"))), connection,
+		manifest, s.registry.Schemes[bearer.Name], needed)
+
+	s.Require().NoError(err)
+	s.Empty(reason)
+	s.Empty(optional.grants)
+	s.Empty(optional.schemes)
+	s.Empty(optional.reconnect)
+	s.Require().NoError(refusedErr)
+	s.Equal(unavailableConnection, refused)
+	s.Empty(needed.grants)
+	s.Contains(s.logs.String(), "level=WARN")
+	s.Contains(s.logs.String(), "its connector was deleted")
+}
+
+// TestAConnectorKeptAfterThePinnedReadGivesItsGrant is the control: the same reads with the
+// connector still there grant the sandbox the pinned revision's env var and hosts.
+func (s *SandboxGrantsSuite) TestAConnectorKeptAfterThePinnedReadGivesItsGrant() {
+	connection, manifest := s.pinnedRead()
+	d := &dispatcher{}
+
+	reason, err := s.manager.sandboxGrant(s.ctx, required(sandboxed(s.fixed("crm", connection.ID, "whoami"))), connection,
+		manifest, s.registry.Schemes[bearer.Name], d)
+
+	s.Require().NoError(err)
+	s.Empty(reason)
+	s.Require().Len(d.grants, 1)
+	s.Equal("crm", d.grants[0].Binding)
+	s.Equal("CRM_TOKEN", d.grants[0].Env)
+	s.Equal([]string{"api.crm.example", "*.crm.example"}, d.grants[0].Hosts)
+	s.Contains(d.schemes, "crm")
+}
+
 // TestABindingOpenedWithoutADriftedToolStillGivesTheSandboxAccess: secret's schema changed
 // since the config granted it, so the binding opens with whoami alone, and its sandbox still
 // gets the connection's grant.

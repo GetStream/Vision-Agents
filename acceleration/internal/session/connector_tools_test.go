@@ -65,6 +65,29 @@ func (s *AttachConnectorsSuite) TestAliceCannotChooseBobsConnection() {
 	s.NotContains(s.provider.sent("secondary"), "initialize", "nothing was sent with Bob's credential")
 }
 
+// TestAConnectorDeletedBeforeThePinnedReadLeavesTheBindingOut: a forced delete of the custom
+// connector commits after openBinding read the connection live and before it reads the pinned
+// revision, here its revisions gone under a live connection row. The binding is left out as
+// one whose connection is gone, the answer a delete a moment earlier gets, not a store failure
+// that fails the session open with a 500.
+func (s *AttachConnectorsSuite) TestAConnectorDeletedBeforeThePinnedReadLeavesTheBindingOut() {
+	id := s.connection("", "primary")
+	optional := s.config(s.fixed("crm", id, "whoami"))
+	needed := s.config(required(s.fixed("crm", id, "whoami")))
+	_, err := s.store.DB().NewDelete().Model((*store.ConnectorDefinition)(nil)).
+		Where("customer_id = ?", s.customerID).Where("id = ?", s.connectorID).Exec(s.ctx)
+	s.Require().NoError(err)
+
+	_, tools, unavailable, err := s.attach(s.spec(optional, "", nil))
+	_, _, _, refused := s.attach(s.spec(needed, "", nil))
+
+	s.Require().NoError(err)
+	s.Empty(tools)
+	s.Equal([]ConnectorUnavailable{{Name: "crm", ConnectorID: s.connectorID, Reason: unavailableConnection}}, unavailable)
+	s.ErrorContains(refused, fmt.Sprintf("required connector %q cannot be used: %s", "crm", unavailableConnection))
+	s.NotErrorIs(refused, store.ErrNoConnectorDefinition)
+}
+
 // TestAnAnonymousCallerOrAGuestChoosesNoConnection: the prototype's second case. Either may go
 // by Alice's name, which nobody vouched for.
 func (s *AttachConnectorsSuite) TestAnAnonymousCallerOrAGuestChoosesNoConnection() {
