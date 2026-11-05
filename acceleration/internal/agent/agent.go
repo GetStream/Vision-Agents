@@ -765,6 +765,15 @@ func (a *Agent) finishTurn(turn Turn) {
 		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
 		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
+	// Only a caller's turn is timed from when they stopped: the agent's own lines, a tool's
+	// answer among them, start the clock when the agent starts them.
+	if started.kind == kindCaller {
+		pipeline := pipelineCascade
+		if a.native() {
+			pipeline = pipelineNative
+		}
+		observeTurnLatency(turn, pipeline)
+	}
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)

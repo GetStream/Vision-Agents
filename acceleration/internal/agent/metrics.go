@@ -5,6 +5,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 )
 
+// turnLatencyBuckets run 200 ms to 10 s: steps of 200 ms up to 1.2 s, the line past which
+// Twilio counts a turn as slow (https://www.twilio.com/docs/voice/voice-insights/conversation-relay-insights-dashboard),
+// then wide ones for a turn that waited on a slow model. Each bucket is a series per leg and
+// pipeline.
+var turnLatencyBuckets = []float64{0.2, 0.4, 0.6, 0.8, 1, 1.2, 1.6, 2, 3, 5, 10}
+
 var (
 	speechOverlaps = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
@@ -85,6 +91,13 @@ var (
 		// 100 ms to 12.8 s: barge-in is ruled on within a second or two of a reply starting.
 		Buckets: prometheus.ExponentialBuckets(0.1, 2, 8),
 	}, []string{"kind"})
+	// leg and pipeline are fixed sets (observeTurnLatency).
+	turnLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
+		Namespace: "router",
+		Name:      "agent_turn_latency_seconds",
+		Help:      "How long a caller waited for the reply to what they said, by leg: roundtrip from the last transcript revision to the first audio published (Turn.RoundtripMs), speech_end_to_audio that plus the transcriber's time deciding they had stopped (SpeechEndToAudioMs), speech_end_to_audible the same to the first frame of the reply the call's track took (SpeechEndToAudibleMs, only from an edge that reports it); by pipeline, cascade or native for one speech-to-speech model. Replies the agent starts on its own are left out, and so is a leg a turn never reached, such as a reply interrupted before any of it went out",
+		Buckets:   turnLatencyBuckets,
+	}, []string{"leg", "pipeline"})
 	// cause, ruler and echo are fixed sets (interruption.go, harness.Ruler).
 	interruptions = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",

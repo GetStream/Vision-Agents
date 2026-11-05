@@ -461,6 +461,29 @@ func speechEndToAudible(current *openTurn) float64 {
 	return msBetween(current.transcriptAt, current.pulledAt) + current.sttLatencyMs
 }
 
+// The pipelines a turn latency is labelled with, named as the session's mode is.
+const (
+	pipelineCascade = "cascade"
+	pipelineNative  = "native"
+)
+
+// observeTurnLatency records a caller turn's waits. A leg that did not happen is zero, and is
+// left out rather than counted as an instant reply.
+func observeTurnLatency(turn Turn, pipeline string) {
+	for _, observed := range []struct {
+		leg string
+		ms  float64
+	}{
+		{"roundtrip", turn.RoundtripMs},
+		{"speech_end_to_audio", turn.SpeechEndToAudioMs},
+		{"speech_end_to_audible", turn.SpeechEndToAudibleMs},
+	} {
+		if observed.ms > 0 {
+			turnLatency.WithLabelValues(observed.leg, pipeline).Observe(observed.ms / 1000)
+		}
+	}
+}
+
 func msBetween(from, to time.Time) float64 {
 	return float64(to.Sub(from).Microseconds()) / 1000
 }
