@@ -455,6 +455,10 @@ After `PUT /v1/agents/users/{user_id}` linked a user to a number, the card of th
 
 A WhatsApp photo now reaches the agent itself, with or without a caption, and the agent answers from the photo and its caption. Before, the agent read the caption alone, and a photo without one got no reply. The router downloads the photo with the business number's access token and stores a copy on the thread channel in Stream Chat. It sends that token to Graph and `lookaside.fbsbx.com` only. If the photo cannot be downloaded or stored, its caption is still answered, and a photo sent alone gets no reply. The router downloads no video or document; their captions are answered as before. A connection takes `whatsapp` revision 3 at its next credential save. A channel manifest can name a file by its id (`media.id`), give an `also` kind its own `media`, and say where such a file is with `messages.media_lookup` (AI-2740).
 
+### A WhatsApp photo tried again keeps its first copy
+
+When the router stored a WhatsApp photo in Stream Chat and then failed to write or answer the message, every retry downloaded and stored the photo again, which left extra copies on the thread channel. A photo sent alone could also get no reply: when the retry could no longer download it, the router took the message as one with nothing to answer. Now the router keeps where it stored the photo, and a retry answers with that copy without downloading it again (AI-2757).
+
 ### A WhatsApp photo's, video's and document's caption is answered
 
 A WhatsApp photo, video or document sent with a caption reaches the agent as its caption, and the agent answers it; before, the whole message was dropped. A caption that is STOP, START or HELP is the keyword, as the same text is. A photo, video or document without a caption, and a voice note, sticker, reaction or location, still get no reply, and the file itself does not reach the agent yet. A connection takes `whatsapp` revision 2 at its next credential save; until then its captioned files are dropped, as before. A channel manifest reads another kind of message by its own text with `messages.also` (AI-2133).
