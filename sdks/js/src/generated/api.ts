@@ -1022,7 +1022,7 @@ export type paths = {
         };
         /**
          * List a connection's tools
-         * @description The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+         * @description The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -2621,7 +2621,7 @@ export type paths = {
         readonly get?: never;
         /**
          * Link a user to a phone number
-         * @description Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+         * @description Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4037,7 +4037,7 @@ export type paths = {
         };
         /**
          * Read what subjects spent against their limits
-         * @description Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+         * @description Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
          *
          *     Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
          */
@@ -4284,7 +4284,7 @@ export type paths = {
         };
         /**
          * List the usage events
-         * @description Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+         * @description Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
          *
          *     Server-side only: a request that is not server-side answers 403 server_side_only.
          */
@@ -4440,7 +4440,7 @@ export type components = {
             /** Format: date-time */
             readonly created_at: string;
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards. */
+            /** @description Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off. */
             readonly episode_cards?: boolean;
             readonly greeting?: components["schemas"]["Greeting"];
             readonly guardrail?: string;
@@ -4507,7 +4507,9 @@ export type components = {
              * @deprecated
              * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
+            readonly mcp_servers?: readonly {
+                readonly [key: string]: unknown;
+            }[];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name?: string;
@@ -4515,12 +4517,14 @@ export type components = {
              * @deprecated
              * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly plugin_events?: readonly {
+                readonly [key: string]: unknown;
+            }[];
             /**
              * @deprecated
              * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly plugins?: readonly (string | Record<string, never>)[];
             /**
              * @description Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
              * @example eu
@@ -4557,7 +4561,7 @@ export type components = {
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
+            /** @description Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
             readonly episode_cards?: boolean;
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
@@ -4574,7 +4578,9 @@ export type components = {
              * @deprecated
              * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
+            readonly mcp_servers?: readonly {
+                readonly [key: string]: unknown;
+            }[];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is unique among the customer's own. */
             readonly name: string;
@@ -4582,12 +4588,14 @@ export type components = {
              * @deprecated
              * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly plugin_events?: readonly {
+                readonly [key: string]: unknown;
+            }[];
             /**
              * @deprecated
              * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly plugins?: readonly (string | Record<string, never>)[];
             /**
              * @description Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
              * @example eu
@@ -4813,7 +4821,7 @@ export type components = {
         /** @description Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none. */
         readonly AgentUserRequest: {
             /**
-             * @description The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+             * @description The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
              * @example +15551234567
              */
             readonly phone: string | null;
@@ -5863,6 +5871,8 @@ export type components = {
             readonly name: string;
             /** @description The scopes a call of the tool needs, as the connector says. Absent when it says none. */
             readonly needs_scopes?: readonly string[] | null;
+            /** @description Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval. */
+            readonly read_only: boolean;
             /** @description The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again. */
             readonly schema_digest: string;
         };
@@ -7679,33 +7689,6 @@ export type components = {
             /** @description The X-Stream-Actor-Name it named, decoded from percent-encoding. Absent when it named none. */
             readonly name?: string;
         };
-        /** @description An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login. */
-        readonly McpServer: {
-            /** @description How the server described itself when the config was saved. Absent when it did not answer. */
-            readonly branding?: components["schemas"]["McpServerBranding"];
-            /** @description What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id. */
-            readonly name: string;
-            /** @description Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again. */
-            readonly needs_login?: boolean;
-            /** @description The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted. */
-            readonly scopes?: readonly string[];
-            /** @description Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool. */
-            readonly tools?: readonly string[];
-            /** @description Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses. */
-            readonly url: string;
-            /** @description Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it. */
-            readonly user?: boolean;
-        };
-        /** @description The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name. */
-        readonly McpServerBranding: {
-            readonly description?: string;
-            /** @description Its first icon served over https, as the server links it. */
-            readonly icon_url?: string;
-            /** @description Its display title, or its name when it gives none. */
-            readonly title?: string;
-            readonly version?: string;
-            readonly website_url?: string;
-        };
         readonly MessageContent: string | readonly components["schemas"]["ContentPart"][];
         /**
          * @description What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
@@ -8004,36 +7987,6 @@ export type components = {
             /** @description Who is placing the call. */
             readonly vendor?: string;
             readonly vendor_call_id: string;
-        };
-        /** @description One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached. */
-        readonly PluginEntry: string | components["schemas"]["PluginWithOptions"];
-        /** @description One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it. */
-        readonly PluginEvent: {
-            /** @description The event's filters, as its inputSchema describes them. */
-            readonly arguments?: {
-                readonly [key: string]: unknown;
-            };
-            /** @description The event's name, as the server's events/list gives it, such as comment.created. */
-            readonly event: string;
-            /** @description What the agent does with the event when it arrives, added to its instructions for that conversation. */
-            readonly instructions?: string;
-            /** @description A catalog plugin the config names under plugins. */
-            readonly plugin: string;
-        };
-        /** @description One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take. */
-        readonly PluginWithOptions: {
-            /** @description A catalog plugin id, such as linear. */
-            readonly name: string;
-            /** @description Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear. */
-            readonly readonly?: boolean;
-            /** @description The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set. */
-            readonly scopes?: readonly string[];
-            /** @description Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool. */
-            readonly tools?: readonly string[];
-            /** @description Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login. */
-            readonly toolsets?: readonly string[];
-            /** @description Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says. */
-            readonly user?: boolean;
         };
         /** @description What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits. */
         readonly Policy: {
@@ -9943,7 +9896,9 @@ export type components = {
              * @deprecated
              * @description No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly mcp_servers?: readonly components["schemas"]["McpServer"][];
+            readonly mcp_servers?: readonly {
+                readonly [key: string]: unknown;
+            }[];
             readonly mode?: components["schemas"]["AgentMode"];
             /** @description What the config is called, which is also the directory's name. */
             readonly name: string;
@@ -9951,12 +9906,14 @@ export type components = {
              * @deprecated
              * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly plugin_events?: readonly components["schemas"]["PluginEvent"][];
+            readonly plugin_events?: readonly {
+                readonly [key: string]: unknown;
+            }[];
             /**
              * @deprecated
              * @description No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
              */
-            readonly plugins?: readonly components["schemas"]["PluginEntry"][];
+            readonly plugins?: readonly (string | Record<string, never>)[];
             /**
              * @description agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
              * @example eu
@@ -18182,7 +18139,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description This deployment has no database to export from. */
+            /** @description This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -20291,7 +20248,8 @@ export interface operations {
     readonly listLimits: {
         readonly parameters: {
             readonly query?: {
-                readonly api_key?: string;
+                /** @description Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 readonly app_id?: string;
                 readonly category?: string;
                 /** @description The next_cursor of the previous page, sent with the same filters. */
@@ -20481,7 +20439,8 @@ export interface operations {
     readonly listLimitGrants: {
         readonly parameters: {
             readonly query?: {
-                readonly api_key?: string;
+                /** @description Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 readonly app_id?: string;
                 readonly category?: string;
                 /** @description The next_cursor of the previous page, sent with the same filters. */
@@ -20652,8 +20611,8 @@ export interface operations {
     readonly getLimitUsage: {
         readonly parameters: {
             readonly query: {
-                /** @description The key of each subject, for subject api_key. */
-                readonly api_key?: readonly string[] | null;
+                /** @description The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: readonly string[] | null;
                 /** @description The app of each subject, for every subject but organization, category and team. One goes with every subject. */
                 readonly app_id?: readonly string[] | null;
                 /** @description The usage category of each subject, for subject category or app_category. */
@@ -20801,8 +20760,8 @@ export interface operations {
     readonly getSpend: {
         readonly parameters: {
             readonly query: {
-                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. */
-                readonly api_key?: string;
+                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 /** @description Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several. */
                 readonly category?: readonly string[];
                 /** @description Start of the window, inclusive. */
@@ -21100,8 +21059,8 @@ export interface operations {
     readonly listUsageEvents: {
         readonly parameters: {
             readonly query?: {
-                /** @description Only work started with this public API key, or by this origin of work no key started, such as hook:chat. */
-                readonly api_key?: string;
+                /** @description Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                readonly api_key_id?: string;
                 /** @description With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused. */
                 readonly app_id?: string;
                 /** @description Only work carrying this usage category, as the tokens name it. Not with team. */

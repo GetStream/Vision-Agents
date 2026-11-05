@@ -3259,7 +3259,7 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, or a phone call starts with the person's other cards.
+	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3356,7 +3356,7 @@ type AgentConfigPatch struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3366,11 +3366,11 @@ type AgentConfigPatch struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+	Plugins *[]AgentConfigPatch_Plugins_Item `json:"plugins,omitempty"`
 
 	// Region Where the agent's work is done: us or eu for now. A change naming a model with no instance there, a knowledge base kept in another region, or a sandbox where none runs there is refused (400), naming each.
 	//
@@ -3415,6 +3415,17 @@ type AgentConfigPatch struct {
 	Voice *string `json:"voice,omitempty"`
 }
 
+// AgentConfigPatchPlugins0 defines model for AgentConfigPatch.Plugins.0.
+type AgentConfigPatchPlugins0 = string
+
+// AgentConfigPatchPlugins1 defines model for AgentConfigPatch.Plugins.1.
+type AgentConfigPatchPlugins1 = map[string]interface{}
+
+// AgentConfigPatch_Plugins_Item defines model for AgentConfigPatch.plugins.Item.
+type AgentConfigPatch_Plugins_Item struct {
+	union json.RawMessage
+}
+
 // AgentConfigRequest defines model for AgentConfigRequest.
 type AgentConfigRequest struct {
 	// Calls The tools an agent on a phone call is offered: end the call, press keys, transfer.
@@ -3429,7 +3440,7 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. An app chat's agent channel that anybody else is a member of or wrote in reads none. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
+	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
@@ -3453,7 +3464,7 @@ type AgentConfigRequest struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -3463,11 +3474,11 @@ type AgentConfigRequest struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+	Plugins *[]AgentConfigRequest_Plugins_Item `json:"plugins,omitempty"`
 
 	// Region Where the agent's work is done: us or eu for now. Every model its sessions run, its knowledge base and its sandbox are in it, and none of its work is served in another region. A config naming a model with no instance there, a knowledge_namespace kept in another region, or a sandbox where none runs there is refused (400), naming each: a knowledge base is never moved. Left out, a new agent is in us and an update keeps the stored region.
 	//
@@ -3520,6 +3531,17 @@ type AgentConfigRequest struct {
 
 	// Voice The voice the agent speaks in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native agent (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// AgentConfigRequestPlugins0 defines model for AgentConfigRequest.Plugins.0.
+type AgentConfigRequestPlugins0 = string
+
+// AgentConfigRequestPlugins1 defines model for AgentConfigRequest.Plugins.1.
+type AgentConfigRequestPlugins1 = map[string]interface{}
+
+// AgentConfigRequest_Plugins_Item defines model for AgentConfigRequest.plugins.Item.
+type AgentConfigRequest_Plugins_Item struct {
+	union json.RawMessage
 }
 
 // AgentConnectorBinding A connector whose tools an agent config may call, under an alias. The binding is the grant: the tools it lists, each pinned to the schema it was reviewed against, or for a tool a session binding grants by name alone, to the schema its connection first offered it with. Or tool_patterns, names or path.Match patterns, pinned per connection on first use, on a session binding or a fixed one. A binding has one or the other.
@@ -3728,7 +3750,7 @@ type AgentUser struct {
 
 // AgentUserRequest Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
 type AgentUserRequest struct {
-	// Phone The user's phone number in E.164, with its plus. Their SMS, WhatsApp messages, iMessages and calls from it then share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+	// Phone The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
 	//
 	// Example: +15551234567
 	Phone *string `json:"phone"`
@@ -4915,6 +4937,9 @@ type ConnectionTool struct {
 
 	// NeedsScopes The scopes a call of the tool needs, as the connector says. Absent when it says none.
 	NeedsScopes *[]string `json:"needs_scopes,omitempty"`
+
+	// ReadOnly Whether the tool only reads, as the connector's latest revision says: every source of the connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive connector without require_approval; any other tool there needs require_approval.
+	ReadOnly bool `json:"read_only"`
 
 	// SchemaDigest The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose schema changes is not offered until it is granted again.
 	SchemaDigest string `json:"schema_digest"`
@@ -6924,43 +6949,6 @@ type ManageStatus struct {
 	Name *string `json:"name,omitempty"`
 }
 
-// McpServer An MCP server the plugin catalog does not have. Every session opens it at the start and offers its tools to the model; the instructions the server gives are added to the agent's own. It is opened with no login unless it sets scopes or user, when it logs in with OAuth as its protected-resource metadata says, registering a client of its own, and saving it is refused when the server advertises no such login.
-type McpServer struct {
-	// Branding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-	Branding *McpServerBranding `json:"branding,omitempty"`
-
-	// Name What its tools are prefixed with, as <name>__<tool>. Lowercase, without __, and not a catalog plugin's id.
-	Name string `json:"name"`
-
-	// NeedsLogin Whether the server requires an OAuth login, as it said when the config was saved: protected-resource metadata, or a 401 to a request without a token. Without user, the app logs in once, from the dashboard. Absent when it could not be asked, which a session starting asks again.
-	NeedsLogin *bool `json:"needs_login,omitempty"`
-
-	// Scopes The OAuth scopes its login asks for at consent. Left out, the login asks for the scopes_supported the server advertises. Only a server that needs a login may set it. A login made before a change keeps what it was granted.
-	Scopes *[]string `json:"scopes,omitempty"`
-
-	// Tools Offer the model only the server's tools matching these names or path.Match patterns. A tool left out is neither listed nor callable. Left out offers every tool.
-	Tools *[]string `json:"tools,omitempty"`
-
-	// Url Its Streamable HTTP endpoint: a public https URL. A host on a private network, loopback or link-local address, or one that does not resolve, is refused: the router reaches only public addresses.
-	Url string `json:"url"`
-
-	// User Each end user logs in with their own account, in the conversation, the first time the agent needs the server, as for a plugin with user, rather than the app once, from the dashboard. Only a server that needs a login may set it.
-	User *bool `json:"user,omitempty"`
-}
-
-// McpServerBranding The serverInfo an MCP server answers initialize with. Every field is optional, and a server that sends only its name and version is titled by its name.
-type McpServerBranding struct {
-	Description *string `json:"description,omitempty"`
-
-	// IconUrl Its first icon served over https, as the server links it.
-	IconUrl *string `json:"icon_url,omitempty"`
-
-	// Title Its display title, or its name when it gives none.
-	Title      *string `json:"title,omitempty"`
-	Version    *string `json:"version,omitempty"`
-	WebsiteUrl *string `json:"website_url,omitempty"`
-}
-
 // MessageContent defines model for MessageContent.
 type MessageContent struct {
 	union json.RawMessage
@@ -7280,50 +7268,6 @@ type PlacedCall struct {
 	// Vendor Who is placing the call.
 	Vendor       *string `json:"vendor,omitempty"`
 	VendorCallId string  `json:"vendor_call_id"`
-}
-
-// PluginEntry One catalog plugin an agent names: its id, such as sentry, or an object naming it with how it is reached.
-type PluginEntry struct {
-	union json.RawMessage
-}
-
-// PluginEntry0 defines model for PluginEntry.0.
-type PluginEntry0 = string
-
-// PluginEvent One MCP event an agent subscribes to on a plugin it names. Each event that arrives opens a text conversation from the config, as whoever's login it came through, with the event's data as the first thing said to it.
-type PluginEvent struct {
-	// Arguments The event's filters, as its inputSchema describes them.
-	Arguments *map[string]interface{} `json:"arguments,omitempty"`
-
-	// Event The event's name, as the server's events/list gives it, such as comment.created.
-	Event string `json:"event"`
-
-	// Instructions What the agent does with the event when it arrives, added to its instructions for that conversation.
-	Instructions *string `json:"instructions,omitempty"`
-
-	// Plugin A catalog plugin the config names under plugins.
-	Plugin string `json:"plugin"`
-}
-
-// PluginWithOptions One catalog plugin an agent names, with how it is reached and what its login asks for. A login made before a change keeps what it was granted, so connect it again for the change to take.
-type PluginWithOptions struct {
-	// Name A catalog plugin id, such as linear.
-	Name string `json:"name"`
-
-	// Readonly Reach the plugin's read-only MCP endpoint, which offers no tool that writes and asks for read access at consent. Only a plugin whose vendor runs one may set it, such as linear.
-	Readonly *bool `json:"readonly,omitempty"`
-
-	// Scopes The OAuth scopes asked for at consent, in place of the catalog's. Left out asks for the catalog's, or the read-only endpoint's when readonly is set.
-	Scopes *[]string `json:"scopes,omitempty"`
-
-	// Tools Offer the model only the server's tools matching these names or path.Match patterns, such as search_files or read_*. A tool left out is neither listed nor callable. Left out offers every tool.
-	Tools *[]string `json:"tools,omitempty"`
-
-	// Toolsets Limit the server to these groups of tools, from the plugin's toolsets in the catalog, such as calcom's bookings and availability. Left out offers every tool. Changing them needs no new login.
-	Toolsets *[]string `json:"toolsets,omitempty"`
-
-	// User Each end user connects the plugin with their own account, in the conversation, the first time the agent needs it. Left out, the catalog decides: a plugin reaching a person's own account, such as google_calendar, is connected by each end user, and one reaching the company's, such as sentry, by the app once, from the dashboard. false has the app connect it whatever the catalog says.
-	User *bool `json:"user,omitempty"`
 }
 
 // Policy What an organization or an app decided about data handling, prompt injection, which models may be used and how usage is labelled. Every field is optional, and a field left out is no opinion rather than off. Spend limits are not here: they are /v1/spend/limits.
@@ -9467,7 +9411,7 @@ type SyncAgentRequest struct {
 
 	// McpServers No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	McpServers *[]McpServer `json:"mcp_servers,omitempty"`
+	McpServers *[]map[string]interface{} `json:"mcp_servers,omitempty"`
 
 	// Mode Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 	Mode *AgentMode `json:"mode,omitempty"`
@@ -9477,11 +9421,11 @@ type SyncAgentRequest struct {
 
 	// PluginEvents No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	PluginEvents *[]PluginEvent `json:"plugin_events,omitempty"`
+	PluginEvents *[]map[string]interface{} `json:"plugin_events,omitempty"`
 
 	// Plugins No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing.
 	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
-	Plugins *[]PluginEntry `json:"plugins,omitempty"`
+	Plugins *[]SyncAgentRequest_Plugins_Item `json:"plugins,omitempty"`
 
 	// Region agent.yaml's region: where the agent's work is done, us or eu for now. Every model its sessions run is served there and nowhere else, its knowledge base is kept there, and its sandbox is made there. A sync is refused (400), before anything is written, when a model the agent names has no instance there, naming each and the region, when its knowledge base is already kept in another region, since a knowledge base is never moved, or when it names a sandbox and none runs there. Left out, a new agent is in us and a stored one keeps its region.
 	//
@@ -9523,6 +9467,17 @@ type SyncAgentRequest struct {
 
 	// Voice The voice the agent speaks in, as TtsOptions.voice takes it: a provider's own voice id, or one of your voices, with the custom: prefix to mean only yours. A native agent (sts) takes the vendor's own voice name instead.
 	Voice *string `json:"voice,omitempty"`
+}
+
+// SyncAgentRequestPlugins0 defines model for SyncAgentRequest.Plugins.0.
+type SyncAgentRequestPlugins0 = string
+
+// SyncAgentRequestPlugins1 defines model for SyncAgentRequest.Plugins.1.
+type SyncAgentRequestPlugins1 = map[string]interface{}
+
+// SyncAgentRequest_Plugins_Item defines model for SyncAgentRequest.plugins.Item.
+type SyncAgentRequest_Plugins_Item struct {
+	union json.RawMessage
 }
 
 // SyncAgentResult defines model for SyncAgentResult.
@@ -11014,10 +10969,12 @@ type GetPricesParams struct {
 // ListLimitsParams defines parameters for ListLimits.
 type ListLimitsParams struct {
 	// Subject Only limits on this subject. team lists the teams' limits, category every other category's.
-	Subject  *LimitSubject  `form:"subject,omitempty" json:"subject,omitempty"`
-	Level    *LimitLevel    `form:"level,omitempty" json:"level,omitempty"`
-	AppId    *string        `form:"app_id,omitempty" json:"app_id,omitempty"`
-	ApiKey   *string        `form:"api_key,omitempty" json:"api_key,omitempty"`
+	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	Level   *LimitLevel   `form:"level,omitempty" json:"level,omitempty"`
+	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// ApiKeyId Only limits on this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string        `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 	UserId   *string        `form:"user_id,omitempty" json:"user_id,omitempty"`
 	Team     *string        `form:"team,omitempty" json:"team,omitempty"`
 	Category *string        `form:"category,omitempty" json:"category,omitempty"`
@@ -11032,12 +10989,14 @@ type ListLimitsParams struct {
 
 // ListLimitGrantsParams defines parameters for ListLimitGrants.
 type ListLimitGrantsParams struct {
-	Subject  *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
-	AppId    *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
-	ApiKey   *string       `form:"api_key,omitempty" json:"api_key,omitempty"`
-	UserId   *string       `form:"user_id,omitempty" json:"user_id,omitempty"`
-	Team     *string       `form:"team,omitempty" json:"team,omitempty"`
-	Category *string       `form:"category,omitempty" json:"category,omitempty"`
+	Subject *LimitSubject `form:"subject,omitempty" json:"subject,omitempty"`
+	AppId   *string       `form:"app_id,omitempty" json:"app_id,omitempty"`
+
+	// ApiKeyId Only grants for this key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
+	UserId   *string `form:"user_id,omitempty" json:"user_id,omitempty"`
+	Team     *string `form:"team,omitempty" json:"team,omitempty"`
+	Category *string `form:"category,omitempty" json:"category,omitempty"`
 
 	// State Only grants in this state. Omitted is every one.
 	State *LimitGrantState `form:"state,omitempty" json:"state,omitempty"`
@@ -11056,8 +11015,8 @@ type GetLimitUsageParams struct {
 	// AppId The app of each subject, for every subject but organization, category and team. One goes with every subject.
 	AppId *[]string `form:"app_id,omitempty" json:"app_id,omitempty"`
 
-	// ApiKey The key of each subject, for subject api_key.
-	ApiKey *[]string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId The key of each subject, for subject api_key. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *[]string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId The end user of each subject, for subject user.
 	UserId *[]string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -11110,8 +11069,8 @@ type GetSpendParams struct {
 	// Tag Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several.
 	Tag *[]string `form:"tag,omitempty" json:"tag,omitempty"`
 
-	// ApiKey Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
-	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only count usage for this end user of the app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -11171,8 +11130,8 @@ type ListUsageEventsParams struct {
 	// Meter Only this kind of work, such as llm or runtime.
 	Meter *string `form:"meter,omitempty" json:"meter,omitempty"`
 
-	// ApiKey Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
-	ApiKey *string `form:"api_key,omitempty" json:"api_key,omitempty"`
+	// ApiKeyId Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call.
+	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
 	UserId *string `form:"user_id,omitempty" json:"user_id,omitempty"`
@@ -11484,6 +11443,130 @@ type TranscribeRecordingJSONRequestBody = TranscriptionRequest
 // RecordSpeechJSONRequestBody defines body for RecordSpeech for application/json ContentType.
 type RecordSpeechJSONRequestBody = SpeechRequest
 
+// AsAgentConfigPatchPlugins0 returns the union data inside the AgentConfigPatch_Plugins_Item as a AgentConfigPatchPlugins0
+func (t AgentConfigPatch_Plugins_Item) AsAgentConfigPatchPlugins0() (AgentConfigPatchPlugins0, error) {
+	var body AgentConfigPatchPlugins0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigPatchPlugins0 overwrites any union data inside the AgentConfigPatch_Plugins_Item as the provided AgentConfigPatchPlugins0
+func (t *AgentConfigPatch_Plugins_Item) FromAgentConfigPatchPlugins0(v AgentConfigPatchPlugins0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigPatchPlugins0 performs a merge with any union data inside the AgentConfigPatch_Plugins_Item, using the provided AgentConfigPatchPlugins0
+func (t *AgentConfigPatch_Plugins_Item) MergeAgentConfigPatchPlugins0(v AgentConfigPatchPlugins0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAgentConfigPatchPlugins1 returns the union data inside the AgentConfigPatch_Plugins_Item as a AgentConfigPatchPlugins1
+func (t AgentConfigPatch_Plugins_Item) AsAgentConfigPatchPlugins1() (AgentConfigPatchPlugins1, error) {
+	var body AgentConfigPatchPlugins1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigPatchPlugins1 overwrites any union data inside the AgentConfigPatch_Plugins_Item as the provided AgentConfigPatchPlugins1
+func (t *AgentConfigPatch_Plugins_Item) FromAgentConfigPatchPlugins1(v AgentConfigPatchPlugins1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigPatchPlugins1 performs a merge with any union data inside the AgentConfigPatch_Plugins_Item, using the provided AgentConfigPatchPlugins1
+func (t *AgentConfigPatch_Plugins_Item) MergeAgentConfigPatchPlugins1(v AgentConfigPatchPlugins1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AgentConfigPatch_Plugins_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AgentConfigPatch_Plugins_Item) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
+// AsAgentConfigRequestPlugins0 returns the union data inside the AgentConfigRequest_Plugins_Item as a AgentConfigRequestPlugins0
+func (t AgentConfigRequest_Plugins_Item) AsAgentConfigRequestPlugins0() (AgentConfigRequestPlugins0, error) {
+	var body AgentConfigRequestPlugins0
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigRequestPlugins0 overwrites any union data inside the AgentConfigRequest_Plugins_Item as the provided AgentConfigRequestPlugins0
+func (t *AgentConfigRequest_Plugins_Item) FromAgentConfigRequestPlugins0(v AgentConfigRequestPlugins0) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigRequestPlugins0 performs a merge with any union data inside the AgentConfigRequest_Plugins_Item, using the provided AgentConfigRequestPlugins0
+func (t *AgentConfigRequest_Plugins_Item) MergeAgentConfigRequestPlugins0(v AgentConfigRequestPlugins0) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+// AsAgentConfigRequestPlugins1 returns the union data inside the AgentConfigRequest_Plugins_Item as a AgentConfigRequestPlugins1
+func (t AgentConfigRequest_Plugins_Item) AsAgentConfigRequestPlugins1() (AgentConfigRequestPlugins1, error) {
+	var body AgentConfigRequestPlugins1
+	err := json.Unmarshal(t.union, &body)
+	return body, err
+}
+
+// FromAgentConfigRequestPlugins1 overwrites any union data inside the AgentConfigRequest_Plugins_Item as the provided AgentConfigRequestPlugins1
+func (t *AgentConfigRequest_Plugins_Item) FromAgentConfigRequestPlugins1(v AgentConfigRequestPlugins1) error {
+	b, err := json.Marshal(v)
+	t.union = b
+	return err
+}
+
+// MergeAgentConfigRequestPlugins1 performs a merge with any union data inside the AgentConfigRequest_Plugins_Item, using the provided AgentConfigRequestPlugins1
+func (t *AgentConfigRequest_Plugins_Item) MergeAgentConfigRequestPlugins1(v AgentConfigRequestPlugins1) error {
+	b, err := json.Marshal(v)
+	if err != nil {
+		return err
+	}
+
+	merged, err := runtime.JSONMerge(t.union, b)
+	t.union = merged
+	return err
+}
+
+func (t AgentConfigRequest_Plugins_Item) MarshalJSON() ([]byte, error) {
+	b, err := t.union.MarshalJSON()
+	return b, err
+}
+
+func (t *AgentConfigRequest_Plugins_Item) UnmarshalJSON(b []byte) error {
+	err := t.union.UnmarshalJSON(b)
+	return err
+}
+
 // AsTextContentPart returns the union data inside the ContentPart as a TextContentPart
 func (t ContentPart) AsTextContentPart() (TextContentPart, error) {
 	var body TextContentPart
@@ -11670,22 +11753,22 @@ func (t *MessageContent) UnmarshalJSON(b []byte) error {
 	return err
 }
 
-// AsPluginEntry0 returns the union data inside the PluginEntry as a PluginEntry0
-func (t PluginEntry) AsPluginEntry0() (PluginEntry0, error) {
-	var body PluginEntry0
+// AsSyncAgentRequestPlugins0 returns the union data inside the SyncAgentRequest_Plugins_Item as a SyncAgentRequestPlugins0
+func (t SyncAgentRequest_Plugins_Item) AsSyncAgentRequestPlugins0() (SyncAgentRequestPlugins0, error) {
+	var body SyncAgentRequestPlugins0
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromPluginEntry0 overwrites any union data inside the PluginEntry as the provided PluginEntry0
-func (t *PluginEntry) FromPluginEntry0(v PluginEntry0) error {
+// FromSyncAgentRequestPlugins0 overwrites any union data inside the SyncAgentRequest_Plugins_Item as the provided SyncAgentRequestPlugins0
+func (t *SyncAgentRequest_Plugins_Item) FromSyncAgentRequestPlugins0(v SyncAgentRequestPlugins0) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergePluginEntry0 performs a merge with any union data inside the PluginEntry, using the provided PluginEntry0
-func (t *PluginEntry) MergePluginEntry0(v PluginEntry0) error {
+// MergeSyncAgentRequestPlugins0 performs a merge with any union data inside the SyncAgentRequest_Plugins_Item, using the provided SyncAgentRequestPlugins0
+func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins0(v SyncAgentRequestPlugins0) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11696,22 +11779,22 @@ func (t *PluginEntry) MergePluginEntry0(v PluginEntry0) error {
 	return err
 }
 
-// AsPluginWithOptions returns the union data inside the PluginEntry as a PluginWithOptions
-func (t PluginEntry) AsPluginWithOptions() (PluginWithOptions, error) {
-	var body PluginWithOptions
+// AsSyncAgentRequestPlugins1 returns the union data inside the SyncAgentRequest_Plugins_Item as a SyncAgentRequestPlugins1
+func (t SyncAgentRequest_Plugins_Item) AsSyncAgentRequestPlugins1() (SyncAgentRequestPlugins1, error) {
+	var body SyncAgentRequestPlugins1
 	err := json.Unmarshal(t.union, &body)
 	return body, err
 }
 
-// FromPluginWithOptions overwrites any union data inside the PluginEntry as the provided PluginWithOptions
-func (t *PluginEntry) FromPluginWithOptions(v PluginWithOptions) error {
+// FromSyncAgentRequestPlugins1 overwrites any union data inside the SyncAgentRequest_Plugins_Item as the provided SyncAgentRequestPlugins1
+func (t *SyncAgentRequest_Plugins_Item) FromSyncAgentRequestPlugins1(v SyncAgentRequestPlugins1) error {
 	b, err := json.Marshal(v)
 	t.union = b
 	return err
 }
 
-// MergePluginWithOptions performs a merge with any union data inside the PluginEntry, using the provided PluginWithOptions
-func (t *PluginEntry) MergePluginWithOptions(v PluginWithOptions) error {
+// MergeSyncAgentRequestPlugins1 performs a merge with any union data inside the SyncAgentRequest_Plugins_Item, using the provided SyncAgentRequestPlugins1
+func (t *SyncAgentRequest_Plugins_Item) MergeSyncAgentRequestPlugins1(v SyncAgentRequestPlugins1) error {
 	b, err := json.Marshal(v)
 	if err != nil {
 		return err
@@ -11722,12 +11805,12 @@ func (t *PluginEntry) MergePluginWithOptions(v PluginWithOptions) error {
 	return err
 }
 
-func (t PluginEntry) MarshalJSON() ([]byte, error) {
+func (t SyncAgentRequest_Plugins_Item) MarshalJSON() ([]byte, error) {
 	b, err := t.union.MarshalJSON()
 	return b, err
 }
 
-func (t *PluginEntry) UnmarshalJSON(b []byte) error {
+func (t *SyncAgentRequest_Plugins_Item) UnmarshalJSON(b []byte) error {
 	err := t.union.UnmarshalJSON(b)
 	return err
 }
@@ -12462,7 +12545,7 @@ type ClientInterface interface {
 
 	// ListConnectionTools List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -13630,7 +13713,7 @@ type ClientInterface interface {
 
 	// UpdateUserWithBody Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -13641,7 +13724,7 @@ type ClientInterface interface {
 
 	// UpdateUser Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -14713,7 +14796,7 @@ type ClientInterface interface {
 
 	// GetLimitUsage Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -14882,7 +14965,7 @@ type ClientInterface interface {
 
 	// ListUsageEvents List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -16285,7 +16368,7 @@ func (c *Client) ExportConnectionToken(ctx context.Context, id string, reqEditor
 
 // ListConnectionTools List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -18713,7 +18796,7 @@ func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, r
 
 // UpdateUserWithBody Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -18734,7 +18817,7 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 
 // UpdateUser Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -20986,7 +21069,7 @@ func (c *Client) UnrevokeLimitGrant(ctx context.Context, grantId int64, body Unr
 
 // GetLimitUsage Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -21345,7 +21428,7 @@ func (c *Client) GetTurnStats(ctx context.Context, params *GetTurnStatsParams, r
 
 // ListUsageEvents List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //
@@ -31828,9 +31911,9 @@ func NewListLimitsRequest(server string, params *ListLimitsParams) (*http.Reques
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -32018,9 +32101,9 @@ func NewListLimitGrantsRequest(server string, params *ListLimitGrantsParams) (*h
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -32298,9 +32381,9 @@ func NewGetLimitUsageRequest(server string, params *GetLimitUsageParams) (*http.
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -32747,9 +32830,9 @@ func NewGetSpendRequest(server string, params *GetSpendParams) (*http.Request, e
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -33251,9 +33334,9 @@ func NewListUsageEventsRequest(server string, params *ListUsageEventsParams) (*h
 
 		}
 
-		if params.ApiKey != nil {
+		if params.ApiKeyId != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key", *params.ApiKey, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "api_key_id", *params.ApiKeyId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else {
 				for _, qp := range strings.Split(queryFrag, "&") {
@@ -34419,7 +34502,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListConnectionToolsWithResponse List a connection's tools
 	//
-	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+	// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -35713,7 +35796,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateUserWithBodyWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -35724,7 +35807,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateUserWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -36892,7 +36975,7 @@ type ClientWithResponsesInterface interface {
 
 	// GetLimitUsageWithResponse Read what subjects spent against their limits
 	//
-	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+	// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 	//
 	// Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 	//
@@ -37083,7 +37166,7 @@ type ClientWithResponsesInterface interface {
 
 	// ListUsageEventsWithResponse List the usage events
 	//
-	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+	// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 	//
 	// Server-side only: a request that is not server-side answers 403 server_side_only.
 	//
@@ -64554,7 +64637,7 @@ func (c *ClientWithResponses) ExportConnectionTokenWithResponse(ctx context.Cont
 
 // ListConnectionToolsWithResponse List a connection's tools
 //
-// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins. Empty until a validate listed them. Who may read them is who may read the connection.
+// The tools the connection offered when it was last validated, each with the schema digest an agent config's grant pins and whether it only reads. Empty until a validate listed them. Who may read them is who may read the connection.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -66604,7 +66687,7 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 
 // UpdateUserWithBodyWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -66621,7 +66704,7 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 
 // UpdateUserWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and their texts and calls from that number share one omni-channel with each agent of the app. Where the person already had one of each, both point at the older one from now on, and no message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -68497,7 +68580,7 @@ func (c *ClientWithResponses) UnrevokeLimitGrantWithResponse(ctx context.Context
 
 // GetLimitUsageWithResponse Read what subjects spent against their limits
 //
-// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
+// Each subject's current window in every interval: what it spent, the limit in force with its effective amount, its baseline since a reset and its room, and for the organization the operator's spend hard limit, which is what admission refuses first, the same on every subject. Up to 100 subjects of one kind, answered in the order asked: repeat the subject's own id (app_id for an app, api_key_id for a key, user_id, team or category), and send app_id once for subjects within one app or once per subject, so every list has one value or one per subject. One subject answers a list of one. Spend is read from the usage records, so it is what admission counts within a few seconds.
 //
 // Server-side only: one server-side credential of any app changes every limit of its organization, and a request that is not server-side, reads included, answers 403 server_side_only.
 //
@@ -68802,7 +68885,7 @@ func (c *ClientWithResponses) GetTurnStatsWithResponse(ctx context.Context, para
 
 // ListUsageEventsWithResponse List the usage events
 //
-// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+// Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 //
 // Server-side only: a request that is not server-side answers 403 server_side_only.
 //
