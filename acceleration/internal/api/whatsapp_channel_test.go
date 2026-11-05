@@ -426,6 +426,33 @@ func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadFailedIsWrittenWithItOnTheNe
 	s.Equal([]llm.ImagePart{{Data: s.photoBytes(photo), MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
 }
 
+// A photo is left out only on the row's last attempt: one Stream Chat fails to store on every
+// attempt but it (the suite's three retries, so the fourth try is the last) is still written
+// with the message when Stream Chat heals before that try.
+func (s *WhatsAppChannelSuite) TestAPhotoStreamChatFailsOnEveryAttemptButTheLastIsWrittenWithIt() {
+	s.answersWith("vision/vision-model")
+	person, asked := s.digits(), len(s.vision.replies())
+	photo := s.photo(person, "Is this tooth chipped?")
+	s.chat.Fail(http.MethodPost, "/image")
+	defer s.chat.Heal(http.MethodPost, "/image")
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, photo)))
+
+	// The last wait is 500 ms: the third failure is recorded, then the fourth try is a wait away.
+	s.Require().Eventually(func() bool {
+		var count int
+		s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+			"SELECT count(*) FROM channel_thread_inbound WHERE customer_id = ? AND state = 'queued' AND attempts = 3", s.customerID()).Scan(&count))
+		return count > 0
+	}, settleFor, 5*time.Millisecond, "the third attempt did not fail")
+	s.chat.Heal(http.MethodPost, "/image")
+
+	stored := s.written(s.threadChannel(person), 1)[0]
+	s.Equal([]string{"https://cdn.fake/image/photo-1.jpeg"}, photoURLs(stored))
+	s.Equal("Two roses.", s.took(1)[0].text)
+	s.Equal([]llm.ImagePart{{Data: s.photoBytes(photo), MIME: "image/jpeg"}}, imagesIn(s.turnWithImages(s.vision.replies()[asked:])))
+}
+
 // A photo Stream Chat keeps failing to store is left out on the row's last attempt (D1), and
 // one it refuses with a 4xx on the first: the caption is answered without it, as a photo that
 // cannot be downloaded is, rather than the row given up with its caption.
