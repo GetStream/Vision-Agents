@@ -272,6 +272,33 @@ func (s *ChatEpisodesSuite) TestAConfigWithoutCardsWritesAndReadsNothingNew() {
 	s.Equal(int64(1), s.configReads.reads.Load(), "the config's row is read as many times as at base")
 }
 
+// Defect: a config without episode_cards asking Stream whether the app checks tokens, as a
+// cards-on one does (checksTokens before the config's gate): with Stream slow to answer, every
+// message of such a config would wait up to omnichannel.ReadTimeout and pay a request for
+// nothing. It is handed on at once and /api/v2/app is never requested.
+func (s *ChatEpisodesSuite) TestAConfigWithoutCardsNeverAsksStreamWhetherTheAppChecksTokens() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	asked, release := s.chat.Hold("/api/v2/app")
+	defer release()
+	worker := s.worker()
+	config := s.config(false, "llm-flow")
+
+	status := make(chan int, 1)
+	go func() { status <- s.writes(config.ID, "where is my order?") }()
+
+	select {
+	case <-worker:
+	case <-time.After(omnichannel.ReadTimeout / 2):
+		s.FailNow("the message was held for Stream's answer about the app")
+	}
+	s.Equal(http.StatusOK, <-status)
+	select {
+	case <-asked:
+		s.Fail("Stream was asked whether the app checks tokens")
+	case <-time.After(dropped):
+	}
+}
+
 // The control in a channel a session answered before, whose calls row ownerOf finds first: a
 // config without episode_cards writes nothing, and its row is read once at most. At base
 // c9a61fc90 the probe of each delivery read it: naming the row's config, none; naming none or
@@ -552,9 +579,10 @@ func (s *ChatEpisodesSuite) TestAMessageToARunningSessionWritesACard() {
 	s.Equal(store.EpisodeChat, custom["source"])
 }
 
-// Defect: a card written into the deployment's app for a customer whose work there may only be
-// read, as app mode leaves it once the fallback is off: a session that started before still
-// answers, and the message opens nothing.
+// Defect: a message of a customer whose work in the deployment's app may only be read, as app
+// mode leaves it once the fallback is off, opening a contact and an episode: a session that
+// started before still answers, and the message opens nothing. The card itself is refused
+// either way (Cards.Write, ErrReadOnly).
 func (s *ChatEpisodesSuite) TestAMessageToARunningSessionOfACustomerReadOnlyInTheAppWritesNoCard() {
 	s.worker()
 	config := s.config(true, "en-low-latency")
