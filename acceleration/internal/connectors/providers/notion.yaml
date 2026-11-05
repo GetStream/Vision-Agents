@@ -22,8 +22,9 @@
 #         WWW-Authenticate: Bearer realm="OAuth", resource_metadata=
 #         "https://mcp.notion.com/.well-known/oauth-protected-resource/mcp", scope="default".
 id: notion
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 lists the tools that
+# only read.
+revision: 2
 name: Notion
 # The catalog's existing category for Google Docs and Google Drive (google_docs.yaml,
 # google_drive.yaml).
@@ -75,3 +76,57 @@ refresh:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from the «complete list of Notion MCP tools» in
+    # https://developers.notion.com/guides/mcp/tools-faqs (opened 2026-11-05; 71 tools) and each
+    # tool's entry in the technical reference pages it links (the same day). Each listed tool
+    # finds, lists, gets, reads, queries, views or waits, and none says it changes anything.
+    # notion-fetch opens Notion content, or a result of notion-connector-search, by its id or
+    # URL, «through the user's own connection to that source». notion-download-attachment
+    # reads only attachments the connection made and «does not fetch arbitrary URLs».
+    # notion-get-file-download-urls returns signed URLs that «expire after a
+    # few minutes», which brings data in, as linear.yaml's get_attachment does.
+    # notion-query-data-sources and notion-query-multiple-data-sources run a «read-only
+    # SQLite query» over Notion's own data sources. Left out: every tool that creates,
+    # updates, moves, duplicates, deletes, restores, resolves, reacts, uploads, sends, spawns
+    # or stops (notion-create-file-upload makes an upload URL); notion-ai-search and
+    # notion-connector-search, which send the model's question to the person's connected
+    # apps, «such as Slack, Google Drive, GitHub, Jira, mail, and calendar», outside Notion;
+    # and notion-calendar-list-contacts, which searches by name or email «across your
+    # connected Calendar accounts», for the same reason. A tool added later is left out too.
+    read_only_tools:
+      - notion-calendar-list-calendar-resources
+      - notion-calendar-list-calendars
+      - notion-calendar-list-coworkers-events
+      - notion-calendar-list-events
+      - notion-download-attachment
+      - notion-download-skill
+      - notion-fetch
+      - notion-get-async-task
+      - notion-get-comments
+      - notion-get-enabled-skills
+      - notion-get-file-download-urls
+      - notion-get-groups
+      - notion-get-self
+      - notion-get-session-status
+      - notion-get-suggested-edit
+      - notion-get-teams
+      - notion-get-tool-access
+      - notion-get-users
+      - notion-get-version-changes
+      - notion-list-favorite-pages
+      - notion-list-page-backlinks
+      - notion-list-private-pages
+      - notion-list-recent-pages
+      - notion-list-session-events
+      - notion-list-shared-pages
+      - notion-memory-search
+      - notion-query-data-sources
+      - notion-query-meeting-notes
+      - notion-query-multiple-data-sources
+      - notion-query-sessions
+      - notion-read-session-event
+      - notion-search
+      - notion-search-agents
+      - notion-search-sessions
+      - notion-view-version
+      - notion-wait-session
