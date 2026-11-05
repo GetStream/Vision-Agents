@@ -122,9 +122,10 @@ func sharesRun(text, reference string, n int) bool {
 	return false
 }
 
-// firstRulingOver is when the server first ruled stop or shorten over the agent, its
-// decision's first line, at or after since.
-func (c *call) firstRulingOver(since time.Time) time.Time {
+// firstRulingOver is when the server first ruled stop or shorten over the agent on words
+// that were not the agent's own echo of reply alone, its decision's first line, at or after
+// since: the first ruling the agent had anything of the caller's to act on.
+func (c *call) firstRulingOver(since time.Time, reply string) time.Time {
 	for _, r := range c.requests() {
 		if r.path != "/v1/decide" || r.firstLine.IsZero() || r.firstLine.Before(since) {
 			continue
@@ -134,8 +135,19 @@ func (c *call) firstRulingOver(since time.Time) time.Time {
 				Floor string `json:"floor"`
 			} `json:"ruling"`
 		}
-		first, _, _ := strings.Cut(r.body, "\n")
-		if json.Unmarshal([]byte(first), &answer) == nil && answer.Ruling != nil && (answer.Ruling.Floor == "stop" || answer.Ruling.Floor == "shorten") {
+		var words struct {
+			Transcript *struct {
+				Text string `json:"text"`
+			} `json:"transcript"`
+		}
+		first, rest, _ := strings.Cut(r.body, "\n")
+		if json.Unmarshal([]byte(first), &answer) != nil || answer.Ruling == nil || (answer.Ruling.Floor != "stop" && answer.Ruling.Floor != "shorten") {
+			continue
+		}
+		if json.Unmarshal([]byte(strings.TrimSpace(rest)), &words) != nil || words.Transcript == nil {
+			continue
+		}
+		if left, _ := echoed(words.Transcript.Text, reply); strings.TrimSpace(left) != "" {
 			return r.firstLine
 		}
 	}
@@ -207,7 +219,7 @@ func (s *scenarios) overTheReply(t *testing.T, name string, after time.Duration,
 	defer c.report()
 
 	took, how, stopped := c.stoppedAfter(over)
-	ruledOver := c.firstRulingOver(over.began())
+	ruledOver := c.firstRulingOver(over.began(), reply)
 	answered := c.answered(over)
 	answers := c.decisionsBetween(over.began(), time.Now().Add(time.Hour), string(ActAnswer))
 	var heard []string
@@ -221,8 +233,9 @@ func (s *scenarios) overTheReply(t *testing.T, name string, after time.Duration,
 		since(answered.speechEnd, answered.ruled), since(answered.speechEnd, answered.decided), since(answered.speechEnd, answered.replied))
 	assert.Empty(t, all[Error](c), "no failure")
 	if assert.True(t, stopped, "the agent stopped or shortened") && assert.False(t, ruledOver.IsZero(), "the model ruled against the reply") {
-		// The loop's own part: the model's first ruling against the reply is acted on, with
-		// its words, within the policy's interval. How soon the model rules is its own.
+		// The loop's own part: the model's first ruling against the reply whose words carry
+		// any of the caller's is acted on within the policy's interval. One on the echo alone
+		// stops nothing, and how soon the model rules is its own.
 		acted := over.began().Add(took).Sub(ruledOver)
 		assert.LessOrEqual(t, acted, time.Duration(s.policy.IntervalMs)*time.Millisecond, "the agent gave way %s after the model's first ruling against the reply", acted.Round(time.Millisecond))
 	}
