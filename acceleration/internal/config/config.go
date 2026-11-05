@@ -374,9 +374,11 @@ type Agent struct {
 	// for an agent that names audiofloor/audio-floor as its transcriber, and AudioFloorMode
 	// says what the flow controller does with its rulings: off (the default), shadow (asks
 	// it beside the flow controller and acts on nothing it says) or act (asks it first, and
-	// the flow controller decides the turns it doesn't answer in time).
-	AudioFloorURL  string `koanf:"audio_floor_url"`
-	AudioFloorMode string `koanf:"audio_floor_mode"`
+	// the flow controller decides the turns it doesn't answer in time). AudioFloorAudio is
+	// how the audio is sent: opus (the default) or pcm, for debugging.
+	AudioFloorURL   string `koanf:"audio_floor_url"`
+	AudioFloorMode  string `koanf:"audio_floor_mode"`
+	AudioFloorAudio string `koanf:"audio_floor_audio"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -556,6 +558,7 @@ var variables = map[string]string{
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
 	"agent.audio_floor_url":     "ROUTER_AUDIO_FLOOR_URL",
 	"agent.audio_floor_mode":    "ROUTER_AUDIO_FLOOR_MODE",
+	"agent.audio_floor_audio":   "ROUTER_AUDIO_FLOOR_AUDIO",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -777,6 +780,11 @@ func (c Config) validate() error {
 		}
 	default:
 		return fmt.Errorf("config: agent.audio_floor_mode (ROUTER_AUDIO_FLOOR_MODE) is off, shadow or act, got %q", c.Agent.AudioFloorMode)
+	}
+	switch c.Agent.AudioFloorAudio {
+	case "", "opus", "pcm":
+	default:
+		return fmt.Errorf("config: agent.audio_floor_audio (ROUTER_AUDIO_FLOOR_AUDIO) is opus or pcm, got %q", c.Agent.AudioFloorAudio)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:

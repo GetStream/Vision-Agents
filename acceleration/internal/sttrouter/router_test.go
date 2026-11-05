@@ -132,7 +132,7 @@ func (s *STTRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	router := s.newRouter()
 	registry := DefaultRegistry()
 	RegisterMock(registry)
-	RegisterAudioFloor(registry, audiofloor.New("http://127.0.0.1:1", nil))
+	RegisterAudioFloor(registry, audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil))
 
 	for _, provider := range router.Config().Providers {
 		s.Truef(registry.Has(provider.Provider),
@@ -674,7 +674,7 @@ func (s *STTRouterSuite) TestTheAudioFloorIsStreamedAtByNameAndReachedByNoShortc
 	config, err := routing.DefaultConfig()
 	s.Require().NoError(err)
 	registry := NewRegistry()
-	RegisterAudioFloor(registry, audiofloor.New(srv.URL, srv.Client()))
+	RegisterAudioFloor(registry, audiofloor.New(srv.URL, audiofloor.Opus, srv.Client()))
 	router, err := New(Options{Config: config[routing.STT], Registry: registry})
 	s.Require().NoError(err)
 	s.T().Cleanup(router.Close)

@@ -853,6 +853,16 @@ func (s *ConfigSuite) TestAnAudioFloorModeIsOffShadowOrAct() {
 	s.ErrorContains(err, "agent.audio_floor_mode")
 }
 
+func (s *ConfigSuite) TestTheAudioFloorsAudioIsOpusOrPCM() {
+	s.T().Setenv("ROUTER_AUDIO_FLOOR_AUDIO", "mp3")
+	_, _, err := Load("")
+	s.ErrorContains(err, "ROUTER_AUDIO_FLOOR_AUDIO")
+	s.T().Setenv("ROUTER_AUDIO_FLOOR_AUDIO", "pcm")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("pcm", settings.Agent.AudioFloorAudio)
+}
+
 func (s *ConfigSuite) TestAnAudioFloorModeNeedsAServer() {
 	s.T().Setenv("ROUTER_AUDIO_FLOOR_MODE", "act")
 	_, _, err := Load("")

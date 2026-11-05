@@ -82,7 +82,7 @@ func (h *Hearer) Check(ctx context.Context, turn harness.FlowTurn) (Check, error
 }
 
 func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error) {
-	info, err := h.client.Info(ctx)
+	policy, err := h.client.Policy(ctx)
 	if err != nil {
 		return Check{}, err
 	}
@@ -103,7 +103,6 @@ func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	if answer.PEOT == nil {
 		return Check{}, stack.Wrap(errors.New("audiofloor: no p_eot with the floor free"))
 	}
-	policy := info.EndOfTurn
 	check.Bar = policy.Bar(!turn.Waited, turn.FirstPause)
 	check.Ended = *answer.PEOT >= check.Bar || turn.Paused >= policy.Cap()
 	if !check.Ended {
@@ -131,9 +130,9 @@ func outcome(err error) string {
 // turnOf says a flow controller's turn in the model's terms. With the floor free the audio
 // says whether the words are finished, and the agent is saying nothing.
 func turnOf(turn harness.FlowTurn) Turn {
-	out := Turn{Speaker: Caller, Speaking: turn.Speaking}
+	out := Turn{Speaker: caller, Speaking: turn.Speaking}
 	if turn.AnotherVoice {
-		out.Speaker = AnotherVoice
+		out.Speaker = anotherVoice
 	}
 	if turn.Speaking {
 		out.Said, out.Unfinished = turn.Reply, turn.Unfinished

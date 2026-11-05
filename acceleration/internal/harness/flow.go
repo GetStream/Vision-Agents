@@ -90,9 +90,9 @@ type FlowTurn struct {
 	// what they had said, so they are giving one thought in parts and a part that sounds
 	// complete may not be the end of it.
 	InParts bool
-	// Audio and Tools are for a Hearer: the speaker's last 16 s at 16 kHz, and the tools
-	// the customer declared.
-	Audio []int16
+	// Audio and Tools are for a Hearer: the speaker's last 16 s, and the tools the
+	// customer declared.
+	Audio Audio
 	Tools []llm.Tool
 	// Paused is how long the words had held still when they were put, and FirstPause says
 	// no earlier pause in the speaker's turn was waited out: what a Hearer ends a turn on.

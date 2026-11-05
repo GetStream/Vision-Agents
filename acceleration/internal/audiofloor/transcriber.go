@@ -5,10 +5,10 @@ import (
 	"errors"
 	"log/slog"
 	"math"
-	"slices"
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -23,10 +23,8 @@ const (
 	// voiceLevel is the root mean square, as a fraction of full scale, from which a frame
 	// counts as voice: about -48 dBFS, below quiet speech and above a phone line's hiss.
 	// It is the gate the model's reference client uses, not one measured on these calls.
+	// It says where the pauses are; what is noise is the server's to say.
 	voiceLevel = 0.004
-	// minVoice is the least voice an utterance needs to be written, so a cough or a click
-	// isn't.
-	minVoice = 300 * time.Millisecond
 	// preroll is the audio kept ahead of an utterance's first voiced frame, so that a gate
 	// that opens late doesn't cut the first sound off.
 	preroll = 300 * time.Millisecond
@@ -44,13 +42,15 @@ const (
 // needs no other speech-to-text provider. It is an stt.STT that writes the whole utterance
 // so far at each of its pauses, once the pause reaches the policy's first check, as a
 // replacement of the words before, and ends the utterance when a pause reaches the policy's
-// cap. When to answer is the flow controller's to say, as it is with any transcriber.
+// cap. When to answer is the flow controller's to say, as it is with any transcriber. The
+// server writes nothing of noise, and empty words are nothing heard.
 //
 // A server that fails to answer is a fatal error, which hands the call to the next
 // transcriber the routing target names. The words since the last ones written are lost.
 type Transcriber struct {
 	client   *Client
 	model    string
+	agent    Agent
 	logger   *slog.Logger
 	emitter  *stt.Emitter
 	requests chan request
@@ -59,41 +59,48 @@ type Transcriber struct {
 	cancel context.CancelFunc
 	done   chan struct{}
 
-	// The utterance being heard, kept by ProcessAudio on the session's own goroutine.
-	first, cap    time.Duration
-	audio         []int16
-	voiced, quiet time.Duration
+	// The utterance being heard, kept by ProcessAudio on the session's own goroutine: heard
+	// holds its audio from frame start on.
+	first, cap time.Duration
+	heard      *Stream
+	start      int64
+	voiced     bool
+	quiet      time.Duration
 	// asked says the pause going on has had its words asked for.
 	asked     bool
 	utterance int64
 }
 
-// request is an utterance's words to write, or with no samples its end on the words last
+// request is an utterance's words to write, or with no audio its end on the words last
 // written.
 type request struct {
 	participant stt.Participant
 	utterance   int64
-	samples     []int16
+	audio       harness.Audio
 	final       bool
 }
 
-// NewTranscriber returns an unstarted transcriber asking client.
-func NewTranscriber(client *Client, model string, logger *slog.Logger) *Transcriber {
+// NewTranscriber returns an unstarted transcriber asking client, for callers who speak
+// languages, BCP 47 tags, or any language when there are none.
+func NewTranscriber(client *Client, model string, languages []string, logger *slog.Logger) *Transcriber {
 	if model == "" {
 		model = DefaultModel
 	}
-	return &Transcriber{client: client, model: model, logger: logger, emitter: stt.NewEmitter(eventBuffer),
-		requests: make(chan request, queued), done: make(chan struct{})}
+	return &Transcriber{client: client, model: model, agent: Agent{Languages: languages}, logger: logger,
+		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
 
 // Start reads the server's policy, which says which pauses are written and which end an
 // utterance.
 func (t *Transcriber) Start(ctx context.Context) error {
-	info, err := t.client.Info(ctx)
+	policy, err := t.client.Policy(ctx)
 	if err != nil {
 		return err
 	}
-	t.first, t.cap = info.EndOfTurn.FirstCheck(), info.EndOfTurn.Cap()
+	if t.heard, err = t.client.NewStream(maxUtterance); err != nil {
+		return err
+	}
+	t.first, t.cap = policy.FirstCheck(), policy.Cap()
 	t.ctx, t.cancel = context.WithCancel(context.Background())
 	go t.transcribe()
 	t.emitter.Send(stt.Connected{Provider: ProviderName, Model: t.model, At: time.Now()})
@@ -108,28 +115,29 @@ func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant)
 	if err := pcm.Validate(stt.SampleRate); err != nil {
 		return err
 	}
-	frame := time.Duration(pcm.DurationMs() * float64(time.Millisecond))
-	t.audio = append(t.audio, pcm.Samples...)
-	if level(pcm.Samples) >= voiceLevel {
-		t.voiced, t.quiet, t.asked = t.voiced+frame, 0, false
-	} else {
-		t.quiet += frame
+	if err := t.heard.Write(pcm.Samples); err != nil {
+		return err
 	}
+	if level(pcm.Samples) >= voiceLevel {
+		t.voiced, t.quiet, t.asked = true, 0, false
+	} else {
+		t.quiet += time.Duration(pcm.DurationMs() * float64(time.Millisecond))
+	}
+	heard := t.heard.Frames()
 	switch {
-	case t.voiced == 0:
-		t.audio = t.audio[max(0, len(t.audio)-samplesOf(preroll)):]
-	case t.voiced < minVoice && t.quiet >= t.first:
-		t.restart()
-	case t.quiet >= t.cap || len(t.audio) >= samplesOf(maxUtterance):
+	case !t.voiced:
+		t.start = heard - int64(preroll/frame)
+	case t.quiet >= t.cap || heard-t.start >= int64(maxUtterance/frame):
 		end := request{participant: participant, utterance: t.utterance + 1, final: true}
 		if !t.asked {
-			end.samples = t.audio
+			end.audio = t.heard.Last(time.Duration(heard-t.start) * frame)
 		}
 		t.ask(end)
 		t.utterance++
-		t.restart()
+		// The next utterance begins with the end of this one, quiet as it is.
+		t.start, t.voiced, t.quiet, t.asked = heard-int64(preroll/frame), false, 0, false
 	case t.quiet >= t.first && !t.asked:
-		t.ask(request{participant: participant, utterance: t.utterance + 1, samples: slices.Clone(t.audio)})
+		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: t.heard.Last(time.Duration(heard-t.start) * frame)})
 		t.asked = true
 	}
 	return nil
@@ -143,13 +151,9 @@ func (t *Transcriber) ask(r request) {
 	}
 }
 
-// restart begins the next utterance with the end of this one's audio, quiet as it is.
-func (t *Transcriber) restart() {
-	t.audio = slices.Clone(t.audio[max(0, len(t.audio)-samplesOf(preroll)):])
-	t.voiced, t.quiet, t.asked = 0, 0, false
-}
-
 // transcribe asks for words one request at a time, so that they arrive in the order said.
+// Words that come back empty write nothing, and an utterance ends on the last words that
+// didn't.
 func (t *Transcriber) transcribe() {
 	defer close(t.done)
 	var last string
@@ -161,9 +165,10 @@ func (t *Transcriber) transcribe() {
 			return
 		}
 		start := time.Now()
-		if r.samples != nil {
+		var words string
+		if r.audio.Data != nil {
 			ctx, cancel := context.WithTimeout(t.ctx, transcribeTimeout)
-			answer, err := t.client.Decide(ctx, Agent{}, Turn{}, r.samples, true)
+			answer, err := t.client.Decide(ctx, t.agent, Turn{}, r.audio, true)
 			cancel()
 			if t.ctx.Err() != nil {
 				return
@@ -172,24 +177,28 @@ func (t *Transcriber) transcribe() {
 				t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Err: err, Context: "transcribe", Fatal: true})
 				return
 			}
-			last = strings.TrimSpace(answer.Transcript)
+			words = strings.TrimSpace(answer.Transcript)
+		}
+		if words != "" {
+			last = words
+		}
+		if last == "" || (words == "" && !r.final) {
+			continue
 		}
 		mode := stt.ModeReplacement
 		if r.final {
 			mode = stt.ModeFinal
 		}
-		if last != "" {
-			t.emitter.Send(stt.Transcript{
-				Participant:      r.participant,
-				Mode:             mode,
-				Utterance:        r.utterance,
-				Text:             last,
-				Provider:         ProviderName,
-				Model:            t.model,
-				ProcessingTimeMs: float64(time.Since(start).Microseconds()) / 1000,
-				AudioDurationMs:  float64(len(r.samples)) * 1000 / SampleRate,
-			})
-		}
+		t.emitter.Send(stt.Transcript{
+			Participant:      r.participant,
+			Mode:             mode,
+			Utterance:        r.utterance,
+			Text:             last,
+			Provider:         ProviderName,
+			Model:            t.model,
+			ProcessingTimeMs: float64(time.Since(start).Microseconds()) / 1000,
+			AudioDurationMs:  float64(r.audio.Duration.Microseconds()) / 1000,
+		})
 		if r.final {
 			last = ""
 		}
@@ -215,8 +224,6 @@ func (t *Transcriber) Provider() string { return ProviderName }
 
 // Model is the model identifier used in stats.
 func (t *Transcriber) Model() string { return t.model }
-
-func samplesOf(d time.Duration) int { return int(d * SampleRate / time.Second) }
 
 // level is a frame's root mean square, as a fraction of full scale.
 func level(samples []int16) float64 {

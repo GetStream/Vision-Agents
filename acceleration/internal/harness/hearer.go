@@ -15,6 +15,15 @@ type Hearer interface {
 	Hear(ctx context.Context, turn FlowTurn) (Decided, error)
 }
 
+// Audio is a recording of the speaker, encoded as a Hearer's server takes it.
+type Audio struct {
+	// Type is Data's media type.
+	Type string
+	Data []byte
+	// Duration is how long it lasts.
+	Duration time.Duration
+}
+
 // HearDeadline is how long a Hearer has to rule on turn: a third of the flow controller's
 // own deadline, which leaves the judge or the model the other two thirds to decide as they
 // would without it.

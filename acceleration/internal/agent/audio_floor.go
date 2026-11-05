@@ -24,14 +24,16 @@ var audioFloorCompared = promauto.NewCounterVec(prometheus.CounterOpts{
 	Help:      "Turns both the flow controller and, in shadow mode, the audio floor model ruled on, by each one's disposition and floor. The model's ruling is not acted on.",
 }, []string{"controller_disposition", "model_disposition", "controller_floor", "model_floor"})
 
-// audioFloor keeps each participant's last 16 s for the audio floor model. Acting, the model
-// is the flow controller's Hearer. In shadow mode it is asked about each turn beside the
-// flow controller and nothing it says is acted on: the two rulings are counted and logged
-// side by side, so that real calls can say whether it should act. A shadow question costs a
-// call nothing, as none is waited for and one still out drops the next.
+// audioFloor keeps each participant's last 16 s for the audio floor model, encoded once as
+// it arrives. Acting, the model is the flow controller's Hearer. In shadow mode it is asked
+// about each turn beside the flow controller and nothing it says is acted on: the two
+// rulings are counted and logged side by side, so that real calls can say whether it should
+// act. A shadow question costs a call nothing, as none is waited for and one still out
+// drops the next.
 //
 // Nil is off, and every method of a nil one does nothing.
 type audioFloor struct {
+	client *audiofloor.Client
 	hearer *audiofloor.Hearer
 	shadow bool
 	logger *slog.Logger
@@ -41,17 +43,19 @@ type audioFloor struct {
 	busy    atomic.Bool
 	running sync.WaitGroup
 
-	mu    sync.Mutex
-	rings map[string]*audiofloor.Ring
+	mu sync.Mutex
+	// streams holds each participant's, or nil for one that could not be kept.
+	streams map[string]*audiofloor.Stream
 	// turns holds what each side said about a turn until the other has.
 	turns map[string]*audioFloorTurn
 }
 
+// audioFloorTurn is what each side said about a turn, and when the model was asked.
 type audioFloorTurn struct {
-	asked      harness.FlowTurn
-	model      *audiofloor.Check
-	took       time.Duration
-	controller *harness.Decided
+	model                  *audiofloor.Check
+	paused, took           time.Duration
+	firstCheck, firstPause bool
+	controller             *harness.Decided
 }
 
 // newAudioFloor returns nil unless the model is asked.
@@ -61,13 +65,14 @@ func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, logger *slog
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &audioFloor{
-		hearer: audiofloor.NewHearer(client),
-		shadow: mode == audiofloor.Shadow,
-		logger: logger,
-		ctx:    ctx,
-		cancel: cancel,
-		rings:  map[string]*audiofloor.Ring{},
-		turns:  map[string]*audioFloorTurn{},
+		client:  client,
+		hearer:  audiofloor.NewHearer(client),
+		shadow:  mode == audiofloor.Shadow,
+		logger:  logger,
+		ctx:     ctx,
+		cancel:  cancel,
+		streams: map[string]*audiofloor.Stream{},
+		turns:   map[string]*audioFloorTurn{},
 	}
 }
 
@@ -84,18 +89,27 @@ func (v *audioFloor) heard(inbound InboundAudio) {
 	if v == nil || inbound.Audio.SampleRate != audiofloor.SampleRate || inbound.Audio.Channels != 1 {
 		return
 	}
-	v.ring(inbound.Participant.ID).Write(inbound.Audio.Samples)
+	stream := v.stream(inbound.Participant.ID)
+	if stream == nil {
+		return
+	}
+	if err := stream.Write(inbound.Audio.Samples); err != nil {
+		v.logger.Debug("the audio floor model missed a frame", "participant", inbound.Participant.ID, "error", err)
+	}
 }
 
-func (v *audioFloor) ring(participant string) *audiofloor.Ring {
+func (v *audioFloor) stream(participant string) *audiofloor.Stream {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	ring, ok := v.rings[participant]
+	stream, ok := v.streams[participant]
 	if !ok {
-		ring = &audiofloor.Ring{}
-		v.rings[participant] = ring
+		var err error
+		if stream, err = v.client.NewStream(audiofloor.Window); err != nil {
+			v.logger.Warn("the audio floor model will not hear a participant", "participant", participant, "error", err)
+		}
+		v.streams[participant] = stream
 	}
-	return ring
+	return stream
 }
 
 // listen gives turn what the model hears: the participant's last 16 s, and the customer's
@@ -104,7 +118,9 @@ func (v *audioFloor) listen(turn *harness.FlowTurn, participant string, tools []
 	if v == nil {
 		return
 	}
-	turn.Audio = v.ring(participant).Last()
+	if stream := v.stream(participant); stream != nil {
+		turn.Audio = stream.Last(audiofloor.Window)
+	}
 	turn.Tools = customerTools(tools)
 }
 
@@ -143,7 +159,10 @@ func (v *audioFloor) ask(turn harness.FlowTurn) {
 			v.logger.Debug("the audio floor model did not rule", "candidate", turn.ID, "error", err)
 			return
 		}
-		v.settle(turn.ID, func(t *audioFloorTurn) { t.asked, t.model, t.took = turn, &check, time.Since(start) })
+		v.settle(turn.ID, func(t *audioFloorTurn) {
+			t.model, t.took = &check, time.Since(start)
+			t.paused, t.firstCheck, t.firstPause = turn.Paused, !turn.Waited, turn.FirstPause
+		})
 	}()
 }
 
@@ -186,8 +205,8 @@ func (v *audioFloor) settle(candidate string, say func(*audioFloorTurn)) {
 		"controller_disposition", controller.Disposition, "controller_floor", controller.Floor,
 		"model_disposition", model.Disposition, "model_floor", model.Floor,
 		"model_answer", answer.Answer, "model_p", answer.AnswerProbability, "p_end", pEnd,
-		"bar", turn.model.Bar, "ended", turn.model.Ended, "paused_ms", turn.asked.Paused.Milliseconds(),
-		"first_check", !turn.asked.Waited, "first_pause", turn.asked.FirstPause,
+		"bar", turn.model.Bar, "ended", turn.model.Ended, "paused_ms", turn.paused.Milliseconds(),
+		"first_check", turn.firstCheck, "first_pause", turn.firstPause,
 		"tool", model.Tool, "cannot", model.Cannot, "took_ms", turn.took.Milliseconds())
 }
 

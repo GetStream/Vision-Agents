@@ -814,10 +814,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 
 	// One audio floor server serves every agent: as a transcriber where one names it, and
 	// to the flow controller as the mode says.
-	var floor *audiofloor.Client
-	if settings.Agent.AudioFloorURL != "" {
-		floor = audiofloor.New(settings.Agent.AudioFloorURL, nil)
-	}
+	floor, floorMode := audiofloor.Open(settings.Agent)
 
 	if section, ok := capabilities[routing.STT]; ok {
 		transcribers := sttrouter.DefaultRegistry()
@@ -1152,7 +1149,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, floorMode, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1986,6 +1983,7 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	floor *audiofloor.Client,
+	floorMode audiofloor.Mode,
 	stream *streamapp.Clients,
 	connectors session.Connectors,
 	prices pricing.Pricer,
@@ -2018,10 +2016,10 @@ func buildSessions(
 		Search:     finding,
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
-		AudioFloor: floor,
 		Phone:      telephony,
-		// Validated as off, shadow or act when the settings were read.
-		AudioFloorMode: audiofloor.Mode(settings.Agent.AudioFloorMode),
+		// Off unless the deployment names a server and a mode.
+		AudioFloor:     floor,
+		AudioFloorMode: floorMode,
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,

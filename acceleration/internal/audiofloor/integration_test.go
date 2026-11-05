@@ -20,9 +20,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// caller is the server ROUTER_AUDIO_FLOOR_URL names and AUDIO_FLOOR_WAV's audio, a 16 kHz
+// recording is the server ROUTER_AUDIO_FLOOR_URL names and AUDIO_FLOOR_WAV's audio, a 16 kHz
 // mono 16-bit WAV of a caller asking something.
-func caller(t *testing.T) (string, []int16) {
+func recording(t *testing.T) (string, []int16) {
 	url, wav := os.Getenv("ROUTER_AUDIO_FLOOR_URL"), os.Getenv("AUDIO_FLOOR_WAV")
 	if url == "" || wav == "" {
 		t.Skip("needs ROUTER_AUDIO_FLOOR_URL and AUDIO_FLOOR_WAV")
@@ -36,45 +36,59 @@ func caller(t *testing.T) (string, []int16) {
 	return url, pcm
 }
 
-// A real audio floor server rules on a caller's question and writes it down.
+// streamed is pcm as a stream of format sends its last 16 s.
+func streamed(t *testing.T, format Format, pcm []int16) harness.Audio {
+	stream, err := newStream(format, Window)
+	require.NoError(t, err)
+	for frame := range slices.Chunk(pcm, frameSamples) {
+		require.NoError(t, stream.Write(frame))
+	}
+	return stream.Last(Window)
+}
+
+// A real audio floor server rules on a caller's question, in Opus as in PCM, and writes it
+// down.
 func TestARealServerRulesAndTranscribes(t *testing.T) {
-	url, pcm := caller(t)
+	url, pcm := recording(t)
 	// The caller has been quiet a while when the turn is put.
 	pcm = append(pcm, make([]int16, SampleRate*6/10)...)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	client := New(url, nil)
-	turn := harness.FlowTurn{
-		Instructions: "You answer the phone for a weather service.",
-		Tools:        []llm.Tool{{Name: "get_weather", Description: "Get the forecast for a city.", Parameters: map[string]any{"required": []any{"city"}}}},
-		Audio:        pcm,
-		Paused:       600 * time.Millisecond,
-		FirstPause:   true,
-	}
+	client := New(url, Opus, nil)
 	hearer := NewHearer(client)
-	_, err := hearer.Check(ctx, turn) // registers the agent and evaluates its prompt
-	require.NoError(t, err)
-	var took []time.Duration
-	var check Check
-	for range 5 {
-		start := time.Now()
-		check, err = hearer.Check(ctx, turn)
+	for _, format := range []Format{PCM, Opus} {
+		turn := harness.FlowTurn{
+			Instructions: "You answer the phone for a weather service.",
+			Tools:        []llm.Tool{{Name: "get_weather", Description: "Get the forecast for a city.", Parameters: map[string]any{"required": []any{"city"}}}},
+			Audio:        streamed(t, format, pcm),
+			Paused:       600 * time.Millisecond,
+			FirstPause:   true,
+		}
+		_, err := hearer.Check(ctx, turn) // registers the agent and evaluates its prompt
 		require.NoError(t, err)
-		took = append(took, time.Since(start))
+		var took []time.Duration
+		var check Check
+		for range 5 {
+			start := time.Now()
+			check, err = hearer.Check(ctx, turn)
+			require.NoError(t, err)
+			took = append(took, time.Since(start))
+		}
+		slices.Sort(took)
+		body, _, err := decisionBody(turnOf(turn), turn.Audio)
+		require.NoError(t, err)
+		t.Logf("%s decision: median %v over %d, server %.0f ms, %d bytes; answer %s %.3f, p_eot %.4f, bar %.3f, ruling %+v",
+			format, took[len(took)/2], len(took), check.Answer.DecideMs, len(body), check.Answer.Answer, check.Answer.AnswerProbability,
+			*check.Answer.PEOT, check.Bar, check.Ruling)
 	}
-	slices.Sort(took)
-	body, _, err := decisionBody(turnOf(turn), pcm)
-	require.NoError(t, err)
-	t.Logf("decision: median %v over %d, server %.0f ms, %d bytes; answer %s %.3f, p_eot %.3f, bar %.3f, ruling %+v",
-		took[len(took)/2], len(took), check.Answer.DecideMs, len(body), check.Answer.Answer, check.Answer.AnswerProbability,
-		*check.Answer.PEOT, check.Bar, check.Ruling)
 
-	took = took[:0]
+	took := []time.Duration{}
 	var said Answer
 	for range 3 {
 		start := time.Now()
-		said, err = client.Decide(ctx, Agent{}, Turn{}, pcm, true)
+		var err error
+		said, err = client.Decide(ctx, Agent{}, Turn{}, streamed(t, Opus, pcm), true)
 		require.NoError(t, err)
 		took = append(took, time.Since(start))
 	}
@@ -85,8 +99,8 @@ func TestARealServerRulesAndTranscribes(t *testing.T) {
 
 // The transcriber writes the caller's question at its pauses and ends it at the cap.
 func TestARealServerTranscribesAnUtterance(t *testing.T) {
-	url, pcm := caller(t)
-	transcriber := NewTranscriber(New(url, nil), "", slog.New(slog.DiscardHandler))
+	url, pcm := recording(t)
+	transcriber := NewTranscriber(New(url, Opus, nil), "", []string{"en"}, slog.New(slog.DiscardHandler))
 	require.NoError(t, transcriber.Start(context.Background()))
 	defer transcriber.Close()
 	pcm = append(append(make([]int16, SampleRate), pcm...), make([]int16, 3*SampleRate)...)

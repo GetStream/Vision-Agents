@@ -21,6 +21,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent/streamedge"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chatlog"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
@@ -192,7 +193,11 @@ func run(options options, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	routers, cleanup, err := buildRouters(ctx, options.replyHedge, options.flowHedge, logger)
+	floor, floorMode, err := openAudioFloor()
+	if err != nil {
+		return err
+	}
+	routers, cleanup, err := buildRouters(ctx, options.replyHedge, options.flowHedge, floor, logger)
 	if err != nil {
 		return err
 	}
@@ -270,6 +275,8 @@ func run(options options, logger *slog.Logger) error {
 		Store:          routers.store,
 		Live:           routers.live,
 		Logger:         logger,
+		AudioFloor:     floor,
+		AudioFloorMode: floorMode,
 	})
 	if err != nil {
 		return err
@@ -476,6 +483,17 @@ func speaker(heard agent.Heard) string {
 	return "someone"
 }
 
+// openAudioFloor is the audio floor server the router's settings name (ROUTER_AUDIO_FLOOR_URL,
+// _MODE and _AUDIO), read as the router reads them, or nil.
+func openAudioFloor() (*audiofloor.Client, audiofloor.Mode, error) {
+	settings, _, err := config.Load("")
+	if err != nil {
+		return nil, "", err
+	}
+	floor, mode := audiofloor.Open(settings.Agent)
+	return floor, mode, nil
+}
+
 // routers is the three modalities an agent needs, plus the store its turns are recorded
 // in when one is configured.
 type routers struct {
@@ -487,8 +505,9 @@ type routers struct {
 }
 
 // buildRouters wires all three routers, using Postgres and Redis when they are configured.
-// The demo is useful without them: it just stops recording usage.
-func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, logger *slog.Logger) (routers, func(), error) {
+// The demo is useful without them: it just stops recording usage. An audio floor server, when
+// there is one, is a transcriber agents can name.
+func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, floor *audiofloor.Client, logger *slog.Logger) (routers, func(), error) {
 	config, err := routing.LoadConfig(os.Getenv(configEnvVar))
 	if err != nil {
 		return routers{}, nil, err
@@ -531,9 +550,13 @@ func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, logg
 		closers = append(closers, liveClient.Close)
 	}
 
+	transcribers := sttrouter.DefaultRegistry()
+	if floor != nil {
+		sttrouter.RegisterAudioFloor(transcribers, floor)
+	}
 	transcriber, err := sttrouter.New(sttrouter.Options{
 		Config:   config[routing.STT],
-		Registry: sttrouter.DefaultRegistry(),
+		Registry: transcribers,
 		Store:    pgStore,
 		Live:     liveClient,
 		Logger:   logger,

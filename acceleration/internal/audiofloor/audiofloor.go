@@ -7,14 +7,15 @@
 //	                          with the floor free says the conversation, the most tools an
 //	                          agent can have, the audio a decision hears, and end_of_turn,
 //	                          the policy fitted to its model for ending a turn
-//	POST /v1/agents           {"instructions","tools"}: registers an agent by its content
-//	                          and answers {"agent": ID}. More tools than the model has
-//	                          answers for is a 422
+//	POST /v1/agents           {"instructions","tools","languages"}: registers an agent by
+//	                          its content and answers {"agent": ID}. More tools than the
+//	                          model has answers for is a 422
 //	POST /v1/decide?agent=ID  a multipart body: a "turn" part, the moment of the call as
-//	                          JSON, then an "audio" part, 16 kHz mono PCM. The answer is
-//	                          every option's probability, p_eot = 1 - p(wait) with the floor
-//	                          free, and the ruling to act on once the turn has ended. With
-//	                          transcript=true a second line follows with what was said
+//	                          JSON, then an "audio" part, Ogg Opus or 16 kHz mono PCM. The
+//	                          answer is every option's probability, p_eot = 1 - p(wait)
+//	                          with the floor free, and the ruling to act on once the turn
+//	                          has ended. With transcript=true a second line follows with
+//	                          what was said, empty when the server heard noise
 //
 // The server writes the model's prompt, because the model knows only the words it was
 // trained on. The server says what to do with the words; whether a turn with the floor free
@@ -24,6 +25,7 @@ package audiofloor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/json"
@@ -34,13 +36,14 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
-	"strconv"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
@@ -48,12 +51,13 @@ import (
 const (
 	// SampleRate is what the server takes and the model hears.
 	SampleRate = 16000
-	// windowSamples is what a decision hears.
-	windowSamples = 16 * SampleRate
-	// maxSaid and maxTurns are what a prompt shows of the reply and of the conversation, so
-	// sending more only spends the request.
-	maxSaid  = 800
-	maxTurns = 6
+	// Window is what a decision hears.
+	Window = 16 * time.Second
+	// maxSaid, maxTurns and maxLineWords are what a prompt shows of the reply, of the
+	// conversation and of each of its lines, so sending more only spends the request.
+	maxSaid      = 800
+	maxTurns     = 6
+	maxLineWords = 40
 	// maxTurnBytes is the most the server takes in a turn.
 	maxTurnBytes = 64 << 10
 	// maxAgents bounds the IDs a client remembers. A router's agents are few, and one
@@ -74,15 +78,9 @@ var (
 // The speakers a prompt can name. Training's rows name nobody else, so a participant's own
 // name goes no further than this package.
 const (
-	Caller       = "caller"
-	AnotherVoice = "another_voice"
+	caller       = "caller"
+	anotherVoice = "another_voice"
 )
-
-// Info is what a server says it serves, in the parts the router reads.
-type Info struct {
-	Template  string `json:"template"`
-	EndOfTurn Policy `json:"end_of_turn"`
-}
 
 // Policy is when a turn with the floor free has ended, fitted to the server's model. A
 // pause is checked FirstCheckMs into it and every IntervalMs after, and the turn has ended
@@ -115,10 +113,12 @@ func (p Policy) FirstCheck() time.Duration { return time.Duration(p.FirstCheckMs
 func (p Policy) Interval() time.Duration   { return time.Duration(p.IntervalMs) * time.Millisecond }
 func (p Policy) Cap() time.Duration        { return time.Duration(p.CapMs) * time.Millisecond }
 
-// Agent is what an agent was told and what it can do.
+// Agent is what an agent was told and what it can do, and the languages its callers speak,
+// the only ones the server writes their words in.
 type Agent struct {
 	Instructions string
 	Tools        []llm.Tool
+	Languages    []string
 }
 
 // Line is one line of the conversation so far.
@@ -145,31 +145,26 @@ type Ruling struct {
 	Cannot      bool   `json:"cannot,omitempty"`
 }
 
-// Option is one answer's probability.
-type Option struct {
-	Name string  `json:"name"`
-	P    float64 `json:"p"`
-}
-
 // Answer is what the model made of a turn.
 type Answer struct {
 	Answer            string   `json:"answer"`
 	AnswerProbability float64  `json:"answer_probability"`
 	PEOT              *float64 `json:"p_eot"`
-	Options           []Option `json:"options"`
 	DecideMs          float64  `json:"decide_ms"`
 	Ruling            *Ruling  `json:"ruling"`
-	// Transcript is what was said, when asked for.
+	// Transcript is what was said, when asked for: empty when nothing was, or when the
+	// server heard noise.
 	Transcript string `json:"-"`
 }
 
 // Client asks one server. It is safe for concurrent use.
 type Client struct {
-	url  string
-	http *http.Client
+	url    string
+	format Format
+	http   *http.Client
 
 	mu     sync.Mutex
-	info   *Info
+	policy *Policy
 	agents map[[sha256.Size]byte]registration
 }
 
@@ -180,44 +175,54 @@ type registration struct {
 	refused error
 }
 
-// New returns a client of the server at url.
-func New(url string, client *http.Client) *Client {
+// New returns a client of the server at url, sending it audio in format.
+func New(url string, format Format, client *http.Client) *Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Client{url: strings.TrimRight(url, "/"), http: client, agents: map[[sha256.Size]byte]registration{}}
+	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, agents: map[[sha256.Size]byte]registration{}}
 }
 
-// Info is what the server serves, asked once and again after the server has restarted.
-func (c *Client) Info(ctx context.Context) (Info, error) {
+// NewStream returns a stream of a participant's audio, as the server is sent it, that keeps
+// the last keep of it.
+func (c *Client) NewStream(keep time.Duration) (*Stream, error) { return newStream(c.format, keep) }
+
+// Policy is the server's policy for its model (GET /v1/info's end_of_turn), asked once and
+// again after the server has restarted.
+func (c *Client) Policy(ctx context.Context) (Policy, error) {
 	c.mu.Lock()
-	known := c.info
+	known := c.policy
 	c.mu.Unlock()
 	if known != nil {
 		return *known, nil
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"/v1/info", nil)
 	if err != nil {
-		return Info{}, stack.Wrap(err)
+		return Policy{}, stack.Wrap(err)
 	}
-	var info Info
+	var info struct {
+		EndOfTurn Policy `json:"end_of_turn"`
+	}
 	if _, err := c.do(req, &info, nil); err != nil {
-		return Info{}, err
+		return Policy{}, err
 	}
 	if p := info.EndOfTurn; p.FirstBar <= 0 || p.LaterBar <= 0 || p.FirstCheckMs <= 0 || p.IntervalMs <= 0 || p.CapMs <= 0 {
-		return Info{}, stack.Wrap(fmt.Errorf("%w: its end_of_turn is incomplete", ErrUnsupported))
+		return Policy{}, stack.Wrap(fmt.Errorf("%w: its end_of_turn is incomplete", ErrUnsupported))
 	}
 	c.mu.Lock()
-	c.info = &info
+	c.policy = &info.EndOfTurn
 	c.mu.Unlock()
-	return info, nil
+	return info.EndOfTurn, nil
 }
 
-// Decide asks about pcm, 16 kHz mono, under the moment turn, and for what was said in it
-// when transcript is set. The agent is registered first if it is new, and again if the
-// server has forgotten it.
-func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, pcm []int16, transcript bool) (Answer, error) {
-	body, contentType, err := decisionBody(turn, pcm)
+// Decide asks about audio under the moment turn, and for what was said in it when
+// transcript is set. The agent is registered first if it is new, and again if the server
+// has forgotten it.
+func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harness.Audio, transcript bool) (Answer, error) {
+	if len(audio.Data) == 0 {
+		return Answer{}, stack.Wrap(errors.New("audiofloor: no audio heard yet"))
+	}
+	body, contentType, err := decisionBody(turn, audio)
 	if err != nil {
 		return Answer{}, err
 	}
@@ -251,7 +256,7 @@ func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, pcm []int16
 			// A restarted server knows no agent, and may serve another model.
 			c.mu.Lock()
 			clear(c.agents)
-			c.info = nil
+			c.policy = nil
 			c.mu.Unlock()
 			continue
 		}
@@ -271,10 +276,11 @@ type toolJSON struct {
 type agentJSON struct {
 	Instructions string     `json:"instructions"`
 	Tools        []toolJSON `json:"tools,omitempty"`
+	Languages    []string   `json:"languages,omitempty"`
 }
 
 func agentKey(agent Agent) ([sha256.Size]byte, []byte, error) {
-	spec := agentJSON{Instructions: agent.Instructions}
+	spec := agentJSON{Instructions: agent.Instructions, Languages: agent.Languages}
 	for _, tool := range agent.Tools {
 		spec.Tools = append(spec.Tools, toolJSON{tool.Name, tool.Description, tool.Parameters})
 	}
@@ -362,9 +368,14 @@ func (c *Client) do(req *http.Request, into any, words *string) (int, error) {
 
 // decisionBody is a decision's multipart body: the turn, then the audio. What a prompt
 // won't show isn't sent.
-func decisionBody(turn Turn, pcm []int16) ([]byte, string, error) {
+func decisionBody(turn Turn, audio harness.Audio) ([]byte, string, error) {
 	turn.Said = lastRunes(turn.Said, maxSaid)
-	turn.Conversation = lastTurns(turn.Conversation, maxTurns)
+	turn.Conversation = slices.Clone(lastTurns(turn.Conversation, maxTurns))
+	for i, line := range turn.Conversation {
+		if words := strings.Fields(line.Text); len(words) > maxLineWords {
+			turn.Conversation[i].Text = strings.Join(words[len(words)-maxLineWords:], " ")
+		}
+	}
 	var moment []byte
 	for {
 		var err error
@@ -380,14 +391,14 @@ func decisionBody(turn Turn, pcm []int16) ([]byte, string, error) {
 		turn.Conversation = turn.Conversation[1:]
 	}
 	var body bytes.Buffer
+	body.Grow(len(moment) + len(audio.Data) + 512)
 	parts := multipart.NewWriter(&body)
 	for _, part := range []struct {
 		name, contentType string
 		raw               []byte
 	}{
 		{"turn", "application/json", moment},
-		{"audio", "audio/pcm;rate=" + strconv.Itoa(SampleRate) + ";channels=1;format=s16le",
-			audio.PcmData{Samples: pcm, SampleRate: SampleRate, Channels: 1}.Bytes()},
+		{"audio", audio.Type, audio.Data},
 	} {
 		header := textproto.MIMEHeader{}
 		header.Set("Content-Disposition", `form-data; name="`+part.name+`"`)
@@ -431,47 +442,11 @@ func lastRunes(s string, n int) string {
 	return s[at:]
 }
 
-// Ring keeps one participant's last 16 s. Write takes a frame from the edge's consumer and
-// allocates nothing once it has its buffer.
-type Ring struct {
-	mu   sync.Mutex
-	buf  []int16
-	next int
-	full bool
-}
-
-// Write adds samples, 16 kHz mono, dropping the oldest once the window is full.
-func (r *Ring) Write(samples []int16) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if r.buf == nil {
-		r.buf = make([]int16, windowSamples)
+// Open returns a client of the server a deployment's settings name, or nil without one, and
+// the mode its agents ask it in. Loading the settings checked both.
+func Open(settings config.Agent) (*Client, Mode) {
+	if settings.AudioFloorURL == "" {
+		return nil, ""
 	}
-	if len(samples) >= len(r.buf) {
-		copy(r.buf, samples[len(samples)-len(r.buf):])
-		r.next, r.full = 0, true
-		return
-	}
-	n := copy(r.buf[r.next:], samples)
-	if n < len(samples) {
-		copy(r.buf, samples[n:])
-		r.full = true
-	}
-	r.next += len(samples)
-	if r.next >= len(r.buf) {
-		r.next -= len(r.buf)
-		r.full = true
-	}
-}
-
-// Last returns what the window holds, oldest first, in a slice of the caller's.
-func (r *Ring) Last() []int16 {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.full {
-		return append([]int16(nil), r.buf[:r.next]...)
-	}
-	out := make([]int16, 0, len(r.buf))
-	out = append(out, r.buf[r.next:]...)
-	return append(out, r.buf[:r.next]...)
+	return New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil), Mode(settings.AudioFloorMode)
 }

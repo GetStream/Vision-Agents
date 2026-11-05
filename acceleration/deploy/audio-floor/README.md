@@ -23,6 +23,9 @@ It plugs in twice, and each is optional:
 | --- | --- |
 | `ROUTER_AUDIO_FLOOR_URL` | The server, such as `http://floor:8080`. Adds the `audiofloor/audio-floor` transcriber |
 | `ROUTER_AUDIO_FLOOR_MODE` | `off` (default); `shadow`, which asks the model about each turn beside the flow controller and acts on nothing it says; or `act`, which asks it first and acts on its ruling |
+| `ROUTER_AUDIO_FLOOR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
+
+`cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`).
 
 The server is started with its model and the `policy.json` that ships with that model.
 `GET /v1/info` hands the policy to the router, so nothing about a checkpoint is in the
@@ -47,9 +50,9 @@ comes with its own.
 `POST /v1/agents`: an agent, by what it was told and its customer tools. The router's own
 tools (ending or transferring the call, pressing keys, the knowledge and web lookups,
 confirming a tool call, video frames) are left out: listing them changes the model's
-answers. The ID follows
-the content, so an agent registers once and again only when it changes or the server
-restarts (a 404).
+answers. The transcriber's agent is told nothing and names the session's language hints
+as `languages`, the languages its callers speak. The ID follows the content, so an agent
+registers once and again only when it changes or the server restarts (a 404).
 
 ```
 {"instructions":"You answer the phone for a weather service.","tools":[{"name":"get_weather","description":"Get the forecast for a city.","parameters":{"type":"object","required":["city"]}}]}
@@ -57,8 +60,9 @@ restarts (a 404).
 ```
 
 `POST /v1/decide?agent=ID`: a `multipart/form-data` body of a `turn` part, the moment of
-the call as UTF-8 JSON, then an `audio` part, 16 kHz mono PCM
-(`audio/pcm;rate=16000;channels=1;format=s16le`). `transcript=true` adds a second line.
+the call as UTF-8 JSON, then an `audio` part: Ogg Opus (`audio/ogg`), or with
+`ROUTER_AUDIO_FLOOR_AUDIO=pcm` 16 kHz mono PCM (`audio/pcm;rate=16000;channels=1;format=s16le`).
+`transcript=true` adds a second line, whose text is empty when nothing was said.
 
 ```
 turn: {"conversation":[{"agent":true,"text":"Weather line, how can I help?"}]}
@@ -69,9 +73,23 @@ turn: {"conversation":[{"agent":true,"text":"Weather line, how can I help?"}]}
 
 The turn's fields are `speaking`, `said` (the agent's reply so far), `unfinished`,
 `speaker` (`caller` or `another_voice`; a participant's name never leaves the router) and
-`conversation`. The turn goes in the body because the longest one a prompt shows, 800
-characters of reply and six lines of 40 words, escapes to 10,285 bytes in Hindi and 12,035
-in Russian as JSON in a header, past the 8 KiB a proxy allows one header line.
+`conversation`. The router sends what a prompt shows: the reply's last 800 characters, the
+lines of the last six turns, and each line's last 40 words. The turn goes in the body
+because the longest, 800 characters of reply and six lines of 40 words, escapes to 10,285
+bytes in Hindi and 12,035 in Russian as JSON in a header, past the 8 KiB a proxy allows one
+header line.
+
+### The audio
+
+Each participant's audio is encoded once, as it arrives: one Opus encoder per participant
+(gopus, VoIP, 32 kb/s, at the 16 kHz mono the router hears), fed 20 ms frames whatever size
+the pieces come in, and a ring of the packets of the last 16 s. A decision sends the packets
+it holds as an Ogg Opus stream of their own: OpusHead with a pre-skip of the encoder's
+lookahead (312 at 48 kHz, 6.5 ms), OpusTags, then up to 255 lacing values to a page, granule
+positions counted from the ring's first packet. A decoder that starts on a packet from the
+middle of the encoder's output converges in its first frames, and the pre-skip lines the
+audio up with the first frame's. What a decision hears ends up to a frame and 6.5 ms before
+the newest sample, which at a pause of 200 ms or more is quiet.
 
 ## How a ruling maps onto the flow controller
 
@@ -88,8 +106,8 @@ changed.
 | `respond`, `clarify`, `ignore` | as said | `continue` | |
 | `cannot` | `respond` | `continue` | `Cannot` |
 | a tool | `respond` | `continue` | `Tool` |
-| over the agent: `stop`, `shorten`, `continue` | `wait` while unfinished, else `respond` | as said | |
-| over the agent: `ignore` | `ignore` | `continue` | |
+| over the agent: `stop`, `shorten` | `wait` while unfinished, else `respond` | as said | |
+| over the agent: `continue`, `ignore` | `ignore` | `continue` | |
 
 `Tool` and `Cannot` are hints on the decision. Nothing runs a tool from them, and a tool's
 approval is untouched. Acting, a decision's `Ruler` is `heard`.
@@ -109,41 +127,69 @@ approval is untouched. Acting, a decision's `Ruler` is `heard`.
   request, is a fatal error, which hands the call to the next transcriber the target names.
   The words since the last ones written are lost. A target that names this transcriber
   alone has no next one.
+- **Noise.** The transcriber drops nothing itself. The server returns empty text for audio
+  with no speech in it, for words in a language the callers don't speak, and for a few words
+  of audio its decision ruled `ignore`, which is how a cough or a breath comes out. Empty
+  text is nothing heard: it writes nothing, and an utterance ends on the last words that
+  weren't empty. The transcriber's level gate only finds the pauses.
 - **A restart.** A 404 has the router register again and read `/v1/info` again, once.
 
 ## Measured
 
-On an Apple M4 Max CPU, one lane, weights in f16, each including its request:
+All on an Apple M4 Max, built with `GOEXPERIMENT=simd`.
 
-| | Median | Runs |
+**The router's cost.** Benchmarks in `internal/audiofloor` (`BenchmarkAFrame`,
+`BenchmarkADecisionsBody`), median of 6 to 8 runs, on 16 s of continuous speech and on 16 s
+of a caller counting with pauses:
+
+| | Before: PCM, copied from a ring at each decision | Now: Opus, encoded once |
 | --- | --- | --- |
-| Decision, 2.8 s of audio | 111 ms | 5 |
-| Decision, a full 16 s window | 639 ms | 5 |
-| Decision and transcript, 2.8 s | 419 ms | 3 |
-| Decision and transcript, 16 s | 1.47 s | 3 |
+| Each 20 ms frame as it arrives | 14 ns | 123 µs (0.6% of a core per participant), nothing allocated |
+| A decision's body, continuous speech | 512,476 bytes, 261 µs, 1.48 MiB allocated | 65,065 bytes, 205 µs, 284 KiB |
+| A decision's body, speech with pauses | 512,476 bytes, 255 µs, 1.48 MiB | 24,981 bytes, 86 µs, 125 KiB |
 
-The transcriber, on a recorded "Hi, what's the weather like in Lisbon tomorrow?", wrote
-"Hi." at the pause after it (880 ms of audio, in 239 ms), the whole question at its end
-(2,680 ms, in 595 ms), and ended the utterance 2.5 s later.
+The design this replaces encoded the whole 16 s again for each decision, 77 to 120 ms of
+CPU. A body is the audio, the turn and its framing: 476 bytes here, with one line of
+conversation, and the turn at most 64 KiB. `ROUTER_AUDIO_FLOOR_AUDIO=pcm` sends what the
+before column does.
 
-A decision sends 512,000 bytes of PCM for a full window, plus the turn and the multipart
-framing: 413 bytes with no conversation, and at most 64 KiB. Ogg Opus at 32 kb/s would be about 78,500
-bytes, but the router's pure-Go encoder took 56 to 160 ms per 16 s window, more than a
-GPU's whole decision, so the router sends PCM.
+**What the model hears.** 20 recordings of requests, acknowledgements and pauses, from 0.5
+to 43 s, decided over PCM and over the router's Ogg Opus on the same server: with the floor
+free as recorded, with the floor free after one Opus generation at 16 kHz and 32 kb/s, as a
+call's audio arrives, and over the agent. The answer was the same in all 60. `p_eot` moved
+by a median of 0.011 as recorded and 0.003 after a call's coding, at most 0.14 and 0.05.
+Encoding at complexity 5 rather than the default 10 costs 78 µs a frame, and agreed as
+well on these 20; at 24 kb/s `p_eot` moved by up to 0.19. The server decodes 16 s of Opus
+in 4.9 ms, or 6.3 ms built with `GOEXPERIMENT=simd`.
+
+**The server.** CPU, one lane, weights in f16, each including its request, 5 decisions and
+3 transcripts:
+
+| | Opus | PCM |
+| --- | --- | --- |
+| Decision, 3.4 s of audio | 91.7 ms, 9,397 bytes | 90.9 ms, 90,005 bytes |
+| Decision, a full 16 s window | 373 ms, 15,568 bytes | 372 ms, 512,405 bytes |
+| Decision and transcript, 3.4 s | 353 ms | |
+| Decision and transcript, 16.6 s | 848 ms | |
+
+Each answer was the same in both. The transcriber, on a recorded "Hi, what's the weather
+like in Lisbon tomorrow?", wrote "Hi." at the pause after it (860 ms of audio, in 193 ms),
+the whole question at its end (2,680 ms, in 329 ms), and ended the utterance 2.5 s later.
 
 ## Limits
 
 - The pause is timed from the transcript's last change, which lags the caller's last sound
   by the transcriber's own delay. The policy was fitted to pauses timed from the voice.
-- The transcriber's voice gate, 0.004 of full scale, was not measured on calls. It writes
-  words only at pauses, so words said over the agent reach the flow controller at the
-  caller's next pause. It rewrites the whole utterance at each pause, ends one at 60 s if
-  the caller never pauses, and drops a ninth request waiting on a slow server.
+- The transcriber's level gate, 0.004 of full scale, which finds its pauses, was not
+  measured on calls. It writes words only at pauses, so words said over the agent reach
+  the flow controller at the caller's next pause. It rewrites the whole utterance at each
+  pause, ends one at 60 s if the caller never pauses, and drops a ninth request waiting on
+  a slow server.
 - With both modes on, a pause costs two requests: the transcript asked for the default
   agent, and the decision asked for the agent's own.
 - With unified replies the reply rules on its own words and no flow controller is asked,
   so acting has nothing to stand in for; shadow compares the model with the reply's ruling.
-- A CPU decision over a full window, 639 ms here, does not fit the 250 ms an overlap
+- A CPU decision over a full window, 373 ms here, does not fit the 250 ms an overlap
   gives it, so words over the agent fall back to the flow controller on such a server.
 
 ## Test it
