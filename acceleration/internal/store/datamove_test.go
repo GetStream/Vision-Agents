@@ -546,6 +546,13 @@ func (a *afterQuery) AfterQuery(_ context.Context, event *bun.QueryEvent) {
 	}
 }
 
+// disarm stops the hook from running again, so it cannot fire in a later test.
+func (a *afterQuery) disarm() {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.run = nil
+}
+
 // A prune between the read of what is kept and the read of the rows drops the rows right
 // after a cursor. Read apart, the rows start above them and the follower jumps over them
 // with no refusal; read in one snapshot, it is handed them.
@@ -557,11 +564,13 @@ func (s *DataMoveSuite) TestAPruneBetweenTheTwoReadsOfAFeedDoesNotLoseRowsAfterT
 	second := s.seedAgentConfig(s.source, "acme", "second after the cursor")
 	s.age()
 	young := s.seedAgentConfig(s.source, "acme", "young")
-	s.source.DB().AddQueryHook(&afterQuery{phrase: "MIN(seq) FROM data_changes", run: func() {
+	hook := &afterQuery{phrase: "MIN(seq) FROM data_changes", run: func() {
 		removed, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
 		s.NoError(err)
 		s.Positive(removed)
-	}})
+	}}
+	s.source.DB().AddQueryHook(hook)
+	s.T().Cleanup(hook.disarm)
 
 	changes, next, err := s.source.Changes(s.ctx, "acme", cursor, 100)
 
