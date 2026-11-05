@@ -99,14 +99,17 @@ Closing (T55, AI-884), `Closer`:
 ```
 idle sweeper, every minute                     call.session_ended hook (api.endCallEpisodes)
   Closer.Start, from cmd/router                  Closer.EndCall(scope, call id)
-  only with connectors on or a config            any call; one with no episode
-  with episode_cards on (startEpisodeSweeper)    matches no row and reaches no Stream
+  only with connectors on, a config with         any call; one with no episode
+  episode_cards on, or an episode left to        matches no row and reaches no Stream
+  close or summarize (startEpisodeSweeper)
               |                                           |
   store.CloseIdleEpisodes                        store.EndCallEpisodes
     thread and chat episodes, last message         call episodes of the call in the
     older than episodes.idle_after                 event's app, still in progress
               \                                          /
                status ended, ended_at, summary lease (5 min): one router wins each row
+               card read once (authorOf)               its author: every update is made as it
+                 unreadable: row summary_failed, no LLM response
                card: status ended                      partial update, no new message
                summary                                 config's own LLM (default llm-fast)
                  linesOf(the episode's own window, last 100, 60,000 runes)
@@ -177,7 +180,9 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - **A card with nothing to say is skipped, not a stop.** `render` passes over a card with neither a summary nor a line, so the older cards are still read. Example: a call in a named channel at -60 s does not hide an SMS at -120 s.
 - **An episode closes once, whatever the number of routers.** Each close is one transaction whose row lock one router wins (`FOR UPDATE SKIP LOCKED`, then the status and the last message checked again), and the winner holds the summary for `summaryLease`. Example: two routers sweep at the same second; each idle thread gets one summary.
 - **A message keeps its thread open.** `store.OpenEpisode` sets `episode_activity.last_message_at` with each message, in the statement that finds the episode open and holds it against a close; a message that arrives after the close opens the next episode and card.
+- **An episode closes whatever its config says now.** Turning `episode_cards` off opens no new call or app chat episode (a connector thread's episode is opened by the channel bridge whatever the flag, `channelbridge.Bridge.episode`), but an episode already open closes and is summarized as any other: the sweeper starts for a thread or chat episode still in progress, or a summary lease still held, though no config has the cards on (`store.AnyEpisodeToSweep`, AI-2771), and a call's hook closes a call's whatever the config. Example: Anya's chat episode is open when the config turns the cards off and the router restarts; it closes an hour after her last message and its card holds the summary.
 - **A call ends with its call, never as idle.** The sweeper closes thread and chat episodes only (`session_id IS NULL`): a chat episode has no session, so it closes after `episodes.idle_after` as a thread's does.
+- **A card is updated as its author.** The closer reads each card once (`Closer.authorOf`, by its message id) and makes every update as the message's user: the agent of the omni-channel it was written in. Not the omni-channel the person's row points at now: an unlink points a number's row at a new omni-channel whose agent user is made only with its first card, and Stream refuses an update by a user it does not have («the user omni-… does not exist», staging, AI-2771). Example: Anya's number is linked, she texts, the number is unlinked; the card in her omni-channel still ends summarized.
 - **A failed summary keeps the raw text.** `summary_failed` changes the card's status only; the thread channel is never written. A call in a channel its session named gives no lines (`linesOf`), so its summary fails rather than mix in another caller's words.
 - **The summary is the config's own LLM**, the agent config's `llm`, or `llm-fast` (a session's default) when it names none. It is not written to memory (follow-up: memory's `Scope.UserID` is «the customer», not the person from the contact map).
 - **Card text is data.** The cards come as one user message, behind `cardsAttribution`, as restored shared history comes behind conversation's note.
@@ -202,7 +207,7 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - T62 moves `channel_identities` onto `contact_map`.
 - The summary is not written to memory: it would change what `memory.Scope.UserID` means (`internal/memory/memory.go:31-32`).
 - A call whose `call.session_ended` arrives before its card's episode is opened (the card is written off the session's start) stays in progress: the sweeper closes thread episodes only.
-- The sweeper's gate is read once, at start: a config that turns `episode_cards` on later has its calls closed by the hook, and its expired summary leases taken from the next start.
+- The sweeper's gate is read once, at start: with connectors off, a config that turns `episode_cards` on later has its calls closed by the hook, and its app chat episodes and expired summary leases taken from the next start.
 - A text session on an agent channel that neither a worker nor the person's own device opened reads no chat person's cards; cards are read once, when a session opens.
 - A backend naming the user it acts for (`KindServer` with a user) and a scheduled task's session read none of that user's cards: no device of theirs opened them.
 - A device session writes no card of its own: only its call, when a number is on it, or the app chat's messages do.
@@ -212,7 +217,6 @@ A card closed after the idle period is updated in the app its episode is pinned 
 - An SMS episode still open when its number is linked goes on as the number's: its next messages keep it open (`episodes_open_thread`) and read the set-aside row's cards, not the user's, until it closes as idle; the next episode joins the user. A call from the number reads no cards until an episode of the number makes its new row (`store.Contact` makes none).
 - A config that had `episode_cards` off when a number was linked joined the number's rows as they were; turning it on later reads the number's earlier cards for the user.
 - A data move carries no link (`store.dataTables`): the contact rows it joins stay behind too, so the customer links again where it moved to.
-- A card written before a link or an unlink and still in progress is closed as the omni-channel its row points at now (`Closer.mark` names that channel's agent as the author of the partial update); that a server-side partial update by another user is accepted is unverified against Stream.
 - A message nothing runs for, in a channel whose last call ran under another config than the one the channel names, or a channel naming none, opens no chat episode unless it holds a voice recording: `heldConfigOf` reads no config there.
 - A session a caller opens on a thread channel through the API and keeps open is checked for a shared thread once, when it opens; the Router's own sessions open for each turn (`api.answerThread`).
 - The message that opens a chat's next episode is also the last line of the one before when a session reads that card: the earlier card's lines end at the next episode's start (`Until`) and include a line made at that very time (`linesOf`, `After`). The summary is not affected; it ends at the episode's own end.

@@ -26,9 +26,10 @@ import (
 )
 
 // EpisodeSweeperSuite is when the router starts the idle sweeper (D3, Kanat 2026-10-07): only
-// with connectors on or an agent config with episode_cards on. Each test holds a text episode
-// idle for longer than the closer's hour, on a database of the suite's own, and a closer that
-// would sweep it every few milliseconds once started.
+// with connectors on, an agent config with episode_cards on, or an episode still to close or
+// summarize (AI-2771). Each test runs on a database of the suite's own, with a closer that
+// would sweep every few milliseconds once started; most hold a text episode idle for longer
+// than the closer's hour.
 type EpisodeSweeperSuite struct {
 	suite.Suite
 	ctx      context.Context
@@ -89,13 +90,16 @@ func (s *EpisodeSweeperSuite) SetupTest() {
 	})
 	s.Require().NoError(err)
 	s.T().Cleanup(s.closer.Close)
+}
 
-	customer := "sweep-" + uuid.NewString()
+// idleEpisode opens the test's episode, a text episode idle for longer than the closer's
+// hour, under the agent config configID of the customer customer.
+func (s *EpisodeSweeperSuite) idleEpisode(customer, configID string) {
 	contact := store.ContactMapEntry{
-		CustomerID: customer, AgentConfigID: "agent-" + uuid.NewString(), Kind: store.ContactSlack,
+		CustomerID: customer, AgentConfigID: configID, Kind: store.ContactSlack,
 		Address: "T1:U1", ConversationID: "agent:omni-" + uuid.NewString(),
 	}
-	_, err = s.store.MapContact(s.ctx, &contact)
+	_, err := s.store.MapContact(s.ctx, &contact)
 	s.Require().NoError(err)
 	episode := store.Episode{
 		CustomerID: customer, ContactID: contact.ID, Source: store.EpisodeSlack,
@@ -106,6 +110,11 @@ func (s *EpisodeSweeperSuite) SetupTest() {
 	s.episode = episode.ID
 }
 
+// strayEpisode opens the test's episode under an agent config no row holds.
+func (s *EpisodeSweeperSuite) strayEpisode() {
+	s.idleEpisode("sweep-"+uuid.NewString(), "agent-"+uuid.NewString())
+}
+
 // status is the test's episode's status as stored.
 func (s *EpisodeSweeperSuite) status() string {
 	var status string
@@ -113,31 +122,77 @@ func (s *EpisodeSweeperSuite) status() string {
 	return status
 }
 
-// Staging runs with connectors off and no config has the cards on: the sweeper never starts,
-// so an idle episode stays as it is, nothing is written and Stream and the LLM are asked
-// nothing.
-func (s *EpisodeSweeperSuite) TestWithNeitherConnectorsNorCardsTheSweeperNeverStarts() {
+// A deployment where no config ever had the cards on, with connectors off, holds no episode:
+// the sweeper never starts, so nothing is written and Stream and the LLM are asked nothing,
+// as on base 668d15d5c.
+func (s *EpisodeSweeperSuite) TestWithNeitherConnectorsNorCardsNorAnEpisodeTheSweeperNeverStarts() {
+	plain := &store.AgentConfig{CustomerID: "sweep-" + uuid.NewString(), Name: "plain"}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, plain))
+
 	started, err := startEpisodeSweeper(s.ctx, s.settings, s.store, s.closer)
 
 	s.Require().NoError(err)
 	s.False(started)
-	s.Never(func() bool { return s.status() != "in_progress" }, 300*time.Millisecond, 10*time.Millisecond,
-		"an idle episode was closed")
+	s.Never(func() bool { return s.model.asked.Load() != 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the LLM was asked something")
 	s.Empty(s.chat.Requests("deploy-key"), "Stream was asked something")
-	s.Zero(s.model.asked.Load(), "the LLM was asked something")
 }
 
-func (s *EpisodeSweeperSuite) TestWithConnectorsOnTheSweeperClosesAnIdleEpisode() {
+// Catches AI-2771: a config's chat episode was open when the config turned the cards off,
+// and the router started again with no config's cards on and connectors off; the sweeper
+// never started, so the episode stayed in progress and was never summarized.
+func (s *EpisodeSweeperSuite) TestAnEpisodeLeftOpenAfterItsConfigTurnedTheCardsOffIsClosedAndItsSummaryFinished() {
+	customer := "sweep-" + uuid.NewString()
+	carded := &store.AgentConfig{CustomerID: customer, Name: "was carded", EpisodeCards: true}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, carded))
+	s.idleEpisode(customer, carded.ID)
+	_, err := s.store.DB().ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = false WHERE id = ?", carded.ID)
+	s.Require().NoError(err)
+
+	started, err := startEpisodeSweeper(s.ctx, s.settings, s.store, s.closer)
+
+	s.Require().NoError(err)
+	s.True(started)
+	s.Eventually(func() bool { return s.status() != "in_progress" && s.status() != "ended" }, 5*time.Second, 10*time.Millisecond)
+	s.NotEmpty(s.chat.Requests("deploy-key"), "the card and the thread channel were never reached")
+}
+
+// Catches an episode a router closed and stopped before summarizing, under a config that
+// turned the cards off since: only a sweep takes its expired lease.
+func (s *EpisodeSweeperSuite) TestAnEndedEpisodeWhoseSummaryLeaseRanOutHasItsSummaryFinished() {
+	customer := "sweep-" + uuid.NewString()
+	plain := &store.AgentConfig{CustomerID: customer, Name: "was carded"}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, plain))
+	s.idleEpisode(customer, plain.ID)
+	closedAt := time.Now()
+	closed, err := s.store.CloseIdleEpisodes(s.ctx, closedAt.Add(-time.Hour), closedAt, 10, closedAt.Add(-time.Second))
+	s.Require().NoError(err)
+	s.Require().Len(closed, 1)
+
+	started, err := startEpisodeSweeper(s.ctx, s.settings, s.store, s.closer)
+
+	s.Require().NoError(err)
+	s.True(started)
+	s.Eventually(func() bool { return s.status() != "ended" }, 5*time.Second, 10*time.Millisecond)
+	s.NotEmpty(s.chat.Requests("deploy-key"), "the card and the thread channel were never reached")
+}
+
+// No episode is in the database yet: the connectors alone start the sweeper, for the
+// thread episodes their channel bridge opens.
+func (s *EpisodeSweeperSuite) TestWithConnectorsOnTheSweeperStartsAndClosesAnIdleEpisode() {
 	s.settings.Connectors.Enabled = true
 
 	started, err := startEpisodeSweeper(s.ctx, s.settings, s.store, s.closer)
 
 	s.Require().NoError(err)
 	s.True(started)
+	s.strayEpisode()
 	s.Eventually(func() bool { return s.status() != "in_progress" }, 5*time.Second, 10*time.Millisecond)
 }
 
-func (s *EpisodeSweeperSuite) TestWithAConfigThatTurnedCardsOnTheSweeperClosesAnIdleEpisode() {
+// No episode is in the database yet: the config alone starts the sweeper, for the app chat
+// episodes it will open.
+func (s *EpisodeSweeperSuite) TestWithAConfigThatTurnedCardsOnTheSweeperStartsAndClosesAnIdleEpisode() {
 	carded := &store.AgentConfig{CustomerID: "sweep-" + uuid.NewString(), Name: "carded", EpisodeCards: true}
 	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, carded))
 
@@ -145,6 +200,7 @@ func (s *EpisodeSweeperSuite) TestWithAConfigThatTurnedCardsOnTheSweeperClosesAn
 
 	s.Require().NoError(err)
 	s.True(started)
+	s.strayEpisode()
 	s.Eventually(func() bool { return s.status() != "in_progress" }, 5*time.Second, 10*time.Millisecond)
 }
 

@@ -387,6 +387,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### An episode left open when its config turns the cards off still closes
+
+On a router with connectors off, the idle sweeper started only if a config had `episode_cards` on when the router started. A chat episode that was opened while the cards were on stayed in progress forever if its config turned them off and the router then restarted. It also got no summary. The sweeper now also starts for an episode still to close or summarize. Turning the cards off still opens no new call or app chat episode. A card is now also updated as its own author: a card written before its number was unlinked stayed in progress and lost its summary, because the update named a user Stream did not have (AI-2771, #1766).
+
 ### An outbound call's episode card goes to who it rang, and a late caller still gets one
 
 Under an agent config with `episode_cards` on, a call placed through `POST /v1/phone/calls` filed its card under the line's own number, so every person the line rang shared one omni-channel. Its card now goes to the omni-channel of the number it rang. An inbound caller who joins the call after the agent now gets their card too; before, they got none. (#1770)
