@@ -10588,6 +10588,7 @@ type GetSpendParams struct {
 	Origin *string `form:"origin,omitempty" json:"origin,omitempty"`
 
 	// ApiKeyId The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only count usage for this end user of the app.
@@ -10652,6 +10653,7 @@ type ListUsageEventsParams struct {
 	Origin *string `form:"origin,omitempty" json:"origin,omitempty"`
 
 	// ApiKeyId The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+	// Deprecated: this property has been marked as deprecated upstream, but no `x-deprecated-reason` was set
 	ApiKeyId *string `form:"api_key_id,omitempty" json:"api_key_id,omitempty"`
 
 	// UserId Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.

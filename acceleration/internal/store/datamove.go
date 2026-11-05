@@ -578,6 +578,12 @@ func (s *Store) sideOf(table dataTable) *bun.DB {
 	return s.db
 }
 
+// lineColumns are what attaching a number, or giving it a line, writes on its row (AttachNumber,
+// TrunkGroupTx.SetLine): where its calls go and which agent answers them. The sealed bridge
+// password is one too, and an import never writes it (secretColumns).
+var lineColumns = []string{"stream_trunk_id", "stream_route_id", "stream_app_pk", "stream_call_id", "stream_call_type",
+	"bridge_uri", "bridge_username", "bridge_password_kek_version", "attached_at", "config_id"}
+
 func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table string, row json.RawMessage) error {
 	spec, found := dataTableByName(table)
 	if !found {
@@ -623,7 +629,22 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 
 	assignments := make([]string, 0, len(columns))
 	for _, column := range columns {
-		if !spec.isKey(shape, column) {
+		switch {
+		case spec.isKey(shape, column):
+		case spec.name == "phone_numbers" && slices.Contains(lineColumns, column):
+			// A number on a trunk here was attached or given a line here (AttachNumber, SetLine),
+			// since an imported row arrives off any trunk (identity). Where its calls go is then
+			// this deployment's, so the source's copy of the row, in a copy taken again or a
+			// change applied later, does not detach it. The agent is too only once attached:
+			// a line alone never wrote it (SetLine), so the source's agent still arrives. A number
+			// the source gave back keeps nothing, as a release here clears the line first.
+			kept := "phone_numbers.stream_trunk_id IS NOT NULL"
+			if column == "config_id" {
+				kept = "phone_numbers.attached_at IS NOT NULL"
+			}
+			assignments = append(assignments, fmt.Sprintf(
+				"%[1]s = CASE WHEN %[2]s AND EXCLUDED.released_at IS NULL THEN phone_numbers.%[1]s ELSE EXCLUDED.%[1]s END", column, kept))
+		default:
 			assignments = append(assignments, column+" = EXCLUDED."+column)
 		}
 	}
