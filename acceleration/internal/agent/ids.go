@@ -67,8 +67,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	// linked are the parts of the links the tools returned (linkParts), but for the parts the
 	// call each answers was sent: a link that holds them writes back what the model asked for.
 	// Each comes with its line and the words that may name its kind: its line's, those of the
-	// keys it stands under and the tool's name. A link's own words name nothing: its host and
-	// path are where it points, so https://channels.example.com/u/U0… is no channel's link.
+	// keys it stands under and the tool's name. A link's own words name no kind: its host and
+	// path say where it points, so https://channels.example.com/u/U0… is no channel's link.
 	type toolLink struct {
 		part  string
 		in    line
