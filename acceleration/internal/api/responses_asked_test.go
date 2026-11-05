@@ -258,6 +258,130 @@ func (s *ResponsesAskedSuite) TestAPersonalConversationsVideoQuestionIsRefusedBe
 	s.Contains(string(body), "video:", "a new command's video is sampled")
 }
 
+// A video question the conversation would refuse to begin, because the answer before it is
+// still running, is refused before its video is fetched or sampled, as a question without a
+// video is. The router refuses to fetch from a loopback address, so no test server can count a
+// fetch: a link to one is refused for its address as it is fetched, and the refusal that comes
+// back says which of the two happened.
+func (s *ResponsesAskedSuite) TestAVideoQuestionWhileAnAnswerRunsIsRefusedBeforeItsVideoIsFetched() {
+	linked := []VideoSource{{Url: "http://127.0.0.1:9/clip.mp4"}}
+	for name, kept := range map[string]struct {
+		session func() Session
+		client  *testClient
+		first   func(string) CreateResponseRequest
+		second  func(string) CreateResponseRequest
+	}{
+		"a command of a personal conversation": {
+			session: func() Session {
+				return s.client.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+			},
+			client: s.client,
+			first: func(text string) CreateResponseRequest {
+				return CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: text}
+			},
+			second: func(text string) CreateResponseRequest {
+				return CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: text, Videos: &linked}
+			},
+		},
+		"a question without a request id": {
+			session: func() Session {
+				return s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+			},
+			client: s.serverClient,
+			first:  func(text string) CreateResponseRequest { return CreateResponseRequest{Text: text} },
+			second: func(text string) CreateResponseRequest { return CreateResponseRequest{Text: text, Videos: &linked} },
+		},
+	} {
+		s.Run(name, func() {
+			opened := kept.session()
+			path := "/v1/agents/sessions/" + opened.Id + "/responses"
+			s.vision.holds()
+			defer s.vision.answers()
+			first := "Is the fryer fixed " + s.utils.uuid() + "?"
+			status, body := kept.client.call(http.MethodPost, path, kept.first(first))
+			s.Require().Less(status, 300, string(body))
+
+			status, body = kept.client.call(http.MethodPost, path, kept.second("What is in this clip?"))
+			s.Equal(http.StatusBadRequest, status)
+			s.Contains(string(body), "a response is already running", "refused for the answer running, not for the clip it never read")
+			s.NotContains(string(body), "video:")
+
+			s.vision.answers()
+			s.Require().Eventually(func() bool {
+				status, body = kept.client.call(http.MethodPost, path, kept.second("What is in this clip?"))
+				return !strings.Contains(string(body), "a response is already running")
+			}, settleFor, 50*time.Millisecond, "the session never took the second question")
+			s.Equal(http.StatusBadRequest, status)
+			s.Contains(string(body), "video:", "once it takes the question its video is fetched, and refused for being on loopback")
+		})
+	}
+}
+
+// A question with a voice note and videos that two refusals apply to, an agent that cannot see
+// images and an answer still running, gets the refusal the same question without videos gets,
+// the agent's, which no retry cures: not_configured, as the check before the note is heard answers it. A
+// retry told "running" would otherwise pay for the video fetch before meeting the 501.
+func (s *ResponsesAskedSuite) TestAVideoQuestionWithAVoiceNoteToAnAgentThatCannotSeeIsRefusedForThatFirst() {
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+	path := "/v1/agents/sessions/" + opened.Id + "/responses"
+	s.notedMu.Lock()
+	model := s.noted[len(s.noted)-1]
+	s.notedMu.Unlock()
+	model.holds()
+	defer model.answers()
+	status, body := s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: "Is the fryer fixed?"})
+	s.Require().Less(status, 300, string(body))
+
+	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: "What is in this clip?",
+		Audio: &AudioSource{Url: "data:audio/wav;base64,AAAA"}, Videos: &[]VideoSource{{Url: "http://127.0.0.1:9/clip.mp4"}}})
+	s.Equal(http.StatusBadRequest, status, string(body))
+	s.Contains(string(body), `"code":"not_configured"`)
+	s.NotContains(string(body), "a response is already running")
+	s.NotContains(string(body), "video:", "refused before the clip is read")
+}
+
+// Without a voice note the agent that cannot see images is not asked first: a question with
+// videos and an answer still running is refused for the answer, as the question is without a
+// note, whose check for the agent's refusal comes only with a note.
+func (s *ResponsesAskedSuite) TestAVideoQuestionWithoutAVoiceNoteToAnAgentThatCannotSeeIsRefusedForTheAnswerRunning() {
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+	path := "/v1/agents/sessions/" + opened.Id + "/responses"
+	s.notedMu.Lock()
+	model := s.noted[len(s.noted)-1]
+	s.notedMu.Unlock()
+	model.holds()
+	defer model.answers()
+	status, body := s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: "Is the fryer fixed?"})
+	s.Require().Less(status, 300, string(body))
+
+	status, body = s.client.call(http.MethodPost, path, CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: "What is in this clip?",
+		Videos: &[]VideoSource{{Url: "http://127.0.0.1:9/clip.mp4"}}})
+	s.Equal(http.StatusBadRequest, status, string(body))
+	s.Contains(string(body), "a response is already running")
+	s.NotContains(string(body), `"code":"not_configured"`)
+	s.NotContains(string(body), "video:", "refused before the clip is read")
+}
+
+// A text past the limit of a command is refused before the video sent with it is fetched. Only
+// a question with a voice note may be that big, as the body is held to 1 MiB without one.
+func (s *ResponsesAskedSuite) TestAVideoQuestionWithATextPastTheLimitOfACommandIsRefusedBeforeItsVideoIsFetched() {
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	path := "/v1/agents/sessions/" + opened.Id + "/responses"
+	command := s.utils.uuid()
+	question := func(text string) CreateResponseRequest {
+		return CreateResponseRequest{RequestId: &command, Text: text, Audio: &AudioSource{Url: "data:audio/wav;base64,AAAA"},
+			Videos: &[]VideoSource{{Url: "http://127.0.0.1:9/clip.mp4"}}}
+	}
+
+	status, body := s.client.call(http.MethodPost, path, question(strings.Repeat("a", 1<<20+1)))
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(body), "invalid command ID or text")
+	s.NotContains(string(body), "video:", "refused for its text, not for the clip it never read")
+
+	_, body = s.client.call(http.MethodPost, path, question(strings.Repeat("a", 1<<20)))
+	s.Contains(string(body), "video:", "a text of the limit is begun, so its video is fetched")
+}
+
 // The session socket's respond takes a photo with no text and no request id the same way.
 func (s *ResponsesAskedSuite) TestAPhotoRespondedOnTheSocketWithoutTextOrRequestIDIsShownOnThePersonsMessage() {
 	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
