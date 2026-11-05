@@ -58,7 +58,8 @@ func init() {
 // endCounter is the router_session_ends_total series of reason.
 func endCounter(reason EndReason) prometheus.Counter {
 	info, _ := reason.Info()
-	return sessionEnds.WithLabelValues(string(reason), strconv.FormatBool(info.Failed), string(info.Fault), string(info.Stage))
+	return sessionEnds.WithLabelValues(string(reason), strconv.FormatBool(info.Failed), string(info.Fault),
+		string(info.Stage))
 }
 
 // endLabel is the reason router_session_ends_total counts the session's end under. An agent

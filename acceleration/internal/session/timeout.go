@@ -43,7 +43,10 @@ const (
 	// a failure of the router's own, such as its playback queue filling.
 	EndAgentFailed EndReason = "agent_failed"
 	// EndModelFailed is a session whose model vendor failed it: its speech-to-speech session
-	// ended and could not be replaced, or its model failed a turn and answered none.
+	// ended and could not be replaced, or its model failed a turn and answered none. The agent
+	// keeps the conversation going after a failed turn (agent.Error), so one turn lost on a call
+	// that was answered is no failure of the session. Like every failure of the agent or its
+	// model, it is counted when the session closes, whatever ends it then.
 	EndModelFailed EndReason = "model_failed"
 	// EndModelConfigRefused is EndModelFailed on the customer's side: the last model to fail ran
 	// on the customer's own key or own model, or refused a setting it was asked for.

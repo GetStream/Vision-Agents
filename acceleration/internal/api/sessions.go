@@ -955,7 +955,8 @@ func (SessionEndReason) Schema(registry huma.Registry) *huma.Schema {
 			continue
 		}
 		values = append(values, string(info.Reason))
-		meanings = append(meanings, string(info.Reason)+", "+info.Meaning+" (fault "+string(info.Fault)+", stage "+string(info.Stage)+")")
+		meanings = append(meanings, string(info.Reason)+", "+info.Meaning+
+			" (fault "+string(info.Fault)+", stage "+string(info.Stage)+")")
 	}
 	return namedEnum(registry, "SessionEndReason", "Why the session ended, with whose fault it was and the stage it came at: "+
 		strings.Join(meanings, "; ")+".", values...)
