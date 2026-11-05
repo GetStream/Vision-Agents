@@ -115,7 +115,11 @@ func NewService(options ServiceOptions) (*Service, error) {
 		logger:    options.Logger,
 	}
 	if options.Store != nil {
-		service.outcomes = outcome.NewKeeper(options.Store, service.now)
+		vendors := []string{SIPTrunkVendor}
+		for _, vendor := range options.Registry.Vendors() {
+			vendors = append(vendors, vendor.Vendor)
+		}
+		service.outcomes = outcome.NewKeeper(options.Store, service.now, vendors, options.Logger)
 	}
 	return service, nil
 }

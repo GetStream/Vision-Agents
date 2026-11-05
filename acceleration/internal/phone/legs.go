@@ -353,7 +353,8 @@ func (s *Service) tell(ctx context.Context, leg store.CallLeg) {
 		}
 	}
 	if leg.EndedAt != nil {
-		if err := s.outcomes.Ended(ctx, key, *leg.EndedAt); err != nil {
+		ended := outcome.Leg{Vendor: leg.Vendor, Inbound: leg.Direction == store.Inbound, AnsweredAt: leg.StartedAt}
+		if err := s.outcomes.Ended(ctx, key, *leg.EndedAt, ended); err != nil {
 			s.logger.Error("could not keep that a call ended", "customer", leg.CustomerID,
 				"call", leg.CallType+":"+leg.CallID, "error", err)
 		}

@@ -276,7 +276,8 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 		manager.logs = newLogRecorder(options.Store, options.Logger)
 		manager.calls = newCallRecorder(options.Store, options.Logger)
-		manager.outcomes = outcome.NewKeeper(options.Store, time.Now)
+		// Read only: the phone service's keeper is what counts calls, so this one names no vendors.
+		manager.outcomes = outcome.NewKeeper(options.Store, time.Now, nil, options.Logger)
 		written = newSessionRecorder(options.Store, options.Logger)
 		manager.records = written
 		manager.reviews = newReviewer(options.LLM, options.Store, options.Logger)

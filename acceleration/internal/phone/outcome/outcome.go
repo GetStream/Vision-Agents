@@ -39,6 +39,14 @@ type Key struct {
 	Remote      string
 }
 
+// Leg is what a call's legs know of the leg that ended: the vendor that carried it, whether
+// the call arrived rather than was placed, and when its phone joined, nil if it never did.
+type Leg struct {
+	Vendor     string
+	Inbound    bool
+	AnsweredAt *time.Time
+}
+
 // Call is one placed call and what is known of how it ended.
 type Call struct {
 	Key
