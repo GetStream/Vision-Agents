@@ -227,9 +227,11 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 // TestTheReadOnlyToolsSeedOverTheRevisionsTheBuildBeforeStored (AI-2777): each of these files
 // lists read_only_tools at the revision here, which is a change, so a new revision rather than
 // an edit the seeder refuses. The build before held each file without the list, one revision
-// down. Every other built-in stays.
+// down. Every other built-in stays. github's list came at 10 and its file is at 11 (an LFS read),
+// so its build before is taken as 11 without the list, at 10: the table is emptied for each test,
+// and a list added at a new revision is what this checks.
 func (s *StoreSuite) TestTheReadOnlyToolsSeedOverTheRevisionsTheBuildBeforeStored() {
-	listed := map[string]int{"calcom": 3, "calendly": 3, "github": 10, "gong": 3, "hubspot": 2, "linear_app": 3,
+	listed := map[string]int{"calcom": 3, "calendly": 3, "github": 11, "gong": 3, "hubspot": 2, "linear_app": 3,
 		"metabase": 3, "notion": 2, "sentry": 2}
 	before := fstest.MapFS{}
 	files, err := fs.ReadDir(providers.FS, ".")
