@@ -565,20 +565,24 @@ What an organization's own dashboard reads about its money, server-side only:
 | `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
 | `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
 | `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
-| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key_id`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `origin`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
 
 The first two and `listUsageEvents` read the usage service's customer view with the ingest
 token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
-organization. A server-side caller's `api_key_id` and `user_id` query parameters are filters there,
-as they are on `getSpend`. A key is named `api_key_id` in the query on these reads and on the limits
-and grants lists and usage. `api_key` in the query is the caller's credential, which Stream's proxy
-requires on every call. `user_id` in the query only names who a backend acts for, which no account
+organization. A server-side caller's `origin` and `user_id` query parameters are filters there,
+as they are on `getSpend`. `origin` is who started the work: a public API key, or the origin of
+work no key started (`hook:chat`, `phone:inbound`, `job:<name>`); each `UsageEvent` names it as
+`origin`. Its old names, the query's `api_key_id` and the event's `api_key`, are still read and
+answered for one release; given beside `origin`, `api_key_id` must name the same one, else 400.
+A key that is only ever a key is named `api_key_id` in the query on the limits and grants lists
+and usage. `api_key` in the query is the caller's credential, which Stream's proxy requires on
+every call. `user_id` in the query only names who a backend acts for, which no account
 read looks at. `listTeams`
 sums the request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
-`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:api_key`,
-`who:user`, `who:team` (work with no team under the empty value) or `who:category` (the team
+`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:origin`
+(`who:api_key` is its old name, still read for one release), `who:user`, `who:team` (work with no team under the empty value) or `who:category` (the team
 left out, and a request counted once in each of its categories). A cost label key holds no
 `:`, so a label named `app` is still `group_by=app`. `scope=organization` counts every app of
 the caller's organization, and there a user is `<app_id>/<user_id>`.
