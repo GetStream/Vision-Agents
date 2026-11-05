@@ -46,8 +46,8 @@ var anthropicHeaders = http.Header{
 }
 
 // anthropicSpendCapBody is Anthropic's 429 for an organization past its monthly spend cap, as
-// documented: https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap
-const anthropicSpendCapBody = `{"type":"error","error":{"type":"rate_limit_error","message":"You have reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on your organization's API tier. You will regain access on 2026-09-01 at 00:00 UTC.","details":{"error_code":"enforced_spend_limit_reached"}},"request_id":"req_018EeWyXxfu5pfWkrYcMdjWG"}`
+// documented, its request id replaced: https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap
+const anthropicSpendCapBody = `{"type":"error","error":{"type":"rate_limit_error","message":"You have reached your API usage limits: your organization has crossed its monthly API usage threshold, set based on your organization's API tier. You will regain access on 2026-09-01 at 00:00 UTC.","details":{"error_code":"enforced_spend_limit_reached"}},"request_id":"req_example"}`
 
 // anthropicRateLimitBody is Anthropic's 429 for a rate limit: the error type it documents for
 // one, without the spend cap's error_code: https://platform.claude.com/docs/en/api/errors
