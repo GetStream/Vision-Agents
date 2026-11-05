@@ -962,6 +962,7 @@ func (s *AgentSuite) SetupTest() {
 	s.unified = false
 	s.performing = ""
 	s.voiceName = ""
+	s.replacementErr = nil
 	s.logs = nil
 	s.backup = nil
 	s.region, s.twinned = "", ""
