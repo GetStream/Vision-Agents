@@ -371,6 +371,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Gmail, Google Calendar, Linear and Slack tools that only read sit beside a sensitive connector
+
+A config that binds a sensitive connector such as Nessy was refused when it also granted a tool of Gmail, Google Calendar, Linear or Slack, even one that only reads, because their manifests listed no `read_only_tools`. Gmail revision 4, Google Calendar revision 3, Linear revision 3 and Slack revision 7 now list the tools their vendor pages or tool descriptions say only read: Gmail's thread, message, draft-list and label reads, Calendar's event and calendar reads and `suggest_time`, Linear's get, list and search tools, and Slack's search and read tools. A binding granting only those by name is accepted. Any other tool, such as Gmail's `get_draft`, Linear's `extract_images` and Slack's `slack_read_file`, still needs the binding's `require_approval` (AI-2756).
+
 ### A new phone link starts the number clean
 
 `PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716, #1728).
