@@ -145,12 +145,30 @@ last frame, and a pause costs one request:
 - **One final.** A check that ends the turn hands its ruling to the agent, and its words
   go out as the utterance's one final, to the cadence as any final does (60 ms). The flow
   controller's Hearer rules on those words as the check did, with no request of its own, and
-  the reply is asked for at once. Over the agent a check has no bar: the model's ruling ends
-  the turn, `stop`, `shorten`, `continue` or `ignore`, and words heard over a reply reach the
-  flow controller as settled words.
+  the reply is asked for at once. Over the agent a pause check has no bar: the model's
+  ruling ends the turn, `stop`, `shorten`, `continue` or `ignore`, and words heard over a
+  reply reach the flow controller as settled words. A turn a check ended is over whatever
+  comes next: speech before its words are written, the caller going on or somebody else in
+  the room, is the next utterance's.
+- **Over the agent, without a pause.** While the agent speaks, a caller who has been voiced
+  for 350 ms in the utterance is asked about without waiting for a pause, the decision and
+  the words of the utterance so far (up to 16 s) in one request, then every `interval_ms`
+  while they talk on, each once the one before has answered. A pause may never come over
+  the agent: its own echo on the caller's line or the room keeps the speech gate open, and a
+  caller who talks straight over it leaves none `first_check_ms` would catch, so the pause
+  checks alone left the agent talking until its reply ended. A ruling to `stop` or `shorten`
+  is acted on at once, as a provisional ruling about another transcriber's revision is
+  (`OverlapDecided`, then the interruption): the agent drops its own echoed voice from the
+  check's words first, as from any chorus-asr transcript, and an echo alone or a murmur
+  stops nothing; after an echo the next check waits a second rather than `interval_ms`. The
+  utterance goes on, its words shown as interims, and ends at a pause with the floor free,
+  where the reply to it is asked for. 350 ms is most of an "uh-huh", so the model rules on a
+  murmur, which it was trained to let the agent talk through, rather than on the first
+  syllable of anything, and a word that stops the agent, "no" or "stop", is said inside it.
 - **Live words, acted on at the end.** While the caller talks the transcriber shows the
   words so far, as interims ([Live words](#live-words)), and the agent shows them and acts
   on none: nothing supersedes a ruling or interrupts a reply about audio already ruled on.
+  Over the agent the checks write the words, and it is their ruling that is acted on.
   Speech after a pause the model waited on begins another: its first check writes the whole
   utterance again.
 
@@ -230,16 +248,36 @@ transcriber now shows the words so far while the caller talks, as interim transc
   alone (`POST /v1/transcribe`), the whole utterance so far, which a replacement must be:
   one at a time per participant, and never again when the server was busy (503, 429 or
   `transcript_error: busy`) or failed. `router_chorus_asr_interims_total` counts each by
-  what became of it: `written`, `late`, `empty`, `refused` or `failed`.
-- **The final has the last word.** An interim holds up no pause check, no decision and no
+  what became of it: `written`, `late`, `unstable`, `empty`, `foreign`, `refused` or
+  `failed`.
+- **In the utterance's own language.** The server names the language it heard with every
+  transcript (`language`). The words so far are asked for in the language of the
+  utterance's first words at a pause, which the server had a whole phrase to tell, and
+  words that come back in another, named otherwise or refused as one the callers don't
+  speak (`noise: language`), are dropped (`foreign`), as are a pause's words in another
+  language, which wait for the final. With no languages declared no interim is asked for
+  before that language is known: asked to guess the language of a second of speech, the
+  server guessed differently from one interim to the next over somebody else talking in the
+  room, and a watcher saw the line switch script. With languages declared the words so far
+  are asked for in them until the utterance's language is known, and in it alone from then
+  on. The final is the model's, in whatever language it heard the turn.
+- **The line never goes back.** An interim holds up no pause check, no decision and no
   final: it runs on a goroutine of its own, and one that answers after the final, or after
-  newer words, is dropped, so what a watcher sees never goes back. The final and the turn's
-  end are exactly as they are without interims.
+  newer words, is dropped (`late`). An interim of the next utterance waits for the last
+  one's final, which a slow server may still be writing. Once the words shown are stable,
+  carried on by the interim after them, an interim that does not carry them on in turn is
+  dropped (`unstable`): fewer words, or an opening and words that are not theirs, as two
+  writings of the same audio over noise can be. Words shown once and never carried on may
+  be anything, the agent's echo or the room, and the next words replace them. No interim
+  brings a script the words shown are not in. The final has the last word, and the turn's
+  end is exactly as it is without interims.
 - **In an agent's call** interims are shown (`Hearing`) under the line the turn is going
   into and put to nothing: not the cadence, which would read words that hold still for
   350 ms as a pause, nor the flow controller, an overlap or a backchannel. The agent's own
-  echo is dropped from them as from any chorus-asr transcript. On the router's STT socket
-  they are replacements like any transcriber's.
+  echo is dropped from them as from any chorus-asr transcript. Over the agent the words
+  come with the checks that ask about the caller without a pause
+  ([Turns from the audio](#turns-from-the-audio)), and it is the checks' ruling that is
+  acted on. On the router's STT socket interims are replacements like any transcriber's.
 
 **What it costs.** The words have no 16 s limit, so an interim of a long utterance would
 grow with it. The audio an interim sends a second of speech is therefore bounded by what a
@@ -523,10 +561,21 @@ never ended the utterance; the new one wrote both replacements and the final.
   `stream/chorus-asr` keeps in every mode.
 - The transcriber's speech gate was not measured on calls. Over noise as loud as -48 dBFS
   a pause is heard about 200 ms late, once the detector's score has let go of the voice,
-  and a sudden loud noise can score as speech. It writes words only at pauses, so words said over the agent reach
-  the flow controller at the caller's next pause. It rewrites the whole utterance at each
-  pause, ends one at 60 s if the caller never pauses, and drops a ninth request waiting on
-  a slow server.
+  and a sudden loud noise can score as speech. The gate is absolute: somebody else talking
+  in the room 18 dB below the caller keeps it open, so the caller's turn ends at the room's
+  pauses, if the model ends it there, or at 60 s, and with no languages declared the model
+  writes the room's words into the caller's final. With the agent quiet it writes words
+  only at pauses. It rewrites the whole utterance at each pause, ends one at 60 s if the
+  caller never pauses, and drops a ninth request waiting on a slow server.
+- With no languages declared the words so far wait for the utterance's first pause, whose
+  words say what language it is in; an utterance with no pause in it shows none until its
+  final, and the language is the model's guess on that pause's words, which the whole
+  utterance's interims are then held to.
+- Checks over the agent cost a decision and the words every `interval_ms` while a caller
+  is voiced over it, the agent's own echo included until the agent has said so, after which
+  one a second: a line with no echo cancellation costs that for as long as the agent talks.
+  A check's window ends mid-word, where the model's barge-in training clips ended 100 to
+  300 ms after the caller's last word, so its ruling there is less sure than at a pause.
 - In `shadow` with the transcriber on, a pause costs two decisions: the transcriber's
   check, under its own agent, and the shadow's under the agent's. In every mode a pause of
   speech costs a words-bearing request, the agent's own echoed voice included, and the
