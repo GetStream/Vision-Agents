@@ -598,8 +598,8 @@ func (s *StoreSuite) TestCardsLeaveOutWhatALinkedNumberSaidBeforeTheLink() {
 	s.Equal([]string{afterUnpinned}, s.readFor(unpinned), "a row pinned NULL is the deployment's own app's")
 }
 
-// The control: the read leaves out nothing of a number that is not linked, or that is linked in
-// another Stream app or by another customer, as the probe of this test at 668d15d5c (before
+// The control: the read leaves out nothing of a number that is not linked (while another number
+// of the app is), or that is linked in another Stream app or by another customer, as the probe of this test at 668d15d5c (before
 // this change) answered.
 func (s *StoreSuite) TestCardsKeepWhatANumberLinkedElsewhereSaid() {
 	s.agentConfigs()
@@ -613,6 +613,7 @@ func (s *StoreSuite) TestCardsKeepWhatANumberLinkedElsewhereSaid() {
 
 	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 7, UserID: "anya", Phone: "+15550177"})
 	s.linkDated(&UserPhone{CustomerID: "another-customer", StreamAppPK: 4242, UserID: "anya", Phone: "+15550188"})
+	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 4242, UserID: "bob", Phone: "+15550199"})
 
 	s.Equal([]string{episodes[0]}, s.readFor(alone))
 	s.Equal([]string{episodes[1]}, s.readFor(elsewhere))
