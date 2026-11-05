@@ -373,7 +373,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A tool call with an ID pasted in a link, or listed by a tool, is no longer refused
 
-The agent refused a tool call whose ID the person had only pasted inside a link, such as a channel in a thread's link, unless they also named what the ID was. An ID that is a whole segment of a link's path, or a whole value of its query, in the person's own message now counts as theirs. An ID a tool wrote out in a text field of its JSON answer, as Slack's channel search lists `#help (C…)` under `results`, now counts as returned. An ID the person or a tool never gave is still refused (AI-2791).
+The agent refused a tool call whose ID the person had only pasted inside a link, such as a channel in a thread's link, unless they also named what the ID was. An ID that is a whole segment of a link's path, or a whole value of its query, in the person's own message now counts as theirs. An ID a tool wrote out in a text field of its JSON answer, as Slack's channel search lists `#help (C…) - public_channel` under `results`, now counts as returned when its line names what the ID is (`channel` for a `channel_id`) and the call that got the answer was not sent that ID. An ID the person or a tool never gave is still refused (AI-2791).
 
 ### Gmail, Google Calendar, Linear and Slack tools that only read sit beside a sensitive connector
 
