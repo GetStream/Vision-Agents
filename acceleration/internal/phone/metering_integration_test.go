@@ -150,6 +150,21 @@ func (s *MeteringSuite) transfer(callID, human string) {
 	s.Require().NoError(err)
 }
 
+func (s *MeteringSuite) TestTheCustomerWhoTransferredCanPressDigitsOnTheTransferLeg() {
+	s.transfer("call-"+uuid.NewString(), "+15125550124")
+
+	s.Require().NoError(s.service.SendDigits(s.ctx, s.customer, s.vendor.vendor, s.vendor.vendor+"-call", "12"))
+	s.Equal([]string{s.vendor.vendor + "-call:12"}, s.vendor.pressed)
+}
+
+func (s *MeteringSuite) TestAnotherCustomerCannotPressDigitsOnATransferLeg() {
+	s.transfer("call-"+uuid.NewString(), "+15125550124")
+
+	err := s.service.SendDigits(s.ctx, "customer-"+uuid.NewString(), s.vendor.vendor, s.vendor.vendor+"-call", "12")
+	s.ErrorIs(err, ErrCallNotFound)
+	s.Empty(s.vendor.pressed)
+}
+
 // legsOf is the legs of the call, open or ended, by direction.
 func (s *MeteringSuite) legsOf(callID string) map[string]store.CallLeg {
 	var legs []store.CallLeg

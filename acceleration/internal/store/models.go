@@ -462,6 +462,8 @@ type CallLeg struct {
 	StreamSessionID    string `bun:"stream_session_id,notnull"`
 	ParticipantSession string `bun:"participant_session,notnull"`
 	Vendor             string `bun:"vendor,notnull"`
+	// VendorCallID is the vendor's id for an outbound leg. Empty for an inbound one.
+	VendorCallID string `bun:"vendor_call_id,nullzero"`
 	// Direction is Inbound or Outbound.
 	Direction    string `bun:"direction,notnull"`
 	LocalNumber  string `bun:"local_number,notnull"`
