@@ -61,17 +61,28 @@ func (k *Keeper) Dialed(ctx context.Context, token, vendorCallID string) error {
 	return asUnknown(err)
 }
 
-// Failed forgets a call the vendor refused to dial: it never rang, so it has no outcome.
+// Failed forgets a call that was never dialled, or that the vendor refused to dial: it never
+// rang, so it has no outcome.
 func (k *Keeper) Failed(ctx context.Context, token string) error {
 	return k.store.DeletePhoneCall(ctx, token)
 }
 
-// Reported takes a vendor's report: reported is empty when it is not final; word is the
-// vendor's own.
-func (k *Keeper) Reported(ctx context.Context, token string, reported Outcome, word string) (Call, error) {
-	e := event{kind: reportedEvent, reported: reported, word: word, at: k.now()}
-	call, _, err := k.decide(ctx, store.PhoneCallWhere{Token: token}, e)
-	return call, asUnknown(err)
+// Refused forgets a call the vendor was asked to dial and refused, as Failed does, and counts
+// it as refused. It has no row, so nothing else counts it.
+func (k *Keeper) Refused(ctx context.Context, token, vendor string) error {
+	callOutcomes.WithLabelValues(k.vendorLabel(vendor), outbound, refused).Inc()
+	return k.Failed(ctx, token)
+}
+
+// Reported takes a vendor's report and counts what it says of the carrier.
+func (k *Keeper) Reported(ctx context.Context, token string, report Report) (Call, error) {
+	e := event{kind: reportedEvent, reported: report.Outcome, word: report.Word, at: k.now()}
+	before, call, err := k.decide(ctx, store.PhoneCallWhere{Token: token}, e)
+	if err != nil {
+		return Call{}, asUnknown(err)
+	}
+	k.countReport(before, report, e.at)
+	return call, nil
 }
 
 // Answered is the call's phone joining the Stream call at at. A leg with no row, a transfer's
@@ -86,16 +97,16 @@ func (k *Keeper) Answered(ctx context.Context, key Key, at time.Time) error {
 // store ends a leg once: failed when the router refused it, else completed or dropped. A
 // transfer's leg is not counted.
 func (k *Keeper) Ended(ctx context.Context, key Key, at time.Time, leg Leg) error {
-	call, first, err := k.decide(ctx, where(key), event{kind: endedEvent, at: at})
+	before, call, err := k.decide(ctx, where(key), event{kind: endedEvent, at: at})
 	switch {
 	case err != nil && !errors.Is(err, store.ErrNoPhoneCall):
 		return err
 	case leg.Inbound && leg.Refused:
-		k.count(ctx, key, leg.Vendor, inbound, Failed, false, at)
+		k.count(ctx, key, leg.Vendor, inbound, Failed, nil, at)
 	case leg.Inbound:
-		k.count(ctx, key, leg.Vendor, inbound, Completed, leg.AnsweredAt != nil, at)
-	case first:
-		k.count(ctx, key, call.Vendor, outbound, call.Outcome, call.AnsweredAt != nil, at)
+		k.count(ctx, key, leg.Vendor, inbound, Completed, leg.AnsweredAt, at)
+	case err == nil && before.EndedAt == nil:
+		k.count(ctx, key, call.Vendor, outbound, call.Outcome, call.AnsweredAt, at)
 	}
 	return nil
 }
@@ -142,13 +153,12 @@ func (k *Keeper) Sweep(ctx context.Context, placedBefore time.Time) (int64, erro
 }
 
 // decide runs e on the call where finds, under the row's lock, so events arriving at once each
-// see what the others decided. ended reports whether e is what first ended the call, which one
-// event of a call is, whatever order they come in.
-func (k *Keeper) decide(ctx context.Context, where store.PhoneCallWhere, e event) (call Call, ended bool, err error) {
+// see what the others decided. before is the call as e found it: e is what first ended the
+// call when before has no end, which one event of a call is, whatever order they come in.
+func (k *Keeper) decide(ctx context.Context, where store.PhoneCallWhere, e event) (before, call Call, err error) {
 	row, err := k.store.ChangePhoneCall(ctx, where, func(row *store.PhoneCall) bool {
-		before := callOf(*row)
+		before = callOf(*row)
 		after := decide(before, e)
-		ended = before.EndedAt == nil && after.EndedAt != nil
 		if after == before {
 			return false
 		}
@@ -157,18 +167,20 @@ func (k *Keeper) decide(ctx context.Context, where store.PhoneCallWhere, e event
 		return true
 	})
 	if err != nil {
-		return Call{}, false, err
+		return Call{}, Call{}, err
 	}
-	return callOf(row), ended, nil
+	return before, callOf(row), nil
 }
 
 // count counts a call that ended at ended under outcome, or as dropped when it was answered
-// and its agent left it on the line. The router's session of a call has the call's id. A
+// (at answered, nil if never) and its agent left it on the line, and as short when it was
+// answered for less than shortCall. The router's session of a call has the call's id. A
 // session that cannot be read leaves the call counted under outcome, and is logged.
-func (k *Keeper) count(ctx context.Context, key Key, vendor, direction string, outcome Outcome, answered bool,
+func (k *Keeper) count(ctx context.Context, key Key, vendor, direction string, outcome Outcome, answered *time.Time,
 	ended time.Time) {
 	label := string(outcome)
-	if answered {
+	vendor = k.vendorLabel(vendor)
+	if answered != nil {
 		session, err := k.store.StoredSession(ctx, key.CustomerID, key.CallID)
 		switch {
 		case err == nil && leftOnTheLine(session, ended):
@@ -178,10 +190,18 @@ func (k *Keeper) count(ctx context.Context, key Key, vendor, direction string, o
 				"customer", key.CustomerID, "call", key.CallType+":"+key.CallID, "outcome", label, "error", err)
 		}
 	}
-	if !slices.Contains(k.vendors, vendor) {
-		vendor = otherVendor
-	}
 	callOutcomes.WithLabelValues(vendor, direction, label).Inc()
+	if answered != nil && isShort(ended.Sub(*answered)) {
+		shortCalls.WithLabelValues(vendor, direction).Inc()
+	}
+}
+
+// vendorLabel is the vendor a call is counted under: one the keeper names, else other.
+func (k *Keeper) vendorLabel(vendor string) string {
+	if !slices.Contains(k.vendors, vendor) {
+		return otherVendor
+	}
+	return vendor
 }
 
 func where(key Key) store.PhoneCallWhere {

@@ -1,9 +1,12 @@
 package sipbridge
 
 import (
+	"context"
 	"log/slog"
+	"net"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/emiago/sipgo"
 	"github.com/emiago/sipgo/sip"
@@ -290,4 +293,96 @@ func TestTheCustomerInviteCarriesNoCallID(t *testing.T) {
 	req := leg.newInvite(nil)
 
 	require.Nil(t, req.GetHeader(CallIDHeader))
+}
+
+// timedInvite sends a guarded leg's INVITE to server, giving up after wait, and returns every
+// post-dial delay the leg told.
+func timedInvite(t *testing.T, server *sipServer, wait time.Duration) []time.Duration {
+	t.Helper()
+	l := guardedLeg(t, server)
+	told := make(chan time.Duration, 4)
+	l.responded = func(d time.Duration) { told <- d }
+	ctx, cancel := context.WithTimeout(t.Context(), wait)
+	defer cancel()
+
+	_, _ = l.Invite(ctx, []byte("v=0 ours\r\n"))
+
+	close(told)
+	var delays []time.Duration
+	for d := range told {
+		delays = append(delays, d)
+	}
+	return delays
+}
+
+func TestABusyCustomersRefusalEndsThePostDialDelay(t *testing.T) {
+	delays := timedInvite(t, startSIPServer(t, "", sip.StatusBusyHere), 5*time.Second)
+
+	require.Len(t, delays, 1)
+	require.Positive(t, delays[0])
+}
+
+func TestTheFirstRingingEndsThePostDialDelayBeforeTheCallIsGivenUp(t *testing.T) {
+	delays := timedInvite(t, startSIPServer(t, "", sip.StatusRinging), 300*time.Millisecond)
+
+	require.Len(t, delays, 1, "told once, on the 180 rather than at the end")
+	require.Less(t, delays[0], 300*time.Millisecond)
+}
+
+func TestAnAnswerIsAPostDialDelayOnce(t *testing.T) {
+	require.Len(t, timedInvite(t, startSIPServer(t, "", sip.StatusOK), 5*time.Second), 1)
+}
+
+// startResponding is a SIP server that answers each INVITE with first, then, after pause, with
+// a refusal as busy.
+func startResponding(t *testing.T, first int, pause time.Duration) *sipServer {
+	t.Helper()
+	ua, err := sipgo.NewUA()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = ua.Close() })
+	srv, err := sipgo.NewServer(ua)
+	require.NoError(t, err)
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = listener.Close() })
+	srv.OnInvite(func(req *sip.Request, tx sip.ServerTransaction) {
+		_ = tx.Respond(sip.NewResponseFromRequest(req, first, "", nil))
+		time.Sleep(pause)
+		_ = tx.Respond(sip.NewResponseFromRequest(req, sip.StatusBusyHere, "Busy Here", nil))
+	})
+	go func() { _ = srv.ServeTCP(listener) }()
+	return &sipServer{addr: listener.Addr().String()}
+}
+
+func TestOnlyTheFirstResponseEndsThePostDialDelay(t *testing.T) {
+	require.Len(t, timedInvite(t, startResponding(t, sip.StatusRinging, 100*time.Millisecond), 5*time.Second), 1,
+		"the 486 after the 180 is no second delay")
+}
+
+func TestATryingDoesNotEndThePostDialDelay(t *testing.T) {
+	delays := timedInvite(t, startResponding(t, sip.StatusTrying, 200*time.Millisecond), 5*time.Second)
+
+	require.Len(t, delays, 1)
+	require.GreaterOrEqual(t, delays[0], 200*time.Millisecond, "timed to the 486, not the 100")
+}
+
+func TestOnlyTheCustomerLegIsTimed(t *testing.T) {
+	cfg := validConfig()
+	cfg.Call.Responded = func(time.Duration) {}
+
+	customer, stream := newLegs(cfg.WithDefaults(), nil, nil, sip.Uri{}, sip.Uri{})
+
+	require.NotNil(t, customer.responded)
+	require.Nil(t, stream.responded, "the Stream leg's delay is no carrier's")
+}
+
+func TestTryingAndChallengesSayNothingOfHowTheCallGoes(t *testing.T) {
+	for _, code := range []int{sip.StatusTrying, sip.StatusUnauthorized, sip.StatusPaymentRequired,
+		sip.StatusProxyAuthRequired} {
+		require.False(t, statusIndicative(code), code)
+	}
+	for _, code := range []int{sip.StatusRinging, sip.StatusSessionInProgress, sip.StatusOK, sip.StatusBusyHere,
+		sip.StatusForbidden} {
+		require.True(t, statusIndicative(code), code)
+	}
 }

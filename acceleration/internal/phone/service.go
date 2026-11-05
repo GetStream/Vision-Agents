@@ -1196,7 +1196,13 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		if shared {
 			s.forgetCallResource(ctx, resource)
 		}
-		s.forgetOutcome(ctx, token, callID)
+		// The vendor was asked: dialMeter reserves nothing, so routing.Call fails only in the dial.
+		// A request that went away mid-dial is no refusal, though: the phone may be ringing.
+		if ctx.Err() == nil {
+			s.forgetRefused(ctx, token, held.Vendor, callID)
+		} else {
+			s.forgetOutcome(ctx, token, callID)
+		}
 		return Placed{}, stack.Wrap(err)
 	}
 
@@ -1242,6 +1248,14 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 // on a request that may be gone, and logs a failure rather than mask the one it follows.
 func (s *Service) forgetOutcome(ctx context.Context, token, callID string) {
 	if err := s.outcomes.Failed(context.WithoutCancel(ctx), token); err != nil {
+		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
+	}
+}
+
+// forgetRefused is forgetOutcome for a call the vendor was asked to dial and refused, which is
+// counted as refused.
+func (s *Service) forgetRefused(ctx context.Context, token, vendor, callID string) {
+	if err := s.outcomes.Refused(context.WithoutCancel(ctx), token, vendor); err != nil {
 		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
 	}
 }
@@ -1492,7 +1506,10 @@ func (s *Service) report(ctx context.Context, token string, status CallStatus) (
 	if err != nil {
 		return outcome.Call{}, err
 	}
-	call, err := s.outcomes.Reported(ctx, token, reported, status.Word)
+	call, err := s.outcomes.Reported(ctx, token, outcome.Report{
+		Outcome: reported, Word: status.Word, SIPCode: status.SIPCode, Ringing: status.Ringing,
+		PostDialDelay: status.PostDialDelay,
+	})
 	if errors.Is(err, outcome.ErrUnknownCall) {
 		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
 	}

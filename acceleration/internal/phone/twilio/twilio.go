@@ -413,7 +413,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 }
 
 // ReadStatus reads the form Twilio posts to a call's StatusCallback. A CallStatus that does
-// not end the call is a report that is not final.
+// not end the call is a report that is not final. SipResponseCode is the final SIP response,
+// sent with a final CallStatus (https://www.twilio.com/docs/voice/api/call-resource); one that
+// is no number is left out.
 func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
 	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/x-www-form-urlencoded" {
 		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("twilio: a call status is a form, not %q", contentType))
@@ -426,7 +428,8 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 	if word == "" {
 		return phone.CallStatus{}, stack.Wrap(errors.New("twilio: a call status without a CallStatus"))
 	}
-	return phone.CallStatus{Result: finalStatuses[word], Word: word}, nil
+	code, _ := strconv.Atoi(form.Get("SipResponseCode"))
+	return phone.CallStatus{Result: finalStatuses[word], Word: word, SIPCode: code}, nil
 }
 
 // ReadMachine reads the form Twilio posts to a call's AsyncAmdStatusCallback.
