@@ -95,7 +95,7 @@ var (
 	turnLatency = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "agent_turn_latency_seconds",
-		Help:      "How long a caller waited for the reply to what they said, by leg: roundtrip from the last transcript revision to the first audio published (Turn.RoundtripMs), speech_end_to_audio that plus the transcriber's time deciding they had stopped (SpeechEndToAudioMs), speech_end_to_audible the same to the first frame of the reply the call's track took (SpeechEndToAudibleMs, only from an edge that reports it); by pipeline, cascade or native for one speech-to-speech model. Replies the agent starts on its own are left out, and so is a leg a turn never reached, such as a reply interrupted before any of it went out",
+		Help:      "How long a caller waited for the reply to what they said, by leg: roundtrip from the last transcript revision to the first audio published (Turn.RoundtripMs), speech_end_to_audio that plus the transcriber's time deciding they had stopped (SpeechEndToAudioMs), speech_end_to_audible the same to the first frame of the reply the call's track took (SpeechEndToAudibleMs, only from an edge that reports it); by pipeline, cascade or native for one speech-to-speech model, the one the turn started on; under native, roundtrip runs from the model's speech-stopped signal and speech_end_to_audio equals roundtrip. Replies the agent starts on its own are left out, and so is a leg a turn never reached, such as a reply interrupted before any of it went out",
 		Buckets:   turnLatencyBuckets,
 	}, []string{"leg", "pipeline"})
 	// cause, ruler and echo are fixed sets (interruption.go, harness.Ruler).

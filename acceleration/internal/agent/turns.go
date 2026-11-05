@@ -78,6 +78,8 @@ type turnTracker struct {
 	// the one before the words it murmurs over; the turn a tool call answers is on the
 	// tool's own line.
 	caller string
+	// native says whether the agent is on a speech-to-speech model now; nil is a cascade.
+	native func() bool
 }
 
 // originsKept is how many turns' origins are kept. An utterance is logged within seconds of
@@ -106,6 +108,9 @@ const (
 type origin struct {
 	kind   string
 	parent string
+	// pipeline is the pipeline the agent ran when the turn started: a settings change may
+	// swap it while the turn is still open, and the turn finishes on the one it began on.
+	pipeline string
 }
 
 // openTurn is a turn that has not finished yet.
@@ -169,12 +174,16 @@ func newTurnTracker(owner routing.Owner, finished func(Turn)) *turnTracker {
 func (t *turnTracker) started(turnID, kind string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
+	pipeline := pipelineCascade
+	if t.native != nil && t.native() {
+		pipeline = pipelineNative
+	}
 	if kind == kindCaller {
 		t.caller = turnID
-		t.remember(turnID, origin{kind: kind})
+		t.remember(turnID, origin{kind: kind, pipeline: pipeline})
 		return
 	}
-	t.remember(turnID, origin{kind: kind, parent: t.caller})
+	t.remember(turnID, origin{kind: kind, parent: t.caller, pipeline: pipeline})
 }
 
 // remember keeps the origin of a turn, letting the oldest go past originsKept.

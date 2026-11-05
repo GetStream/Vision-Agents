@@ -127,6 +127,73 @@ func (s *AgentSuite) TestAReplyInterruptedBeforeItsAudioIsNotObserved() {
 	}
 }
 
+// Catches a reply interrupted after its first audio went out dropped from the metric: the
+// caller did wait that long for it.
+func (s *AgentSuite) TestAReplyInterruptedAfterItsAudioIsStillObserved() {
+	s.join(true)
+	s.edge.holdSpeech(true)
+	s.model.reply = nil
+	s.model.then = []string{"I heard you."}
+	before := turnLatencies(pipelineCascade)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool {
+		requests := s.model.requests()
+		return len(requests) == 1 && s.model.script(requests[0].ID) != nil
+	}, "the first reply never started")
+	turnID := s.model.requests()[0].ID
+	s.model.writes(turnID, "The old reply is still in flight.")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the first audio never went out")
+
+	s.says(participant, "actually, stop")
+
+	// The caller's second words start a reply of their own, which is observed too.
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 2 }, "both turns were never reported")
+	var interrupted Turn
+	var seconds float64
+	for _, event := range s.reported() {
+		if turn, ok := event.(Turn); ok {
+			seconds += turn.RoundtripMs / 1000
+			if turn.TurnID == turnID {
+				interrupted = turn
+			}
+		}
+	}
+	s.Require().True(interrupted.Interrupted)
+	s.Require().Positive(interrupted.RoundtripMs, "the first audio went out before the interruption")
+	gained := observedSince(pipelineCascade, before)
+	s.Equal(uint64(2), gained["roundtrip"].count)
+	s.InDelta(seconds, gained["roundtrip"].sum, 1e-9)
+}
+
+// Catches a turn labelled with the pipeline it finished on, not the one it started on: a
+// settings change moves the agent onto a speech-to-speech model while the turn waits out its
+// playout grace.
+func (s *AgentSuite) TestATurnIsObservedOnThePipelineItStartedOn() {
+	s.edgeFactory = func(base *loopbackEdge) Edge {
+		return &markedEdge{loopbackEdge: base, neverTakes: true}
+	}
+	w := s.joinSwappable()
+	before, native := turnLatencies(pipelineCascade), turnLatencies(pipelineNative)
+	alice := stt.Participant{ID: "alice"}
+	s.hears(w, alice, "hello", 1)
+	s.Require().Zero(countOf[Turn](s.reported()), "the turn must still be open when the pipeline moves")
+
+	moved := cascadeOnStub
+	moved.STSTarget = "openai/gpt-realtime-2"
+	s.Require().NoError(s.agent.SetSettings(s.ctx, moved))
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn was never reported")
+	turn, _ := firstOf[Turn](s.reported())
+	gained := observedSince(pipelineCascade, before)
+	s.Equal(uint64(1), gained["roundtrip"].count)
+	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+	for leg, series := range observedSince(pipelineNative, native) {
+		s.Zero(series.count, "a cascade's turn was counted as native after the move: "+leg)
+	}
+}
+
 // Catches a tool's answer timed as if the caller had waited on it since they stopped: its
 // clock starts when the tool comes back.
 func (s *AgentSuite) TestATurnTheAgentStartedIsNotObserved() {
