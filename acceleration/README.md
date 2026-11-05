@@ -2391,7 +2391,8 @@ An export starts recording the app's changes, then waits until every write trans
 the source's shared database when recording started has ended, and only then reads its snapshot.
 So every write of the app to a table the export carries is in the export or in the changes after its cursor,
 including one that was in progress when the export started. A transaction still open after 30 seconds makes the
-export answer 503: run it again.
+export answer 503: run it again. A repeatable read or serializable transaction whose snapshot is older than the
+start of recording is refused with a serialization failure when it next writes, so its retry is recorded.
 
 The source must be a router without shards. A shard's tables (calls, call bridges, recordings,
 sessions, responses, requests and their stats) record no changes, so a router with a shard database
