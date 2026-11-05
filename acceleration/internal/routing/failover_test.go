@@ -198,6 +198,16 @@ func (s *RoutingSuite) TestAStartThatFailedOnceTheCallerHadLeftIsCountedUnderCan
 	s.Equal(map[string]float64{"stt m start cancelled": 1}, s.failoversOf(first))
 }
 
+func (s *RoutingSuite) TestAFailureIsCountedUnderTheFirstReasonThatExplainsIt() {
+	own := ProviderConfig{Provider: "quick", Model: "en", BYOK: true}
+	refused := Refused(errors.New("no such voice"))
+
+	s.Equal(failoverRequest, failoverReason(own, refused, true), "a setting is refused the same way on any key and in any context")
+	s.Equal(failoverCancelled, failoverReason(own, errors.New("dial: canceled"), true), "a caller who left says nothing of their key")
+	s.Equal(failoverCustomerKey, failoverReason(own, errors.New("401"), false))
+	s.Equal(failoverVendor, failoverReason(ProviderConfig{Provider: "quick", Model: "en"}, errors.New("503"), false))
+}
+
 func (s *RoutingSuite) TestAHandoverIsCountedAtSessionByWhatTheProviderSaidAndWhoseKeyItWasOn() {
 	vendor, own := failoverVendors()
 

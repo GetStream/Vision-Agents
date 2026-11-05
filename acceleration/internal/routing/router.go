@@ -783,7 +783,6 @@ func (r *Router[P]) Walk(ctx context.Context, request Request, use func(P, Provi
 
 		if moved != nil {
 			countFailover(r.modality, *moved)
-			moved = nil
 		}
 		provider, err := r.startCandidate(ctx, request, candidate)
 		started := err == nil
