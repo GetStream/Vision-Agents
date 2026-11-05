@@ -258,6 +258,11 @@ type Session struct {
 	runs        map[*agent.Agent]*presence
 	callerSeen  atomic.Bool
 	settledOnce atomic.Bool
+	// caller is the number of the first phone caller to join the call, set once callerHeard
+	// closes (hearCaller). The channel is made on first use.
+	callerMu    sync.Mutex
+	caller      string
+	callerHeard chan struct{}
 	// machine holds the agent's hang-up while a call that leaves a voicemail is checked.
 	machine machineCheck
 	// connectorsUnavailable are the optional connector bindings the session opened without,
@@ -1671,6 +1676,8 @@ func (s *Session) close() error {
 	s.stopTimeout()
 	s.mu.Unlock()
 	s.checked(false)
+	// A card waiting for the caller waits no longer (awaitCaller).
+	s.hearCaller("")
 
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
