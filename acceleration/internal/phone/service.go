@@ -1635,8 +1635,8 @@ func (s *Service) allowlistFor(vendor string) ([]string, error) {
 // sharedLine is the line a call from the number goes out on, or false when the call makes a
 // trunk and rule of its own: the vendor cannot name the call on its leg, there is no key to
 // seal a shared trunk's password with, the number was attached before its password was
-// kept, or it is attached in another app. A number lined in another app only to place calls
-// moves its line here.
+// kept, it is attached in another app, or Stream routes it through a rule or trunk its line
+// did not make. A number lined in another app only to place calls moves its line here.
 func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, provider Provider, held store.PhoneNumber) (TrunkLine, bool, error) {
 	if StreamLegOf(provider) != StreamLegShared {
 		return TrunkLine{}, false, nil
@@ -1649,7 +1649,8 @@ func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, pro
 		}
 	}
 	line, err := s.line(ctx, stream, pin, held)
-	if errors.Is(err, ErrNoSealer) || errors.Is(err, store.ErrNoStoredBridge) || errors.Is(err, errLinedElsewhere) {
+	if errors.Is(err, ErrNoSealer) || errors.Is(err, store.ErrNoStoredBridge) ||
+		errors.Is(err, errLinedElsewhere) || errors.Is(err, errRoutedElsewhere) {
 		return TrunkLine{}, false, nil
 	}
 	if err != nil {
