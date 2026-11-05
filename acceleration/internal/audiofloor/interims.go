@@ -42,10 +42,12 @@ var interims = promauto.NewCounterVec(prometheus.CounterOpts{
 type sentWords struct {
 	mu sync.Mutex
 	// utterance is the newest utterance words have gone out of, upTo how much of its audio
-	// the last of them were of, text what they said, and done whether they were its final.
+	// the last of them were of, text what they said, stable whether they carried on the
+	// words before them, and done whether they were its final.
 	utterance int64
 	upTo      time.Duration
 	text      string
+	stable    bool
 	done      bool
 	// language is the language of utterance spokenOf's first words at a pause, as the
 	// server named it (Words.Language).
@@ -55,20 +57,27 @@ type sentWords struct {
 
 // send sends transcript unless words of its utterance that supersede it have gone out, and
 // says what became of it: written, or why not. An interim is held to the words shown as
-// well (carriesOn).
+// well: never in a script they are not in, and once they are stable, carried on by the
+// words after them, only words that carry them on in turn (carriesOn). Words shown once and
+// never carried on may be anything, the agent's echo or the room, and the next words
+// replace them.
 func (t *Transcriber) send(transcript stt.Transcript) string {
 	s := &t.sent
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	upTo := time.Duration(transcript.AudioDurationMs * float64(time.Millisecond))
+	same := transcript.Utterance == s.utterance
 	switch {
 	case transcript.Utterance < s.utterance:
 		return "late"
-	case transcript.Utterance == s.utterance && (s.done || (!transcript.Final() && upTo <= s.upTo)):
+	case same && (s.done || (!transcript.Final() && upTo <= s.upTo)):
 		return "late"
-	case transcript.Interim && transcript.Utterance == s.utterance && !carriesOn(s.text, transcript.Text):
+	case transcript.Interim && same && scripts(transcript.Text)&^scripts(s.text) != 0:
+		return "unstable"
+	case transcript.Interim && same && s.stable && !carriesOn(s.text, transcript.Text):
 		return "unstable"
 	}
+	s.stable = same && !transcript.Final() && carriesOn(s.text, transcript.Text)
 	s.utterance, s.upTo, s.text, s.done = transcript.Utterance, upTo, transcript.Text, transcript.Final()
 	t.emitter.Send(transcript)
 	return "written"
@@ -120,16 +129,12 @@ func (s *sentWords) spokenLocked(utterance int64) string {
 }
 
 // carriesOn says next, an interim, goes on from shown, the words of the utterance a watcher
-// sees: in no script shown is not in, with at least as many words, opening on the same word
-// and keeping at least half of shown's. The model writes the whole utterance each time, and
-// over noise or speech in another language two writings of the same audio can differ
-// wholesale: a watcher is shown the first, and words that don't carry it on wait for the
-// final.
+// sees: with at least as many words, opening on the same word and keeping at least half of
+// shown's. The model writes the whole utterance each time, and over noise or speech in
+// another language two writings of the same audio can differ wholesale: a watcher keeps the
+// words that were carried on once, and words that don't carry them on wait for the final.
 func carriesOn(shown, next string) bool {
 	if shown == "" {
-		return true
-	}
-	if scripts(next)&^scripts(shown) != 0 {
 		return false
 	}
 	before, after := plainWords(shown), plainWords(next)

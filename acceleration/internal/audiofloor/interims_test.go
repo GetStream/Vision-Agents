@@ -116,15 +116,21 @@ func (s *InterimSuite) TestInterimsNarrowToTheLanguageOfTheFirstWords() {
 }
 
 // An interim never takes a watcher's line back. Two writings of the same audio can differ
-// wholesale over noise or speech in another language, so words that don't carry on the ones
-// shown are dropped: fewer words, a script the shown words are not in, or an opening and
-// words that are not theirs. The final is as it is.
+// wholesale over noise or speech in another language, so once the words shown are stable,
+// carried on by the words after them, words that don't carry them on in turn are dropped:
+// fewer words, a script the shown words are not in, or an opening and words that are not
+// theirs. The final is as it is.
 func (s *InterimSuite) TestAnInterimThatGoesBackOnTheWordsShownIsDropped() {
 	s.say(1000, true)
 	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
+	s.server.mu.Lock()
+	s.server.words = "Two tickets to Bilbao, please, for tonight."
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.Equal("Two tickets to Bilbao, please, for tonight.", next[stt.Transcript](&s.transcribing).Text, "carried on: the words shown are stable")
 	for _, unstable := range []string{
-		"Two tickets to Bilbao.",
-		"Two tickets to Bilbao, please. 性格 木气 太 木",
+		"Two tickets to Bilbao, please.",
+		"Two tickets to Bilbao, please, for tonight. 性格 木气 太 木",
 		"Bye, bye, biga. Bye, there. Bye, biga. Bye, kill the jago.",
 		"Two tickets, two tickets, two tickets, two tickets, two tickets.",
 	} {
@@ -137,14 +143,38 @@ func (s *InterimSuite) TestAnInterimThatGoesBackOnTheWordsShownIsDropped() {
 		s.none()
 	}
 	s.server.mu.Lock()
-	s.server.words = "Two tickets to Bilbao, please, for tonight."
+	s.server.words = "Two tickets to Bilbao, please, for tonight, by the window."
 	s.server.mu.Unlock()
 	s.say(1000, true)
-	s.Equal("Two tickets to Bilbao, please, for tonight.", next[stt.Transcript](&s.transcribing).Text)
+	s.Equal("Two tickets to Bilbao, please, for tonight, by the window.", next[stt.Transcript](&s.transcribing).Text)
 	s.say(220, false)
 	end := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeFinal, end.Mode)
-	s.Equal("Two tickets to Bilbao, please, for tonight.", end.Text)
+	s.Equal("Two tickets to Bilbao, please, for tonight, by the window.", end.Text)
+}
+
+// Words shown once and never carried on may be anything, the agent's echo at the start of
+// the utterance or the room, and the next words replace them, fewer or not: a caller's "No,
+// no, stop" is not held to the echo written before it. A script the shown words are not in
+// never replaces them, whatever they were.
+func (s *InterimSuite) TestWordsNeverCarriedOnAreReplaced() {
+	s.server.mu.Lock()
+	s.server.words = "Tomorrow and listen to."
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.Equal("Tomorrow and listen to.", next[stt.Transcript](&s.transcribing).Text)
+	before := outcomes()
+	s.server.mu.Lock()
+	s.server.words = "我感觉。"
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.became("unstable", before)
+	s.none()
+	s.server.mu.Lock()
+	s.server.words = "No! No! Stop!"
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.Equal("No! No! Stop!", next[stt.Transcript](&s.transcribing).Text, "words never carried on are replaced")
 }
 
 // While the caller talks on, the words so far are written about once a second of speech, as
