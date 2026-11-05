@@ -836,6 +836,53 @@ func (s *DataMoveSuite) TestPruningKeepsWhatIsNumberedAboveAChangeInFlight() {
 	s.Equal([]string{held, after}, handed)
 }
 
+// A write whose trigger looked before the capture committed recorded nothing, and an export
+// read while it is open misses it too, so the wait holds it until it ends.
+func (s *DataMoveSuite) TestWaitingForOpenWritesHoldsAWriteFromBeforeTheCaptureStarted() {
+	before := s.begin()
+	id := s.writeIn(before, "acme", "straddles the capture start")
+	s.capture("acme")
+
+	started := time.Now()
+	s.ErrorIs(s.source.WaitForOpenWrites(s.ctx, 50*time.Millisecond), ErrWritesOpen)
+	s.Less(time.Since(started), 5*time.Second, "it gives up once its bound is past")
+
+	waited := make(chan error, 1)
+	go func() { waited <- s.source.WaitForOpenWrites(s.ctx, time.Minute) }()
+	s.Never(func() bool { return len(waited) > 0 }, 300*time.Millisecond, 10*time.Millisecond,
+		"the wait returned while the write was open")
+	s.Require().NoError(before.Commit())
+	s.Require().NoError(<-waited)
+	exported := s.export("acme")
+	handed, _ := s.follow("acme", exported.cursor)
+	s.True(slices.ContainsFunc(exported.of("agent_configs"), func(row map[string]any) bool { return row["id"] == id }) ||
+		slices.Contains(handed, id), "the write is in neither the export nor the changes")
+}
+
+// With nothing open there is nothing to wait for, so even no time at all is enough.
+func (s *DataMoveSuite) TestWaitingForOpenWritesReturnsAtOnceWithNoneOpen() {
+	s.NoError(s.source.WaitForOpenWrites(s.ctx, 0))
+}
+
+// A transaction that only reads holds no transaction id, and can hold no change.
+func (s *DataMoveSuite) TestWaitingForOpenWritesIgnoresATransactionThatOnlyReads() {
+	reading := s.begin()
+	s.Require().NoError(reading.QueryRowContext(s.ctx, "SELECT count(*) FROM agent_configs").Scan(new(int)))
+
+	s.NoError(s.source.WaitForOpenWrites(s.ctx, 0))
+}
+
+// Transaction ids are counted across the whole Postgres server; another database's writes are
+// none of this one's.
+func (s *DataMoveSuite) TestWaitingForOpenWritesIgnoresAnotherDatabase() {
+	elsewhere, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = elsewhere.Rollback() })
+	s.writeIn(elsewhere, "acme", "in the other database")
+
+	s.NoError(s.source.WaitForOpenWrites(s.ctx, 0))
+}
+
 // begin opens a transaction on the source that the test commits when it says so.
 func (s *DataMoveSuite) begin() bun.Tx {
 	tx, err := s.source.DB().BeginTx(s.ctx, nil)
