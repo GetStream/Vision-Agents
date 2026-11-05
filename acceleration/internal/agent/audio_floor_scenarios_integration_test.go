@@ -113,7 +113,7 @@ func (c *call) stoppedAfter(said *cue) (time.Duration, string, bool) {
 // three with a reply about the same thing ("in Lisbon tomorrow"), which echoed, lenient by
 // design, would take for an echo.
 func sharesRun(text, reference string, n int) bool {
-	heard, said := strings.Fields(plainWords(text)), plainWords(reference)
+	heard, said := strings.Fields(wordsOfText(text)), wordsOfText(reference)
 	for at := 0; at+n <= len(heard); at++ {
 		if strings.Contains(" "+said+" ", " "+strings.Join(heard[at:at+n], " ")+" ") {
 			return true
@@ -192,8 +192,8 @@ func (s *scenarios) pausesInside(t *testing.T, name string) {
 		assert.Empty(t, early, "no cut-in on an 800 ms pause")
 		assert.Len(t, answers, 1, "one answer")
 		if assert.Len(t, finals, 1, "one final") {
-			assert.Contains(t, plainWords(finals[0].T.Text), "lisbon")
-			assert.Contains(t, plainWords(finals[0].T.Text), "raining", "the final has the turn's end")
+			assert.Contains(t, wordsOfText(finals[0].T.Text), "lisbon")
+			assert.Contains(t, wordsOfText(finals[0].T.Text), "raining", "the final has the turn's end")
 		}
 	}
 	s.measured(t, name, answered)
@@ -240,7 +240,7 @@ func (s *scenarios) overTheReply(t *testing.T, name string, after time.Duration,
 		assert.LessOrEqual(t, acted, time.Duration(s.policy.IntervalMs)*time.Millisecond, "the agent gave way %s after the model's first ruling against the reply", acted.Round(time.Millisecond))
 	}
 	assert.True(t, answered.ok, "what the caller said over the agent was answered")
-	assert.Contains(t, plainWords(strings.Join(heard, " ")), keyword[name], "what the caller said reached the conversation")
+	assert.Contains(t, wordsOfText(strings.Join(heard, " ")), keyword[name], "what the caller said reached the conversation")
 	for _, line := range heard {
 		assert.False(t, sharesRun(line, reply, 4), "the agent's voice in what was heard over it: %q", line)
 	}
@@ -272,7 +272,7 @@ func (s *scenarios) secondTurnBeforeTheReply(t *testing.T) {
 		since(answered.speechEnd, answered.ruled), since(answered.speechEnd, answered.decided), since(answered.speechEnd, answered.replied))
 	assert.Empty(t, all[Error](c), "no failure")
 	assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
-	assert.Contains(t, plainWords(strings.Join(prompts, " ")), "porto", "the second question was answered")
+	assert.Contains(t, wordsOfText(strings.Join(prompts, " ")), "porto", "the second question was answered")
 	assert.LessOrEqual(t, len(c.edge.replyStarts()), 2, "at most two replies heard")
 	s.measured(t, "S4a", answered)
 }
@@ -410,7 +410,7 @@ func (s *scenarios) server503Transcribe(t *testing.T) {
 	assert.Empty(t, all[Error](c), "no failure")
 	assert.True(t, answered.ok, "the turn was answered")
 	if assert.Len(t, finals, 1, "one final") {
-		assert.Contains(t, plainWords(finals[0].T.Text), "here is my situation", "the final has the turn's beginning")
+		assert.Contains(t, wordsOfText(finals[0].T.Text), "here is my situation", "the final has the turn's beginning")
 	}
 	assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
 	s.measured(t, "S9c", answered)
@@ -480,8 +480,8 @@ func (s *scenarios) monologue(t *testing.T) {
 	assert.NotEmpty(t, finals, "the monologue was written")
 	assert.GreaterOrEqual(t, len(answers), 1, "the caller was answered")
 	if len(finals) > 0 {
-		assert.Contains(t, plainWords(finals[0].T.Text), "here is my situation", "the first final has the beginning")
-		assert.Contains(t, plainWords(finals[len(finals)-1].T.Text), "whole weekend", "the last final has the end")
+		assert.Contains(t, wordsOfText(finals[0].T.Text), "here is my situation", "the first final has the beginning")
+		assert.Contains(t, wordsOfText(finals[len(finals)-1].T.Text), "whole weekend", "the last final has the end")
 	}
 }
 
@@ -514,7 +514,7 @@ func (s *scenarios) languageSwitch(t *testing.T, languages []string) {
 	}
 	if languages == nil {
 		assert.True(t, answered.ok, "the Portuguese question was answered")
-		assert.Contains(t, plainWords(strings.Join(c.callerLines(), " ")), "porto", "the Portuguese heard: %q", c.callerLines())
+		assert.Contains(t, wordsOfText(strings.Join(c.callerLines(), " ")), "porto", "the Portuguese heard: %q", c.callerLines())
 	}
 	s.measured(t, "S12", answered)
 }
