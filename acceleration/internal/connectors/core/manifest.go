@@ -119,9 +119,10 @@ type Manifest struct {
 // Those are the revision's own number; broken_revisions, which the seeder alone reads;
 // category, description and setup, which only the catalog shows, from the connector's latest
 // revision (connectorOf, internal/api/connectors.go); and sensitive and each source's outbound
-// and read_only_tools, which only the sensitive-connector check reads, from the connector's
-// latest revision whatever a connection pins (SensitiveBindingsComplaint,
-// internal/api/configs.go); and sandbox.reads, which a session reads from the connector's latest
+// and read_only_tools, which only the sensitive-connector check and a connection's tools'
+// read_only read, from the connector's latest revision whatever a connection pins
+// (SensitiveBindingsComplaint, internal/api/configs.go; listConnectionTools,
+// internal/api/connection_tools.go); and sandbox.reads, which a session reads from the connector's latest
 // revision (sandboxGrant, internal/session/sandbox_grants.go). Any other field counts, the name
 // among them: a consent shows the pinned name (ConnectorConsents, internal/api/authorizations.go).
 func (m Manifest) ReadsAsConnection(other Manifest) bool {
@@ -294,6 +295,13 @@ func (r SourceRule) SendsOut() bool {
 // conversation: unless the source says outbound: false or lists it in read_only_tools.
 func (r SourceRule) SendsOutTool(name string) bool {
 	return r.SendsOut() && !slices.Contains(r.ReadOnlyTools, name)
+}
+
+// SendsOutTool reports whether a tool granted by the name name may send data out of the
+// conversation: whether any of m's sources may send it (SourceRule.SendsOutTool), as a grant
+// by name does not say which source the tool comes from. A manifest with no source sends none.
+func (m Manifest) SendsOutTool(name string) bool {
+	return slices.ContainsFunc(m.Sources, func(source SourceRule) bool { return source.SendsOutTool(name) })
 }
 
 // ToolRule is what a manifest says about one tool of a source.
