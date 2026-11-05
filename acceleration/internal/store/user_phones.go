@@ -295,9 +295,9 @@ func (s *Store) streamUserAddresses(link UserPhone) []string {
 // omni-channel, for each agent config of the customer: the older one, whose oldest row was
 // made first, and its pin with it. A link whose boundary is before its own time (all of the
 // number's past, or from an earlier time on) joins the number's rows a link set aside too
-// (retireHistory), found by contact_map_retired: EpisodeCards reads them up to the boundary. The number is the link as stored, read under the link's
-// lock, not link.Phone: a join that comes after another PUT of the user joins the number that
-// PUT left. No card moves: a card is read by its message id (omnichannel.summaryOf), and the
+// (retireHistory), found by contact_map_retired: EpisodeCards reads them up to the boundary.
+// The number is the link as stored, read under the link's lock, not link.Phone: a join that
+// comes after another PUT of the user joins the number that PUT left. No card moves: a card is read by its message id (omnichannel.summaryOf), and the
 // cards of a person are those of every row pointing at their omni-channel (EpisodeCards). Two
 // joins of one link take turns under its lock, so the second finds the first's rows on one
 // omni-channel already. Each half of the pair is found for each of the customer's agent
