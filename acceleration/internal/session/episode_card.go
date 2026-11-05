@@ -301,13 +301,11 @@ func (c *callCards) rung(ctx context.Context, spec Spec) (string, error) {
 // ownLine reports whether number is the line the session's call is on (PhoneSpec.Number),
 // which is the vendor's leg of a call the agent placed, never the person.
 func ownLine(spec Spec, number string) bool {
-	if spec.Phone == nil || spec.Phone.Number == "" {
+	if spec.Phone == nil {
 		return false
 	}
-	line, err := omnichannel.Phone(spec.Phone.Number)
-	if err != nil {
-		return false
-	}
+	// A line that is not in E.164 has no address, which no person's is.
+	line, _ := omnichannel.Phone(spec.Phone.Number)
 	person, err := omnichannel.Phone(number)
 	return err == nil && person.Address == line.Address
 }
