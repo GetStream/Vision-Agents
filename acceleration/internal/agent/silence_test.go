@@ -2,18 +2,48 @@ package agent
 
 import (
 	"context"
+	"sync"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
 // refusingMarkedEdge is a markedEdge whose call has been left, so none of the speech goes out.
 type refusingMarkedEdge struct{ *loopbackEdge }
 
 func (refusingMarkedEdge) PublishAudioMarked(audio.PcmData, PlayoutMarks) error { return ErrCallLeft }
+
+// takingEdge is a markedEdge whose track takes each chunk the moment it is published, and
+// which keeps whether each chunk came with marks.
+type takingEdge struct {
+	*loopbackEdge
+	mu     sync.Mutex
+	marked []bool
+}
+
+func (e *takingEdge) PublishAudioMarked(pcm audio.PcmData, marks PlayoutMarks) error {
+	if err := e.loopbackEdge.PublishAudio(pcm); err != nil {
+		return err
+	}
+	e.mu.Lock()
+	e.marked = append(e.marked, marks != nil)
+	e.mu.Unlock()
+	if marks != nil {
+		marks.FirstFrameQueued(time.Now())
+		marks.FirstAudiblePulled(time.Now())
+	}
+	return nil
+}
+
+func (e *takingEdge) asked() []bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return append([]bool(nil), e.marked...)
+}
 
 // frameAt is 20 ms of a participant's audio with every sample at level.
 func frameAt(level int16) audio.PcmData {
@@ -139,6 +169,31 @@ func (s *AgentSuite) TestSpeechForACallAlreadyLeftIsNotSpeechPublished() {
 	s.Nil(s.agent.CallAudio().Silences())
 }
 
+func (s *AgentSuite) TestTheEdgeIsAskedToReportOnTheSameSpeechAsBefore() {
+	// Catches the call's marks handed with speech nothing asked a report for, or with speech
+	// after the track took an audible frame, which has the speaker look for one in every chunk.
+	// The expected marks are what the base build gives the edge for the same calls.
+	var edge *takingEdge
+	s.edgeFactory = func(base *loopbackEdge) Edge {
+		edge = &takingEdge{loopbackEdge: base}
+		return edge
+	}
+	s.join(true)
+	s.voiceSends(1,
+		tts.SynthesisStarted{SynthesisID: "turn-a", Provider: "stub"},
+		chunkOf("turn-a", 160, 1000), chunkOf("turn-a", 160, 1000), chunkOf("turn-a", 160, 1000),
+		tts.SynthesisComplete{SynthesisID: "turn-a"},
+	)
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.says(alice, "hello")
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the agent never answered")
+
+	s.Equal([]bool{false, false, false, true, false}, edge.asked())
+	s.True(s.agent.CallAudio().Published)
+	s.True(s.agent.CallAudio().Pulled)
+}
+
 func (s *AgentSuite) TestAudioANativeModelHeardIsNotJudgedForWords() {
 	// Catches a speech-to-speech call, whose model writes no transcript here, counted as one
 	// whose caller was never transcribed.
@@ -205,6 +260,7 @@ func (s *AgentSuite) TestTheRunsOfOneCallAreJudgedTogether() {
 	s.Nil(native.Merge(attended).Silences())
 	s.Nil(unheard.Merge(pulled).Silences())
 	s.Nil(pulled.Merge(unheard).Silences())
+	s.Equal([]Silence{SilenceNoAudibleOutbound}, unheard.Merge(CallAudio{}).Silences())
 	s.Equal([]Silence{SilenceNoInbound}, CallAudio{}.Merge(attended).Silences())
 	s.Equal([]Silence{SilenceNoInbound}, attended.Merge(CallAudio{}).Silences())
 	s.Equal([]Silence{SilenceNoAudibleOutbound}, CallAudio{}.Merge(unheard).Silences())

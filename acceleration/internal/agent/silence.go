@@ -26,8 +26,8 @@ import (
 //
 // The outbound case stands beside them, so a call with no audio either way is in two:
 //
-//   - SilenceNoAudibleOutbound: the agent handed speech to an edge that says when its track
-//     takes it (MarkedPlayout), and the track took no frame of it that was not silence: a
+//   - SilenceNoAudibleOutbound: a reply's speech was queued at an edge that says when its
+//     track takes it (MarkedPlayout), and the track took no frame of it that was not silence: a
 //     track the call never pulled from, or a voice that sent only silence. Speech the caller
 //     interrupted before any of it played, with nothing said after, is counted here too.
 //     An edge that cannot say is not judged. That the track took a frame does not prove the
@@ -56,8 +56,8 @@ type CallAudio struct {
 	Words int64
 	// Native is some of the participants' audio having gone to a speech-to-speech model.
 	Native bool
-	// Published is speech handed to an edge that marks its playout, and Pulled its track
-	// having taken an audible frame.
+	// Published is a reply's speech queued at an edge that marks its playout, and Pulled its
+	// track having taken an audible frame of it.
 	Published bool
 	Pulled    bool
 }
@@ -124,19 +124,16 @@ type carried struct {
 	pulled    atomic.Bool
 }
 
-func (c *carried) FirstFrameQueued(time.Time) {}
-
-// FirstAudiblePulled runs on the track's goroutine, so it only stores.
+// FirstFrameQueued and FirstAudiblePulled run on the publishing and the track's goroutines,
+// so they only store.
+func (c *carried) FirstFrameQueued(time.Time)   { c.published.Store(true) }
 func (c *carried) FirstAudiblePulled(time.Time) { c.pulled.Store(true) }
 
-// marked adds the call's marks to a reply's, until the track has taken an audible frame:
-// after that there is nothing left to learn, and the speaker is spared looking for one.
+// marked adds the call's marks to a reply's. Speech the reply asks no report for is left
+// unmarked, so the edge is asked about the same speech as without this.
 func (c *carried) marked(marks PlayoutMarks) PlayoutMarks {
-	switch {
-	case c.pulled.Load():
-		return marks
-	case marks == nil:
-		return c
+	if marks == nil {
+		return nil
 	}
 	return bothMarks{marks, c}
 }

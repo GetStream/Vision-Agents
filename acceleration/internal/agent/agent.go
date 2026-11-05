@@ -3270,9 +3270,6 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
 				err = marked.PublishAudioMarked(speech, a.carried.marked(withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard)))
-				if err == nil {
-					a.carried.published.Store(true)
-				}
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}
