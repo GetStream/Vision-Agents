@@ -13282,7 +13282,7 @@ pub struct UsageEvent {
     ///The agent the work was done for.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub agent_id: ::std::option::Option<::std::string::String>,
-    ///The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+    ///The old name of origin, the same value, still answered for one release.
     pub api_key: ::std::string::String,
     ///The app the work was for.
     pub app_id: ::std::string::String,
@@ -13309,6 +13309,8 @@ pub struct UsageEvent {
     pub model: ::std::option::Option<::std::string::String>,
     ///When the work happened.
     pub occurred_at: ::std::string::String,
+    ///Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>.
+    pub origin: ::std::string::String,
     ///Who did the work, such as openai.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub provider: ::std::option::Option<::std::string::String>,
