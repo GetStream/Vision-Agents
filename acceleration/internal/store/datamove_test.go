@@ -586,6 +586,22 @@ func (s *DataMoveSuite) TestAChangeOfATransactionThatCommitsLateIsNotSteppedOver
 	s.Equal([]string{late, second}, rest)
 }
 
+// Right after an export nothing older is kept, so the number in flight is the only gap.
+func (s *DataMoveSuite) TestAChangeInFlightRightAfterTheCursorDoesNotExpireIt() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	inFlight := s.begin()
+	late := s.writeIn(inFlight, "acme", "in flight")
+	committed := s.seedAgentConfig(s.source, "acme", "committed")
+
+	handed, next := s.follow("acme", cursor)
+	s.Empty(handed)
+	s.Require().NoError(inFlight.Commit())
+	rest, _ := s.follow("acme", next)
+
+	s.Equal([]string{late, committed}, rest)
+}
+
 func (s *DataMoveSuite) TestAQuietFeedHandsOutEveryChangeUpToTheNewest() {
 	s.capture("acme")
 	cursor := s.export("acme").cursor

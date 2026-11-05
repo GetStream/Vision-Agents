@@ -1237,11 +1237,19 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		limit = 500
 	}
 
+	// Read first, so the statements after it see every change at or below it.
+	mark, err := s.changeWatermark(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	// Sequence numbers are shared by every customer and pruning drops the oldest of all of
 	// them, so a gap before this customer's first change is the other customers' changes,
 	// not a pruned one: only a cursor older than the oldest change kept has lost any. With
 	// none of theirs kept, a quiet customer and one whose every change aged out look the
-	// same, and the follower that is only waiting is not refused.
+	// same, and the follower that is only waiting is not refused. Pruning stops at the mark,
+	// which never goes down, so the gap right after a cursor at or above it is a change
+	// still in flight rather than a pruned one.
 	var kept sql.NullInt64
 	var theirs bool
 	if err := s.db.QueryRowContext(ctx,
@@ -1249,15 +1257,10 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		customerID).Scan(&kept, &theirs); err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
-	if after > 0 && theirs && kept.Int64 > after+1 {
+	if after > 0 && after < mark && theirs && kept.Int64 > after+1 {
 		return nil, 0, ErrChangesExpired
 	}
 
-	// Read before the rows, so the statement reading them sees every change at or below it.
-	mark, err := s.changeWatermark(ctx)
-	if err != nil {
-		return nil, 0, err
-	}
 	rows, err := s.db.QueryContext(ctx, `
 SELECT seq, table_name, op, key, payload, at
 FROM data_changes
