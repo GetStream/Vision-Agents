@@ -839,8 +839,12 @@ func (b *Bridge) recordStarter(ctx context.Context, thread store.ChannelThread, 
 // store holds it now: the row names the config alone, and whether it writes cards
 // (store.AgentConfig.WritesCards) is the config's to say when the message is written, so a
 // config turned off opens no episode from its next message on. A config deleted since the
-// message was queued opens none.
+// message was queued opens none. A connector with no episode source opens none whatever its
+// config says, so its config is not read.
 func (b *Bridge) queuedEpisode(ctx context.Context, thread store.ChannelThread, message store.ChannelInbound, inbound core.InboundMessage) (omnichannel.Opened, error) {
+	if _, carded := episodeSources[message.ConnectorID]; !carded {
+		return omnichannel.Opened{}, nil
+	}
 	config, err := b.store.AgentConfig(ctx, message.CustomerID, message.ConfigID)
 	if errors.Is(err, store.ErrNoAgentConfig) {
 		return omnichannel.Opened{}, nil
