@@ -20,12 +20,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// recording is the server ROUTER_AUDIO_FLOOR_URL names and AUDIO_FLOOR_WAV's audio, a 16 kHz
+// recording is the server ROUTER_CHORUS_ASR_URL names and CHORUS_ASR_WAV's audio, a 16 kHz
 // mono 16-bit WAV of a caller asking something.
 func recording(t *testing.T) (string, []int16) {
-	url, wav := os.Getenv("ROUTER_AUDIO_FLOOR_URL"), os.Getenv("AUDIO_FLOOR_WAV")
+	url, wav := os.Getenv("ROUTER_CHORUS_ASR_URL"), os.Getenv("CHORUS_ASR_WAV")
 	if url == "" || wav == "" {
-		t.Skip("needs ROUTER_AUDIO_FLOOR_URL and AUDIO_FLOOR_WAV")
+		t.Skip("needs ROUTER_CHORUS_ASR_URL and CHORUS_ASR_WAV")
 	}
 	raw, err := os.ReadFile(wav)
 	require.NoError(t, err)
@@ -46,7 +46,7 @@ func streamed(t *testing.T, format Format, pcm []int16) harness.Audio {
 	return stream.Last(Window)
 }
 
-// A real audio floor server rules on a caller's question, in Opus as in PCM, and writes it
+// A real chorus-asr server rules on a caller's question, in Opus as in PCM, and writes it
 // down with no decision.
 func TestARealServerRulesAndTranscribes(t *testing.T) {
 	url, pcm := recording(t)

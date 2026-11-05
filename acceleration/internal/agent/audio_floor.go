@@ -20,11 +20,11 @@ const audioFloorPending = 64
 
 var audioFloorCompared = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
-	Name:      "agent_audio_floor_compared_total",
-	Help:      "Turns both the flow controller and, in shadow mode, the audio floor model ruled on, by each one's disposition and floor, and the end-of-turn preset the model's was read by. The model's ruling is not acted on.",
+	Name:      "agent_chorus_asr_compared_total",
+	Help:      "Turns both the flow controller and, in shadow mode, the chorus-asr model ruled on, by each one's disposition and floor, and the end-of-turn preset the model's was read by. The model's ruling is not acted on.",
 }, []string{"controller_disposition", "model_disposition", "controller_floor", "model_floor", "preset"})
 
-// audioFloor keeps each participant's last 16 s for the audio floor model, encoded once as
+// audioFloor keeps each participant's last 16 s for the chorus-asr model, encoded once as
 // it arrives. Acting, the model is the flow controller's Hearer. In shadow mode it is asked
 // about each turn beside the flow controller and nothing it says is acted on: the two
 // rulings are counted and logged side by side, so that real calls can say whether it should
@@ -94,7 +94,7 @@ func (v *audioFloor) heard(inbound InboundAudio) {
 		return
 	}
 	if err := stream.Write(inbound.Audio.Samples); err != nil {
-		v.logger.Debug("the audio floor model missed a frame", "participant", inbound.Participant.ID, "error", err)
+		v.logger.Debug("the chorus-asr model missed a frame", "participant", inbound.Participant.ID, "error", err)
 	}
 }
 
@@ -105,7 +105,7 @@ func (v *audioFloor) stream(participant string) *audiofloor.Stream {
 	if !ok {
 		var err error
 		if stream, err = v.client.NewStream(audiofloor.Window); err != nil {
-			v.logger.Warn("the audio floor model will not hear a participant", "participant", participant, "error", err)
+			v.logger.Warn("the chorus-asr model will not hear a participant", "participant", participant, "error", err)
 		}
 		v.streams[participant] = stream
 	}
@@ -156,7 +156,7 @@ func (v *audioFloor) ask(turn harness.FlowTurn) {
 		start := time.Now()
 		check, err := v.hearer.Check(ctx, turn)
 		if err != nil {
-			v.logger.Debug("the audio floor model did not rule", "candidate", turn.ID, "error", err)
+			v.logger.Debug("the chorus-asr model did not rule", "candidate", turn.ID, "error", err)
 			return
 		}
 		v.settle(turn.ID, func(t *audioFloorTurn) {
@@ -202,7 +202,7 @@ func (v *audioFloor) settle(candidate string, say func(*audioFloorTurn)) {
 	if answer.PEOT != nil {
 		pEnd = *answer.PEOT
 	}
-	v.logger.Debug("the audio floor model beside the flow controller", "candidate", candidate,
+	v.logger.Debug("the chorus-asr model beside the flow controller", "candidate", candidate,
 		"controller_disposition", controller.Disposition, "controller_floor", controller.Floor,
 		"model_disposition", model.Disposition, "model_floor", model.Floor,
 		"model_answer", answer.Answer, "model_p", answer.AnswerProbability, "p_end", pEnd,

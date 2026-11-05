@@ -847,28 +847,28 @@ func (s *ConfigSuite) TestStreamTenancyIsDeploymentOrApp() {
 }
 
 func (s *ConfigSuite) TestAnAudioFloorModeIsOffShadowOrAct() {
-	s.T().Setenv("ROUTER_AUDIO_FLOOR_URL", "http://floor:8080")
-	s.T().Setenv("ROUTER_AUDIO_FLOOR_MODE", "on")
+	s.T().Setenv("ROUTER_CHORUS_ASR_URL", "http://floor:8080")
+	s.T().Setenv("ROUTER_CHORUS_ASR_MODE", "on")
 	_, _, err := Load("")
-	s.ErrorContains(err, "agent.audio_floor_mode")
+	s.ErrorContains(err, "agent.chorus_asr_mode")
 }
 
 func (s *ConfigSuite) TestTheAudioFloorsAudioIsOpusOrPCM() {
-	s.T().Setenv("ROUTER_AUDIO_FLOOR_AUDIO", "mp3")
+	s.T().Setenv("ROUTER_CHORUS_ASR_AUDIO", "mp3")
 	_, _, err := Load("")
-	s.ErrorContains(err, "ROUTER_AUDIO_FLOOR_AUDIO")
-	s.T().Setenv("ROUTER_AUDIO_FLOOR_AUDIO", "pcm")
+	s.ErrorContains(err, "ROUTER_CHORUS_ASR_AUDIO")
+	s.T().Setenv("ROUTER_CHORUS_ASR_AUDIO", "pcm")
 	settings, _, err := Load("")
 	s.Require().NoError(err)
 	s.Equal("pcm", settings.Agent.AudioFloorAudio)
 }
 
 func (s *ConfigSuite) TestAnAudioFloorModeNeedsAServer() {
-	s.T().Setenv("ROUTER_AUDIO_FLOOR_MODE", "act")
+	s.T().Setenv("ROUTER_CHORUS_ASR_MODE", "act")
 	_, _, err := Load("")
-	s.ErrorContains(err, "ROUTER_AUDIO_FLOOR_URL")
+	s.ErrorContains(err, "ROUTER_CHORUS_ASR_URL")
 
-	s.T().Setenv("ROUTER_AUDIO_FLOOR_URL", "http://floor:8080")
+	s.T().Setenv("ROUTER_CHORUS_ASR_URL", "http://floor:8080")
 	settings, _, err := Load("")
 	s.Require().NoError(err)
 	s.Equal("act", settings.Agent.AudioFloorMode)

@@ -102,7 +102,7 @@ type ManagerOptions struct {
 	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
 	// language model. Empty keeps the language model.
 	FlowJudge string
-	// AudioFloor is optional, and is the audio floor model every agent's flow controller
+	// AudioFloor is optional, and is the chorus-asr model every agent's flow controller
 	// asks as AudioFloorMode says.
 	AudioFloor     *audiofloor.Client
 	AudioFloorMode audiofloor.Mode

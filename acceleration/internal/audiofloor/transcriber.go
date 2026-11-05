@@ -17,8 +17,8 @@ import (
 
 // ProviderName and DefaultModel name the transcriber in routing.
 const (
-	ProviderName = "audiofloor"
-	DefaultModel = "audio-floor"
+	ProviderName = "stream"
+	DefaultModel = "chorus-asr"
 )
 
 // A frame is speech when it is loud enough and the speech detector, Opus's neural speech
@@ -50,7 +50,7 @@ const (
 	eventBuffer = 64
 )
 
-// Transcriber writes what a participant says with the audio floor server's model, so a call
+// Transcriber writes what a participant says with the chorus-asr server's model, so a call
 // needs no other speech-to-text provider. It is an stt.STT that writes the whole utterance
 // so far at each of its pauses, once the pause reaches writeAfter, as a replacement of the
 // words before, and ends the utterance at a pause of endAfter with one final transcript.
@@ -185,7 +185,7 @@ func (t *Transcriber) ask(r request) {
 	select {
 	case t.requests <- r:
 	default:
-		t.logger.Warn("dropped a request for words, the audio floor server is behind", "participant", r.participant.ID)
+		t.logger.Warn("dropped a request for words, the chorus-asr server is behind", "participant", r.participant.ID)
 	}
 }
 

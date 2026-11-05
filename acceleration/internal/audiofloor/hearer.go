@@ -30,13 +30,13 @@ const (
 var (
 	checks = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
-		Name:      "audio_floor_checks_total",
-		Help:      "Turns put to the audio floor model, by what became of them. Acting on it, every outcome but answered and superseded is a turn the flow controller decided instead.",
+		Name:      "chorus_asr_checks_total",
+		Help:      "Turns put to the chorus-asr model, by what became of them. Acting on it, every outcome but answered and superseded is a turn the flow controller decided instead.",
 	}, []string{"outcome"})
 	checkSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "router",
-		Name:      "audio_floor_check_seconds",
-		Help:      "How long the audio floor model took to answer a turn, the request included.",
+		Name:      "chorus_asr_check_seconds",
+		Help:      "How long the chorus-asr model took to answer a turn, the request included.",
 		Buckets:   []float64{.01, .025, .05, .1, .25, .5, 1, 2},
 	})
 )

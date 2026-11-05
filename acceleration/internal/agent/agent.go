@@ -142,7 +142,7 @@ type Options struct {
 	// when JudgeTarget names one. Nil or an empty JudgeTarget keeps the language model.
 	Judge       *decisionrouter.Router
 	JudgeTarget string
-	// AudioFloor is an audio floor model the flow controller asks first when
+	// AudioFloor is the chorus-asr model the flow controller asks first when
 	// AudioFloorMode is Act, or beside it when Shadow. Nil or another mode asks it nothing.
 	AudioFloor     *audiofloor.Client
 	AudioFloorMode audiofloor.Mode
@@ -360,7 +360,7 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
-	// audioFloor keeps what the audio floor model hears, and asks it beside the flow
+	// audioFloor keeps what the chorus-asr model hears, and asks it beside the flow
 	// controller in shadow mode. Nil unless Options.AudioFloorMode asks it.
 	audioFloor *audioFloor
 	// decisionStore keeps what the conversation decided for an hour, so a call can be read

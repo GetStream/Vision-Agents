@@ -34,7 +34,7 @@ import (
 
 const testInfo = `{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0.5,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}}}}`
 
-// fakeServer answers as an audio floor server does, with what a test sets.
+// fakeServer answers as a chorus-asr server does, with what a test sets.
 type fakeServer struct {
 	mu         sync.Mutex
 	registered []agentJSON
@@ -765,9 +765,9 @@ func TestAStreamWritesWithoutAllocating(t *testing.T) {
 	require.Zero(t, testing.AllocsPerRun(100, func() { _ = stream.Write(quiet) }))
 }
 
-// benchSpeech is AUDIO_FLOOR_WAV's audio, a 16 kHz mono 16-bit WAV, or the test signal.
+// benchSpeech is CHORUS_ASR_WAV's audio, a 16 kHz mono 16-bit WAV, or the test signal.
 func benchSpeech(b *testing.B, n int) []int16 {
-	path := os.Getenv("AUDIO_FLOOR_WAV")
+	path := os.Getenv("CHORUS_ASR_WAV")
 	if path == "" {
 		return speech(n)
 	}

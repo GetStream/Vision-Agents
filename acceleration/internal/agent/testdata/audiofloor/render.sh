@@ -1,5 +1,5 @@
 #!/bin/sh
-# Renders the speech the audio floor acceptance replay plays (audio_floor_integration_test.go):
+# Renders the speech the chorus-asr acceptance replay plays (audio_floor_integration_test.go):
 # macOS's say, at 16 kHz mono, kept as Ogg Opus at 48 kb/s, as a call's audio arrives. The
 # noise, room tone, breath and cough are made by the test itself.
 set -eu

@@ -1,7 +1,7 @@
-// Package audiofloor asks an audio floor model about a call: one speech model that hears the
+// Package audiofloor asks the chorus-asr model about a call: one speech model that hears the
 // caller's last 16 s and answers the question the flow controller answers from the words,
 // says which of the agent's tools is wanted, and can write what was said. It is served by an
-// audio floor server, which speaks this protocol:
+// chorus-asr server, which speaks this protocol:
 //
 //	GET  /v1/info             what the server serves: its prompt template, whether a prompt
 //	                          with the floor free says the conversation, the most tools an

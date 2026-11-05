@@ -291,8 +291,8 @@ func DefaultRegistry() *Registry {
 	return registry
 }
 
-// RegisterAudioFloor adds the audio floor server's transcriber. A deployment without one
-// never calls this, so audiofloor/audio-floor is a target nothing can be built for.
+// RegisterAudioFloor adds the chorus-asr server's transcriber. A deployment without one
+// never calls this, so stream/chorus-asr is a target nothing can be built for.
 func RegisterAudioFloor(registry *Registry, client *audiofloor.Client) {
 	registry.Register(audiofloor.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		return audiofloor.NewTranscriber(client, spec.Model, spec.LanguageHints, spec.Logger), nil

@@ -370,15 +370,15 @@ type Agent struct {
 	// FlowJudge routes the flow controller to a decision model, such as
 	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
 	FlowJudge string `koanf:"flow_judge"`
-	// AudioFloorURL is an audio floor server (internal/audiofloor). Its model transcribes
-	// for an agent that names audiofloor/audio-floor as its transcriber, and AudioFloorMode
+	// AudioFloorURL is a chorus-asr server (internal/audiofloor). Its model transcribes
+	// for an agent that names stream/chorus-asr as its transcriber, and AudioFloorMode
 	// says what the flow controller does with its rulings: off (the default), shadow (asks
 	// it beside the flow controller and acts on nothing it says) or act (asks it first, and
 	// the flow controller decides the turns it doesn't answer in time). AudioFloorAudio is
 	// how the audio is sent: opus (the default) or pcm, for debugging.
-	AudioFloorURL   string `koanf:"audio_floor_url"`
-	AudioFloorMode  string `koanf:"audio_floor_mode"`
-	AudioFloorAudio string `koanf:"audio_floor_audio"`
+	AudioFloorURL   string `koanf:"chorus_asr_url"`
+	AudioFloorMode  string `koanf:"chorus_asr_mode"`
+	AudioFloorAudio string `koanf:"chorus_asr_audio"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -556,9 +556,9 @@ var variables = map[string]string{
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
 	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
-	"agent.audio_floor_url":     "ROUTER_AUDIO_FLOOR_URL",
-	"agent.audio_floor_mode":    "ROUTER_AUDIO_FLOOR_MODE",
-	"agent.audio_floor_audio":   "ROUTER_AUDIO_FLOOR_AUDIO",
+	"agent.chorus_asr_url":     "ROUTER_CHORUS_ASR_URL",
+	"agent.chorus_asr_mode":    "ROUTER_CHORUS_ASR_MODE",
+	"agent.chorus_asr_audio":   "ROUTER_CHORUS_ASR_AUDIO",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -776,15 +776,15 @@ func (c Config) validate() error {
 	case "", "off":
 	case "shadow", "act":
 		if c.Agent.AudioFloorURL == "" {
-			return fmt.Errorf("config: agent.audio_floor_mode %q needs agent.audio_floor_url (ROUTER_AUDIO_FLOOR_URL)", c.Agent.AudioFloorMode)
+			return fmt.Errorf("config: agent.chorus_asr_mode %q needs agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL)", c.Agent.AudioFloorMode)
 		}
 	default:
-		return fmt.Errorf("config: agent.audio_floor_mode (ROUTER_AUDIO_FLOOR_MODE) is off, shadow or act, got %q", c.Agent.AudioFloorMode)
+		return fmt.Errorf("config: agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is off, shadow or act, got %q", c.Agent.AudioFloorMode)
 	}
 	switch c.Agent.AudioFloorAudio {
 	case "", "opus", "pcm":
 	default:
-		return fmt.Errorf("config: agent.audio_floor_audio (ROUTER_AUDIO_FLOOR_AUDIO) is opus or pcm, got %q", c.Agent.AudioFloorAudio)
+		return fmt.Errorf("config: agent.chorus_asr_audio (ROUTER_CHORUS_ASR_AUDIO) is opus or pcm, got %q", c.Agent.AudioFloorAudio)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:

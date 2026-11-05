@@ -39,16 +39,16 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
-// The audio floor acceptance replay: recorded calls played into an agent in real time, as a
-// call's edge hands them over, with the audio floor model as both the transcriber
-// (audiofloor/audio-floor) and, acting, the flow controller's Hearer, against the real server
-// ROUTER_AUDIO_FLOOR_URL names. Only the conversation model and the voice are stand-ins:
+// The chorus-asr acceptance replay: recorded calls played into an agent in real time, as a
+// call's edge hands them over, with the chorus-asr model as both the transcriber
+// (stream/chorus-asr) and, acting, the flow controller's Hearer, against the real server
+// ROUTER_CHORUS_ASR_URL names. Only the conversation model and the voice are stand-ins:
 // both answer at once, and the voice speaks a recorded reply long enough to talk over.
 //
-//	ROUTER_AUDIO_FLOOR_URL=http://127.0.0.1:8080 \
+//	ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 \
 //	  go test -tags integration -count=1 -timeout 30m -run TestAudioFloorReplay -v ./internal/agent/
 //
-// AUDIO_FLOOR_REPLAY_LOGS names a directory for each call's debug log (default: a new one in
+// CHORUS_ASR_REPLAY_LOGS names a directory for each call's debug log (default: a new one in
 // the system's temporary directory). A failed check is what the call did, with its timeline
 // in the test's output.
 const (
@@ -86,9 +86,9 @@ var replayTools = harness.Tools{Tools: []harness.Tool{{
 
 // TestAudioFloorReplay is the acceptance replay: each check a call of its own, in order.
 func TestAudioFloorReplay(t *testing.T) {
-	url := os.Getenv("ROUTER_AUDIO_FLOOR_URL")
+	url := os.Getenv("ROUTER_CHORUS_ASR_URL")
 	if url == "" {
-		t.Skip("needs ROUTER_AUDIO_FLOOR_URL, an audio floor server")
+		t.Skip("needs ROUTER_CHORUS_ASR_URL, a chorus-asr server")
 	}
 	h := newFloorHarness(t, url)
 	h.warm(t)
@@ -130,7 +130,7 @@ func newFloorHarness(t *testing.T, url string) *floorHarness {
 		url:      url,
 		requests: requests,
 		client:   audiofloor.New(url, audiofloor.Opus, &http.Client{Transport: requests}),
-		logDir:   os.Getenv("AUDIO_FLOOR_REPLAY_LOGS"),
+		logDir:   os.Getenv("CHORUS_ASR_REPLAY_LOGS"),
 	}
 	if h.logDir == "" {
 		dir, err := os.MkdirTemp("", "audio-floor-replay-")
@@ -347,7 +347,7 @@ func (h *floorHarness) coughAlone(t *testing.T) {
 	assert.Empty(t, all[Responding](c), "no answer")
 }
 
-// 9. With the mode off, the audio floor transcriber writes a turn by itself: words alone, no
+// 9. With the mode off, the chorus-asr transcriber writes a turn by itself: words alone, no
 // decision asked.
 func (h *floorHarness) transcriptionAlone(t *testing.T) {
 	c := h.start(t, "", replayInstructions, []string{"en"})
@@ -425,7 +425,7 @@ type call struct {
 	logs   *logBook
 }
 
-// start joins an agent to a new call: the audio floor model transcribing, and asked as mode
+// start joins an agent to a new call: the chorus-asr model transcribing, and asked as mode
 // says, with the conversation model and the voice stand-ins.
 func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions string, languages []string) *call {
 	logs := newLogBook(t, filepath.Join(h.logDir, strings.NewReplacer(" ", "-", "/", "-", ",", "").Replace(t.Name())+".jsonl"))
