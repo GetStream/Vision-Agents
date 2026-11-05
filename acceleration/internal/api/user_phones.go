@@ -21,7 +21,7 @@ var (
 
 // AgentUserRequest is what the customer's backend knows about one of its users.
 type AgentUserRequest struct {
-	Phone *string `json:"phone" nullable:"true" example:"+15551234567" doc:"The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken)."`
+	Phone *string `json:"phone" nullable:"true" example:"+15551234567" doc:"The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken)."`
 }
 
 func (*AgentUserRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -57,8 +57,9 @@ func (s *Server) registerUserPhones(api huma.API) {
 			"agent with episode_cards on when the link is made, the number's earlier conversations, and " +
 			"one still going on, keep the omni-channel they had, and the user's app chat reads none of " +
 			"their cards. Otherwise, where the person already had one of each, both point at the older " +
-			"one. No message moves. One number for each user, and one user for each number, within " +
-			"the app: the same user id in another Stream app is another person. Sending the same number " +
+			"one, and the user still reads none of the number's cards from before the link once the agent " +
+			"turns episode_cards on. No message moves. One number for each user, and one user for each " +
+			"number, within the app: the same user id in another Stream app is another person. Sending the same number " +
 			"again changes nothing; null unlinks.\n\n" +
 			"Server-side only: it needs a server-side token, so it cannot be reached from an " +
 			"end user's device.",
