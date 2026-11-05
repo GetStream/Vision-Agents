@@ -524,6 +524,8 @@ func (s *scenarios) languageSwitch(t *testing.T, languages []string) {
 // shedding load answers.
 type faults struct {
 	base http.RoundTripper
+	// prefix is the server's own path, which path leaves out.
+	prefix string
 
 	mu      sync.Mutex
 	path    string
@@ -542,7 +544,7 @@ func (f *faults) clear() { f.set("", 0, 0, 0) }
 
 func (f *faults) RoundTrip(req *http.Request) (*http.Response, error) {
 	f.mu.Lock()
-	hit := req.URL.Path == f.path
+	hit := strings.TrimPrefix(req.URL.Path, f.prefix) == f.path
 	delay := f.delay
 	fail := hit && f.failing > 0
 	if fail {

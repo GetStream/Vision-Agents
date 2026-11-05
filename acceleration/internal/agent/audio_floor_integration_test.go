@@ -13,6 +13,7 @@ import (
 	"math"
 	"math/rand/v2"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -147,8 +148,12 @@ type floorHarness struct {
 }
 
 func newFloorHarness(t *testing.T, url string) *floorHarness {
-	faults := &faults{base: http.DefaultTransport}
-	requests := &exchanges{base: faults}
+	// A server behind a gateway is at a path of its own, which the routes are under.
+	server, err := neturl.Parse(url)
+	require.NoError(t, err)
+	prefix := strings.TrimRight(server.Path, "/")
+	faults := &faults{base: http.DefaultTransport, prefix: prefix}
+	requests := &exchanges{base: faults, prefix: prefix}
 	h := &floorHarness{
 		url:      url,
 		faults:   faults,
@@ -1582,8 +1587,10 @@ func all[E Event](c *call) []stampedEvent[E] {
 // answer ended, and the answer.
 type exchanges struct {
 	base http.RoundTripper
-	mu   sync.Mutex
-	kept []*exchange
+	// prefix is the server's own path, which path leaves out.
+	prefix string
+	mu     sync.Mutex
+	kept   []*exchange
 }
 
 type exchange struct {
@@ -1597,7 +1604,7 @@ type exchange struct {
 }
 
 func (x *exchanges) RoundTrip(req *http.Request) (*http.Response, error) {
-	kept := &exchange{method: req.Method, path: req.URL.Path, query: req.URL.RawQuery, start: time.Now()}
+	kept := &exchange{method: req.Method, path: strings.TrimPrefix(req.URL.Path, x.prefix), query: req.URL.RawQuery, start: time.Now()}
 	x.mu.Lock()
 	x.kept = append(x.kept, kept)
 	x.mu.Unlock()
