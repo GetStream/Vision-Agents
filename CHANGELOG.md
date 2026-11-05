@@ -401,7 +401,7 @@ A link a tool returns now gives an ID only of a kind that its line, the keys abo
 
 ### A link's address and a role's word name no ID's kind
 
-A link's own host and path no longer name what kind of thing its ID is: `see https://channels.example.com/u/U…` gives no channel. The words beside the link, the keys above it and the tool's name still do, so `Channel link: <link>` and a channel search's permalink still give the channel. A word between the kind and the ID is no longer read as the thing's name where a colon ends a label at it or the thing was named before its kind. So `Channel owner: U…` and `#help channel admin U…` give no channel, while `Channel #help: C…` and `channel help (C…)` still do (AI-2881, AI-2884).
+A link's own host and path no longer name what kind of thing its ID is: `see https://channels.example.com/u/U…` gives no channel. The words beside the link, the keys above it and the tool's name still do, so `Channel link: <link>` and a channel search's permalink still give the channel. A word between the kind and the ID is no longer read as the thing's name where a colon ends a label at it or the thing was named before its kind. So `Channel owner: U…` and `#help channel admin U…` give no channel, while `Channel #help: C…` and `channel help (C…)` still do. A link a tool writes twice, as `<link|host/path>`, names no kind by either copy (AI-2881, AI-2884, #1788).
 
 ### A short video is sampled into the frames it has
 

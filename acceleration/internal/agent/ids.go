@@ -112,7 +112,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				for _, text := range strings.Split(html.UnescapeString(value), "\n") {
 					for _, part := range linkParts(text) {
 						if !strings.Contains(alphanumeric(sent[message.ToolCallID]), part) {
-							named := slices.Concat(lineWords(link.ReplaceAllString(text, " ")), lineWords(strings.Join(under, " ")), lineWords(called[message.ToolCallID]))
+							named := slices.Concat(lineWords(blankLinks(text)), lineWords(strings.Join(under, " ")), lineWords(called[message.ToolCallID]))
 							linked = append(linked, toolLink{part, line{text, sent[message.ToolCallID], len(wrote)}, named})
 						}
 					}
@@ -949,7 +949,8 @@ var idWord = regexp.MustCompile(`[\p{L}\p{Nd}_#-]+`)
 //
 // The one word between is a name only where nothing says it is not. A label is named by its
 // last word (labelNames): in "Channel owner: U0…" a colon ends the label at "owner", so U0…
-// is an owner. And a thing named before its kind has its name: in "#help channel admin U0…"
+// is an owner. A colon between the kind and the name makes the name the field's value, not a
+// role: "Channel: help, ID: C0…" gives the ID. And a thing named before its kind has its name: in "#help channel admin U0…"
 // the word after the kind is not the channel's. A name marked with # is a name either way,
 // "Channel #help: C0…".
 //
@@ -964,7 +965,7 @@ func besideKind(line, wanted, kind string, labelled bool) bool {
 	words := lineWords(line)
 	spans := wordSpans(line)
 	ends := phraseEnds(line)
-	links := link.FindAllStringIndex(line, -1)
+	links := linkSpans(line)
 	inLink := func(word []int) bool {
 		return slices.ContainsFunc(links, func(found []int) bool { return found[0] <= word[0] && word[1] <= found[1] })
 	}
@@ -995,7 +996,8 @@ func besideKind(line, wanted, kind string, labelled bool) bool {
 			} else if at >= start+size {
 				between = words[start+size : at]
 				if name := slices.DeleteFunc(slices.Clone(between), isID); len(name) == 1 && !strings.HasPrefix(name[0], "#") &&
-					(strings.Contains(line[spans[start+size][1]:spans[at][0]], ":") || start > 0 && strings.HasPrefix(words[start-1], "#")) {
+					(strings.Contains(line[spans[start+size][1]:spans[at][0]], ":") && !strings.Contains(line[spans[start+size-1][1]:spans[start+size][0]], ":") ||
+						start > 0 && !ends[start-1] && strings.HasPrefix(words[start-1], "#")) {
 					limit = 0
 				}
 			}
@@ -1005,6 +1007,47 @@ func besideKind(line, wanted, kind string, labelled bool) bool {
 		}
 	}
 	return false
+}
+
+// linkSpans are where each link on a line stands, as start and end offsets, and where its
+// address stands again without the scheme: a tool that lists "<https://host/path|host/path>"
+// or "[host/path](https://host/path)" writes the link's words twice, and both name no kind.
+func linkSpans(line string) [][]int {
+	spans := link.FindAllStringIndex(line, -1)
+	for _, found := range slices.Clone(spans) {
+		// The link's regexp runs on past a closing bracket or a full stop, which the copy lacks.
+		bare := strings.TrimRight(line[found[0]+strings.Index(line[found[0]:found[1]], "://")+3:found[1]], ")]>.,;:!?'")
+		if bare == "" {
+			continue
+		}
+		for from := 0; ; {
+			at := strings.Index(line[from:], bare)
+			if at < 0 {
+				break
+			}
+			if from += at; !slices.ContainsFunc(spans, func(span []int) bool { return span[0] <= from && from < span[1] }) {
+				spans = append(spans, []int{from, from + len(bare)})
+			}
+			from += len(bare)
+		}
+	}
+	return spans
+}
+
+// blankLinks returns line with each of its links (linkSpans) replaced by a space.
+func blankLinks(line string) string {
+	var blank strings.Builder
+	last := 0
+	spans := linkSpans(line)
+	slices.SortFunc(spans, func(a, b []int) int { return a[0] - b[0] })
+	for _, span := range spans {
+		if span[0] < last {
+			continue
+		}
+		blank.WriteString(line[last:span[0]] + " ")
+		last = span[1]
+	}
+	return blank.String() + line[last:]
 }
 
 // lineWords are the words of a line, lowercase (idWords), but for a mark alone, the dash in
@@ -1101,7 +1144,7 @@ func labelledAs(line, wanted string) [][]string {
 			field = field[cut+3:]
 		}
 		if colon := strings.LastIndex(field, ":"); colon >= 0 {
-			labels = append(labels, lineWords(link.ReplaceAllString(field[:colon], " ")))
+			labels = append(labels, lineWords(blankLinks(field[:colon])))
 		}
 	}
 	return labels
