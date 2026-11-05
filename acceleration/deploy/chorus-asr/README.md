@@ -26,7 +26,8 @@ It plugs in twice, and each is optional:
 
 | Variable | Purpose |
 | --- | --- |
-| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`. Adds the `stream/chorus-asr` transcriber |
+| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`, with the path of a gateway it sits behind if it has one ([Behind a gateway](#behind-a-gateway)). Adds the `stream/chorus-asr` transcriber |
+| `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as `Authorization: Bearer <key>` on every request, for a server behind a gateway that asks for a key. Never logged, and taken out of what a gateway says back. Send it over `https` |
 | `ROUTER_CHORUS_ASR_MODE` | `off` (default); `shadow`, which asks the model about each turn beside the flow controller and acts on nothing it says; or `act`, which asks it first and acts on its ruling |
 | `ROUTER_CHORUS_ASR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |

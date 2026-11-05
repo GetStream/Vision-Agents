@@ -893,12 +893,19 @@ func (s *ConfigSuite) TestTheAudioFloorsURLIsAServersAddress() {
 		_, _, err := Load("")
 		s.ErrorContains(err, "ROUTER_CHORUS_ASR_URL", bad)
 	}
-	for _, good := range []string{"http://floor:8080", "https://floor.example/chorus-asr/", "http://127.0.0.1:8792"} {
+	for _, good := range []string{"http://floor:8080", "https://floor.example/chorus-asr/", "http://127.0.0.1:8792", "https://model-x.api.baseten.co/environments/production/sync"} {
 		s.T().Setenv("ROUTER_CHORUS_ASR_URL", good)
 		settings, _, err := Load("")
 		s.Require().NoError(err, good)
 		s.Equal(good, settings.Agent.AudioFloorURL)
 	}
+}
+
+func (s *ConfigSuite) TestTheAudioFloorsKeyIsRead() {
+	s.T().Setenv("ROUTER_CHORUS_ASR_API_KEY", "a-key")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("a-key", settings.Agent.AudioFloorAPIKey)
 }
 
 func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {

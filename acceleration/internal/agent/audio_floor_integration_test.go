@@ -153,7 +153,7 @@ func newFloorHarness(t *testing.T, url string) *floorHarness {
 		url:      url,
 		faults:   faults,
 		requests: requests,
-		client:   audiofloor.New(url, audiofloor.Opus, &http.Client{Transport: requests}),
+		client:   audiofloor.New(url, audiofloor.Opus, &http.Client{Transport: requests}).WithAPIKey(os.Getenv("ROUTER_CHORUS_ASR_API_KEY")),
 		logDir:   os.Getenv("CHORUS_ASR_REPLAY_LOGS"),
 	}
 	if h.logDir == "" {

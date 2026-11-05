@@ -269,6 +269,74 @@ func TestTheSettingsSayWhetherTheWordsAreWrittenWhileTheCallerTalks(t *testing.T
 	require.Nil(t, client)
 }
 
+// A gateway's address has a path of its own, and every route goes under it, with the key when
+// there is one.
+func TestEveryRequestGoesUnderTheAddressesPathWithTheKey(t *testing.T) {
+	const prefix = "/environments/production/sync"
+	for _, key := range []string{"", "a-key"} {
+		fake := &fakeServer{known: map[string]bool{}, info: testInfo, decision: `{"answer":"respond","p_eot":0.9,"options":[{"name":"respond","p":0.9}],"ruling":{"disposition":"respond","floor":"continue"}}`, words: "hello"}
+		var (
+			mu     sync.Mutex
+			routes []string
+		)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			route, found := strings.CutPrefix(r.URL.Path, prefix)
+			require.True(t, found, r.URL.Path)
+			wantAuth := ""
+			if key != "" {
+				wantAuth = "Bearer " + key
+			}
+			require.Equal(t, wantAuth, r.Header.Get("Authorization"), route)
+			mu.Lock()
+			routes = append(routes, route)
+			mu.Unlock()
+			r.URL.Path = route
+			fake.ServeHTTP(w, r)
+		}))
+		defer srv.Close()
+		// Written with and without the slash an address may end in.
+		for _, address := range []string{srv.URL + prefix, srv.URL + prefix + "/"} {
+			routes = nil
+			client, _ := Open(config.Agent{AudioFloorURL: address, AudioFloorAudio: "pcm", AudioFloorAPIKey: key})
+			_, err := client.PolicyNow(context.Background())
+			require.NoError(t, err)
+			_, err = client.Decide(context.Background(), booking, Turn{Speaker: caller}, some)
+			require.NoError(t, err)
+			_, said, err := client.DecideWords(context.Background(), booking, Turn{Speaker: caller}, some)
+			require.NoError(t, err)
+			require.NoError(t, (<-said).Err)
+			_, err = client.Transcribe(context.Background(), some, nil)
+			require.NoError(t, err)
+			require.Equal(t, []string{"/v1/info", "/v1/agents", "/v1/decide", "/v1/decide", "/v1/transcribe"}, routes)
+		}
+	}
+}
+
+// A gateway that turns the key away is the router's to fix, not a server that is down, and
+// what it says, which is logged, doesn't carry the key, even when it quotes it.
+func TestARefusedKeyIsMisconfiguredAndInNoError(t *testing.T) {
+	const key = "a-key-to-keep-out-of-the-logs"
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such key: " + r.Header.Get("Authorization")})
+		}))
+		defer srv.Close()
+		client := New(srv.URL, PCM, srv.Client()).WithAPIKey(key)
+		_, policy := client.PolicyNow(context.Background())
+		_, decide := client.Decide(context.Background(), booking, Turn{Speaker: caller}, some)
+		_, _, words := client.DecideWords(context.Background(), Agent{}, Turn{Speaker: caller}, some)
+		_, transcribe := client.Transcribe(context.Background(), some, nil)
+		for name, err := range map[string]error{"policy": policy, "decide": decide, "words": words, "transcribe": transcribe} {
+			require.Error(t, err, name)
+			require.True(t, Misconfigured(err), "%s: %d is misconfigured", name, status)
+			require.False(t, Unreachable(err), "%s: %d is not a server down", name, status)
+			require.NotContains(t, fmt.Sprintf("%+v", err), key, name)
+			require.Contains(t, err.Error(), "[key]", name)
+		}
+	}
+}
+
 func (s *ClientSuite) TestAChangedAgentIsRegisteredAgain() {
 	for _, instructions := range []string{"One.", "One.", "Two."} {
 		_, err := s.client.Decide(context.Background(), Agent{Instructions: instructions}, Turn{}, some)

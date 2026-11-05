@@ -266,6 +266,9 @@ type Client struct {
 	url    string
 	format Format
 	http   *http.Client
+	// apiKey, when the server is behind a gateway that asks for one, goes with every
+	// request and in nothing else.
+	apiKey string
 	// interims says its transcribers write the words so far while the caller talks.
 	interims bool
 	// now is the clock the policy's age is read by: time.Now, but in tests.
@@ -293,6 +296,13 @@ func New(url string, format Format, client *http.Client) *Client {
 		client = http.DefaultClient
 	}
 	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, interims: true, now: time.Now, agents: map[[sha256.Size]byte]registration{}}
+}
+
+// WithAPIKey has the client send key, when there is one, as a bearer token on every request,
+// and returns the client.
+func (c *Client) WithAPIKey(key string) *Client {
+	c.apiKey = key
+	return c
 }
 
 // NewStream returns a stream of a participant's audio, as the server is sent it, that keeps
@@ -477,7 +487,7 @@ func (c *Client) decideWords(ctx context.Context, target string, body []byte, co
 		}
 		return stack.Wrap(err)
 	}
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		stop()
 		cancel()
@@ -487,7 +497,7 @@ func (c *Client) decideWords(ctx context.Context, target string, body []byte, co
 		stop()
 		defer cancel()
 		defer resp.Body.Close()
-		return Answer{}, nil, resp.StatusCode, stack.Wrap(statusError(req, resp))
+		return Answer{}, nil, resp.StatusCode, stack.Wrap(c.statusError(req, resp))
 	}
 	lines := json.NewDecoder(io.LimitReader(resp.Body, responseLimit))
 	var answer Answer
@@ -615,15 +625,23 @@ func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byt
 	return result.id, result.refused
 }
 
+// send is the one way a request leaves the client.
+func (c *Client) send(req *http.Request) (*http.Response, error) {
+	if c.apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	}
+	return c.http.Do(req)
+}
+
 // do sends req and reads the answer, a JSON line, into into.
 func (c *Client) do(req *http.Request, into any) (int, error) {
-	resp, err := c.http.Do(req)
+	resp, err := c.send(req)
 	if err != nil {
 		return 0, stack.Wrap(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return resp.StatusCode, stack.Wrap(statusError(req, resp))
+		return resp.StatusCode, stack.Wrap(c.statusError(req, resp))
 	}
 	answer := json.NewDecoder(io.LimitReader(resp.Body, responseLimit))
 	if err := answer.Decode(into); err != nil {
@@ -633,12 +651,16 @@ func (c *Client) do(req *http.Request, into any) (int, error) {
 }
 
 // statusError is the server's answer to req, which isn't 200: a StatusError, and
-// ErrUnsupported for a server with no policy.
-func statusError(req *http.Request, resp *http.Response) error {
+// ErrUnsupported for a server with no policy. Errors are logged, and a gateway may quote the
+// key it turned away, so the key is taken out of what it said.
+func (c *Client) statusError(req *http.Request, resp *http.Response) error {
 	var failed struct {
 		Error string `json:"error"`
 	}
 	_ = json.NewDecoder(io.LimitReader(resp.Body, responseLimit)).Decode(&failed)
+	if c.apiKey != "" {
+		failed.Error = strings.ReplaceAll(failed.Error, c.apiKey, "[key]")
+	}
 	var err error = &StatusError{Method: req.Method, Path: req.URL.Path, Code: resp.StatusCode, Status: resp.Status, Message: failed.Error}
 	if resp.StatusCode == http.StatusNotImplemented {
 		err = fmt.Errorf("%w: %w", ErrUnsupported, err)
@@ -728,7 +750,7 @@ func Open(settings config.Agent) (*Client, Mode) {
 	if settings.AudioFloorURL == "" {
 		return nil, ""
 	}
-	client := New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil)
+	client := New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil).WithAPIKey(settings.AudioFloorAPIKey)
 	client.interims = settings.AudioFloorInterims != "off"
 	return client, Mode(settings.AudioFloorMode)
 }
