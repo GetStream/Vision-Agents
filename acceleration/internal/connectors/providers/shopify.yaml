@@ -53,3 +53,6 @@ schemes: [none]
 sources:
   - kind: mcp
     endpoint: mcp
+    # No read_only_tools: the one tool, search_shop_policies_and_faqs, sends the model's
+    # «query» and «context» («the customer's situation») to the shop, another business ([faqs],
+    # opened again 2026-11-05), so it sends data out (AI-2777).

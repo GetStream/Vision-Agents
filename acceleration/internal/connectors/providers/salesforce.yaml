@@ -122,3 +122,7 @@ rate_limit:
 sources:
   - kind: mcp
     endpoint: mcp
+    # No read_only_tools: Salesforce's tool reference for this server
+    # (https://developer.salesforce.com/docs/platform/hosted-mcp-servers/guide/sobject-all.html)
+    # answered 403 to every fetch on 2026-11-05, so which tools only read is unverified
+    # (AI-2777).

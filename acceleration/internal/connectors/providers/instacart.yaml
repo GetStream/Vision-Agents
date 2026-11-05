@@ -26,3 +26,6 @@ schemes: [bearer]
 sources:
   - kind: mcp
     endpoint: mcp
+    # No read_only_tools: the server's two tools, create-recipe and create-shopping-list ([mcp],
+    # opened again 2026-11-05), each make a page from what the model sends and return its link,
+    # which anyone holding it can open, so each sends data out (AI-2777).
