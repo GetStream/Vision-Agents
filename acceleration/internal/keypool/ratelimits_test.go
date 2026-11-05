@@ -416,6 +416,29 @@ func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeKeepsItsHeadroom() {
 	s.Equal(map[string]float64{"0/concurrent-requests": 4}, s.remaining(p.keyVars[0]))
 }
 
+// A handshake is counted under the key it was dialled with, not the one now next in turn:
+// a count under the wrong index would point an operator at a key that was fine.
+func (s *VendorRateLimitSuite) TestAHandshakeOnTheSecondKeyIsCountedUnderTheSecondKey() {
+	p := s.pool("handshakesecond")
+	s.answer(p.keys[1], answer{status: http.StatusTooManyRequests, header: http.Header{"Retry-After": {"10"}}})
+	p.Next()
+
+	s.Require().NoError(s.dial(p.Pool))
+
+	s.Equal([]string{p.keys[1], p.keys[0]}, s.keysSeen())
+	s.Equal(map[string]float64{"1": 1}, s.limited(p.keyVars[0]))
+}
+
+func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeOnTheSecondKeyKeepsItsHeadroomUnderTheSecondKey() {
+	p := s.pool("acceptedsecond")
+	s.answer(p.keys[1], answer{header: http.Header{"Current-Concurrent-Requests": {"1"}, "Maximum-Concurrent-Requests": {"5"}}})
+	p.Next()
+
+	s.Require().NoError(s.dial(p.Pool))
+
+	s.Equal(map[string]float64{"1/concurrent-requests": 4}, s.remaining(p.keyVars[0]))
+}
+
 func (s *VendorRateLimitSuite) TestAFrameReportsHeadroomOnlyOnTheRoutersKeysAndOnlyAsACount() {
 	p := s.pool("frame")
 
