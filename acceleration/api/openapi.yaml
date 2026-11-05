@@ -19236,7 +19236,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: This deployment has no database to read changes from.
+          description: This deployment has no database to read changes from, or has shards, whose changes cannot be followed yet.
       summary: What has happened to this app's rows since a cursor
   /v1/data/export:
     get:
@@ -19276,7 +19276,7 @@ paths:
             application/json:
               schema:
                 $ref: '#/components/schemas/ErrorResponse'
-          description: 'This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again.'
+          description: 'This deployment has no database to export from, has shards, whose changes cannot be followed yet, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again.'
       summary: Everything this app has, as newline-delimited JSON
   /v1/data/import:
     post:

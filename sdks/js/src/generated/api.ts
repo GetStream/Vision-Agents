@@ -17211,7 +17211,7 @@ export interface operations {
                 };
             };
             readonly 500: components["responses"]["InternalError"];
-            /** @description This deployment has no database to read changes from. */
+            /** @description This deployment has no database to read changes from, or has shards, whose changes cannot be followed yet. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -17249,7 +17249,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again. */
+            /** @description This deployment has no database to export from, has shards, whose changes cannot be followed yet, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
