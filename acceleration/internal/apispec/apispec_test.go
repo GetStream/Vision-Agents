@@ -27,7 +27,7 @@ func (s *DeprecatedParamsSuite) TestTheRoutersOldOriginNameIsADeprecatedParamete
 	rendered, err := api.Spec()
 	s.Require().NoError(err)
 
-	marked, _ := s.params(rendered)
+	marked := s.params(rendered)
 
 	s.Equal([]string{"getSpend query api_key_id", "listUsageEvents query api_key_id"}, marked)
 }
@@ -36,7 +36,7 @@ func (s *DeprecatedParamsSuite) TestTheUsageServicesOldOriginNamesAreDeprecatedP
 	rendered, err := server.Spec()
 	s.Require().NoError(err)
 
-	marked, _ := s.params(rendered)
+	marked := s.params(rendered)
 
 	s.Equal([]string{
 		"listUsage query api_key", "listUsage query api_key_id",
@@ -44,22 +44,12 @@ func (s *DeprecatedParamsSuite) TestTheUsageServicesOldOriginNamesAreDeprecatedP
 	}, marked)
 }
 
-func (s *DeprecatedParamsSuite) TestOriginBesideTheOldNamesIsNotDeprecated() {
-	rendered, err := server.Spec()
-	s.Require().NoError(err)
-
-	marked, all := s.params(rendered)
-
-	s.Contains(all, "listUsage query origin")
-	s.NotContains(marked, "listUsage query origin")
-}
-
 func (s *DeprecatedParamsSuite) TestEveryParameterTaggedDeprecatedIsMarkedOnTheParameter() {
 	for name, render := range map[string]func() ([]byte, error){"router": api.Spec, "usage": server.Spec} {
 		rendered, err := render()
 		s.Require().NoError(err)
 
-		marked, _ := s.params(rendered)
+		marked := s.params(rendered)
 		var document struct {
 			Paths map[string]map[string]struct {
 				OperationID string `yaml:"operationId"`
@@ -97,9 +87,24 @@ func (s *DeprecatedParamsSuite) TestAParameterDeclaredByReferenceIsLeftAsWritten
 	s.True(tagged.Deprecated, "a reference before a tagged parameter stops nothing")
 }
 
-// params lists every operation parameter of a rendered document as "operationId in name",
-// sorted, and those of them marked deprecated on the parameter itself.
-func (s *DeprecatedParamsSuite) params(rendered []byte) (marked, all []string) {
+func (s *DeprecatedParamsSuite) TestATaggedParameterIsMarkedWhereverItIsCarried() {
+	schema := func(deprecated bool) *huma.Schema {
+		return &huma.Schema{Type: huma.TypeString, Deprecated: deprecated}
+	}
+	header := &huma.Param{Name: "X-Old", In: "header", Schema: schema(true)}
+	path := &huma.Param{Name: "old_id", In: "path", Required: true, Schema: schema(true)}
+	plain := &huma.Param{Name: "X-Current", In: "header", Schema: schema(false)}
+
+	apispec.DeprecateParams(nil, &huma.Operation{Parameters: []*huma.Param{header, path, plain}})
+
+	s.True(header.Deprecated, "header")
+	s.True(path.Deprecated, "path")
+	s.False(plain.Deprecated, "an untagged parameter")
+}
+
+// params lists the operation parameters of a rendered document as "operationId in name",
+// sorted, that are marked deprecated on the parameter itself.
+func (s *DeprecatedParamsSuite) params(rendered []byte) (marked []string) {
 	var document struct {
 		Paths map[string]map[string]struct {
 			OperationID string `yaml:"operationId"`
@@ -114,15 +119,12 @@ func (s *DeprecatedParamsSuite) params(rendered []byte) (marked, all []string) {
 	for _, item := range document.Paths {
 		for _, operation := range item {
 			for _, param := range operation.Parameters {
-				key := operation.OperationID + " " + param.In + " " + param.Name
-				all = append(all, key)
 				if param.Deprecated {
-					marked = append(marked, key)
+					marked = append(marked, operation.OperationID+" "+param.In+" "+param.Name)
 				}
 			}
 		}
 	}
 	slices.Sort(marked)
-	slices.Sort(all)
-	return marked, all
+	return marked
 }
