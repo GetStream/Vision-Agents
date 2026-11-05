@@ -350,6 +350,56 @@ func (s *AccountSuite) TestUsageEventsWithNoKeyInTheQueryListEveryKey() {
 		usageIDs(s.events("")))
 }
 
+// origin is the key-or-origin filter's public name, and api_key_id its old one (AI-2811).
+func (s *AccountSuite) TestUsageEventsFilterByOrigin() {
+	other := "key-other-" + s.utils.uuid()
+	own := s.spend(1_000, func(event *usage.Event) { event.APIKey = s.app.key })
+	another := s.spend(1_000, func(event *usage.Event) { event.APIKey = other })
+	hook := s.spend(1_000, func(event *usage.Event) { event.APIKey = "hook:chat" })
+	proxied := "api_key=" + url.QueryEscape(s.app.key)
+
+	for _, query := range []string{"origin=hook%3Achat", proxied + "&origin=hook%3Achat",
+		"origin=hook%3Achat&api_key_id=hook%3Achat", "origin=&api_key_id=hook%3Achat"} {
+		s.Equal([]string{hook.UsageID.String()}, usageIDs(s.events(query)), query)
+	}
+	s.Equal([]string{another.UsageID.String()}, usageIDs(s.events("origin="+url.QueryEscape(other))))
+	s.Equal([]string{own.UsageID.String()}, usageIDs(s.events(proxied+"&origin="+url.QueryEscape(s.app.key))))
+	s.ElementsMatch([]string{own.UsageID.String(), another.UsageID.String(), hook.UsageID.String()},
+		usageIDs(s.events("origin=")), "an empty origin filters nothing")
+}
+
+func (s *AccountSuite) TestUsageEventsRefuseAnOriginAndAnAPIKeyIDNamingTwo() {
+	status, message := s.serverClient.failure(http.MethodGet, "/v1/usage/events?origin=hook%3Achat&api_key_id="+url.QueryEscape(s.app.key), nil)
+
+	s.Equal(http.StatusBadRequest, status, message)
+	s.Contains(message, "origin and api_key_id ")
+}
+
+// Each event names who started it as origin, and as api_key, its old name, with the same value:
+// a key's event and an origin's alike.
+func (s *AccountSuite) TestUsageEventsNameTheirOriginUnderBothNames() {
+	own := s.spend(1_000, func(event *usage.Event) { event.APIKey = s.app.key })
+	hook := s.spend(1_000, func(event *usage.Event) { event.APIKey = "hook:chat" })
+
+	origins := map[string][2]string{}
+	for _, event := range s.events("").Items {
+		origins[event.UsageId] = [2]string{event.Origin, event.ApiKey}
+	}
+
+	s.Equal(map[string][2]string{
+		own.UsageID.String():  {s.app.key, s.app.key},
+		hook.UsageID.String(): {"hook:chat", "hook:chat"},
+	}, origins)
+}
+
+// A usage service of the release before answers api_key alone; the router still answers origin.
+func (s *AccountSuite) TestAnEventOfAnOlderUsageServiceStillNamesItsOrigin() {
+	listed := usageEventOf(usage.CustomerUsageEvent{APIKey: "hook:chat"})
+
+	s.Equal("hook:chat", listed.Origin)
+	s.Equal("hook:chat", listed.ApiKey)
+}
+
 func (s *AccountSuite) TestUsageEventsPage() {
 	at := time.Now().UTC().Truncate(time.Second)
 	var spent []usage.Event

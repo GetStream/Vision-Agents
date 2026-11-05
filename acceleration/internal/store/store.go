@@ -832,7 +832,9 @@ const spendGroupByModality = "modality"
 // The group_by values that are who asked rather than a cost label key, from the columns every
 // row carries. A label key never holds a ':', so none of them shadows a label of the same name.
 const (
-	SpendGroupByApp      = "who:app"
+	SpendGroupByApp    = "who:app"
+	SpendGroupByOrigin = "who:origin"
+	// SpendGroupByAPIKey is the old name of SpendGroupByOrigin, still read for one release.
 	SpendGroupByAPIKey   = "who:api_key"
 	SpendGroupByUser     = "who:user"
 	SpendGroupByTeam     = "who:team"
@@ -849,7 +851,7 @@ func spendGroups(groupBy string, acrossApps bool) (value, join string, ok bool) 
 		return "modality", "", true
 	case SpendGroupByApp:
 		return "customer_id", "", true
-	case SpendGroupByAPIKey:
+	case SpendGroupByOrigin, SpendGroupByAPIKey:
 		return "api_key", "", true
 	case SpendGroupByUser:
 		if acrossApps {
