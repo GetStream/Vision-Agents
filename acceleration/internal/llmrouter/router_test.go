@@ -33,6 +33,8 @@ type stubLLM struct {
 	capabilities llm.Capabilities
 	// createDelay is how long Create takes, as a provider takes to answer with its headers.
 	createDelay time.Duration
+	// createErr, if set, is what Create fails with, as a vendor that is down answers.
+	createErr error
 }
 
 func newStubLLM() *stubLLM { return &stubLLM{} }
@@ -44,6 +46,9 @@ func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Str
 		time.Sleep(s.createDelay)
 	}
 	s.asked = append(s.asked, params)
+	if s.createErr != nil {
+		return nil, s.createErr
+	}
 
 	script := llmtest.New(llm.StreamOptions{
 		ResponseID: params.ID,

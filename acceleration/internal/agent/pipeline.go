@@ -775,6 +775,11 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		a.mu.Unlock()
 		a.logger.Warn("the voice was lost, speaking in another",
 			"lost", failed[len(failed)-1], "provider", next.Provider(), "model", next.Model())
+		// A voice reopened on the same instance, all a target with one voice has, moved off
+		// nothing.
+		if moved := next.Config(); moved.Name() != lost.Config().Name() || moved.BYOK != lost.Config().BYOK {
+			routing.CountHandover(routing.TTS, lost.Config(), nil)
+		}
 		if err := lost.Close(); err != nil {
 			a.logger.Debug("closing the lost voice", "error", err)
 		}

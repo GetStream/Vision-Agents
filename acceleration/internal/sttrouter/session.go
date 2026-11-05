@@ -203,6 +203,7 @@ func (s *Session) forward() {
 			from := current.config.Name()
 			refused = append(refused, from)
 			if next, nextConfig, err := s.reopenAnswering(refused); err == nil && s.swap(current.provider, next, nextConfig) {
+				routing.CountHandover(routing.STT, current.config, failure.Err)
 				s.billUnsettled(current.provider)
 				// Before the Failover is passed on: a write that fails meanwhile went to next.
 				current = &relay{provider: next, config: nextConfig}
