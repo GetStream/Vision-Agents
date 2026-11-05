@@ -68,15 +68,6 @@ func (s *PausesSuite) ending(pEOT float64) {
 	s.server.decision = fmt.Sprintf(`{"answer":"respond","answer_probability":%v,"p_eot":%v,"options":[],"decide_ms":1,"ruling":{"disposition":"respond","floor":"continue"}}`, pEOT, pEOT)
 }
 
-// answered waits for the check asked to have answered.
-func (s *PausesSuite) answered() {
-	s.Eventually(func() bool {
-		s.transcriber.mu.Lock()
-		defer s.transcriber.mu.Unlock()
-		return !s.transcriber.pause.inFlight
-	}, 5*time.Second, time.Millisecond)
-}
-
 // counts are the server's decisions, those that wrote words too, and its transcripts.
 func (s *PausesSuite) counts() (decisions, withWords, transcripts int) {
 	s.server.mu.Lock()
@@ -305,4 +296,126 @@ func (s *PausesSuite) TestAPauseTheServerCantRuleOnIsLeftToTheWordsAlone() {
 		s.Equal(mode, next[stt.Transcript](&s.transcribing).Mode)
 	}
 	s.Empty(s.agent.rulings())
+}
+
+// AloneSuite is a transcriber no agent asks on behalf of: transcription alone, or an agent
+// that acts on nothing the model says. It asks about each pause for an agent of its own.
+type AloneSuite struct{ transcribing }
+
+func TestAloneSuite(t *testing.T) {
+	suite.Run(t, new(AloneSuite))
+}
+
+// ending has the server answer p_eot, with the floor free, and a ruling to respond.
+func (s *AloneSuite) ending(pEOT float64) {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.server.decision = fmt.Sprintf(`{"answer":"respond","answer_probability":%v,"p_eot":%v,"options":[],"decide_ms":1,"ruling":{"disposition":"respond","floor":"continue"}}`, pEOT, pEOT)
+}
+
+// With no agent asking, the transcriber asks about each pause for an agent of its own, a
+// plain voice assistant with no tools, registered once, and the utterance ends when the
+// model says so, by the server's default preset: one final at the first check, its words
+// from the same pass, rather than at the silence cap.
+func (s *AloneSuite) TestWithNoAgentTheModelEndsTheUtteranceUnderTheTranscribersOwn() {
+	s.ending(0.999)
+	s.say(1000, true)
+	s.say(220, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance)
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	s.InDelta(float64(300+1000+200), end.AudioDurationMs, 40, "the whole utterance, 200 ms into the pause")
+
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.Require().Len(s.server.registered, 1)
+	s.Equal(neutralInstructions, s.server.registered[0].Instructions)
+	s.Empty(s.server.registered[0].Tools)
+	s.Equal([]string{"en", "pt-BR"}, s.server.registered[0].Languages)
+	s.Len(s.server.turns, 1)
+	s.False(s.server.turns[0].Speaking)
+	s.Empty(s.server.turns[0].Conversation)
+	s.Equal(1, s.server.withWords)
+	s.Len(s.server.audio, 1, "one request: the decision and the words in one pass")
+}
+
+// A pause the model waits on is checked again every interval, and the utterance ends at the
+// cap whatever the model says, on the first check's words: never later than the silence cap
+// it ended at before, and no words are asked for twice.
+func (s *AloneSuite) TestWithNoAgentAPauseTheModelWaitsOnEndsAtTheCap() {
+	s.ending(0.1)
+	s.say(1000, true)
+	s.say(220, false)
+	s.answered()
+	s.none()
+	for quiet := 220; quiet < int(endAfter/time.Millisecond); quiet += 300 {
+		s.say(300, false)
+		s.answered()
+	}
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.Equal(1, s.server.withWords, "the words once, with the first check")
+	s.Len(s.server.audio, len(s.server.turns), "no words asked for alone")
+	s.GreaterOrEqual(len(s.server.turns), 8, "checked every interval to the cap")
+}
+
+// A server with no policy for its model can't rule on a pause: it is asked once, and from
+// then on the session's utterances end on the words alone, at the silence cap, as they did
+// before the model was asked.
+func (s *AloneSuite) TestAServerWithNoPolicyIsAskedOnceAndTheWordsComeAlone() {
+	s.server.mu.Lock()
+	s.server.noPolicy = true
+	s.server.mu.Unlock()
+	for utterance := int64(1); utterance <= 2; utterance++ {
+		s.say(1000, true)
+		s.say(220, false)
+		s.answered()
+		s.say(40, false)
+		said := next[stt.Transcript](&s.transcribing)
+		s.Equal(stt.ModeReplacement, said.Mode)
+		s.Equal(utterance, said.Utterance)
+		s.say(int(endAfter/time.Millisecond), false)
+		end := next[stt.Transcript](&s.transcribing)
+		s.Equal(stt.ModeFinal, end.Mode)
+		s.Equal(utterance, end.Utterance)
+	}
+	s.Equal(1, s.infos(), "asked for its policy once")
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.Empty(s.server.registered)
+	s.Empty(s.server.turns)
+	s.Len(s.server.audio, 2, "the words of each utterance, once")
+}
+
+// A check the server fails to answer leaves that pause to the words alone, and the next
+// utterance is asked about again: a server that is busy or restarting costs a request, not
+// the session's turn-taking.
+func (s *AloneSuite) TestACheckThatFailsLeavesThePauseToTheWordsAloneAndTheNextAsksAgain() {
+	s.ending(0.999)
+	s.server.mu.Lock()
+	s.server.failingDecides = 1
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(220, false)
+	s.answered()
+	s.say(40, false)
+	s.Equal(stt.ModeReplacement, next[stt.Transcript](&s.transcribing).Mode)
+	s.say(int(endAfter/time.Millisecond), false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance)
+
+	s.say(1000, true)
+	s.say(220, false)
+	again := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, again.Mode)
+	s.Equal(int64(2), again.Utterance)
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.Len(s.server.turns, 1, "the second utterance's check, answered")
+	s.Equal(1, s.server.withWords)
 }

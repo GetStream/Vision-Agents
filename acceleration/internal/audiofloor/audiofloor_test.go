@@ -60,10 +60,12 @@ type fakeServer struct {
 	types      []string
 	languages  []string
 	// refuse is the status /v1/agents answers an agent with tools, fail has /v1/decide
-	// answer 500, and info is /v1/info's body.
-	refuse int
-	fail   bool
-	info   string
+	// answer 500, info is /v1/info's body, and noPolicy has /v1/info answer 501, as a
+	// server started without a policy for its model does.
+	refuse   int
+	fail     bool
+	info     string
+	noPolicy bool
 	// failing is how many transcription requests to answer failWith, before answering,
 	// failDecide has every decision fail, and failingDecides the next that many.
 	failing        int
@@ -99,6 +101,11 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	switch r.URL.Path {
 	case "/v1/info":
 		f.infos++
+		if f.noPolicy {
+			w.WriteHeader(http.StatusNotImplemented)
+			_, _ = w.Write([]byte(`{"error":"no policy for this model"}`))
+			return
+		}
 		_, _ = w.Write([]byte(f.info))
 	case "/v1/agents":
 		var spec agentJSON
@@ -482,13 +489,17 @@ func (s *HearerSuite) TestATurnIsSaidInTheModelsTerms() {
 	s.Equal(Turn{Speaker: anotherVoice, Conversation: []Line{{Text: "hi"}, {Agent: true, Text: "hello"}}}, s.server.turns[0])
 }
 
-// TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet.
+// TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet, asking
+// about no pauses: the words alone, which is how a session ends up once the server has said
+// it can't rule on them, and what any pause falls to when a check of it fails.
 type TranscriberSuite struct{ transcribing }
 
 // transcribing is a transcriber of a fake server, and the frames it is sent.
 type transcribing struct {
 	serverSuite
 	transcriber *Transcriber
+	// wordsAlone opens each transcriber asking about no pauses (AskOnPauses(nil)).
+	wordsAlone bool
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -499,6 +510,11 @@ type transcribing struct {
 
 func TestTranscriberSuite(t *testing.T) {
 	suite.Run(t, new(TranscriberSuite))
+}
+
+func (s *TranscriberSuite) SetupTest() {
+	s.wordsAlone = true
+	s.transcribing.SetupTest()
 }
 
 func (s *transcribing) SetupTest() {
@@ -526,6 +542,9 @@ func (s *transcribing) reopen(now func() time.Time) {
 func (s *transcribing) openReading(now func() time.Time) {
 	s.transcriber = NewTranscriber(s.client, "", []string{"en", "pt-BR"}, slog.New(slog.DiscardHandler))
 	s.transcriber.now = now
+	if s.wordsAlone {
+		s.transcriber.AskOnPauses(nil)
+	}
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })
@@ -574,6 +593,15 @@ func (s *transcribing) say(ms int, voiced bool) {
 
 func (s *transcribing) send(frame []int16) {
 	s.Require().NoError(s.transcriber.ProcessAudio(audio.PcmData{Samples: frame, SampleRate: SampleRate, Channels: 1}, stt.Participant{ID: "p"}))
+}
+
+// answered waits for the check asked to have answered.
+func (s *transcribing) answered() {
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return !s.transcriber.pause.inFlight
+	}, 5*time.Second, time.Millisecond)
 }
 
 // next is the next event of type E.

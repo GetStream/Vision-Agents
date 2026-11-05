@@ -40,7 +40,11 @@ const (
 	speechScore    = 0.5
 	detectorWarmup = 10
 	// writeAfter is the pause at which the utterance so far is written, and endAfter the
-	// pause that ends it: the end-of-turn policies' first check and cap.
+	// pause that ends it, when its words are asked for alone, with no check ruling on the
+	// pause: the end-of-turn policies' first check and cap. The cap stands as the fallback
+	// as it is: with no model to say otherwise, a shorter silence would cut the pauses a
+	// caller leaves inside a number or a spelled name, which the policy's points were fitted
+	// to leave alone, and what a check decides it decides sooner than the cap anyway.
 	writeAfter = 200 * time.Millisecond
 	endAfter   = 2500 * time.Millisecond
 	// preroll is the audio kept ahead of an utterance's first voiced frame, so that a gate
@@ -72,14 +76,23 @@ var transcribeFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 }, []string{"reason"})
 
 // Transcriber writes what a participant says with the chorus-asr server's model, so a call
-// needs no other speech-to-text provider. It is an stt.STT that writes the whole utterance
-// so far at each of its pauses, once the pause reaches writeAfter, as a replacement of the
-// words before, and ends the utterance at a pause of endAfter with one final transcript.
-// It asks for an utterance's words only when speech has come since it last did, so audio
-// is never written twice, and the next utterance begins after the last one ended. When to
-// answer is the flow controller's to say, as it is with any transcriber. It asks the
-// server for the words alone (POST /v1/transcribe): no agent, decision or policy. The
-// server writes nothing of noise, and empty words are nothing heard.
+// needs no other speech-to-text provider. It is an stt.STT that ends each utterance when the
+// model says the turn has ended, checking each pause from the voice's last frame at the
+// server's policy's times (Pauses): on behalf of the agent that acts on the model, when one
+// asks (AskOnPauses), and otherwise on its own, under an agent of its own with no tools
+// (neutralAgent) and the server's default preset. The first check of a pause asks for the
+// decision and the words of the whole utterance in one request, and a turn that ended goes
+// out as one final. When to answer is the flow controller's to say, as it is with any
+// transcriber. The server writes nothing of noise, and empty words are nothing heard.
+//
+// Decisions never hold the words up. A pause no check could rule on, because the server did
+// not answer or no check ended it within checkGrace of the policy's cap, falls to the words
+// alone: the whole utterance so far is written once the pause reaches writeAfter, as a
+// replacement of the words before, asked for alone (POST /v1/transcribe), and the utterance
+// ends at a pause of endAfter with one final. A server that can't rule at all, with no
+// policy for its model, is asked once a session and the words come alone from then on. The
+// transcriber asks for an utterance's words only when speech has come since it last did, so
+// audio is never written twice, and the next utterance begins after the last one ended.
 //
 // A server that is busy, restarting or slow costs a request, not the session: its words are
 // asked for again at the utterance's next pause, or at its end. A misconfigured one, which
@@ -125,8 +138,9 @@ type Transcriber struct {
 	// utterance that is over.
 	endedByCheck atomic.Int64
 
-	// With an agent asking (AskOnPauses), its checks of the pause going on, each run on a
-	// goroutine of its own, and how many of the utterance's pauses were asked about.
+	// The checks of the pause going on, asked for asker, the agent's (AskOnPauses) or the
+	// transcriber's own, each run on a goroutine of its own, and how many of the utterance's
+	// pauses were asked about. Nil asks about none.
 	mu      sync.Mutex
 	asker   Asker
 	pause   pause
@@ -150,6 +164,7 @@ func NewTranscriber(client *Client, model string, languages []string, logger *sl
 		model = DefaultModel
 	}
 	return &Transcriber{client: client, model: model, languages: languages, logger: logger, now: time.Now,
+		asker:   neutralAgent{hearer: NewHearer(client, EndOfTurn{}, logger)},
 		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
 

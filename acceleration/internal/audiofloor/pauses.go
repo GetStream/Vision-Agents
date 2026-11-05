@@ -48,6 +48,34 @@ type Pauses interface {
 	AskOnPauses(agent Asker)
 }
 
+// neutralInstructions is what the transcriber's own agent is told, for a session no agent
+// asks on behalf of (AskOnPauses): transcription alone, or an agent that acts on nothing the
+// model says. The point of the model is that it ends turns, and it does so under a prompt,
+// as it was trained to; with no app agent to supply one the transcriber brings its own, so
+// that an utterance still ends when the model says so rather than at the silence cap. The
+// prompt is a plain voice assistant with no tools and no conversation: it names no business
+// and asks for no behaviour, so what it adds to the decision is as near nothing as a prompt
+// can be, and p_eot is the audio's. It goes through POST /v1/agents like any other agent,
+// once per server (the client remembers it by content), and the turn ends by the server's
+// default preset, the point it publishes for an agent that chooses none. Its ruling goes
+// nowhere: what to do with the words is the listener's to decide, as with any transcriber.
+const neutralInstructions = "You are a voice assistant on a phone call. Listen to what the caller says and answer them."
+
+// neutralAgent is the Asker of a session no agent asks for: the transcriber's own.
+type neutralAgent struct{ hearer *Hearer }
+
+// Moment is the call with nothing said yet: the words are the audio's, and the agent is
+// saying nothing.
+func (n neutralAgent) Moment(stt.Participant) harness.FlowTurn {
+	return harness.FlowTurn{Instructions: neutralInstructions}
+}
+
+// Ruled hands the ruling to nobody.
+func (neutralAgent) Ruled(stt.Participant, Ruled) {}
+
+// Hearer ends turns by the server's default preset.
+func (n neutralAgent) Hearer() *Hearer { return n.hearer }
+
 // pause is the pause going on in the utterance being heard, and what its checks said.
 type pause struct {
 	// epoch tells this pause from the next: speech resuming, or the utterance ending,
@@ -83,7 +111,8 @@ type pauseCheck struct {
 	asked       time.Time
 }
 
-// AskOnPauses has the transcriber ask about each pause for agent, from the next on.
+// AskOnPauses has the transcriber ask about each pause for agent, from the next on, in place
+// of its own (neutralAgent). Nil has it ask about none, and end utterances on the words alone.
 func (t *Transcriber) AskOnPauses(agent Asker) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -213,6 +242,17 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	p.inFlight = false
 	if err != nil {
 		p.failed = true
+		// A server that will never rule, with no policy for its model or refusing the
+		// request, is asked no more on the transcriber's own behalf: every pause would
+		// otherwise cost a request that fails. An agent asking keeps asking, as it chose to.
+		_, own := t.asker.(neutralAgent)
+		if own && Misconfigured(err) {
+			t.asker = nil
+			t.mu.Unlock()
+			t.logger.Warn("the chorus-asr server can't rule on pauses, so this session's utterances end on the words alone",
+				"participant", c.participant.ID, "error", err)
+			return
+		}
 		t.mu.Unlock()
 		t.logger.Debug("the chorus-asr server did not rule on a pause, its words are asked for alone",
 			"participant", c.participant.ID, "error", err)

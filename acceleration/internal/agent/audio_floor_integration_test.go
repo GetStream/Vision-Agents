@@ -259,8 +259,10 @@ func (h *floorHarness) backchannel(t *testing.T) {
 // of it is logged as an observation, and the contract is what they see: one turn of the
 // caller's, none of the agent's voice. Transcribing alone (mode off), the router does not know
 // the app's voice, and cancelling the echo is the edge's to do; the contract is the
-// transcriber's: the caller's words are one final of their own, and the agent's voice, when
-// written, is a final of its own rather than part of theirs.
+// transcriber's: the model ends the caller's turn under the transcriber's own agent, so their
+// words are one final of their own, written within a check or two of their voice rather than
+// at the silence cap, which the agent's reply came back inside of, and the agent's voice is a
+// final of its own rather than part of theirs.
 func (h *floorHarness) oneFinal(t *testing.T, mode audiofloor.Mode, bed []float64, echo float64) {
 	c := h.start(t, mode, replayInstructions, []string{"en"})
 	c.edge.background(bed, echo)
@@ -292,7 +294,11 @@ func (h *floorHarness) oneFinal(t *testing.T, mode audiofloor.Mode, bed []float6
 		t.Logf("[transcriber] with the agent's voice echoed, %d finals in %d utterances: the caller's %q, the agent's voice alone %q, the caller's with the agent's voice on the end %q",
 			len(finals), len(utterances), finalTexts(callers), finalTexts(voice), finalTexts(both))
 		if mode == "" {
-			assert.Len(t, callers, 1, "[transcriber] one final of the caller's words")
+			if assert.Len(t, callers, 1, "[transcriber] one final of the caller's words") {
+				wait := callers[0].At.Sub(said.ended())
+				assert.Less(t, wait, h.soon(), "[transcriber] the caller's final came %s after their voice: a turn the model ends is written within a check or two of it", wait.Round(time.Millisecond))
+			}
+			assert.NotEmpty(t, voice, "[transcriber] the agent's voice, heard back on the line, written as a final of its own")
 			assert.Empty(t, both, "[transcriber] the agent's voice written into the caller's final rather than as a final of its own: %q", finalTexts(both))
 		}
 	}
@@ -470,12 +476,13 @@ func (h *floorHarness) coughAlone(t *testing.T) {
 	assert.Empty(t, all[Responding](c), "no answer")
 }
 
-// 9. With the mode off, the chorus-asr transcriber writes a turn by itself: words alone, no
-// decision asked.
+// 9. With the mode off, the chorus-asr transcriber writes a turn by itself: the model ends
+// it under the transcriber's own agent, the decision and the words in one request, within a
+// check or two of the voice, and no words are asked for alone once the caller has stopped.
 func (h *floorHarness) transcriptionAlone(t *testing.T) {
 	c := h.start(t, "", replayInstructions, []string{"en"})
 	c.edge.pause(time.Second)
-	c.edge.say("weather", h.weather)
+	said := c.edge.say("weather", h.weather)
 	c.edge.pause(4 * time.Second)
 	c.settle(2*time.Second, time.Minute)
 	defer c.report()
@@ -483,14 +490,36 @@ func (h *floorHarness) transcriptionAlone(t *testing.T) {
 	finals := c.finals()
 	if assert.Len(t, finals, 1, "one final transcript") {
 		assert.Contains(t, plainWords(finals[0].T.Text), "lisbon", "the turn written: %q", finals[0].T.Text)
+		wait := finals[0].At.Sub(said.ended())
+		assert.Less(t, wait, h.soon(), "the final came %s after the voice: the model ended the turn", wait.Round(time.Millisecond))
 	}
 	heard := all[Heard](c)
 	if assert.NotEmpty(t, heard, "the turn reached the conversation") {
 		assert.Contains(t, plainWords(heard[0].E.Text), "lisbon")
 	}
-	for _, r := range c.requests() {
-		assert.Equal(t, "/v1/transcribe", r.path, "words alone, nothing else asked: %s %s", r.method, r.path)
+	registered := c.requestsTo("/v1/agents")
+	for _, r := range registered {
+		assert.NotContains(t, r.body, "get_weather", "the transcriber's own agent has no tools: %s", r.body)
 	}
+	stopped := c.wordRequestsSince(said.ended().Add(h.firstCheck() / 2))
+	if assert.Len(t, stopped, 1, "one request for the words once the caller stopped") {
+		assert.Equal(t, "/v1/decide", stopped[0].path, "the decision and the words in one pass: %s %s?%s", stopped[0].method, stopped[0].path, stopped[0].query)
+	}
+	for _, r := range c.requests() {
+		assert.NotEqual(t, "/v1/transcribe", r.path, "words asked for alone: %s %s at %s", r.method, r.path, c.since(r.start))
+	}
+}
+
+// firstCheck is how far into a pause the server's policy checks it first.
+func (h *floorHarness) firstCheck() time.Duration {
+	return time.Duration(h.policy.FirstCheckMs) * time.Millisecond
+}
+
+// soon is how long after the voice a turn the model ends is written, with room for a second
+// check and the words: the policy's first check and its interval, and a second. The silence
+// cap the transcriber ended utterances at before, 2.5 s and the words, is well past it.
+func (h *floorHarness) soon() time.Duration {
+	return h.firstCheck() + time.Duration(h.policy.IntervalMs)*time.Millisecond + time.Second
 }
 
 // 8. From the end of the caller's speech to the turn's ruling, and to the reply being heard,
@@ -785,14 +814,20 @@ func (c *call) asking() bool {
 }
 
 // wordRequests are the requests for words: transcripts, and decisions that wrote words too.
-func (c *call) wordRequests() int {
-	n := 0
+func (c *call) wordRequests() int { return len(c.wordRequestsSince(c.began)) }
+
+// wordRequestsSince are the requests for words started at or after at.
+func (c *call) wordRequestsSince(at time.Time) []exchange {
+	var out []exchange
 	for _, r := range c.requests() {
+		if r.start.Before(at) {
+			continue
+		}
 		if r.path == "/v1/transcribe" || (r.path == "/v1/decide" && strings.Contains(r.query, "transcript=true")) {
-			n++
+			out = append(out, r)
 		}
 	}
-	return n
+	return out
 }
 
 func (c *call) requestsTo(path string) []exchange {
