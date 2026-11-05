@@ -431,7 +431,10 @@ func (s *WhatsAppChannelSuite) TestAPhotoWhoseUploadFailedIsWrittenWithItOnTheNe
 // cannot be downloaded is, rather than the row given up with its caption.
 func (s *WhatsAppChannelSuite) TestAPhotoStreamChatWillNotStoreIsAnsweredByItsCaptionAlone() {
 	s.answersWith("vision/vision-model")
-	for name, fail := range map[string]func(method, suffix string){"failing": s.chat.Fail, "refused": s.chat.Refuse} {
+	for name, fail := range map[string]func(method, suffix string){
+		"failing": s.chat.Fail,
+		"refused": func(method, suffix string) { s.chat.FailWith(method, suffix, http.StatusBadRequest) },
+	} {
 		s.Run(name, func() {
 			person, asked, uploaded, sent := s.digits(), len(s.vision.replies()), len(s.chat.Uploads()), len(s.meta.sent())
 			fail(http.MethodPost, "/image")
@@ -456,7 +459,7 @@ func (s *WhatsAppChannelSuite) TestAPhotoStreamChatWillNotStoreIsAnsweredByItsCa
 // is not written, answered or carded, and the row is done.
 func (s *WhatsAppChannelSuite) TestAPhotoAloneStreamChatWillNotStoreIsNotWritten() {
 	person := s.digits()
-	s.chat.Refuse(http.MethodPost, "/image")
+	s.chat.FailWith(http.MethodPost, "/image", http.StatusBadRequest)
 	defer s.chat.Heal(http.MethodPost, "/image")
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.delivery(s.unit, s.photo(person, ""))))
