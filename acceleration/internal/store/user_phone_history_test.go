@@ -143,6 +143,31 @@ func (s *StoreSuite) TestASetAsideRowOfAnotherAppIsNotRead() {
 	s.ElementsMatch([]string{own, monday}, s.readFor(chat))
 }
 
+// Catches a read of the set-aside rows that finds the link only by the Stream user's row: anya
+// never chatted with the agent, and the number's next row reads its past with all of it.
+func (s *StoreSuite) TestALinkWithAllOfTheHistoryIsReadOnTheNumbersNextRow() {
+	s.agentConfigs()
+	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true WHERE id = 'agent-one'")
+	s.Require().NoError(err)
+	sunday := s.smsAt(s.made(contact("+15550100", "agent:omni-sms")), linkedAt.Add(-36*time.Hour))
+	s.linkWith("+15550100", &PhoneHistory{All: true})
+
+	s.Equal([]string{sunday}, s.readFor(s.made(contact("+15550100", "agent:omni-next"))))
+}
+
+// Catches a read of the set-aside rows that misses a link in the deployment's own app: the link
+// names it 0, and the message hook's row of anya names it by its id.
+func (s *StoreSuite) TestALinkWithAllOfTheHistoryInTheDeploymentsOwnApp() {
+	s.store.SetStreamPins(StreamPins{Deployment: func() int64 { return 4242 }})
+	s.T().Cleanup(func() { s.store.SetStreamPins(StreamPins{}) })
+	chat, own, sunday, monday := s.historyStory()
+
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &UserPhone{CustomerID: "acme-app", UserID: "anya", Phone: "+15550100",
+		History: &PhoneHistory{All: true}}))
+
+	s.ElementsMatch([]string{own, sunday, monday}, s.readFor(chat))
+}
+
 // Catches a link that leaves the router it replaced reading more than the user was given, on a
 // rollback to it: the previous release's queries (v0.6.284, ba2c5e912) on the migrated schema.
 // Its unlink detaches only the rows at the number, so set-aside rows moved onto anya's
