@@ -622,6 +622,8 @@ func TestSyncSendsTheEndOfTurnTheAgentDeclared(t *testing.T) {
 		{"end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n",
 			&acceleration.EndOfTurn{Bars: &[]acceleration.EndOfTurnBar{{FromMs: 0, Bar: 0.97}, {FromMs: 900, Bar: 0.25}}}},
 		{"end_of_turn: {}\n", &acceleration.EndOfTurn{}},
+		{"end_of_turn:\n  max_wait_ms: 0\n", &acceleration.EndOfTurn{MaxWaitMs: pointer(int64(0))}},
+		{"end_of_turn:\n  preset: \"\"\n", &acceleration.EndOfTurn{Preset: pointer("")}},
 		{"llm: openai/gpt-5.6\n", nil},
 	} {
 		root := filepath.Join(t.TempDir(), "concierge")

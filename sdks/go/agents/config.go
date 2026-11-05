@@ -332,16 +332,16 @@ func declareEndOfTurn(settings *EndOfTurnSettings) *acceleration.EndOfTurn {
 	if settings == nil {
 		return nil
 	}
-	declared := &acceleration.EndOfTurn{}
-	if settings.MaxWaitMs != 0 {
-		wait := int64(settings.MaxWaitMs)
+	declared := &acceleration.EndOfTurn{Preset: settings.Preset}
+	if settings.MaxWaitMs != nil {
+		wait := int64(*settings.MaxWaitMs)
 		declared.MaxWaitMs = &wait
 	}
-	setString(&declared.Preset, settings.Preset)
 	if settings.Bars != nil {
 		bars := make([]acceleration.EndOfTurnBar, 0, len(settings.Bars))
 		for _, bar := range settings.Bars {
-			bars = append(bars, acceleration.EndOfTurnBar{FromMs: int64(bar.FromMs), Bar: bar.Bar})
+			// Load refused a bar without both.
+			bars = append(bars, acceleration.EndOfTurnBar{FromMs: int64(*bar.FromMs), Bar: *bar.Bar})
 		}
 		declared.Bars = &bars
 	}

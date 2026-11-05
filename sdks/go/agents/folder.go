@@ -398,22 +398,25 @@ type TransferDestination struct {
 //
 //	end_of_turn:
 //	    max_wait_ms: 900
+//
+// Each is nil when the file doesn't name it, and sent as written when it does, so a value the
+// router refuses is refused there rather than dropped here.
 type EndOfTurnSettings struct {
 	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
 	// milliseconds: the server's measured point with the fewest cut-ins within it.
-	MaxWaitMs int `yaml:"max_wait_ms"`
+	MaxWaitMs *int `yaml:"max_wait_ms"`
 	// Preset is one of the presets the server publishes, such as safe or fast.
-	Preset string `yaml:"preset"`
+	Preset *string `yaml:"preset"`
 	// Bars are the agent's own: the first from 0 ms, each later one from further into the
-	// pause. Nil when the file names none.
+	// pause.
 	Bars []EndOfTurnBar `yaml:"bars"`
 }
 
 // EndOfTurnBar is what chorus-asr's p_eot must reach for the turn to have ended, at a check
-// from FromMs into the pause on.
+// from FromMs into the pause on. A bar names both.
 type EndOfTurnBar struct {
-	FromMs int     `yaml:"from_ms"`
-	Bar    float64 `yaml:"bar"`
+	FromMs *int     `yaml:"from_ms"`
+	Bar    *float64 `yaml:"bar"`
 }
 
 // ChannelSettings is one line the agent is reachable on.
@@ -739,6 +742,13 @@ func declare(raw []byte) (Settings, error) {
 		}
 		if settings.Video.MaxFrames < 1 || settings.Video.MaxFrames > 8 {
 			return Settings{}, errors.New("video.max_frames must be an integer from 1 to 8")
+		}
+	}
+	if settings.EndOfTurn != nil {
+		for i, bar := range settings.EndOfTurn.Bars {
+			if bar.FromMs == nil || bar.Bar == nil {
+				return Settings{}, fmt.Errorf("end_of_turn.bars[%d] names both from_ms and bar", i)
+			}
 		}
 	}
 	if options := settings.SandboxOptions; options != nil && options.Timeout != "" {
