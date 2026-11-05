@@ -343,7 +343,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### `episode_cards` is `off`, `record` or `on`
 
-An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #PR).
+An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #1791).
 
 ### Usage reads drop the old names of `origin`
 
