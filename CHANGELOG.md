@@ -383,6 +383,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A linked user never reads what the number said before the link, whenever the cards were turned on
+
+A number linked to a user (`PUT /v1/agents/users/{user_id}`) under an agent with `episode_cards` off kept its earlier SMS and call episodes on the user's omni-channel. Once the agent turned the cards on, the user's app chat, their own device and the number's later calls and SMS read those cards. Now no session reads an episode that a linked number started before the link, and sending the same number again no longer moves the time of the link (#PRNUM).
+
 ### An export no longer misses a write that was in progress when it started
 
 A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).

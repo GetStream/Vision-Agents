@@ -392,8 +392,8 @@ func (s *Store) EpisodeCards(ctx context.Context, query CardsQuery) ([]EpisodeCa
 		Where("ep.session_id IS DISTINCT FROM ?", query.ExceptSession).
 		// What a linked number said before its link is not the user's, however the config came
 		// to have episode_cards on: retireHistory sets it aside only under a config with them on
-		// at the link.
-		// The link is found as linkOf finds a number's; no other kind of row has an E.164 address.
+		// at the link. The link is found as linkOf finds a number's; no other kind of row has an
+		// E.164 address.
 		Where(`NOT EXISTS (SELECT 1 FROM user_phones AS up WHERE up.customer_id = cm.customer_id
 			AND up.stream_app_pk = COALESCE(NULLIF(cm.stream_app_pk, ?), 0) AND up.phone = cm.address
 			AND ep.started_at < up.updated_at)`, s.streamPins().deployment()).
