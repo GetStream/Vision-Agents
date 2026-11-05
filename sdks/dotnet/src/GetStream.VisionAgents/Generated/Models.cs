@@ -1314,10 +1314,22 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
+        /// true when the user reads all of what the number ever said. Left out otherwise.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("include_phone_history")]
+        public bool? IncludePhoneHistory { get; set; } = default!;
+
+        /// <summary>
         /// The number linked to the user, in E.164; null when none is.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("phone")]
         public string? Phone { get; set; } = default!;
+
+        /// <summary>
+        /// From when on the user reads what the number said: the link's time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone_history_since")]
+        public System.DateTimeOffset? PhoneHistorySince { get; set; } = default!;
 
         /// <summary>
         /// The Stream user id, as the app's own token signs it.
@@ -1344,10 +1356,22 @@ namespace GetStream.VisionAgents.Models
     {
 
         /// <summary>
-        /// The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+        /// How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("include_phone_history")]
+        public bool? IncludePhoneHistory { get; set; } = default!;
+
+        /// <summary>
+        /// The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number's SMS, WhatsApp or iMessage thread is handed none of the thread's earlier messages. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("phone")]
         public string? Phone { get; set; } = default!;
+
+        /// <summary>
+        /// The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("phone_history_since")]
+        public System.DateTimeOffset? PhoneHistorySince { get; set; } = default!;
 
         private System.Collections.Generic.IDictionary<string, object>? _additionalProperties;
 
