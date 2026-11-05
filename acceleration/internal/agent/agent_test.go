@@ -30,6 +30,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/metered"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing/failovertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/searchrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -835,6 +836,8 @@ type AgentSuite struct {
 	holdOpen chan struct{}
 	// replacement is the voice opened after the first, for a test whose agent loses one.
 	replacement *stubTTS
+	// replacementErr, if set, is what opening any voice after the first fails with.
+	replacementErr error
 	// subagent is the second model, present only when a test asks for delegation.
 	subagent *stubLLM
 	// sees makes the conversation model one that takes images.
@@ -1135,6 +1138,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	speech.Register("stub", func(spec routing.Spec) (tts.TTS, error) {
 		s.builtIn.add(routing.TTS, spec.Region)
 		s.voiceAsked = spec
+		if opened && s.replacementErr != nil {
+			return nil, s.replacementErr
+		}
 		if opened && s.replacement != nil {
 			return s.replacement, nil
 		}
@@ -5138,17 +5144,40 @@ func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
 	s.join(false)
 	s.replacement = newStubTTS(false)
 	lost := s.agent.voice()
+	before := failovertest.Of(s.T(), "stub")
 	s.voice.emitter.Send(tts.Error{
 		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
 	})
 	s.eventually(func() bool { return s.agent.voice() != lost },
 		"the lost voice was never replaced")
+	s.eventually(func() bool {
+		return failovertest.Of(s.T(), "stub")["tts stub-model session vendor"] == before["tts stub-model session vendor"]+1
+	}, "the hand-over to the replacing voice was not counted as a failover of the lost one")
 
 	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil, options.LLM{})
 	s.Require().NoError(err)
 
 	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 },
 		"the reply was not spoken in the voice that replaced the lost one")
+}
+
+func (s *AgentSuite) TestALostVoiceNothingReplacedIsNoFailover() {
+	s.join(false)
+	s.replacementErr = errors.New("no voice left")
+	before := failovertest.Of(s.T(), "stub")
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+
+	s.eventually(func() bool {
+		for _, event := range s.reported() {
+			if failure, ok := event.(Error); ok && strings.Contains(failure.Err.Error(), "no voice left") {
+				return true
+			}
+		}
+		return false
+	}, "the replacement never failed")
+	s.Equal(before, failovertest.Of(s.T(), "stub"))
 }
 
 func (s *AgentSuite) TestAnAgentWithNoVoiceOpensItsVoiceWithNone() {

@@ -25,6 +25,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing/failovertest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt/muse"
@@ -193,6 +194,31 @@ func (s *SessionSuite) TestARefusalNoOtherModelCanTakeOverEndsTheSession() {
 	s.Empty(s.drain(session))
 }
 
+func (s *SessionSuite) TestARefusalTheNextModelTookOverIsAFailoverOfTheRefusingOne() {
+	router := s.router(1, refused())
+	defer router.Close()
+	session := s.start(router)
+	defer session.Close()
+
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+	s.IsType(stt.Failover{}, s.speakInto(session))
+
+	s.Equal(map[string]float64{"stt live session vendor": 1}, failovertest.Of(s.T(), s.refusing))
+	s.Empty(failovertest.Of(s.T(), s.working), "it took the session over")
+}
+
+func (s *SessionSuite) TestARefusalNoOtherModelTookOverIsNoFailover() {
+	router := s.router(1, refused())
+	defer router.Close()
+	session := s.startOn(router, s.refusing+"/live")
+	defer session.Close()
+
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+	s.IsType(stt.Error{}, s.speakInto(session))
+
+	s.Empty(failovertest.Of(s.T(), s.refusing))
+}
+
 func (s *SessionSuite) TestASocketThatDroppedIsNotHandedToTheNextModel() {
 	drop := stt.Error{Err: errors.New("websocket: close 1006 (abnormal closure)"), Context: "read", Fatal: true}
 	router := s.router(1, drop)
@@ -203,6 +229,7 @@ func (s *SessionSuite) TestASocketThatDroppedIsNotHandedToTheNextModel() {
 	s.IsType(stt.Transcript{}, s.speakInto(session))
 	s.Equal(drop, s.speakInto(session))
 	s.Equal(s.refusing, session.Provider())
+	s.Empty(failovertest.Of(s.T(), s.refusing), "nothing took over")
 }
 
 func (s *SessionSuite) TestAnErrorTheProviderOutlivesIsNotHandedToTheNextModel() {

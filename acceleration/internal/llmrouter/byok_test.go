@@ -15,6 +15,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm/anthropic"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing/failovertest"
 )
 
 // The keys the vendor of these tests is asked with: the deployment's own, read from the
@@ -149,10 +150,15 @@ func (s *LLMRouterSuite) TestARefusedCustomerKeyFallsBackToTheDeploymentsInstanc
 	at := startVendor(s.T(), customerKey)
 	router := s.keyedRouter(keyedConfig(s.T(), at), keptKeys{"acme/anthropic/us": customerKey}, nil)
 
+	before := failovertest.Of(s.T(), anthropic.ProviderName)
+
 	response := s.answered(router)
 
 	s.Equal("hello", response.OutputText)
 	s.Equal([]string{customerKey, deploymentKey}, at.asked(), "the customer's instance, then the deployment's")
+	after := failovertest.Of(s.T(), anthropic.ProviderName)
+	s.Equal(before["llm "+haiku+" session customer_key"]+1, after["llm "+haiku+" session customer_key"])
+	s.Equal(before["llm "+haiku+" session vendor"], after["llm "+haiku+" session vendor"], "the key was the customer's to fix")
 }
 
 func (s *LLMRouterSuite) TestACustomersKeyForTheEUIsNotUsedForAUSInstance() {

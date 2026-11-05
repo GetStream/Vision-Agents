@@ -7,32 +7,13 @@ import (
 	"log/slog"
 	"strings"
 
-	"github.com/prometheus/client_golang/prometheus"
-
 	"github.com/GetStream/Vision-Agents/acceleration/internal/pricing"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing/failovertest"
 )
 
 // failoversOf is every failover counted against provider, by "modality model stage reason".
-// Each test names its providers afresh, so what it reads is its own.
 func (s *RoutingSuite) failoversOf(provider string) map[string]float64 {
-	families, err := prometheus.DefaultGatherer.Gather()
-	s.Require().NoError(err)
-	counted := map[string]float64{}
-	for _, family := range families {
-		if family.GetName() != "router_failovers_total" {
-			continue
-		}
-		for _, metric := range family.GetMetric() {
-			labels := map[string]string{}
-			for _, label := range metric.GetLabel() {
-				labels[label.GetName()] = label.GetValue()
-			}
-			if labels["provider"] == provider {
-				counted[labels["modality"]+" "+labels["model"]+" "+labels["stage"]+" "+labels["reason"]] += metric.GetCounter().GetValue()
-			}
-		}
-	}
-	return counted
+	return failovertest.Of(s.T(), provider)
 }
 
 // failoverVendors are two vendors no other test names, each with one model, m.
