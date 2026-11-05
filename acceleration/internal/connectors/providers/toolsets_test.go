@@ -115,6 +115,19 @@ func (s *ToolsetSuite) TestMetabaseOffersOnlyTheToolsItsScopesReach() {
 		"glossary", "learn", "run_saved_question", "search"}, names)
 }
 
+// TestLinearAppListsTheReadOnlyToolsLinearDoes: linear_app.yaml and linear.yaml reach the same
+// MCP server, https://mcp.linear.app/mcp, so a tool only reads on one when it does on the other
+// (AI-2777).
+func (s *ToolsetSuite) TestLinearAppListsTheReadOnlyToolsLinearDoes() {
+	app, linear := s.manifest("linear_app"), s.manifest("linear")
+
+	s.Equal(linear.Endpoints["mcp"], app.Endpoints["mcp"])
+	s.Require().Len(app.Sources, 1)
+	s.Require().Len(linear.Sources, 1)
+	s.Require().NotEmpty(linear.Sources[0].ReadOnlyTools)
+	s.Equal(linear.Sources[0].ReadOnlyTools, app.Sources[0].ReadOnlyTools)
+}
+
 // TestAGrantOfDriveMeetsWhatGoogleWriteToolsNeed: Google's tool pages take drive for each write
 // tool (google_drive.yaml, google_docs.yaml), so a grant holding drive, such as one moved from a
 // plugin that asked for it, needs nothing more; one holding only the read scopes does.
