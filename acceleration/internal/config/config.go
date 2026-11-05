@@ -375,10 +375,14 @@ type Agent struct {
 	// says what the flow controller does with its rulings: off (the default), shadow (asks
 	// it beside the flow controller and acts on nothing it says) or act (asks it first, and
 	// the flow controller decides the turns it doesn't answer in time). AudioFloorAudio is
-	// how the audio is sent: opus (the default) or pcm, for debugging.
-	AudioFloorURL   string `koanf:"chorus_asr_url"`
-	AudioFloorMode  string `koanf:"chorus_asr_mode"`
-	AudioFloorAudio string `koanf:"chorus_asr_audio"`
+	// how the audio is sent: opus (the default) or pcm, for debugging. AudioFloorInterims
+	// says whether its transcriber writes the words so far while the caller talks: on (the
+	// default) or off, for a server short of transcription lanes, where the words come at
+	// the turn's end.
+	AudioFloorURL      string `koanf:"chorus_asr_url"`
+	AudioFloorMode     string `koanf:"chorus_asr_mode"`
+	AudioFloorAudio    string `koanf:"chorus_asr_audio"`
+	AudioFloorInterims string `koanf:"chorus_asr_interims"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -559,6 +563,7 @@ var variables = map[string]string{
 	"agent.chorus_asr_url":      "ROUTER_CHORUS_ASR_URL",
 	"agent.chorus_asr_mode":     "ROUTER_CHORUS_ASR_MODE",
 	"agent.chorus_asr_audio":    "ROUTER_CHORUS_ASR_AUDIO",
+	"agent.chorus_asr_interims": "ROUTER_CHORUS_ASR_INTERIMS",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -798,6 +803,11 @@ func (c Config) validate() error {
 	case "", "opus", "pcm":
 	default:
 		return fmt.Errorf("config: agent.chorus_asr_audio (ROUTER_CHORUS_ASR_AUDIO) is opus or pcm, got %q", c.Agent.AudioFloorAudio)
+	}
+	switch c.Agent.AudioFloorInterims {
+	case "", "on", "off":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_interims (ROUTER_CHORUS_ASR_INTERIMS) is on or off, got %q", c.Agent.AudioFloorInterims)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:

@@ -266,6 +266,8 @@ type Client struct {
 	url    string
 	format Format
 	http   *http.Client
+	// interims says its transcribers write the words so far while the caller talks.
+	interims bool
 	// now is the clock the policy's age is read by: time.Now, but in tests.
 	now func() time.Time
 
@@ -290,7 +292,7 @@ func New(url string, format Format, client *http.Client) *Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, now: time.Now, agents: map[[sha256.Size]byte]registration{}}
+	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, interims: true, now: time.Now, agents: map[[sha256.Size]byte]registration{}}
 }
 
 // NewStream returns a stream of a participant's audio, as the server is sent it, that keeps
@@ -705,10 +707,12 @@ func lastRunes(s string, n int) string {
 }
 
 // Open returns a client of the server a deployment's settings name, or nil without one, and
-// the mode its agents ask it in. Loading the settings checked both.
+// the mode its agents ask it in. Loading the settings checked them all.
 func Open(settings config.Agent) (*Client, Mode) {
 	if settings.AudioFloorURL == "" {
 		return nil, ""
 	}
-	return New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil), Mode(settings.AudioFloorMode)
+	client := New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil)
+	client.interims = settings.AudioFloorInterims != "off"
+	return client, Mode(settings.AudioFloorMode)
 }

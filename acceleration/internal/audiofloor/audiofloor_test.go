@@ -30,6 +30,7 @@ import (
 	"github.com/thesyncim/gopus/container/ogg"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -237,6 +238,19 @@ func (s *ClientSuite) TestAnAgentIsRegisteredOnceAndTheMomentGoesInTheBody() {
 	s.Equal("Votre traversée à 8 h", s.server.turns[0].Said)
 	s.Equal([]byte{1, 0, 0xff, 0xff}, s.server.audio[0])
 	s.Equal("audio/pcm;rate=16000;channels=1;format=s16le", s.server.types[0])
+}
+
+// The settings open a client whose transcribers write the words so far while the caller
+// talks unless they say off.
+func TestTheSettingsSayWhetherTheWordsAreWrittenWhileTheCallerTalks(t *testing.T) {
+	for setting, interims := range map[string]bool{"": true, "on": true, "off": false} {
+		client, mode := Open(config.Agent{AudioFloorURL: "http://floor:8080", AudioFloorMode: "act", AudioFloorInterims: setting})
+		require.NotNil(t, client, setting)
+		require.Equal(t, Act, mode)
+		require.Equal(t, interims, NewTranscriber(client, "", nil, slog.New(slog.DiscardHandler)).interims, "interims %q", setting)
+	}
+	client, _ := Open(config.Agent{})
+	require.Nil(t, client)
 }
 
 func (s *ClientSuite) TestAChangedAgentIsRegisteredAgain() {

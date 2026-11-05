@@ -140,9 +140,9 @@ type Transcriber struct {
 	// retrying has its audio asked for again at its end, or once more speech has come.
 	missed   atomic.Int64
 	retrying bool
-	// interims says the words so far are written while the caller talks (interim); spoken
-	// is the speech since the utterance's words were last asked for, in frames, and
-	// interimOut says an interim is out, at most one at a time.
+	// interims says the words so far are written while the caller talks (interim), the
+	// client's setting; spoken is the speech since the utterance's words were last asked
+	// for, in frames, and interimOut says an interim is out, at most one at a time.
 	interims   bool
 	spoken     int64
 	interimOut atomic.Bool
@@ -176,7 +176,7 @@ func NewTranscriber(client *Client, model string, languages []string, logger *sl
 		model = DefaultModel
 	}
 	return &Transcriber{client: client, model: model, languages: languages, logger: logger, now: time.Now,
-		asker: neutralAgent{hearer: NewHearer(client, EndOfTurn{}, logger)}, interims: true,
+		asker: neutralAgent{hearer: NewHearer(client, EndOfTurn{}, logger)}, interims: client.interims,
 		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
 

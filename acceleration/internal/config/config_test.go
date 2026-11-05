@@ -863,6 +863,16 @@ func (s *ConfigSuite) TestTheAudioFloorsAudioIsOpusOrPCM() {
 	s.Equal("pcm", settings.Agent.AudioFloorAudio)
 }
 
+func (s *ConfigSuite) TestTheAudioFloorsInterimsAreOnOrOff() {
+	s.T().Setenv("ROUTER_CHORUS_ASR_INTERIMS", "yes")
+	_, _, err := Load("")
+	s.ErrorContains(err, "ROUTER_CHORUS_ASR_INTERIMS")
+	s.T().Setenv("ROUTER_CHORUS_ASR_INTERIMS", "off")
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal("off", settings.Agent.AudioFloorInterims)
+}
+
 func (s *ConfigSuite) TestAnAudioFloorModeNeedsAServer() {
 	s.T().Setenv("ROUTER_CHORUS_ASR_MODE", "act")
 	_, _, err := Load("")
