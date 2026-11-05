@@ -2293,7 +2293,7 @@ func (ConnectorOnInterrupt) Schema(registry huma.Registry) *huma.Schema {
 }
 
 // ConnectorBindingEvent is one MCP event a binding subscribes to on its connection's server.
-// The cap of 32 on a binding's events is plugin_events', a choice that is unverified.
+// The cap of 32 on a binding's events, the maxItems on its Events field, is a choice that is unverified.
 type ConnectorBindingEvent struct {
 	Event        string          `json:"event" minLength:"1" doc:"The event's name, as the server's events/list gives it, such as issue.created."`
 	Arguments    *map[string]any `json:"arguments,omitempty" doc:"The event's filters, as its inputSchema describes them."`
