@@ -1096,6 +1096,27 @@ func (e Endpointing) Valid() bool {
 	}
 }
 
+// Defines values for EpisodeCardsMode.
+const (
+	Off    EpisodeCardsMode = "off"
+	On     EpisodeCardsMode = "on"
+	Record EpisodeCardsMode = "record"
+)
+
+// Valid indicates whether the value is a known member of the EpisodeCardsMode enum.
+func (e EpisodeCardsMode) Valid() bool {
+	switch e {
+	case Off:
+		return true
+	case On:
+		return true
+	case Record:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ErrorType.
 const (
 	ErrorTypeAuthentication       ErrorType = "authentication"
@@ -3110,8 +3131,8 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
-	EpisodeCards *bool `json:"episode_cards,omitempty"`
+	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
+	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting  *Greeting `json:"greeting,omitempty"`
@@ -3189,8 +3210,10 @@ type AgentConfigPatch struct {
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
-	Dispatch     *AgentDispatch `json:"dispatch,omitempty"`
-	EpisodeCards *bool          `json:"episode_cards,omitempty"`
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+
+	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
+	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -3291,8 +3314,8 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
-	EpisodeCards *bool `json:"episode_cards,omitempty"`
+	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
+	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -5601,6 +5624,9 @@ type EndCallSettings struct {
 
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
+
+// EpisodeCardsMode What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
+type EpisodeCardsMode string
 
 // Equals Matches one value exactly: "value" is short for {"$eq": "value"}.
 type Equals struct {
