@@ -8,9 +8,12 @@ import 'assistant.dart';
 import 'chat_screen.dart';
 import 'conversations.dart';
 import 'notice.dart';
+import 'settings.dart';
+import 'trip_components.dart';
 
-void main() {
+Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await TripComponents.load();
   SystemChrome.setPreferredOrientations([DeviceOrientation.portraitUp]);
   runApp(const AssistantApp());
 }
@@ -98,6 +101,13 @@ class _RootScreenState extends State<RootScreen> {
                 .firstOrNull;
             return Text(open?.displayTitle ?? 'Juno');
           },
+        ),
+        trailing: StreamButton.icon(
+          style: .secondary,
+          type: .ghost,
+          tooltip: 'Settings',
+          onPressed: () => SettingsSheet.show(context),
+          icon: const Icon(Icons.tune),
         ),
       ),
       drawer: Drawer(

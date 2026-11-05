@@ -37,7 +37,7 @@ class _ChatScreenState extends State<ChatScreen> {
   static const _starters = [
     "What's on my calendar today?",
     'Remind me to call mum at 6pm',
-    'Plan a weekend in Lisbon',
+    'Plan a weekend in Ohrid',
     'What should I cook tonight?',
   ];
 
@@ -351,6 +351,7 @@ class _ChatScreenState extends State<ChatScreen> {
                 // A question on its way is thought about before the session says anything.
                 isThinking: workingOn == null && ((chat?.isThinking ?? false) || _asking != null),
                 approver: chat == null ? null : _approver,
+                ui: chat?.ui,
                 loadOlderMessages: chat != null && chat.hasOlderMessages
                     ? chat.loadOlderMessages
                     : null,

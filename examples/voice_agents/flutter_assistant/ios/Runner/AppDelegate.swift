@@ -45,6 +45,13 @@ final class CalendarChannel {
         switch call.method {
         case "listEvents":
           result(try await events(on: arguments["day"] as? String ?? ""))
+        case "eventsBetween":
+          // A plan's days for its calendar_check, each day's lines in turn.
+          var days: [[String]] = []
+          for day in arguments["days"] as? [String] ?? [] {
+            days.append(try await events(on: day))
+          }
+          result(days)
         case "addReminder":
           let due = (arguments["due"] as? NSNumber).map {
             Date(timeIntervalSince1970: $0.doubleValue / 1000)

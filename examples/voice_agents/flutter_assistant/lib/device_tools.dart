@@ -270,6 +270,42 @@ abstract final class DeviceTools {
   static String _coordinates(Position here) =>
       'They are at latitude ${here.latitude}, longitude ${here.longitude}';
 
+  /// The person's calendar from [start] to [end], at most two weeks of it, a list of what is on
+  /// each day, or null when it isn't shared with the app.
+  ///
+  /// For a reply's calendar_check: shown on the phone, never sent to the agent.
+  static Future<List<({DateTime date, List<String> events})>?> calendarDays(
+    DateTime start,
+    DateTime end,
+  ) async {
+    if (!await Permissions.allOf([Permission.calendarFullAccess])) return null;
+    final first = DateTime(start.year, start.month, start.day);
+    final last = end.isBefore(first) ? first : DateTime(end.year, end.month, end.day);
+    final days = [
+      for (
+        var day = first;
+        !day.isAfter(last) && day.difference(first).inDays < 14;
+        day = DateTime(day.year, day.month, day.day + 1)
+      )
+        day,
+    ];
+    final isoDay = DateFormat('yyyy-MM-dd');
+    try {
+      final lines = await _calendar.invokeMethod<List<Object?>>('eventsBetween', {
+        'days': [for (final day in days) isoDay.format(day)],
+      });
+      return [
+        for (final (index, day) in days.indexed)
+          (
+            date: day,
+            events: [for (final line in (lines?[index] as List<Object?>? ?? const [])) '$line'],
+          ),
+      ];
+    } on PlatformException {
+      return null;
+    }
+  }
+
   /// Calls the app's calendar code with [method] and [arguments].
   ///
   /// What it could not do comes back as words for the model.
