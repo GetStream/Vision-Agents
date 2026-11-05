@@ -387,6 +387,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The agent passes on only an ID a source gave it as that kind
+
+A link a tool returns now gives an ID only of a kind that its line, the keys above it or the tool's name names. A person's profile link from a user lookup is no channel ID, and a message link's timestamp is no case ID; a channel search's permalink still gives the channel. A link or line that a tool reads back and that holds a line the agent wrote earlier, in a reply or in a message it posted, is no source for the IDs in it. An ID before its kind word counts only where that word ends its phrase. So `Ana Lind (U…) - channel owner` and `Owner U… channel admin` give no channel, while `#help (C…) - public_channel` and `C… (channel)` still do (AI-2852, AI-2853, AI-2854).
+
 ### `git lfs pull` works in a sandbox behind the egress proxy
 
 Under `code_sandbox.broker: proxy`, Git LFS's batch request was refused as a write, so `git lfs pull` failed. GitHub's connector (revision 11) now lets a batch that asks to download through, and fetches the objects from the host GitHub names with no token; an upload is still refused (#1768).
