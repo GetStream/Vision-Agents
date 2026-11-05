@@ -433,3 +433,33 @@ func (s *VendorRateLimitSuite) TestNoLabelHoldsAKey() {
 		}
 	}
 }
+
+// The pool reads the start of a 429 to tell a spend cap: what it read is put back.
+func (s *VendorRateLimitSuite) TestA429LongerThanWhatIsReadOfItIsHandedBackWhole() {
+	p := s.pool("long")
+	long := strings.Repeat("x", 3*drainLimit)
+	for _, key := range p.keys {
+		s.answer(key, answer{status: http.StatusTooManyRequests, body: long})
+	}
+
+	status, body := s.post(p.Pool)
+
+	s.Equal(http.StatusTooManyRequests, status)
+	s.Equal(long, body)
+	s.Equal(p.keys, s.keysSeen())
+}
+
+// GOOGLE_API_KEY and GEMINI_API_KEY may hold the same key: its series keeps the first name it
+// was read under, not the last.
+func (s *VendorRateLimitSuite) TestKeysReadFromTwoVariablesKeepTheFirst() {
+	p := s.pool("first")
+	second := fmt.Sprintf("VR_SECOND_%s_API_KEY", rand.Text())
+	s.T().Setenv(second, strings.Join(p.keys, ","))
+	FromEnv("", second)
+	s.answer(p.keys[0], answer{status: http.StatusTooManyRequests})
+
+	s.post(p.Pool)
+
+	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
+	s.Empty(s.limited(second))
+}

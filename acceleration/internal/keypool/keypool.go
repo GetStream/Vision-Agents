@@ -281,13 +281,11 @@ func (r *ring) name(keyVar string) {
 	}
 }
 
-// from gives the ring the variable Env read its keys from, unless it has one.
+// from gives the ring the variable Env read its keys from.
 func (r *ring) from(source string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.source == "" {
-		r.source = source
-	}
+	r.source = source
 }
 
 // countRefused counts a refused attempt under the pool's key variable, never its key.
@@ -613,7 +611,7 @@ func (p *Pool) Dial(
 		key := p.Next()
 		endpoint, header := build(key)
 		conn, response, err := dialer.DialContext(ctx, endpoint, header)
-		if response != nil && key != "" {
+		if response != nil {
 			p.observe(key, response)
 		}
 		if err == nil || response == nil || key == "" {
