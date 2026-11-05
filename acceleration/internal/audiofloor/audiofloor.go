@@ -251,15 +251,31 @@ type Answer struct {
 	Ruling            *Ruling  `json:"ruling"`
 }
 
+const (
+	// policyTTL is how long a policy read from the server stands before it is read again,
+	// in the background, so that a server moved to another model is followed within it;
+	// policyRetry is how soon a read that failed is tried again; and policyReadTimeout
+	// bounds a read made in the background, which is on no call's deadline.
+	policyTTL         = 5 * time.Minute
+	policyRetry       = 30 * time.Second
+	policyReadTimeout = wordsTimeout
+)
+
 // Client asks one server. It is safe for concurrent use.
 type Client struct {
 	url    string
 	format Format
 	http   *http.Client
+	// now is the clock the policy's age is read by: time.Now, but in tests.
+	now func() time.Time
 
-	mu     sync.Mutex
-	policy *Policy
-	agents map[[sha256.Size]byte]registration
+	mu sync.Mutex
+	// policy is the last one read, nextRead when it is to be read again, and reading says a
+	// read is out, in the background.
+	policy   *Policy
+	nextRead time.Time
+	reading  bool
+	agents   map[[sha256.Size]byte]registration
 }
 
 // registration is the server's name for an agent, or why it refused it: an agent refused
@@ -274,22 +290,60 @@ func New(url string, format Format, client *http.Client) *Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, agents: map[[sha256.Size]byte]registration{}}
+	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, now: time.Now, agents: map[[sha256.Size]byte]registration{}}
 }
 
 // NewStream returns a stream of a participant's audio, as the server is sent it, that keeps
 // the last keep of it.
 func (c *Client) NewStream(keep time.Duration) (*Stream, error) { return newStream(c.format, keep) }
 
-// Policy is the server's policy for its model (GET /v1/info's end_of_turn), asked once and
-// again after the server has restarted.
+// Policy is the server's policy for its model (GET /v1/info's end_of_turn). The first call
+// reads it within ctx. From then on it is the last one read, which is read again in the
+// background once it is policyTTL old, and sooner after an answer that says the server may
+// have changed: a 404 for an agent it was told, or a 422 refusing one. No decision waits on
+// a read, and one that fails leaves the last policy standing, to be read again after
+// policyRetry.
 func (c *Client) Policy(ctx context.Context) (Policy, error) {
 	c.mu.Lock()
 	known := c.policy
+	if known != nil && !c.now().Before(c.nextRead) {
+		c.rereadLocked()
+	}
 	c.mu.Unlock()
 	if known != nil {
 		return *known, nil
 	}
+	return c.readPolicy(ctx)
+}
+
+// PolicyNow reads the server's policy now, within ctx, for a caller on no call's path that
+// wants it as it is: an agent's end_of_turn is checked against it as the agent is written.
+// What it reads is what Policy answers from then on.
+func (c *Client) PolicyNow(ctx context.Context) (Policy, error) { return c.readPolicy(ctx) }
+
+// rereadLocked has the policy read again in the background, unless a read is out already.
+// With none read yet there is nothing to stand in for it, and the next Policy reads it.
+func (c *Client) rereadLocked() {
+	c.nextRead = time.Time{}
+	if c.policy == nil || c.reading {
+		return
+	}
+	c.reading = true
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), policyReadTimeout)
+		defer cancel()
+		_, err := c.readPolicy(ctx)
+		c.mu.Lock()
+		defer c.mu.Unlock()
+		c.reading = false
+		if err != nil {
+			c.nextRead = c.now().Add(policyRetry)
+		}
+	}()
+}
+
+// readPolicy reads GET /v1/info within ctx, and keeps the policy it answers.
+func (c *Client) readPolicy(ctx context.Context) (Policy, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.url+"/v1/info", nil)
 	if err != nil {
 		return Policy{}, stack.Wrap(err)
@@ -310,7 +364,7 @@ func (c *Client) Policy(ctx context.Context) (Policy, error) {
 		return Policy{}, stack.Wrap(fmt.Errorf("%w: its end_of_turn is incomplete", ErrUnsupported))
 	}
 	c.mu.Lock()
-	c.policy = &policy
+	c.policy, c.nextRead = &policy, c.now().Add(policyTTL)
 	c.mu.Unlock()
 	return policy, nil
 }
@@ -370,10 +424,11 @@ func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harne
 			status, err = c.do(req, &answer)
 		}
 		if status == http.StatusNotFound && attempt == 0 {
-			// A restarted server knows no agent, and may serve another model.
+			// A restarted server knows no agent, and may serve another model: its policy is
+			// read again, in the background, and the last one read stands until then.
 			c.mu.Lock()
 			clear(c.agents)
-			c.policy = nil
+			c.rereadLocked()
 			c.mu.Unlock()
 			continue
 		}
@@ -533,6 +588,11 @@ func (c *Client) register(ctx context.Context, key [sha256.Size]byte, spec []byt
 		clear(c.agents)
 	}
 	c.agents[key] = result
+	if result.refused != nil {
+		// Refused for more tools than the model has answers for: the server may have moved
+		// to another model, with another policy.
+		c.rereadLocked()
+	}
 	c.mu.Unlock()
 	return result.id, result.refused
 }

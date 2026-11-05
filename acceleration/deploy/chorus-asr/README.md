@@ -362,7 +362,11 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   words at a pause only when speech has come since it last did, so no audio is written
   twice; it ends the utterance with one final, and the next begins after it, with none of
   its audio.
-- **A restart.** A 404 has the router register again and read `/v1/info` again, once.
+- **A restart, or another model.** A 404 has the router register again. The policy it read
+  from `/v1/info` is read again in the background, every 5 minutes and after a 404 or a 422
+  refusing an agent, with the last one read standing until then: no decision waits on it,
+  and a read that fails is tried again after 30 s. An agent written meanwhile has its
+  `end_of_turn` checked against `/v1/info` as it answers then.
 
 ## Measured
 

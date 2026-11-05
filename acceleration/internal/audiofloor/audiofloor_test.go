@@ -233,7 +233,22 @@ func (s *ClientSuite) TestAChangedAgentIsRegisteredAgain() {
 	s.Len(s.server.registered, 2)
 }
 
-// A restarted server has forgotten its agents, and may serve another model and policy.
+// infos is how many times the server was asked for its policy.
+func (s *serverSuite) infos() int {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	return s.server.infos
+}
+
+// publish has the server publish another policy: the same, with default as its default.
+func (s *serverSuite) publish(preset string) {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.server.info = strings.Replace(testInfo, `"default":"safe"`, `"default":"`+preset+`"`, 1)
+}
+
+// A restarted server has forgotten its agents, and may serve another model and policy: the
+// policy is read again, in the background, and the last one read stands until then.
 func (s *ClientSuite) TestARestartedServerIsAskedAgain() {
 	_, err := s.client.Policy(context.Background())
 	s.Require().NoError(err)
@@ -242,17 +257,75 @@ func (s *ClientSuite) TestARestartedServerIsAskedAgain() {
 	s.server.mu.Lock()
 	s.server.known = map[string]bool{}
 	s.server.mu.Unlock()
+	s.publish("fast")
 	_, err = s.client.Decide(context.Background(), booking, Turn{}, some)
 	s.Require().NoError(err)
 	s.Len(s.server.registered, 2)
+	s.Eventually(func() bool { return s.infos() == 2 }, 5*time.Second, time.Millisecond)
+	s.Eventually(func() bool {
+		policy, err := s.client.Policy(context.Background())
+		return err == nil && policy.Default == "fast"
+	}, 5*time.Second, time.Millisecond)
+}
+
+// A policy stands for policyTTL, and is then read again in the background: the call that
+// finds it old gets the last one read, and the next the new one.
+func (s *ClientSuite) TestAnOldPolicyIsReadAgainInTheBackground() {
+	var skew atomic.Int64
+	s.client.now = skewed(&skew)
+	first, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.publish("fast")
+	again, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Equal(first.Default, again.Default, "stands within the TTL")
+	s.Equal(1, s.infos())
+
+	skew.Store(int64(policyTTL))
+	old, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Equal("safe", old.Default, "the last one read, while it is read again")
+	s.Eventually(func() bool {
+		policy, err := s.client.Policy(context.Background())
+		return err == nil && policy.Default == "fast"
+	}, 5*time.Second, time.Millisecond)
+	s.Equal(2, s.infos(), "read again once")
+}
+
+// A read that fails leaves the last policy standing, and is tried again after policyRetry.
+func (s *ClientSuite) TestAFailedReadLeavesTheLastPolicyStanding() {
+	var skew atomic.Int64
+	s.client.now = skewed(&skew)
+	_, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.server.mu.Lock()
+	s.server.info = `{"end_of_turn":{}}`
+	s.server.mu.Unlock()
+	skew.Store(int64(policyTTL))
 	_, err = s.client.Policy(context.Background())
 	s.Require().NoError(err)
-	s.Equal(2, s.server.infos)
+	s.Eventually(func() bool { return s.infos() == 2 }, 5*time.Second, time.Millisecond)
+	policy, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Equal("safe", policy.Default)
+	s.Equal(2, s.infos(), "not before policyRetry")
+
+	s.publish("fast")
+	skew.Add(int64(policyRetry))
+	_, err = s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Eventually(func() bool {
+		policy, err := s.client.Policy(context.Background())
+		return err == nil && policy.Default == "fast"
+	}, 5*time.Second, time.Millisecond)
 }
 
 // An agent with more tools than the model has answers for is refused, and isn't offered
-// again until it changes.
+// again until it changes. The server may have moved to another model to refuse it, so its
+// policy is read again, in the background.
 func (s *ClientSuite) TestARefusedAgentIsRefusedUntilItChanges() {
+	_, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
 	s.server.refuse = http.StatusUnprocessableEntity
 	for range 2 {
 		_, err := s.client.Decide(context.Background(), booking, Turn{}, some)
@@ -260,8 +333,9 @@ func (s *ClientSuite) TestARefusedAgentIsRefusedUntilItChanges() {
 		s.ErrorContains(err, "22 tools")
 	}
 	s.Len(s.server.registered, 1)
-	_, err := s.client.Decide(context.Background(), Agent{Instructions: booking.Instructions}, Turn{}, some)
+	_, err = s.client.Decide(context.Background(), Agent{Instructions: booking.Instructions}, Turn{}, some)
 	s.Require().NoError(err)
+	s.Eventually(func() bool { return s.infos() == 2 }, 5*time.Second, time.Millisecond)
 }
 
 func (s *ClientSuite) TestAServerWithoutAPolicyIsUnsupported() {

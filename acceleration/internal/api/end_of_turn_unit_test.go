@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -85,6 +86,28 @@ func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishes(t *testing.T) {
 		require.False(t, ok, "%+v", c.chosen)
 		require.Contains(t, message, c.says)
 	}
+}
+
+// A choice is checked against what the server publishes now, not against what a session read
+// of it earlier: a preset the server has stopped publishing is refused as the agent is written.
+func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishesNow(t *testing.T) {
+	var info atomic.Pointer[string]
+	info.Store(new(chorusASRInfo))
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(*info.Load()))
+	}))
+	t.Cleanup(srv.Close)
+	client := audiofloor.New(srv.URL, audiofloor.Opus, srv.Client())
+	_, err := client.Policy(context.Background())
+	require.NoError(t, err, "a session read the policy, with its fast preset")
+
+	info.Store(new(strings.Replace(chorusASRInfo, `"presets":{"safe":1100,"fast":500}`, `"presets":{"safe":1100}`, 1)))
+	s := serverAsking(client, audiofloor.Act)
+	_, message, ok := s.endOfTurnComplaint(context.Background(), store.EndOfTurn{Preset: "fast"}, store.EndOfTurn{})
+	require.False(t, ok, "fast is no longer published")
+	require.Contains(t, message, `there is no preset "fast"; the model's are safe`)
+	_, message, ok = s.endOfTurnComplaint(context.Background(), store.EndOfTurn{Preset: "safe"}, store.EndOfTurn{})
+	require.True(t, ok, message)
 }
 
 // A choice stored before is left editable, as it was checked when it was written: the server
