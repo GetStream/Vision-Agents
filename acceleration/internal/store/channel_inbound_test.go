@@ -122,6 +122,37 @@ func (s *StoreSuite) TestAnInboundMessagesMediaIsStoredUnderItsOwnKeys() {
 	s.Equal(files, s.claimedOne(s.base, "1759740000.000100").Message().Media)
 }
 
+// The media an attempt saves is what the row's next claim reads: a photo named by id keeps
+// where Stream Chat stored its upload under a key of its own, its url and mime_type still
+// empty, so a build from before it reads the row as it did and writes no image (AI-2757). A
+// worker whose lease was taken over saves nothing.
+func (s *StoreSuite) TestAnInboundMessagesUploadsAreSavedOnlyUnderTheRowsLease() {
+	byID := core.Media{ID: "1003383421387256", MIMEType: "image/jpeg"}
+	s.inbound("thread-one", "1759740000.000100", func(message *ChannelInbound) {
+		message.Media = []core.Media{byID}
+	})
+	stale := s.claimedOne(s.base, "1759740000.000100")
+	current := s.claimedOne(s.base.Add(time.Minute), "1759740000.000100")
+	uploaded := []core.Media{{ID: "1003383421387256", MIMEType: "image/png", Uploaded: "https://cdn.example.com/photo-1.png"}}
+
+	saved, err := s.store.SaveChannelInboundMedia(s.ctx, stale, uploaded)
+	s.Require().NoError(err)
+	s.False(saved, "the lease is another worker's")
+	saved, err = s.store.SaveChannelInboundMedia(s.ctx, current, uploaded)
+	s.Require().NoError(err)
+	s.True(saved)
+
+	var media string
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx,
+		"SELECT media::text FROM channel_thread_inbound WHERE channel_id = 'thread-one'").Scan(&media))
+	s.JSONEq(`[{"url": "", "mime_type": "", "id": "1003383421387256", "id_mime_type": "image/png",
+		"uploaded": "https://cdn.example.com/photo-1.png"}]`, media)
+	s.Equal(uploaded, s.claimedOne(s.base.Add(2*time.Minute), "1759740000.000100").Message().Media)
+	state, attempts := s.inboundState("thread-one", "1759740000.000100")
+	s.Equal(ChannelInboundQueued, state)
+	s.Zero(attempts, "saving the media records no attempt")
+}
+
 func (s *StoreSuite) TestAnInboundMessageWithNoMediaAndNoForwardIsClaimedWithNeither() {
 	s.inbound("thread-one", "1759740000.000100")
 

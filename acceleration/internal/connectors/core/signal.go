@@ -87,6 +87,11 @@ type Media struct {
 	// ID is, in place of URL, the provider's id for the file, which the manifest's media
 	// lookup finds it by (MessageRule.MediaLookup, AI-2740).
 	ID string
+	// Uploaded is, for a file named by ID, where Stream Chat keeps it once the channel bridge
+	// uploaded it to the thread channel, so a later attempt of the queued message writes that
+	// upload instead of downloading and uploading the file again (AI-2757). MIMEType is then
+	// the type the file's bytes sniffed as.
+	Uploaded string
 }
 
 // InboundMessage is one message a person sent on an external thread, named by the provider's

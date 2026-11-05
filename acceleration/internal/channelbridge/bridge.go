@@ -21,6 +21,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -873,15 +874,16 @@ func (b *Bridge) openThread(ctx context.Context, thread store.ChannelThread, con
 }
 
 // upload stores files, the photos download fetched, on the thread channel as the message's
-// author, as image attachments for writeInto. An upload Stream Chat fails fails the attempt,
+// author, and returns media with each one stored as uploaded (core.Media.Uploaded), whose
+// uploads are writeInto's image attachments. An upload Stream Chat fails fails the attempt,
 // as its other writes do, so the row is tried again. On the row's last attempt, or when Stream
 // Chat refuses the upload for good (refusedForGood), the photo is left out and logged with ids
 // only, as one that cannot be downloaded is, so the message's text is still written.
-func (b *Bridge) upload(ctx context.Context, target streamThread, thread store.ChannelThread, files []sandbox.File, last bool, log *slog.Logger) ([]getstream.Attachment, error) {
-	var attachments []getstream.Attachment
-	for i, file := range files {
+func (b *Bridge) upload(ctx context.Context, target streamThread, thread store.ChannelThread, media []core.Media, files []fetched, last bool, log *slog.Logger) ([]core.Media, error) {
+	media = slices.Clone(media)
+	for i, photo := range files {
 		// As the person, as a photo they send in an app chat is (conversation.PublishPhotos).
-		uploaded, err := conversation.Upload(ctx, target.client, thread.ChannelID, file, target.author)
+		uploaded, err := conversation.Upload(ctx, target.client, thread.ChannelID, photo.file, target.author)
 		if err != nil {
 			if !last && !refusedForGood(err) {
 				return nil, stack.Wrap(err)
@@ -890,17 +892,29 @@ func (b *Bridge) upload(ctx context.Context, target streamThread, thread store.C
 				"connection", thread.ConnectionID, "photo", i+1, "error", err)
 			continue
 		}
-		attachments = append(attachments, getstream.Attachment{
-			Type: getstream.PtrTo("image"), ImageUrl: &uploaded.URL, Custom: map[string]any{"mime_type": file.MIME},
-		})
+		media[photo.at].Uploaded, media[photo.at].MIMEType = uploaded.URL, photo.file.MIME
 	}
-	return attachments, nil
+	return media, nil
+}
+
+// uploads are the photos of media an attempt of the row uploaded (upload) as image
+// attachments, as Stream Chat keeps them.
+func uploads(media []core.Media) []getstream.Attachment {
+	var attachments []getstream.Attachment
+	for _, file := range media {
+		if file.Uploaded != "" {
+			attachments = append(attachments, getstream.Attachment{
+				Type: getstream.PtrTo("image"), ImageUrl: &file.Uploaded, Custom: map[string]any{"mime_type": file.MIMEType},
+			})
+		}
+	}
+	return attachments
 }
 
 // writeInto writes message into its thread channel as its author under the Stream message id
 // id, with its photos at a URL and uploaded, the attachments upload stored. When Stream Chat
 // refuses the write as already done (alreadyWritten), that refusal carries no message, so the
-// message is rebuilt as written and returned with the error: with this attempt's uploads,
+// message is rebuilt as written and returned with the error: with the row's uploads,
 // never a provider's URL that needs the connection's credential.
 func (b *Bridge) writeInto(ctx context.Context, target streamThread, thread store.ChannelThread, message core.InboundMessage, id string, uploaded []getstream.Attachment) (Written, error) {
 	attachments := append(photos(message.Media), uploaded...)

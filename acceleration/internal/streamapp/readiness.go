@@ -171,6 +171,20 @@ func (c *Clients) Readiness(ctx context.Context, bound Bound) (Readiness, error)
 	return readiness, err
 }
 
+// ChecksTokens reports whether Stream says the app a client acts in checks the tokens it is
+// sent: only then is a Stream user a request names one a token Stream checked says. An app
+// with no client, or one Stream could not be asked about (err), is taken as one that does not.
+func (c *Clients) ChecksTokens(ctx context.Context, bound Bound) (bool, error) {
+	if bound.Client == nil {
+		return false, nil
+	}
+	readiness, err := c.Readiness(ctx, bound)
+	if err != nil {
+		return false, err
+	}
+	return !readiness.AuthChecksOff, nil
+}
+
 // LearnDeploymentApp asks Stream which app the deployment's own credential belongs to,
 // when nobody said, and records it. A source with no deployment app of its own has
 // nothing to learn.
