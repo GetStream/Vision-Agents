@@ -1740,6 +1740,12 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			a.lastHeardAt = time.Now()
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
+			if typed.Interim {
+				// Words of a turn still going on, from a transcriber that will say when it
+				// has ended: shown, and acted on when the final comes.
+				a.converse.Glimpsed(typed)
+				continue
+			}
 			a.act(a.converse.Observe(typed, a.floor()))
 
 		case stt.Connected:

@@ -401,6 +401,28 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 	return actions
 }
 
+// Glimpsed shows a participant's words as they talk, from a transcriber that ends their turn
+// itself (stt.Transcript.Interim): the line their turn is going into gets them (Hearing), as
+// a revision's words do, and nothing else moves. No turn is put to the flow controller, no
+// overlap is asked about and no backchannel is offered, as the words say nothing about a
+// pause: the transcriber will say when the turn has ended, with its final, which is observed
+// as any final is, under the same line.
+func (c *converse) Glimpsed(transcript stt.Transcript) {
+	c.mu.Lock()
+	line := c.lineLocked(transcript.Participant.ID)
+	shown := c.lineTextLocked(transcript.Participant.ID, strings.TrimSpace(transcript.Text))
+	c.mu.Unlock()
+	if shown == "" {
+		return
+	}
+	c.emitter.Send(Hearing{
+		Participant: transcript.Participant,
+		Text:        shown,
+		Language:    transcript.Language,
+		LineID:      line,
+	})
+}
+
 // overlap asks the controller whether the agent should give up the floor to a caller who
 // is talking over it, while their words are still in progress.
 //

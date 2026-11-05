@@ -6178,3 +6178,47 @@ func knows(params llm.ResponseParams, text string) bool {
 		return harness.IsNote(message) && strings.Contains(message.Content, text)
 	})
 }
+
+// A transcriber that ends turns itself sends the words of a turn still going on as interims
+// (stt.Transcript.Interim), for a watcher to see the words appear as the caller talks. The
+// agent shows them under the line the turn is going into and acts on nothing: they are no
+// sign the caller has paused, so the flow controller is not asked until the final, which is
+// answered as any final is, under the same line.
+func (s *AgentSuite) TestAnInterimIsShownAndNotActedOn() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	hearings := func() []Hearing {
+		var out []Hearing
+		for _, event := range s.events.seen() {
+			if typed, ok := event.(Hearing); ok {
+				out = append(out, typed)
+			}
+		}
+		return out
+	}
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Interim: true, Utterance: 1, Text: "one two", Language: "en"})
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Interim: true, Utterance: 1, Text: "one two three", Language: "en"})
+	s.eventually(func() bool { return len(hearings()) == 2 }, "the words were not shown as they arrived")
+	time.Sleep(3 * defaultCadenceGap)
+	s.Empty(s.flow.requests(), "an interim is no sign the caller has paused")
+	s.Empty(s.model.requests(), "nothing was answered")
+
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 1, Text: "one two three four", Language: "en", Confidence: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the final was never answered")
+	s.Equal("one two three four", harness.WithoutNotes(s.model.requests()[0].Input)[0].Content)
+	shown := hearings()
+	s.Require().GreaterOrEqual(len(shown), 3)
+	s.Equal("one two three", shown[1].Text)
+	s.Equal(shown[0].LineID, shown[len(shown)-1].LineID, "one line, from the first interim to the final")
+	var heard []Heard
+	for _, event := range s.events.seen() {
+		if typed, ok := event.(Heard); ok {
+			heard = append(heard, typed)
+		}
+	}
+	if s.Len(heard, 1) {
+		s.Equal(shown[0].LineID, heard[0].LineID, "heard under the line it was shown in")
+	}
+}
