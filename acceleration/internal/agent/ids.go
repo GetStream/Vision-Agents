@@ -755,8 +755,18 @@ var link = regexp.MustCompile("(?i)https?://[^\\s<>\"{}|\\\\^`]+")
 
 // linkParts returns every path segment and query value of the links in text, each
 // alphanumeric. Only whole parts are given: the 1793 inside a segment p1793 is not one.
+//
+// Only a part that mixes letters and digits is given. A number alone is as often a page, a
+// year or a size as an ID, and letters alone are a word, a name or a section: neither is an
+// ID of a kind the link leaves unnamed. A number the person means as an ID still counts
+// where what they wrote names its kind, as "…/cases/48213" does.
 func linkParts(text string) []string {
 	var parts []string
+	add := func(part string) {
+		if part = alphanumeric(part); strings.ContainsFunc(part, unicode.IsLetter) && strings.ContainsFunc(part, unicode.IsDigit) {
+			parts = append(parts, part)
+		}
+	}
 	for _, written := range link.FindAllString(text, -1) {
 		address, err := url.Parse(written)
 		if err != nil {
@@ -768,11 +778,11 @@ func linkParts(text string) []string {
 			if err != nil {
 				continue
 			}
-			parts = append(parts, alphanumeric(segment))
+			add(segment)
 		}
 		for _, values := range address.Query() {
 			for _, value := range values {
-				parts = append(parts, alphanumeric(value))
+				add(value)
 			}
 		}
 	}
