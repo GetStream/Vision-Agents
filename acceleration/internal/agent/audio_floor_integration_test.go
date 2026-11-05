@@ -111,6 +111,9 @@ func TestAudioFloorReplay(t *testing.T) {
 	t.Run("5 a long turn", h.longTurn)
 	t.Run("6 a cough alone", h.coughAlone)
 	t.Run("9 transcription alone", h.transcriptionAlone)
+	t.Run("10a live words over another language in the room, no languages", func(t *testing.T) { h.liveWordsOverAnotherLanguage(t, nil) })
+	t.Run("10b live words over another language in the room, callers speak en", func(t *testing.T) { h.liveWordsOverAnotherLanguage(t, []string{"en"}) })
+	t.Run("11 a caller talking over the agent without a pause", h.talkedOver)
 	t.Run("8 latency", h.latency)
 }
 
@@ -127,8 +130,10 @@ type floorHarness struct {
 	endOfTurn audiofloor.EndOfTurn
 	ending    audiofloor.Ending
 
-	weather, uhhuh, rain, pharmacy, long, reply []int16
-	count                                       [][]int16
+	weather, uhhuh, rain, pharmacy, long, stop, reply []int16
+	count                                             [][]int16
+	// portuguese is somebody else in the room, talking in another language.
+	portuguese []int16
 
 	mu        sync.Mutex
 	latencies []turnLatency
@@ -152,6 +157,7 @@ func newFloorHarness(t *testing.T, url string) *floorHarness {
 	h.endOfTurn = endOfTurnOf(t, os.Getenv("CHORUS_ASR_END_OF_TURN"))
 	h.weather, h.uhhuh, h.rain = fixture(t, "weather"), fixture(t, "uhhuh"), fixture(t, "rain")
 	h.pharmacy, h.long, h.reply = fixture(t, "pharmacy"), fixture(t, "long"), fixture(t, "reply")
+	h.stop, h.portuguese = fixture(t, "stop"), fixture(t, "portuguese")
 	for _, n := range []string{"one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten"} {
 		h.count = append(h.count, trimmed(fixture(t, "count-"+n)))
 	}
@@ -511,6 +517,108 @@ func (h *floorHarness) transcriptionAlone(t *testing.T) {
 		// The words alone are asked for only while the caller talks, as interims.
 		assert.True(t, r.start.Before(stopped[0].start), "words asked for alone once the caller stopped: %s %s at %s", r.method, r.path, c.since(r.start))
 	}
+}
+
+// roomLevel is how far below the caller somebody else talking in the room is heard, in dB:
+// a voice across the room, which the model writes when it is told no language.
+const roomLevel = 18
+
+// roomWords are the words of the room's Portuguese that English speech is never written
+// as, lowercase and without accents as plainWords strips them, to tell the room's words
+// from the caller's in what the agent heard.
+var roomWords = map[string]bool{"nao": true, "não": true, "desculpa": true, "buscar": true, "jogo": true, "tenho": true, "aquilo": true,
+	"agora": true, "passava": true, "acho": true, "olha": true, "deixa": true, "depois": true, "trato": true, "disso": true, "onde": true,
+	"tirar": true, "tarde": true, "disse": true, "vem": true, "está": true, "esta": true, "deixar": true, "estar": true}
+
+// fromTheRoom are text's words that are the room's.
+func fromTheRoom(text string) []string {
+	var out []string
+	for _, w := range strings.Fields(plainWords(text)) {
+		if roomWords[w] {
+			out = append(out, w)
+		}
+	}
+	return out
+}
+
+// 10. The caller's long turn with somebody else talking in the room, in Portuguese, 18 dB
+// below them: with no languages declared (10a), and with en (10b). The words so far are
+// shown while the caller talks, and none of them, nor any final, is in another script or
+// carries the room's words: with no language declared, an interim is asked for in the
+// language of the turn's first words at a pause rather than the server's guess at the audio
+// so far, which over the room's voice flipped language and script from one to the next.
+func (h *floorHarness) liveWordsOverAnotherLanguage(t *testing.T, languages []string) {
+	c := h.start(t, audiofloor.Act, replayInstructions, languages)
+	c.edge.background(bedBelow(h.portuguese, h.long, roomLevel), 0)
+	c.edge.pause(time.Second)
+	said := c.edge.say("long", h.long)
+	c.edge.pause(5 * time.Second)
+	c.settle(3*time.Second, 2*time.Minute)
+	defer c.report()
+
+	var interims, finals int
+	for _, w := range c.words.all() {
+		switch {
+		case w.T.Interim:
+			interims++
+		case w.T.Final():
+			finals++
+			assert.False(t, foreign(w.T.Text), "[transcriber] a final in another script: %q", w.T.Text)
+			assert.Empty(t, fromTheRoom(w.T.Text), "[transcriber] the room's words in a final: %q", w.T.Text)
+		}
+	}
+	t.Logf("[transcriber] %d interims shown and %d finals written of a %s turn", interims, finals, said.ended().Sub(said.began()).Round(time.Second))
+	assert.NotZero(t, interims, "[transcriber] the words so far were shown while the caller talked")
+	assert.NotZero(t, finals, "[transcriber] the turn was written")
+	for _, hearing := range all[Hearing](c) {
+		assert.False(t, foreign(hearing.E.Text), "[conversation] words in another script shown: %q", hearing.E.Text)
+		assert.Empty(t, fromTheRoom(hearing.E.Text), "[conversation] the room's words shown as the caller's: %q", hearing.E.Text)
+	}
+	var lines []string
+	for _, heard := range all[Heard](c) {
+		lines = append(lines, heard.E.Text)
+		assert.False(t, foreign(heard.E.Text), "[conversation] a turn in another script: %q", heard.E.Text)
+		assert.Empty(t, fromTheRoom(heard.E.Text), "[conversation] the room's words heard as the caller's: %q", heard.E.Text)
+	}
+	assert.Contains(t, plainWords(strings.Join(lines, " ")), "lisbon", "[conversation] the caller's English heard: %q", lines)
+}
+
+// stopWithin is how soon after the caller's first word over the agent the agent is to have
+// stopped: the time they are voiced before they are asked about, the decision, the words
+// and the interruption.
+const stopWithin = 700 * time.Millisecond
+
+// 11. A caller who talks over the agent without pausing: "No, no, stop, that's not what I
+// asked, I wanted Lisbon", its gaps cut to under 200 ms so that no pause reaches the
+// policy's first check, 1.5 s into a 9 s reply echoed at -30 dB with somebody talking in
+// the room at -40 dBFS. The agent stops within stopWithin of the caller's first word, on
+// the model's ruling, and answers what they said. A murmur over the agent, check 1, still
+// leaves the reply going.
+func (h *floorHarness) talkedOver(t *testing.T) {
+	c := h.start(t, audiofloor.Act, replayInstructions, []string{"en"})
+	c.edge.background(bedAt(h.portuguese, -40), echoAt(-30))
+	c.edge.pause(time.Second)
+	c.edge.say("weather", h.weather)
+	c.until(func() bool { return len(c.edge.replyStarts()) > 0 }, 20*time.Second, "the reply began")
+	time.Sleep(1500 * time.Millisecond)
+	over := c.edge.say("stop", withGapsUnder(h.stop, 150*time.Millisecond))
+	c.settle(4*time.Second, time.Minute)
+	defer c.report()
+
+	interrupted := all[Interrupted](c)
+	if assert.NotEmpty(t, interrupted, "the agent was stopped") {
+		took := interrupted[0].At.Sub(over.began())
+		t.Logf("the agent stopped %s after the caller's first word", took.Round(time.Millisecond))
+		assert.False(t, interrupted[0].At.Before(over.began()), "the agent stopped before the caller spoke")
+		assert.LessOrEqual(t, took, stopWithin, "the agent stopped %s after the caller's first word", took.Round(time.Millisecond))
+	}
+	for _, at := range c.edge.drops() {
+		assert.False(t, at.Before(over.began()), "the reply was thrown away %s before the caller spoke: the room or the echo stopped it", over.began().Sub(at).Round(time.Millisecond))
+	}
+	answered := c.answered(over)
+	h.measured(t, "11", answered)
+	assert.True(t, answered.ok, "what the caller said over the agent was answered")
+	assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
 }
 
 // firstCheck is how far into a pause the server's policy checks it first.
@@ -1646,6 +1754,55 @@ func scaled(samples []float64, dbfs float64) []float64 {
 		samples[i] *= gain
 	}
 	return samples
+}
+
+// activeLevel is the RMS of samples' voiced frames, as a fraction of full scale: the level
+// of a voice, its pauses left out.
+func activeLevel(samples []int16) float64 {
+	var sum float64
+	var n int
+	for at := 0; at+replayFrame <= len(samples); at += replayFrame {
+		if r := rms(samples[at : at+replayFrame]); r >= voicedLevel {
+			sum, n = sum+r*r, n+1
+		}
+	}
+	if n == 0 {
+		return 0
+	}
+	return math.Sqrt(sum / float64(n))
+}
+
+// bedAt is speech as a bed under the line, its voice at dbfs.
+func bedAt(speech []int16, dbfs float64) []float64 {
+	gain := level(dbfs) / (activeLevel(speech) * math.MaxInt16)
+	out := make([]float64, len(speech))
+	for i, s := range speech {
+		out[i] = float64(s) * gain
+	}
+	return out
+}
+
+// bedBelow is speech as a bed under the line, its voice dbBelow the caller's in reference.
+func bedBelow(speech, reference []int16, dbBelow float64) []float64 {
+	return bedAt(speech, 20*math.Log10(activeLevel(reference))-dbBelow)
+}
+
+// withGapsUnder is speech with every pause in it cut to gap: a caller who runs their words
+// together, so that no pause reaches a policy's first check.
+func withGapsUnder(samples []int16, gap time.Duration) []int16 {
+	keep := int(gap / replayFrameTime)
+	var out []int16
+	var quiet int
+	for at := 0; at+replayFrame <= len(samples); at += replayFrame {
+		frame := samples[at : at+replayFrame]
+		if rms(frame) >= voicedLevel {
+			quiet = 0
+		} else if quiet++; quiet > keep {
+			continue
+		}
+		out = append(out, frame...)
+	}
+	return trimmed(out)
 }
 
 // lineNoise is a phone line's hiss: white noise at dbfs.
