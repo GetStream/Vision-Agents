@@ -631,6 +631,12 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		}
 	}()
 	created := m.newSession(spec, conv, skills, opening, runtime)
+	// A session held ends where it closes (Session.counted); one never held ends here.
+	defer func() {
+		if !opened {
+			endCounter(endCreateFailed).Inc()
+		}
+	}()
 	fail := func() {
 		runtime.Cancel()
 		created.Close()
@@ -966,6 +972,8 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 		return nil, stack.Wrap(ErrSessionExists)
 	}
 	m.sessions[created.id] = created
+	sessionsActive.Inc()
+	created.active.Store(true)
 	m.mu.Unlock()
 
 	// Said after the session is here to be found, so a peer that forwards a request on

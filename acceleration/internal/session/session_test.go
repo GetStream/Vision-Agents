@@ -31,6 +31,8 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
@@ -470,6 +472,9 @@ type SessionSuite struct {
 	// edges that say nobody comes or goes, as a socket does.
 	present    []stt.Participant
 	unattended bool
+	// speech opens the speech-to-speech model a native session converses with, when a test
+	// wants one. Nil routes none.
+	speech func() (sts.STS, error)
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -491,6 +496,7 @@ func (s *SessionSuite) SetupTest() {
 	s.others = nil
 	s.present = nil
 	s.unattended = false
+	s.speech = nil
 	s.shortensPhoneTimeouts()
 }
 
@@ -565,10 +571,23 @@ func (s *SessionSuite) manages() {
 		storing = func(context.Context, Spec, streamapp.Bound, *slog.Logger) (Transcript, error) { return s.records, nil }
 	}
 
+	var conversing *stsrouter.Router
+	if s.speech != nil {
+		native := stsrouter.NewRegistry()
+		native.Register("stub", func(routing.Spec) (sts.STS, error) { return s.speech() })
+		// A native session asks its model to write down what was said.
+		speaking := stubConfig()
+		speaking.Providers[0].Terms = []options.Term{options.InputTranscript, options.OutputTranscript}
+		conversing, err = stsrouter.New(stsrouter.Options{Config: speaking, Registry: native, Logger: logger})
+		s.Require().NoError(err)
+		s.T().Cleanup(conversing.Close)
+	}
+
 	manager, err := NewManager(ManagerOptions{
 		LLM:           reasoner,
 		STT:           transcriber,
 		TTS:           speaker,
+		STS:           conversing,
 		Memory:        remembering,
 		Transcript:    storing,
 		Conversations: s.conversations,

@@ -318,6 +318,11 @@ type Session struct {
 	// halted is set by a router shutting down, whose ending leaves the reply being written
 	// interrupted rather than cancelled.
 	halted atomic.Bool
+	// active is set while router_sessions_active counts the session: from the manager
+	// holding it until it has closed. agentLeft is set once its agent left the call by itself
+	// (consume).
+	active    atomic.Bool
+	agentLeft atomic.Bool
 }
 
 // recordedTurn is one turn being written down as it happens.
@@ -1720,6 +1725,7 @@ func (s *Session) close() error {
 	for i := len(s.closers) - 1; i >= 0; i-- {
 		s.closers[i]()
 	}
+	s.counted()
 
 	s.mu.Lock()
 	s.state = Ended
@@ -1773,6 +1779,11 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 	// the session. A timeout of zero ends it off this goroutine, which closing waits for.
 	if transferred && s.current() == held {
 		s.SetTimeout(0, EndTransferred)
+	}
+	// An agent still the session's that closed while the session is not closing, with no
+	// hang-up, transfer or timeout noted, left by itself.
+	if s.current() == held && !s.closingNow() && s.endReason() == "" {
+		s.agentLeft.Store(true)
 	}
 }
 
