@@ -2210,6 +2210,24 @@ func (s *AgentSuite) TestAnIDInTheInstructionsIsPassedOn() {
 	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the account the operator gave was refused")
 }
 
+func (s *AgentSuite) TestAnIDInALinkThePersonWroteIsPassedOn() {
+	s.runner = &stubToolRunner{result: `{"messages":"Channel: #help (C0EX4MPL1)"}`}
+	s.tools = harness.Tools{Tools: []harness.Tool{{
+		Name:        "read_channel",
+		Description: "read a channel",
+		Parameters:  map[string]any{"type": "object", "properties": map[string]any{"channel_id": map[string]any{"type": "string"}}},
+	}}}
+	s.joinText()
+	s.model.reply = []string{"Let me read it."}
+	s.model.then = []string{"Nothing new there."}
+	s.asksFor("read_channel", `{"channel_id":"C0EX4MPL1"}`)
+
+	_, err := s.agent.RespondTo(s.ctx, "What's new in https://team.example.com/archives/C0EX4MPL1/p1793120000000100 ?", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return len(s.runner.asked()) == 1 }, "the channel in the link the person wrote was refused")
+}
+
 func (s *AgentSuite) TestAnIDSummarisedAwayIsStillOneAToolReturned() {
 	// A lookup returns a member ID and a compaction then summarises the result away. A later
 	// call with that ID still names an ID a tool returned, because the call's record keeps it.
