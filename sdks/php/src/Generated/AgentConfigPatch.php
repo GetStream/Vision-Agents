@@ -21,6 +21,8 @@ final readonly class AgentConfigPatch
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
+        // Replaces the choice whole. An empty object is the server's default.
+        public ?EndOfTurn $endOfTurn = null,
         public ?bool $episodeCards = null,
         // Replaces the greeting whole. An empty text removes it.
         public ?Greeting $greeting = null,
@@ -82,6 +84,7 @@ final readonly class AgentConfigPatch
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
+            endOfTurn: array_key_exists('end_of_turn', $data) && $data['end_of_turn'] !== null ? EndOfTurn::fromArray(Json::object($data, 'end_of_turn')) : null,
             episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
@@ -135,6 +138,9 @@ final readonly class AgentConfigPatch
         }
         if ($this->dispatch !== null) {
             $out['dispatch'] = $this->dispatch->toArray();
+        }
+        if ($this->endOfTurn !== null) {
+            $out['end_of_turn'] = $this->endOfTurn->toArray();
         }
         if ($this->episodeCards !== null) {
             $out['episode_cards'] = $this->episodeCards;

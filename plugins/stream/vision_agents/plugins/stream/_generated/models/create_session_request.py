@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.create_session_request_custom import CreateSessionRequestCustom
     from ..models.create_session_request_tags import CreateSessionRequestTags
+    from ..models.end_of_turn import EndOfTurn
     from ..models.greeting import Greeting
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
@@ -54,6 +55,11 @@ class CreateSessionRequest:
             back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
             writing.
         description (str | Unset): A longer note about the conversation, searched alongside the title.
+        end_of_turn (EndOfTurn | Unset): When chorus-asr has a caller's turn ended, where the router asks it about
+            turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named
+            replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that
+            ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model
+            the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         history (list[HistoryMessage] | Unset): The conversation so far, for a backend that keeps its own: a thread in
             its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on:
@@ -154,6 +160,7 @@ class CreateSessionRequest:
     context_truncated: bool | Unset = UNSET
     custom: CreateSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
+    end_of_turn: EndOfTurn | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     history: list[HistoryMessage] | Unset = UNSET
     id: str | Unset = UNSET
@@ -215,6 +222,10 @@ class CreateSessionRequest:
             custom = self.custom.to_dict()
 
         description = self.description
+
+        end_of_turn: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.end_of_turn, Unset):
+            end_of_turn = self.end_of_turn.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -329,6 +340,8 @@ class CreateSessionRequest:
             field_dict["custom"] = custom
         if description is not UNSET:
             field_dict["description"] = description
+        if end_of_turn is not UNSET:
+            field_dict["end_of_turn"] = end_of_turn
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if history is not UNSET:
@@ -400,6 +413,7 @@ class CreateSessionRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.create_session_request_custom import CreateSessionRequestCustom
         from ..models.create_session_request_tags import CreateSessionRequestTags
+        from ..models.end_of_turn import EndOfTurn
         from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
@@ -448,6 +462,13 @@ class CreateSessionRequest:
             custom = CreateSessionRequestCustom.from_dict(_custom)
 
         description = d.pop("description", UNSET)
+
+        _end_of_turn = d.pop("end_of_turn", UNSET)
+        end_of_turn: EndOfTurn | Unset
+        if isinstance(_end_of_turn, Unset):
+            end_of_turn = UNSET
+        else:
+            end_of_turn = EndOfTurn.from_dict(_end_of_turn)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -572,6 +593,7 @@ class CreateSessionRequest:
             context_truncated=context_truncated,
             custom=custom,
             description=description,
+            end_of_turn=end_of_turn,
             greeting=greeting,
             history=history,
             id=id,

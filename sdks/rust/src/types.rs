@@ -325,6 +325,9 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///Absent when chorus-asr ends the agent's turns by the server's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     ///Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
@@ -408,6 +411,9 @@ pub struct AgentConfigPatch {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///Replaces the choice whole. An empty object is the server's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
     ///Replaces the greeting whole. An empty text removes it.
@@ -516,6 +522,9 @@ pub struct AgentConfigRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///When chorus-asr has a caller's turn ended in this agent's sessions, where the router asks it about turns: one of max_wait_ms, preset and bars. A session request's wins over this. Left out on a create, the server's default; left out on an update, the stored choice stays, and an empty object is the server's default again. A preset or wait the server does not publish is refused (400) when the router can ask it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     ///Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<bool>,
@@ -4289,6 +4298,9 @@ pub struct CreateSessionRequest {
     ///A longer note about the conversation, searched alongside the title.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
+    ///When chorus-asr has the caller's turn ended in this session, over the agent config's, where the router asks it about turns: one of max_wait_ms, preset and bars, and an empty object for the server's default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because how eager the agent is to answer is the app's to decide.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     ///What the agent opens the call with, over what the config says.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
@@ -5096,6 +5108,30 @@ pub struct EndCallSettings {
     ///When the agent should end the call, in the caller's terms.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub when: ::std::option::Option<::std::string::String>,
+}
+///When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EndOfTurn {
+    ///Bars of the agent's own: the first from 0 ms, each later one from further into the pause. At each check of a pause, the turn has ended when p_eot reaches the last bar to have begun.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub bars: ::std::option::Option<::std::vec::Vec<EndOfTurnBar>>,
+    ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_wait_ms: ::std::option::Option<i64>,
+    ///One of the presets the chorus-asr server publishes, by name, such as safe or fast. Refused when the server publishes none by that name.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub preset: ::std::option::Option<::std::string::String>,
+}
+///What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct EndOfTurnBar {
+    ///What p_eot, chorus-asr's probability that the caller has finished, must reach for the turn to have ended: strictly between 0 and 1.
+    pub bar: f64,
+    ///How far into the pause, in milliseconds, the bar begins.
+    pub from_ms: i64,
 }
 ///What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 #[derive(
@@ -12128,6 +12164,9 @@ pub struct SyncAgentRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. When the server cannot be asked, or the router asks it nothing about turns, the choice is kept and a warning says so.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     ///The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.

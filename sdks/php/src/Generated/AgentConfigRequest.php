@@ -21,6 +21,8 @@ final readonly class AgentConfigRequest
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
+        // When chorus-asr has a caller's turn ended in this agent's sessions, where the router asks it about turns: o...
+        public ?EndOfTurn $endOfTurn = null,
         // Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent c...
         public ?bool $episodeCards = null,
         public ?Greeting $greeting = null,
@@ -93,6 +95,7 @@ final readonly class AgentConfigRequest
             channels: array_key_exists('channels', $data) && $data['channels'] !== null ? AgentChannels::fromArray(Json::object($data, 'channels')) : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
+            endOfTurn: array_key_exists('end_of_turn', $data) && $data['end_of_turn'] !== null ? EndOfTurn::fromArray(Json::object($data, 'end_of_turn')) : null,
             episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
@@ -146,6 +149,9 @@ final readonly class AgentConfigRequest
         }
         if ($this->dispatch !== null) {
             $out['dispatch'] = $this->dispatch->toArray();
+        }
+        if ($this->endOfTurn !== null) {
+            $out['end_of_turn'] = $this->endOfTurn->toArray();
         }
         if ($this->episodeCards !== null) {
             $out['episode_cards'] = $this->episodeCards;

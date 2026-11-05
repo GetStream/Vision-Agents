@@ -18,6 +18,7 @@ struct StringCodingKey: CodingKey, ExpressibleByStringLiteral {
 }
 
 extension StringCodingKey {
+    static let action: StringCodingKey = "action"
     static let agent: StringCodingKey = "agent"
     static let agentId: StringCodingKey = "agent_id"
     static let allowTitle: StringCodingKey = "allow_title"
@@ -29,6 +30,8 @@ extension StringCodingKey {
     static let attempts: StringCodingKey = "attempts"
     static let audio: StringCodingKey = "audio"
     static let backchannel: StringCodingKey = "backchannel"
+    static let bar: StringCodingKey = "bar"
+    static let bars: StringCodingKey = "bars"
     static let body: StringCodingKey = "body"
     static let cachedInputTokens: StringCodingKey = "cached_input_tokens"
     static let call: StringCodingKey = "call"
@@ -59,6 +62,7 @@ extension StringCodingKey {
     static let displayTitle: StringCodingKey = "display_title"
     static let durationSeconds: StringCodingKey = "duration_seconds"
     static let end: StringCodingKey = "end"
+    static let endOfTurn: StringCodingKey = "end_of_turn"
     static let endReason: StringCodingKey = "end_reason"
     static let error: StringCodingKey = "error"
     static let excludeDomains: StringCodingKey = "exclude_domains"
@@ -68,6 +72,7 @@ extension StringCodingKey {
     static let filter: StringCodingKey = "filter"
     static let finishedAt: StringCodingKey = "finished_at"
     static let forkedFrom: StringCodingKey = "forked_from"
+    static let fromMs: StringCodingKey = "from_ms"
     static let greeting: StringCodingKey = "greeting"
     static let gte: StringCodingKey = "$gte"
     static let hasMore: StringCodingKey = "has_more"
@@ -98,6 +103,7 @@ extension StringCodingKey {
     static let maxOutputTokens: StringCodingKey = "max_output_tokens"
     static let maxTokens: StringCodingKey = "max_tokens"
     static let maxToolRounds: StringCodingKey = "max_tool_rounds"
+    static let maxWaitMs: StringCodingKey = "max_wait_ms"
     static let memory: StringCodingKey = "memory"
     static let message: StringCodingKey = "message"
     static let messages: StringCodingKey = "messages"
@@ -122,6 +128,7 @@ extension StringCodingKey {
     static let path: StringCodingKey = "path"
     static let payload: StringCodingKey = "payload"
     static let phone: StringCodingKey = "phone"
+    static let preset: StringCodingKey = "preset"
     static let projectId: StringCodingKey = "project_id"
     static let provider: StringCodingKey = "provider"
     static let providers: StringCodingKey = "providers"
@@ -191,4 +198,5 @@ extension StringCodingKey {
     static let video: StringCodingKey = "video"
     static let videos: StringCodingKey = "videos"
     static let voice: StringCodingKey = "voice"
+    static let voicemail: StringCodingKey = "voicemail"
 }

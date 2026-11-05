@@ -3110,6 +3110,9 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
+
 	// EpisodeCards Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
 
@@ -3189,8 +3192,11 @@ type AgentConfigPatch struct {
 	Connectors *[]AgentConnectorBinding `json:"connectors,omitempty"`
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
-	Dispatch     *AgentDispatch `json:"dispatch,omitempty"`
-	EpisodeCards *bool          `json:"episode_cards,omitempty"`
+	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	EndOfTurn    *EndOfTurn `json:"end_of_turn,omitempty"`
+	EpisodeCards *bool      `json:"episode_cards,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -3290,6 +3296,9 @@ type AgentConfigRequest struct {
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
 
 	// EpisodeCards Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays.
 	EpisodeCards *bool `json:"episode_cards,omitempty"`
@@ -5177,6 +5186,9 @@ type CreateSessionRequest struct {
 	// Description A longer note about the conversation, searched alongside the title.
 	Description *string `json:"description,omitempty"`
 
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
+
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
 
@@ -5597,6 +5609,35 @@ type EndCallSettings struct {
 
 	// When When the agent should end the call, in the caller's terms.
 	When *string `json:"when,omitempty"`
+}
+
+// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+type EndOfTurn struct {
+	// Bars Bars of the agent's own: the first from 0 ms, each later one from further into the pause. At each check of a pause, the turn has ended when p_eot reaches the last bar to have begun.
+	Bars *[]EndOfTurnBar `json:"bars,omitempty"`
+
+	// MaxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
+	//
+	// Example: 900
+	MaxWaitMs *int64 `json:"max_wait_ms,omitempty"`
+
+	// Preset One of the presets the chorus-asr server publishes, by name, such as safe or fast. Refused when the server publishes none by that name.
+	//
+	// Example: safe
+	Preset *string `json:"preset,omitempty"`
+}
+
+// EndOfTurnBar What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on.
+type EndOfTurnBar struct {
+	// Bar What p_eot, chorus-asr's probability that the caller has finished, must reach for the turn to have ended: strictly between 0 and 1.
+	//
+	// Example: 0.9
+	Bar float64 `json:"bar"`
+
+	// FromMs How far into the pause, in milliseconds, the bar begins.
+	//
+	// Example: 0
+	FromMs int64 `json:"from_ms"`
 }
 
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
@@ -8924,6 +8965,9 @@ type SyncAgentRequest struct {
 
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
+
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. Whichever is named replaces only the bars: when a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`

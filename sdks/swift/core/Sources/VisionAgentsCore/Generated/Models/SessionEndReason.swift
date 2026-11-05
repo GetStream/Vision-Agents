@@ -1,7 +1,7 @@
 import Foundation
 import StreamCore
 
-/// Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+/// Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 final class SessionEndReason: RawRepresentable, Codable, Hashable, Sendable {
     let rawValue: String
 
@@ -14,4 +14,5 @@ final class SessionEndReason: RawRepresentable, Codable, Hashable, Sendable {
     static let start = SessionEndReason(rawValue: "start")
     static let transferred = SessionEndReason(rawValue: "transferred")
     static let unanswered = SessionEndReason(rawValue: "unanswered")
+    static let voicemail = SessionEndReason(rawValue: "voicemail")
 }

@@ -31,6 +31,8 @@ final readonly class CreateSessionRequest
         public ?array $custom = null,
         // A longer note about the conversation, searched alongside the title.
         public ?string $description = null,
+        // When chorus-asr has the caller's turn ended in this session, over the agent config's, where the router asks...
+        public ?EndOfTurn $endOfTurn = null,
         // What the agent opens the call with, over what the config says.
         public ?Greeting $greeting = null,
         // The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlive...
@@ -111,6 +113,7 @@ final readonly class CreateSessionRequest
             contextTruncated: array_key_exists('context_truncated', $data) && $data['context_truncated'] !== null ? Json::bool($data, 'context_truncated') : null,
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            endOfTurn: array_key_exists('end_of_turn', $data) && $data['end_of_turn'] !== null ? EndOfTurn::fromArray(Json::object($data, 'end_of_turn')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             history: array_key_exists('history', $data) && $data['history'] !== null ? array_map(HistoryMessage::fromArray(...), Json::objects($data, 'history')) : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
@@ -180,6 +183,9 @@ final readonly class CreateSessionRequest
         }
         if ($this->description !== null) {
             $out['description'] = $this->description;
+        }
+        if ($this->endOfTurn !== null) {
+            $out['end_of_turn'] = $this->endOfTurn->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();
