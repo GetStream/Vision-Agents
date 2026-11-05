@@ -458,6 +458,7 @@ func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 		{"a person bracketed after a label with no bracket before it", `{"messages":"Channel: Group DM Creator: Ana Lind (U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a person bracketed after a name that is no label", `{"messages":"Channel #x by Ana Lind (U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a channel after a name and a dash", `{"messages":"Channel #help - C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel after its name and the word ID", `{"messages":"Channel #help ID: C0HELP002"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a kind of two words", `{"results":"Phone number P0NUM001 - active"}`, `{"phone_number_id":"P0NUM001"}`, false},
 		{"a person by a channel's name", `{"messages":"Channel #x by U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a creator at the end of a listed channel", `{"results":"1. #help (C0HELP002) - public_channel - created by U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
