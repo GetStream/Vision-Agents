@@ -304,6 +304,64 @@ func (s *CloserSuite) TestAFailedSummaryLeavesSummaryFailedAndTheThreadIntact() 
 	s.Equal(before, s.chat.Stored(thread), "the raw thread is as it was")
 }
 
+// A number linked to a user texts into the user's omni-channel; the unlink then points the
+// number's row at a new omni-channel whose agent user is made only with its first card. The
+// card is updated as its own author, who exists, not as the new omni-channel's agent, whom
+// Stream refuses (AI-2771: the card stayed in_progress and the summary was lost).
+func (s *CloserSuite) TestACardIsSummarizedAsItsAuthorAfterTheNumberWasUnlinked() {
+	s.chat.KnownAuthors()
+	user := "anya-" + uuid.NewString()
+	// A Stream user of the deployment's own app, as a link names one (store.LinkUserPhone).
+	chatting, err := s.cards.Open(s.ctx, Episode{
+		CustomerID: s.customerID, AgentConfigID: s.config.ID, AgentName: s.config.Name,
+		Person: Person{Kind: store.ContactStreamUser, Address: store.StreamUserAddress(0, user)},
+		Source: store.EpisodeChat, ThreadChannel: chatlog.ChannelType + ":chat-" + uuid.NewString(), StartedAt: time.Now().UTC(),
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.cards.Write(s.ctx, chatting))
+	number := "+15550100"
+	s.Require().NoError(s.store.LinkUserPhone(s.ctx, &store.UserPhone{CustomerID: s.customerID, UserID: user, Phone: number}))
+	person, err := Phone(number)
+	s.Require().NoError(err)
+	started := time.Now().Add(-2 * time.Hour).UTC().Truncate(time.Second)
+	thread := "sms-" + uuid.NewString()
+	texted, err := s.cards.Open(s.ctx, Episode{
+		CustomerID: s.customerID, AgentConfigID: s.config.ID, AgentName: s.config.Name, Person: person,
+		Source: store.EpisodeSMS, ThreadChannel: chatlog.ChannelType + ":" + thread, StartedAt: started,
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.cards.Write(s.ctx, texted))
+	s.Require().Equal(chatting.Contact.ConversationID, texted.Contact.ConversationID, "the linked number texts into the user's omni-channel")
+	author := "sms-author"
+	bound, err := s.apps.For(s.ctx, s.customerID)
+	s.Require().NoError(err)
+	_, err = bound.Client.Chat().GetOrCreateChannel(s.ctx, chatlog.ChannelType, thread, &getstream.GetOrCreateChannelRequest{
+		Data: &getstream.ChannelInput{CreatedByID: &author, Custom: map[string]any{conversation.CustomerField: s.customerID}},
+	})
+	s.Require().NoError(err)
+	s.chat.At(started.Add(time.Minute))
+	text := "where is my order 12?"
+	_, err = bound.Client.Chat().SendMessage(s.ctx, chatlog.ChannelType, thread, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &author},
+	})
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.UnlinkUserPhone(s.ctx, s.customerID, 0, user))
+
+	s.Require().NoError(s.closer.Sweep(s.ctx))
+
+	var card map[string]any
+	for _, message := range s.chat.Stored(strings.TrimPrefix(chatting.Contact.ConversationID, chatlog.ChannelType+":")) {
+		if message["id"] == texted.Episode.CardMessageID {
+			card = message
+		}
+	}
+	s.Require().NotNil(card, "the card stays in the omni-channel it was written in")
+	s.Equal(s.fast.reply, card["text"])
+	custom, _ := card["custom"].(map[string]any)
+	s.Equal(store.EpisodeSummarized, custom["status"])
+	s.Equal(store.EpisodeSummarized, s.status(texted))
+}
+
 // The card is updated in place, which Stream sends as message.updated: no new message, so
 // nothing reaches the message hook, which asks for message.new only.
 func (s *CloserSuite) TestACardUpdateWritesNoNewMessage() {
