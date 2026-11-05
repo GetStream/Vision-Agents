@@ -160,8 +160,9 @@ func (s *EpisodeCardsSuite) TestACallWithCardsIsRefusedAMoveOntoSpeechToSpeech()
 	s.Contains(failure.Error.Message, "no speech-to-speech models")
 }
 
-// smsWithALine opens an SMS episode of number, as the bridge will (T53), with one line in its
-// thread channel, so a call from the number starts with its card.
+// smsWithALine opens an SMS episode of number, as the bridge does, with one line in its
+// thread channel written after the episode opened, so a call from the number starts with its
+// card.
 func (s *EpisodeCardsSuite) smsWithALine(number, text string) {
 	ctx := context.Background()
 	cards, err := omnichannel.New(omnichannel.Options{Store: s.store, Stream: s.stream})
@@ -175,16 +176,16 @@ func (s *EpisodeCardsSuite) smsWithALine(number, text string) {
 		Data: &getstream.ChannelInput{CreatedByID: &author, Custom: map[string]any{"support_customer_id": s.customerID()}},
 	})
 	s.Require().NoError(err)
-	_, err = bound.Client.Chat().SendMessage(ctx, "agent", thread, &getstream.SendMessageRequest{
-		Message: getstream.MessageRequest{Text: &text, UserID: &author},
-	})
-	s.Require().NoError(err)
 	opened, err := cards.Open(ctx, omnichannel.Episode{
 		CustomerID: s.customerID(), AgentConfigID: s.config.Id, AgentName: s.config.Name, Person: person,
 		Source: "sms", ThreadChannel: "agent:" + thread,
 	})
 	s.Require().NoError(err)
 	s.Require().NoError(cards.Write(ctx, opened))
+	_, err = bound.Client.Chat().SendMessage(ctx, "agent", thread, &getstream.SendMessageRequest{
+		Message: getstream.MessageRequest{Text: &text, UserID: &author},
+	})
+	s.Require().NoError(err)
 }
 
 // joined is the id of a session under the test's agent on a call the participant is on.
