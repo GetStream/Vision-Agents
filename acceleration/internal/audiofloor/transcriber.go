@@ -142,9 +142,11 @@ type Transcriber struct {
 	retrying bool
 	// interims says the words so far are written while the caller talks (interim), the
 	// client's setting; spoken is the speech since the utterance's words were last asked
-	// for, in frames, and interimOut says an interim is out, at most one at a time.
+	// for, in frames, talked the speech in the utterance so far, and interimOut says an
+	// interim is out, at most one at a time.
 	interims   bool
 	spoken     int64
+	talked     int64
 	interimOut atomic.Bool
 	// sent is the last words of the utterance to have gone out, which every transcript is
 	// held to (send): none after the final, and none that go back on words already out.
@@ -231,11 +233,12 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	if at, ok := t.endedOnCheck(); ok {
 		// A pause check ended the utterance on its words: the next begins after its audio.
 		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken = at, at, false, false, false, 0, 0
+		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken, t.talked = at, at, false, false, false, 0, 0, 0
 	}
 	if speech {
 		t.voiced, t.fresh, t.retrying, t.quiet = true, true, false, 0
 		t.spoken++
+		t.talked++
 		t.resumed()
 	} else {
 		t.quiet += frame
@@ -262,7 +265,7 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		}
 		t.ask(end)
 		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken = heard, heard, false, false, false, 0, 0
+		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken, t.talked = heard, heard, false, false, false, 0, 0, 0
 		t.mu.Lock()
 		t.newUtteranceLocked()
 		t.mu.Unlock()

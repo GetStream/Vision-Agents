@@ -99,16 +99,18 @@ type pause struct {
 	done    bool
 }
 
-// pauseCheck is one question about a pause, asked off the session's goroutine.
+// pauseCheck is one question about a pause, asked off the session's goroutine. voiced is how
+// much of the utterance so far was speech, and length how long it is, the pause included.
 type pauseCheck struct {
-	epoch       int64
-	first       bool
-	firstPause  bool
-	paused      time.Duration
-	at          int64
-	participant stt.Participant
-	audio       harness.Audio
-	asked       time.Time
+	epoch          int64
+	first          bool
+	firstPause     bool
+	paused         time.Duration
+	voiced, length time.Duration
+	at             int64
+	participant    stt.Participant
+	audio          harness.Audio
+	asked          time.Time
 }
 
 // AskOnPauses has the transcriber ask about each pause for agent, from the next on, in place
@@ -162,10 +164,11 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 		t.spoken = 0
 	}
 	c := pauseCheck{epoch: p.epoch, first: p.checks == 1, firstPause: t.pauses == 1, paused: t.quiet, at: heard,
+		voiced: time.Duration(t.talked) * frame, length: time.Duration(heard-t.start) * frame,
 		participant: participant, asked: time.Now()}
 	// The check that asks for words sends the whole utterance: the model decides on its
 	// last 16 s and writes all of it. The others send what a decision hears.
-	length := time.Duration(heard-t.start) * frame
+	length := c.length
 	if !c.first {
 		length = min(length, Window)
 	}
@@ -234,6 +237,7 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	if err == nil {
 		checkSeconds.Observe(time.Since(c.asked).Seconds())
 	}
+	t.logCheck(turn, c, checked, err)
 	t.mu.Lock()
 	p := &t.pause
 	if p.epoch != c.epoch {
@@ -269,6 +273,24 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		go t.await(c, said)
 	}
 	t.finish(c.epoch)
+}
+
+// logCheck says what a check asked and what came of it, for a call's debug log: no audio
+// and no words.
+func (t *Transcriber) logCheck(turn harness.FlowTurn, c pauseCheck, checked Check, err error) {
+	attributes := []any{"participant", c.participant.ID, "speaking", turn.Speaking, "paused_ms", c.paused.Milliseconds(),
+		"voiced_ms", c.voiced.Milliseconds(), "utterance_ms", c.length.Milliseconds(), "first", c.first, "first_pause", c.firstPause,
+		"took_ms", time.Since(c.asked).Milliseconds()}
+	if err != nil {
+		t.logger.Debug("chorus-asr did not rule on a check", append(attributes, "error", err)...)
+		return
+	}
+	var pEOT any
+	if checked.Answer.PEOT != nil {
+		pEOT = *checked.Answer.PEOT
+	}
+	t.logger.Debug("chorus-asr checked", append(attributes, "answer", checked.Answer.Answer, "p_eot", pEOT, "bar", checked.Bar,
+		"in_a_row", checked.InARow, "ended", checked.Ended, "disposition", checked.Ruling.Disposition, "floor", checked.Ruling.Floor)...)
 }
 
 // await keeps the words of a pause's first check, once written, and shows them meanwhile
