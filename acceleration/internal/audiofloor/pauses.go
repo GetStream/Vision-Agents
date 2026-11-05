@@ -107,7 +107,8 @@ type pause struct {
 	inFlight    bool
 	participant stt.Participant
 	utterance   int64
-	// failed says a check could not be made, and the pause ends as it would with no agent.
+	// failed says the pause is the words' alone to end, as with no agent: a check of it
+	// failed, its words did, or none ended it by the cap and checkGrace.
 	failed bool
 	// resumed says speech came while a check was out (resumed): the pause is over unless
 	// that check ended the turn.
@@ -287,10 +288,11 @@ type overCheck struct {
 // the caller's line or the room keeps the speech gate open, and a caller who talks straight
 // over it leaves none the policy's first check would catch, so the pause checks alone left
 // the agent talking until its reply ended. On its own echo the model rules ignore and
-// writes nothing, so a line with no echo cancellation costs a decision an interval while
-// the agent talks and nothing is done. It says whether the checks are the words' to write
-// meanwhile, as each asks for them: interims are not asked for besides. It runs on the
-// session's goroutine, on a frame of speech.
+// writes the echo's words, which the agent drops as its own, so a line with no echo
+// cancellation costs a decision and the words an interval while the agent talks and
+// nothing is done. It says whether the checks are the words' to write meanwhile, as each
+// asks for them: interims are not asked for besides. It runs on the session's goroutine, on
+// a frame of speech.
 func (t *Transcriber) checksOver(participant stt.Participant, heard int64) bool {
 	if time.Duration(t.talked)*frame < overAfter || heard-t.start >= int64(maxUtterance/frame) {
 		return false

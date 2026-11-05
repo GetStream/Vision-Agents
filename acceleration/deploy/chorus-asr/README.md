@@ -160,9 +160,10 @@ last frame, and a pause costs one request:
   is acted on at once, as a provisional ruling about another transcriber's revision is
   (`OverlapDecided`, then the interruption): the agent drops its own echoed voice from the
   check's words first, as from any chorus-asr transcript, and an echo alone or a murmur
-  stops nothing; after an echo the next check waits a second rather than `interval_ms`. The
-  utterance goes on, its words shown as interims, and ends at a pause with the floor free,
-  where the reply to it is asked for. 350 ms is most of an "uh-huh", so the model rules on a
+  stops nothing. The checks go on every `interval_ms` for as long as the caller's line is
+  voiced over the agent, its own echo included (Limits). The utterance goes on, its words
+  shown as interims, and ends at a pause with the floor free, where the reply to it is asked
+  for. 350 ms is most of an "uh-huh", so the model rules on a
   murmur, which it was trained to let the agent talk through, rather than on the first
   syllable of anything, and a word that stops the agent, "no" or "stop", is said inside it.
 - **Live words, acted on at the end.** While the caller talks the transcriber shows the
@@ -235,6 +236,36 @@ person's recording of the weather question, "Hi." was a turn of its own and the 
 answered 1.07 and 1.19 s after the voice; with turns from the audio the pause after "Hi." was
 waited on (p_eot 0.43 and 0.39 at 200 ms) and the question answered at 692 and 735 ms.
 
+### Scenarios
+
+What `TestAudioFloorScenarios` measured against the TPU server, acting under the `safe`
+default, the reply echoed back at -30 dB where the caller speaks over it. Times are from the
+end of the caller's voice unless said otherwise; over the agent they are from the caller's
+first word, and the loop acts on the model's first ruling against the reply within the
+policy's 300 ms interval.
+
+| Scenario | What the loop did |
+| --- | --- |
+| S1a. Two pauses of 800 ms inside a turn | One final, one answer, no cut-in: ruled 266 ms, answered 414 ms |
+| S1b. Two pauses of 1,300 ms inside a turn | Cut in at both, three turns: past 1,100 ms the `safe` point's bar is 0.2, as measured (4.5% of mid-turn pauses) |
+| S2a. "No, Porto." 500 ms into the reply | Stopped 566 ms after the first word, on the check at 350 ms voiced; answered 1.39 s after the voice, p_eot 0.85 to 0.96 until the 1,100 ms bar |
+| S2b. "No, I meant Porto." with a 300 ms pause, 500 ms into the reply | Stopped 571 ms after the first word; one turn, answered 529 ms |
+| S3. "Sorry, what was the second one?" 4 s into a list | Stopped 402 ms after the first word; answered 1.4 s after the voice |
+| S4a. A second question 20 ms into the reply | The model ruled `shorten` 640 ms in; answered once the reply ended, the replay's voice saying a reply as one sentence |
+| S4b. "And in Porto?" 2 s into the reply | Heard as "and in Porto," out of the echo; the agent gave way at the model's first `shorten`, 955 ms after the first word |
+| S5. Silence after the agent asks a question | One answer; nothing written and no request made of the silence |
+| S6. "So I was thinking [1.2 s] hmm [0.9 s] maybe Friday…" | One turn, no cut-in: ruled 267 ms, answered 407 ms |
+| S7. A cough 2 s into the reply | The reply heard whole, nothing answered |
+| S8. "And also, should I bring an umbrella…" 1 s into the reply | `shorten` 667 ms after the first word; the words heard whole, without the echo |
+| S9a. Every decision 400 ms late | Ruled 661 ms, answered 766 ms, every turn the model's |
+| S9b. 503 to the first two decisions | The first turn answered by the flow controller 728 ms after the voice; the next ruled by the model, 259 ms |
+| S9c. 503 to every `POST /v1/transcribe` | 15 interims refused and the pauses' words shown instead; one final with the turn's beginning, answered 962 ms |
+| S10a. The agent greets first, the caller waits | Answered 379 ms; the greeting's echo nothing heard |
+| S10b. The caller asks 1 s into the greeting | The greeting stopped 1.34 s after the first word, on the model's ruling; answered 529 ms after the voice |
+| S11. An 80 s monologue | See the row the test logs: the utterance ends at 60 s as it is, and the rest is a turn of its own |
+| S12a. Portuguese after English, callers speak `en` | Nothing written, nothing answered: a language the callers don't speak is noise to the server |
+| S12b. Portuguese after English, no languages | Written in Portuguese, live words and final, answered 376 ms |
+
 ### Live words
 
 A caller counting slowly for 40 s saw nothing until the turn ended. In every mode the
@@ -246,10 +277,10 @@ transcriber now shows the words so far while the caller talks, as interim transc
   between numbers sees each number as they say it, at no extra cost.
 - **About once a second of speech with no pause in it**, the words so far are asked for
   alone (`POST /v1/transcribe`), the whole utterance so far, which a replacement must be:
-  one at a time per participant, and never again when the server was busy (503, 429 or
-  `transcript_error: busy`) or failed. `router_chorus_asr_interims_total` counts each by
-  what became of it: `written`, `late`, `unstable`, `empty`, `foreign`, `refused` or
-  `failed`.
+  one at a time per participant, and one the server was too busy for (503, 429 or
+  `transcript_error: busy`) or failed is not asked for again; the next is, a second of
+  speech on. `router_chorus_asr_interims_total` counts each by what became of it:
+  `written`, `late`, `unstable`, `empty`, `foreign`, `refused` or `failed`.
 - **In the utterance's own language.** The server names the language it heard with every
   transcript (`language`). The words so far are asked for in the language of the
   utterance's first words at a pause, which the server had a whole phrase to tell, and
@@ -480,12 +511,14 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   does not answer falls to the flow controller, check by check, whatever became of the
   words. A request for words times out at 8 s and the audio's length again.
 - **Echo.** A phone with no echo cancellation sends the agent's voice back down the
-  caller's line, and the model writes it as the caller's words, or adds it to theirs within
-  one utterance. The agent drops a chorus-asr transcript's end that is three or more of its
-  own words, near enough (a quarter of them may be heard wrong), when the audio overlapped
-  its speech or came within 1.5 s of it: what is left is the caller's, and an echo alone is
-  nothing heard (`router_agent_chorus_asr_echoes_total`). It does so in every mode, interims
-  included; the transcriber itself still writes what it heard. Other transcribers are left
+  caller's line, and the model writes it as the caller's words, or around theirs when they
+  speak over it. The agent drops from a chorus-asr transcript every run of three or more of
+  its own words, near enough (a quarter of them may be heard wrong, one at a time), when
+  the audio overlapped its speech or came within 1.5 s of it: what is left, before, between
+  and after the runs, is the caller's, and an echo alone is nothing heard
+  (`router_agent_chorus_asr_echoes_total`). It does so in every mode, interims included, and
+  a pause check's ruling is kept on the words so dropped, which are the words the turn is
+  matched by; the transcriber itself still writes what it heard. Other transcribers are left
   as they are.
 - **Noise.** The transcriber drops nothing itself. The server returns empty text for audio
   with no speech in it and for words in a language the callers don't speak, and cuts a
@@ -572,8 +605,9 @@ never ended the utterance; the new one wrote both replacements and the final.
   final, and the language is the model's guess on that pause's words, which the whole
   utterance's interims are then held to.
 - Checks over the agent cost a decision and the words every `interval_ms` while a caller
-  is voiced over it, the agent's own echo included until the agent has said so, after which
-  one a second: a line with no echo cancellation costs that for as long as the agent talks.
+  is voiced over it, the agent's own echo included: a line with no echo cancellation costs
+  that for as long as the agent talks, on the replay's TPU about three requests a second of
+  90 to 140 ms each, each ruled `ignore` and its words dropped as the echo.
   A check's window ends mid-word, where the model's barge-in training clips ended 100 to
   300 ms after the caller's last word, so its ruling there is less sure than at a pause.
 - In `shadow` with the transcriber on, a pause costs two decisions: the transcriber's
@@ -589,8 +623,11 @@ never ended the utterance; the new one wrote both replacements and the final.
   the turn at `cap_ms`. The replay's 19.8 s turn was answered 3.1 s after the voice under
   `max_wait_ms: 1400` so.
 - Echo is dropped by its words, not its sound: an echo the model writes too far from what
-  the agent said, or of fewer than three words, is still the caller's; and a caller who
-  repeats three or more of the agent's words while it speaks, or within 1.5 s, loses them.
+  the agent said, or of fewer than three words, is still the caller's; a caller who repeats
+  three or more of the agent's words in a row while it speaks, or within 1.5 s, loses them;
+  and one word of the caller's between two runs of the echo reads as a word of the agent's
+  misheard. Two or more words in a row are the caller's wherever they fall, as "and in
+  Porto" does inside the reply's echo.
 - With unified replies the reply rules on its own words and no flow controller is asked,
   so acting has nothing to stand in for; shadow compares the model with the reply's ruling.
 - Without turns from the audio, a CPU decision over a full window, 373 ms here, does not fit
@@ -614,3 +651,13 @@ output and its debug log in `CHORUS_ASR_REPLAY_LOGS`:
 ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 GOEXPERIMENT=simd \
   go test -tags integration -count=1 -timeout 30m -run TestAudioFloorReplay -v ./internal/agent/
 ```
+
+`TestAudioFloorScenarios`, in `audio_floor_scenarios_integration_test.go`, plays what the
+acceptance checks don't: pauses inside a turn, a correction, a question and a second turn
+over the reply, silence after the agent asks a question, a thinking murmur inside a long
+pause, a cough over the agent, a caller who goes on after being answered, the server slow or
+answering 503, the agent speaking first, a monologue of over 60 s and a caller who switches
+language. Each is a call of its own, run by its number (`-run 'TestAudioFloorScenarios/S4'`),
+and logs a `row:` line of what the loop did and how long it took; what each one measured on
+the TPU server is in [Scenarios](#scenarios). The speech is rendered by
+`testdata/audiofloor/render.sh`.
