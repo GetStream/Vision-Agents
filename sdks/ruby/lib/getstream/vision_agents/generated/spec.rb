@@ -2000,8 +2000,8 @@ module GetStream
           required: %w[connection_id header value].freeze, open: false
         }.freeze,
         "ConnectionTool" => {
-          properties: %w[description input_schema name needs_scopes schema_digest].freeze,
-          required: %w[name description input_schema schema_digest].freeze, open: false
+          properties: %w[description input_schema name needs_scopes read_only schema_digest].freeze,
+          required: %w[name description input_schema schema_digest read_only].freeze, open: false
         }.freeze,
         "ConnectionToolApproval" => {
           properties: %w[name schema_digest].freeze,

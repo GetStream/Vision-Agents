@@ -1007,10 +1007,7 @@ func bindingSendsOut(binding store.ConnectorBinding, manifest core.Manifest) ([]
 		return unheld, len(unheld) > 0
 	}
 	for _, tool := range binding.Tools {
-		sends := slices.ContainsFunc(manifest.Sources, func(source core.SourceRule) bool {
-			return source.SendsOutTool(tool.Name)
-		})
-		if sends && !binding.RequiresApproval(tool.Name) {
+		if manifest.SendsOutTool(tool.Name) && !binding.RequiresApproval(tool.Name) {
 			unheld = append(unheld, tool.Name)
 		}
 	}

@@ -7,8 +7,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/providers"
@@ -2053,6 +2055,146 @@ func (s *ConfigsSuite) TestNessyBesideEveryToolGmailAndCalendarLeaveOutNamesExac
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, `or add to each binding's require_approval its tools that do not only read: `+
 		`"mail" `+strings.Join(gmail, ", ")+`; "calendar" `+strings.Join(calendar, ", "))
+}
+
+// GET .../tools says which tools only read by the rule a config save checks beside nessy
+// (AI-2788): linear.yaml lists list_issues in read_only_tools and leaves out
+// search_documentation, which Athena took for a read on 2026-11-05, and save_issue. A binding
+// granting by name exactly the tools flagged read_only is accepted beside nessy; one granting a
+// tool flagged otherwise as well is refused, naming that tool.
+func (s *ConfigsSuite) TestABindingBesideNessyMayGrantExactlyTheToolsFlaggedReadOnly() {
+	s.useInternalApp()
+	id := s.connectionTo("linear", "")
+	s.listTools(id, "list_issues", "search_documentation", "save_issue")
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"list_issues": true, "search_documentation": false, "save_issue": false}, readOnly)
+	var reads, others []string
+	for name, only := range readOnly {
+		if only {
+			reads = append(reads, name)
+		} else {
+			others = append(others, name)
+		}
+	}
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"), sessionGranting("linear", "tracker", reads...)}})
+	s.Len(value(created.Connectors), 2)
+	for _, other := range others {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+			"name": "triage", "connectors": []map[string]any{
+				sessionNessy("customers"), sessionGranting("linear", "tracker", append(slices.Clone(reads), other)...)}})
+
+		s.Equal(http.StatusBadRequest, status, other)
+		s.Contains(failure, `"tracker" `+other)
+	}
+}
+
+// read_only is read from the connector's latest revision, as a config save beside nessy reads
+// it (SensitiveBindingsComplaint), not from the revision the connection pins: a connection
+// pinned to revision 1, which leaves search_documentation out of read_only_tools, flags it
+// read_only once revision 2 lists it, and a binding granting it sits beside nessy.
+func (s *ConfigsSuite) TestReadOnlyIsTheConnectorsLatestRevisionsAsAConfigSaveChecks() {
+	s.useInternalApp()
+	ctx := context.Background()
+	linear, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), "linear")
+	s.Require().NoError(err)
+	manifest := linear.Manifest
+	manifest.ID = "custom_t" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest.Sources = []core.SourceRule{{Kind: "mcp", Endpoint: "mcp", ReadOnlyTools: []string{"list_issues"}}}
+	_, err = s.store.CreateConnectorDefinition(ctx, s.customerID(), manifest)
+	s.Require().NoError(err)
+	id := s.connectionTo(manifest.ID, "")
+	manifest.Sources = []core.SourceRule{{Kind: "mcp", Endpoint: "mcp",
+		ReadOnlyTools: []string{"list_issues", "search_documentation"}}}
+	revised, err := s.store.CreateConnectorDefinition(ctx, s.customerID(), manifest)
+	s.Require().NoError(err)
+	connection, err := s.store.ConnectorConnection(ctx, s.customerID(), id)
+	s.Require().NoError(err)
+	s.Require().Equal([]int{1, 2}, []int{connection.DefinitionRevision, revised.Revision})
+	s.listTools(id, "list_issues", "search_documentation", "save_issue")
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"list_issues": true, "search_documentation": true, "save_issue": false}, readOnly)
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"), sessionGranting(manifest.ID, "tracker", "list_issues", "search_documentation")}})
+	s.Len(value(created.Connectors), 2)
+}
+
+// A grant by name does not say which source of a connector a tool comes from, so a tool is
+// read_only only when every source lists it in read_only_tools or says outbound: false, and the
+// save beside nessy agrees. The first source lists search_documentation too, the second does not:
+// it is not read_only and a binding granting it is refused, while list_issues and get_issue are
+// listed by both and accepted. The third source says outbound: false and changes neither.
+func (s *ConfigsSuite) TestReadOnlyOfAConnectorWithSeveralSourcesNeedsEverySourceToSayIt() {
+	s.useInternalApp()
+	ctx := context.Background()
+	linear, err := s.store.LatestConnectorDefinition(ctx, s.customerID(), "linear")
+	s.Require().NoError(err)
+	manifest := linear.Manifest
+	manifest.ID = "custom_t" + strings.ReplaceAll(s.utils.uuid(), "-", "")
+	manifest.Sources = []core.SourceRule{
+		{Kind: "mcp", Endpoint: "mcp", ReadOnlyTools: []string{"list_issues", "get_issue", "search_documentation"}},
+		{Kind: "mcp", Endpoint: "mcp", ReadOnlyTools: []string{"list_issues", "get_issue"}},
+		{Kind: "mcp", Endpoint: "mcp", Outbound: new(false)}}
+	_, err = s.store.CreateConnectorDefinition(ctx, s.customerID(), manifest)
+	s.Require().NoError(err)
+	id := s.connectionTo(manifest.ID, "")
+	s.listTools(id, "list_issues", "get_issue", "search_documentation", "save_issue")
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"list_issues": true, "get_issue": true, "search_documentation": false, "save_issue": false}, readOnly)
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"), sessionGranting(manifest.ID, "tracker", "list_issues", "get_issue")}})
+	s.Len(value(created.Connectors), 2)
+	for _, other := range []string{"search_documentation", "save_issue"} {
+		status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+			"name": "triage", "connectors": []map[string]any{
+				sessionNessy("customers"), sessionGranting(manifest.ID, "tracker", "list_issues", other)}})
+
+		s.Equal(http.StatusBadRequest, status, other)
+		s.Contains(failure, `"tracker" `+other)
+	}
+}
+
+// A connection whose connector the app can no longer see (nessy, an internal connector, once the app
+// loses internal_connectors) still lists its tools, none of them read_only: a config save skips
+// a binding with no definition, so this read does not fail where it answered before (AI-2788).
+func (s *ConfigsSuite) TestAConnectionWhoseConnectorTheAppCanNoLongerSeeListsItsToolsAsNotReadOnly() {
+	s.useInternalApp()
+	id := s.connectionTo("nessy", "")
+	s.listTools(id, "org_lookup")
+	_, err := s.store.DB().NewUpdate().Model(&store.App{ID: s.customerID(), Settings: store.AppSettings{}}).
+		Column("settings").WherePK().Exec(context.Background())
+	s.Require().NoError(err)
+
+	readOnly := s.readOnlyTools(id)
+
+	s.Equal(map[string]bool{"org_lookup": false}, readOnly)
+}
+
+// listTools stores names as the tools a validate of the connection listed.
+func (s *ConfigsSuite) listTools(id string, names ...string) {
+	tools := make([]store.ConnectorTool, 0, len(names))
+	for _, name := range names {
+		tools = append(tools, store.ConnectorTool{Name: name, InputSchema: map[string]any{"type": "object"}})
+	}
+	s.Require().NoError(s.store.SetConnectorConnectionTools(context.Background(), s.customerID(), id, tools,
+		"digest", time.Now()))
+}
+
+// readOnlyTools is GET .../tools as each tool's name and read_only.
+func (s *ConfigsSuite) readOnlyTools(id string) map[string]bool {
+	var tools ConnectionTools
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connections/"+id+"/tools", nil, &tools))
+	readOnly := make(map[string]bool, len(tools.Tools))
+	for _, tool := range tools.Tools {
+		readOnly[tool.Name] = tool.ReadOnly
+	}
+	return readOnly
 }
 
 // nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
