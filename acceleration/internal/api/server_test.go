@@ -470,11 +470,10 @@ func (s *ServerSuite) TestSpendByUserAcrossTheOrganization() {
 	s.Equal(map[string]int64{"u1": 1_000}, spentBy(s.spend("group_by=who%3Auser&granularity=daily")), "the app alone, by default")
 	s.Equal(map[string]int64{s.customerID(): 1_000, sibling: 6_000}, spentBy(s.spend("group_by=who%3Aapp&granularity=daily&scope=organization")))
 	s.Equal(map[string]int64{"key-" + s.customerID(): 1_000, "key-" + sibling: 6_000},
-		spentBy(s.spend("group_by=who%3Aapi_key&granularity=daily&scope=organization")))
+		spentBy(s.spend("group_by=who%3Aorigin&granularity=daily&scope=organization")))
 }
 
-// who:origin groups by the key or origin that started the work; who:api_key is its old name
-// (AI-2811).
+// who:origin groups by the key or origin that started the work (AI-2811).
 func (s *ServerSuite) TestSpendByOrigin() {
 	organization := s.app.organization.ID
 	s.recordWho(s.customerID(), organization, 1_000, "")
@@ -485,7 +484,18 @@ func (s *ServerSuite) TestSpendByOrigin() {
 
 	want := map[string]int64{"key-" + s.customerID(): 1_000, "hook:chat": 2_000}
 	s.Equal(want, spentBy(s.spend("group_by=who%3Aorigin&granularity=daily")))
-	s.Equal(want, spentBy(s.spend("group_by=who%3Aapi_key&granularity=daily")))
+}
+
+// who:api_key was who:origin's name until AI-2851. Read as a cost label it would answer the whole
+// spend as one group, so it is refused.
+func (s *ServerSuite) TestSpendRefusesTheOldGroupByWhoAPIKey() {
+	s.recordWho(s.customerID(), s.app.organization.ID, 1_000, "")
+
+	path := fmt.Sprintf("/v1/stats/spend?group_by=who%%3Aapi_key&granularity=daily&from=%s&to=%s", s.from(), s.to(24*time.Hour))
+	status, message := s.serverClient.failure(http.MethodGet, path, nil)
+
+	s.Equal(http.StatusBadRequest, status, message)
+	s.Contains(message, "who:api_key is now named who:origin")
 }
 
 func (s *ServerSuite) TestSpendByCategoryCountsARowInEach() {
