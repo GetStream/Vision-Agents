@@ -320,9 +320,12 @@ type Session struct {
 	halted atomic.Bool
 	// active is set while router_sessions_active counts the session: from the manager
 	// holding it until it has closed. agentLeft is set once its agent left the call by itself
-	// (consume).
-	active    atomic.Bool
-	agentLeft atomic.Bool
+	// (consume). modelErred and replied are whether its model failed a turn and whether
+	// the agent answered one (observeTurn).
+	active     atomic.Bool
+	agentLeft  atomic.Bool
+	modelErred atomic.Bool
+	replied    atomic.Bool
 }
 
 // recordedTurn is one turn being written down as it happens.
@@ -1756,6 +1759,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 	}
 
 	transferred := false
+	lost := ""
 	for event := range held.Events() {
 		typed := transcript == nil || s.typedEvent(event)
 		if s.persisted != nil && typed {
@@ -1769,6 +1773,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 			transferred = true
 		}
 		s.observe(run, event)
+		s.observeTurn(event, &lost)
 		s.remember(event)
 		s.record(event)
 		s.broadcast(event)

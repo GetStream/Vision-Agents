@@ -4,7 +4,7 @@
 
 ### The router counts its sessions and how they end
 
-`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed}`, each session end once: its stored end reason, or `closed`, `shutdown`, `create_failed` or `agent_failed`; `failed` is `true` for `start`, `create_failed` and `agent_failed` (AI-2779, #1782).
+`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed}`, each session end once: its stored end reason, or `closed`, `shutdown`, `create_failed`, `agent_failed` or `model_failed`; `failed` is `true` for `start`, `create_failed`, `agent_failed` and `model_failed` (AI-2779, #1782).
 
 ### Usage reads name who started the work `origin`
 

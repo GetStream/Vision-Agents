@@ -194,6 +194,8 @@ type stubLLM struct {
 	// tools, as a model told it may call none does not.
 	called bool
 	sees   bool
+	// refuses, when set, is what every request fails with, as a provider refusing its key.
+	refuses error
 }
 
 func (s *stubLLM) Start(context.Context) error { return nil }
@@ -201,6 +203,10 @@ func (s *stubLLM) Start(context.Context) error { return nil }
 func (s *stubLLM) Create(_ context.Context, params llm.ResponseParams) (*llm.Stream, error) {
 	s.mu.Lock()
 	s.asked = append(s.asked, params)
+	if s.refuses != nil {
+		s.mu.Unlock()
+		return nil, s.refuses
+	}
 	offered := len(params.Tools) > 0 && params.ToolChoice != "none"
 	reply := s.reply
 	var calls []llm.ToolCall

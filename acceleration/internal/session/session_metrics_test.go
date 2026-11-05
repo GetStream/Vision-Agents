@@ -8,9 +8,13 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
 // Every reason router_session_ends_total documents, and whether it is a failure. Written
@@ -27,6 +31,7 @@ var documentedEnds = map[string]string{
 	"shutdown":      "false",
 	"create_failed": "true",
 	"agent_failed":  "true",
+	"model_failed":  "true",
 }
 
 // series is the value of the default registry's series name with labels, and whether it
@@ -297,6 +302,98 @@ func (s *SessionSuite) TestASessionWhoseAgentDroppedOutBeforeItTimedOutEndsAsAFa
 	s.Equal(TimeoutHangup, created.endReason(), "the row's end reason changed")
 }
 
+func (s *SessionSuite) TestASessionWhoseModelRefusedEveryTurnEndsAsAFailedModel() {
+	// Catches a cascade agent whose model refuses every request, which keeps the call going
+	// with nothing said, counted as a normal close.
+	s.manages()
+	active, before := s.active(), s.allEnds()
+	created := s.joins(Spec{})
+	s.model.mu.Lock()
+	s.model.refuses = errors.New("401 Unauthorized: invalid api key")
+	s.model.mu.Unlock()
+
+	s.refusedTo(created, "Hi, is anyone there?")
+	s.refusedTo(created, "I want to move my appointment.")
+	s.Equal(Live, created.State(), "a failed turn ended the session")
+
+	closed, err := s.manager.Close(created.ID(), backend("acme"))
+	s.Require().NoError(err)
+	s.Require().True(closed)
+
+	s.Equal(active, s.active())
+	s.endedOnce(before, "model_failed")
+	s.Empty(created.endReason(), "the row's end reason changed")
+}
+
+func (s *SessionSuite) TestASessionThatLostOneTurnAfterAnsweringEndsAsClosed() {
+	// Catches a long call counted as failed over one turn its model lost.
+	s.manages()
+	before := s.allEnds()
+	created := s.joins(Spec{})
+	s.hears(created)
+	s.model.mu.Lock()
+	s.model.refuses = errors.New("the provider is down")
+	s.model.mu.Unlock()
+	s.refusedTo(created, "And can you send me a reminder?")
+
+	closed, err := s.manager.Close(created.ID(), backend("acme"))
+	s.Require().NoError(err)
+	s.Require().True(closed)
+
+	s.endedOnce(before, "closed")
+}
+
+func (s *SessionSuite) TestTheEndOfASessionWhoseModelAnsweredNothing() {
+	// Catches the reason that ends a session after its model failed every turn counted in
+	// place of the failure, the lost reply the agent says taken for an answer, a greeting
+	// taken for one, and a turn the injection screen refused or a voice failing taken for
+	// a failure of the model.
+	observed := func(events ...Event) *Session {
+		session := &Session{}
+		lost := ""
+		for _, event := range events {
+			session.observeTurn(event, &lost)
+		}
+		return session
+	}
+	ended := func(events ...Event) string { return observed(events...).endLabel() }
+	call := func(turn string, success bool, code string) Event {
+		return agent.ModelCall{CallTiming: llm.CallTiming{Purpose: "reply", TurnID: turn, Success: success, ErrorCode: code}}
+	}
+	refused := agent.Error{Context: "llm", Err: errors.New("401 Unauthorized")}
+	lostTurn := func(turn string) []Event {
+		return []Event{call(turn, false, "create_failed"), refused, agent.Responded{TurnID: turn, Text: "Sorry, could you ask me that again?"}}
+	}
+
+	s.Equal(endModelFailed, ended(lostTurn("turn-1")...), "a lost reply")
+
+	hungUp := observed(append([]Event{agent.Said{TurnID: "say-1", Text: "Hi, how can I help?"}}, lostTurn("turn-1")...)...)
+	hungUp.noteEnd(TimeoutHangup)
+	s.Equal(endModelFailed, hungUp.endLabel(), "the caller hanging up on a silent agent")
+
+	greeted := append([]Event{agent.Responded{TurnID: "say-1", Text: "Hi there.", Purpose: agent.PurposeGreeting}}, lostTurn("turn-1")...)
+	s.Equal(endModelFailed, ended(greeted...), "a greeting written in a text session")
+
+	s.Equal(endModelFailed, ended(agent.Error{Context: "sts", Err: errors.New("the model went away")}), "a speech-to-speech model failing its turn")
+
+	answered := append([]Event{call("turn-1", true, ""), agent.Responded{TurnID: "turn-1", Text: "Friday at ten."}}, lostTurn("turn-2")...)
+	s.Equal(endClosed, ended(answered...), "a lost turn after an answered one")
+
+	retried := append([]Event{
+		call("turn-1", false, "upstream_error"), call("turn-1", true, ""),
+		agent.Responded{TurnID: "turn-1", Text: "Friday at ten."},
+	}, lostTurn("turn-2")...)
+	s.Equal(endClosed, ended(retried...), "a turn a second provider answered")
+
+	interrupted := append([]Event{
+		call("turn-1", false, string(llm.StatusCancelled)), agent.Responded{TurnID: "turn-1", Text: "Friday at"},
+	}, lostTurn("turn-2")...)
+	s.Equal(endClosed, ended(interrupted...), "a reply the caller cut short")
+
+	s.Equal(endClosed, ended(agent.Error{Context: "llm", Err: policy.ErrPromptInjection, TurnID: "turn-1"}), "a turn the screen refused")
+	s.Equal(endClosed, ended(agent.Error{Context: "tts", Err: errors.New("the voice is down")}), "a voice failing, which is no model's turn")
+}
+
 func (s *SessionSuite) TestACreateTurnedAwayIsNoFailedCreate() {
 	// Catches a redelivered hook that lost the race for its session's id, or a create a
 	// router shutting down turned away, counted as a session that failed to open: an alert
@@ -377,6 +474,19 @@ func (e joiningEdge) Join(ctx context.Context) error {
 	e.entered <- struct{}{}
 	<-e.allowed
 	return e.quietEdge.Join(ctx)
+}
+
+// refusedTo has somebody say text to a session on a call whose model refuses them: the
+// model is asked, maybe more than once, and the turn settles.
+func (s *SessionSuite) refusedTo(created *Session, text string) {
+	s.eventually(func() bool { return len(s.edges) > 0 }, "the session never joined its call")
+	alice := stt.Participant{ID: "alice", Name: "Alice"}
+	asked := len(s.model.requests())
+	pcm := audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}
+	s.edges[len(s.edges)-1].inbound <- agent.InboundAudio{Participant: alice, Audio: pcm}
+	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: text, Language: "en", Confidence: 1})
+	s.eventually(func() bool { return len(s.model.requests()) > asked }, "the model was never asked")
+	s.eventually(func() bool { return !created.Busy() }, "the refused turn never settled")
 }
 
 // refusedEdge is a call that will not have the agent.
