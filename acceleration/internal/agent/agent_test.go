@@ -3888,6 +3888,47 @@ func (s *AgentSuite) TestACheckInTheCallerTalksOverIsStopped() {
 	s.Equal(turnID, interrupted.TurnID)
 }
 
+// A shortening lets the agent finish at most shortenTail of the reply it is saying, which
+// then stops, as the item the caller added is answered after it: let to play on, the reply
+// already handed to the voice played for as long as it was. Over a line the agent said of its
+// own accord, which answers no request, it is a stop.
+func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTail() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon this week")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	shorten := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Shorten}},
+		Words: "and in Porto", Speaking: true, Overheard: true, AudioMs: 900, WordsMs: 100}
+	shortened := time.Now()
+	pauseAsker{s.agent}.Overheard(participant, shorten)
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the shortened reply played on")
+	s.GreaterOrEqual(time.Since(shortened), shortenTail, "the reply was cut before its tail")
+	s.Less(time.Since(shortened), shortenTail+time.Second, "the reply was cut long after its tail")
+	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept saying the reply")
+}
+
+func (s *AgentSuite) TestAShortenedCheckInStopsAtOnce() {
+	s.join(true)
+	s.voice.silent = true
+	s.model.composes = []string{"Are you still with me, or should I hold on?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.agent.checkIn(participant, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	shorten := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Shorten}},
+		Words: "give me a second", Speaking: true, Overheard: true, AudioMs: 900, WordsMs: 100}
+	shortened := time.Now()
+	pauseAsker{s.agent}.Overheard(participant, shorten)
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the check-in played on")
+	s.Less(time.Since(shortened), shortenTail, "a check-in answers no request, and is stopped at once")
+}
+
 func (s *AgentSuite) TestALineWrittenAfterTheCallerSpokeIsNotSaid() {
 	s.join(true)
 	written := make(chan struct{})

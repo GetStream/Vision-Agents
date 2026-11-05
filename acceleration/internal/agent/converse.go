@@ -37,7 +37,7 @@ const (
 	ActHold ActionKind = "hold"
 	// ActInterrupt abandons the reply being spoken.
 	ActInterrupt ActionKind = "interrupt"
-	// ActShorten stops the model adding more while letting the audio already sent finish.
+	// ActShorten stops the model adding more, and the reply being said shortenTail later.
 	ActShorten ActionKind = "shorten"
 	// ActBackchannel makes a short listening noise.
 	ActBackchannel ActionKind = "backchannel"
@@ -117,7 +117,8 @@ type Action struct {
 	LatencyMs float64
 	// Unheard says none of the interrupted reply has gone out, and it is only abandoned so.
 	Unheard bool
-	// Interruption is why an interrupt abandons the reply, for the agent to report.
+	// Interruption is why an interrupt or a shortening abandons the reply, for the agent to
+	// report.
 	Interruption interruption
 	// LineID is the caller's line a turn queued, held or answered was heard as, so a
 	// watcher can say of that line that it waits for the agent to finish.
@@ -856,6 +857,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 				Participant: ready.Participant,
 				TurnID:      state.Speaking,
 				LatencyMs:   ruling.TookMs,
+				Interruption: interruption{cause: causeShortened, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+					words: ready.Text},
 			}),
 		}
 
@@ -935,6 +938,8 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 			Participant: seen.participant,
 			TurnID:      seen.turnID,
 			LatencyMs:   ruling.TookMs,
+			Interruption: interruption{cause: causeShortened, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+				words: seen.text},
 		})}
 	}
 

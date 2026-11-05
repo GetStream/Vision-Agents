@@ -60,9 +60,9 @@ func TestAudioFloorContract(t *testing.T) {
 	t.Run("C7 one final, one answer, at once, ending at the first check", k.oneFinal)
 }
 
-// shortenTail is how much of the agent's speech a shortening lets finish (README, "The loop's
-// contract"): a stop has it quiet within stopWithin of the caller's first word.
-const shortenTail = 250 * time.Millisecond
+// shortenedWithin is how much of the agent's speech a shortening lets finish (README, "The
+// loop's contract"): a stop has it quiet within stopWithin of the caller's first word.
+const shortenedWithin = 250 * time.Millisecond
 
 // frameSlack is the frame the edge was playing when the agent was stopped, and the next.
 const frameSlack = 2 * replayFrameTime
@@ -207,7 +207,7 @@ func (k *contract) stopThenQuestion(t *testing.T) {
 	k.measured(t, "C3 stop then question", answered)
 }
 
-// C4. One more item over the forecast list: the agent stops speaking within shortenTail of
+// C4. One more item over the forecast list: the agent stops speaking within shortenedWithin of
 // the model's shortening, or within stopWithin of the first word if the model stops it, and
 // the item is answered.
 func (k *contract) shortened(t *testing.T, name string) {
@@ -226,7 +226,7 @@ func (k *contract) shortened(t *testing.T, name string) {
 	answered := c.answered(over)
 	last := c.edge.heardBetween(gave, answered.replied)
 	t.Logf("the model %s the reply %s after the first word; the agent was last heard %d frames after", how, took.Round(time.Millisecond), len(last))
-	bound := shortenTail + frameSlack
+	bound := shortenedWithin + frameSlack
 	if how == "stop" {
 		bound = frameSlack
 	}
@@ -272,7 +272,7 @@ func (k *contract) checkInTalkedOver(t *testing.T) {
 		}
 		last := c.edge.heardBetween(gave, next)
 		if len(last) > 0 {
-			assert.LessOrEqual(t, last[len(last)-1].Sub(over.began()), stopWithin+shortenTail,
+			assert.LessOrEqual(t, last[len(last)-1].Sub(over.began()), stopWithin+shortenedWithin,
 				"the check-in went on %s after the caller's first word", last[len(last)-1].Sub(over.began()).Round(time.Millisecond))
 		}
 	}

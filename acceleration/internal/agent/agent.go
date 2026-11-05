@@ -1910,7 +1910,7 @@ func (a *Agent) perform(action Action) {
 		a.interrupt(action.Participant, action.Interruption)
 
 	case ActShorten:
-		a.shorten()
+		a.shorten(action.Participant, action.TurnID, action.Interruption)
 
 	case ActAnswer:
 		a.mu.Lock()
@@ -3933,20 +3933,54 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	return true
 }
 
-// shorten stops the model from adding more while allowing speech already sent to the
-// voice to finish.
-func (a *Agent) shorten() {
-	a.mu.Lock()
-	turnID := a.speakingTurn
-	reply := a.streams[turnID]
-	a.mu.Unlock()
-	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) || reply == nil {
+// shortenTail is how much of what it is saying a shortening lets the agent finish. The
+// caller added one more item for the request being answered (README, "The loop's contract"),
+// and the model was trained on shorten in a demo that let at most this much of the audio
+// playing finish, its voice having no word timing. The router's voices have none either:
+// what the voice was already sent can be seconds of speech, all of it playing on.
+const shortenTail = 250 * time.Millisecond
+
+// shorten has the agent add nothing more to turnID, the reply it is saying, and stop saying it
+// shortenTail later, once the item the caller added is to be answered (respondQueued). A line
+// the agent said of its own accord answers no request, so it is stopped at once.
+func (a *Agent) shorten(participant stt.Participant, turnID string, why interruption) {
+	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) {
 		return
 	}
-	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID)
-	if err := reply.Close(); err != nil {
-		a.fail(err, "llm")
+	saying := func(speaking string) bool { return speaking == turnID }
+	if ownLine(turnID) {
+		a.abandonReply(participant, saying, why)
+		return
 	}
+	a.mu.Lock()
+	reply, ctx := a.streams[turnID], a.ctx
+	if a.closed || ctx == nil {
+		a.mu.Unlock()
+		return
+	}
+	a.running.Add(1)
+	a.mu.Unlock()
+	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID, "tail", shortenTail)
+	if reply != nil {
+		if err := reply.Close(); err != nil {
+			a.fail(err, "llm")
+		}
+	}
+	go func() {
+		defer a.running.Done()
+		select {
+		case <-time.After(shortenTail):
+			a.abandonReply(participant, saying, why)
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// ownLine reports whether a turn is a line the agent said of its own accord, rather than a
+// reply to something somebody asked: a check-in, an update or a hold, or a line said as
+// written, such as the greeting.
+func ownLine(turnID string) bool {
+	return strings.HasPrefix(turnID, ownPrefix) || Scripted(turnID)
 }
 
 // respondQueued answers the turn held back while the agent was talking, if it has
