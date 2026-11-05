@@ -9,6 +9,7 @@ import (
 
 	"github.com/google/uuid"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/outcome"
@@ -212,6 +213,26 @@ func (s *EpisodeReadingSuite) TestAnInboundCallerWhoJoinsAfterTheAgentGetsTheirC
 
 	s.Require().Eventually(func() bool { return len(callEpisodesIn(db, created.ID())) == 1 }, settleFor, 10*time.Millisecond)
 	s.Equal(1, callers())
+
+	// A leg that drops comes back under a new connection id: the same call, the same card.
+	rejoined := stt.Participant{ID: "caller-" + uuid.NewString(), UserID: "sip-" + lateCaller}
+	watched, detach := created.Watch()
+	defer detach()
+	edge.arrives(rejoined)
+	s.Require().Eventually(func() bool {
+		for {
+			select {
+			case event := <-watched:
+				if joined, ok := event.(agent.ParticipantJoined); ok && joined.Participant.ID == rejoined.ID {
+					return true
+				}
+			default:
+				return false
+			}
+		}
+	}, settleFor, 10*time.Millisecond, "the session took the rejoin")
+	s.Equal(Live, created.State())
+	s.Len(callEpisodesIn(db, created.ID()), 1)
 }
 
 // Defect: the vendor's leg of a placed call can be the first phone to join it, under the
