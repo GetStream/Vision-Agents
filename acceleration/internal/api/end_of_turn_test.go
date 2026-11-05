@@ -15,7 +15,7 @@ import (
 )
 
 // EndOfTurnSuite runs a router that asks a chorus-asr server about turns, which publishes
-// chorusInfo, on an app of each test's own.
+// chorusASRInfo, on an app of each test's own.
 type EndOfTurnSuite struct {
 	RouterSuite
 }
@@ -25,11 +25,11 @@ func TestEndOfTurnSuite(t *testing.T) {
 }
 
 func (s *EndOfTurnSuite) SetupSuite() {
-	chorus := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		_, _ = w.Write([]byte(chorusInfo))
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = w.Write([]byte(chorusASRInfo))
 	}))
-	s.T().Cleanup(chorus.Close)
-	s.audioFloor, s.audioFloorMode = audiofloor.New(chorus.URL, audiofloor.Opus, chorus.Client()), audiofloor.Shadow
+	s.T().Cleanup(server.Close)
+	s.audioFloor, s.audioFloorMode = audiofloor.New(server.URL, audiofloor.Opus, server.Client()), audiofloor.Shadow
 	s.RouterSuite.SetupSuite()
 }
 
