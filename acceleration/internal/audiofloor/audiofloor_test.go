@@ -2,6 +2,7 @@ package audiofloor
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/binary"
 	"encoding/json"
@@ -75,10 +76,15 @@ type fakeServer struct {
 	busy           int
 	failDecide     bool
 	failingDecides int
-	// transcribeGate, when set, holds every transcription request until it is closed, and
-	// held counts the requests waiting at it.
+	// transcribeGate, when set, holds every transcription request until it is closed, or
+	// with holdOne the next one alone, and held counts the requests waiting at it.
 	transcribeGate chan struct{}
+	holdOne        bool
 	held           int
+	// language is the language the server says it heard words in, English unless set, and
+	// noise, when set, has it answer transcriptions with no words and that as the reason.
+	language string
+	noise    string
 	// decideAfter is how long a decision takes, and wordsAfter how long its words take after
 	// it.
 	decideAfter time.Duration
@@ -144,11 +150,18 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		f.languages = append(f.languages, r.URL.Query().Get("languages"))
 		if gate := f.transcribeGate; gate != nil {
 			f.held++
+			if f.holdOne {
+				f.transcribeGate = nil
+			}
 			f.mu.Unlock()
 			<-gate
 			f.mu.Lock()
 		}
-		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q}}`+"\n", f.words)
+		if f.noise != "" {
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":"","language":%q,"noise":%q}}`+"\n", f.spoken(), f.noise)
+			return
+		}
+		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q}}`+"\n", f.words, f.spoken())
 	case "/v1/decide":
 		if f.fail || f.failDecide || f.failingDecides > 0 {
 			if f.failingDecides > 0 {
@@ -194,10 +207,13 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				time.Sleep(f.wordsAfter)
 				f.mu.Lock()
 			}
-			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q},"transcript_ms":3}`+"\n", f.words)
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q},"transcript_ms":3}`+"\n", f.words, f.spoken())
 		}
 	}
 }
+
+// spoken is the language the server says it heard. The caller holds the lock.
+func (f *fakeServer) spoken() string { return cmp.Or(f.language, "English") }
 
 // serverSuite is a Client of a fake server.
 type serverSuite struct {
@@ -396,7 +412,8 @@ func (s *ClientSuite) TestTheWordsAloneAreAskedForAlone() {
 	s.server.words = "What time is the last ferry?"
 	got, err := s.client.Transcribe(context.Background(), some, []string{"en", "pt-BR"})
 	s.Require().NoError(err)
-	s.Equal("What time is the last ferry?", got)
+	s.Equal("What time is the last ferry?", got.Text)
+	s.Equal("English", got.Language, "the language the server heard, by its name for it")
 	s.Equal([]string{"en,pt-BR"}, s.server.languages)
 	s.Equal([][]byte{some.Data}, s.server.audio)
 	s.Equal([]string{pcmType}, s.server.types)
@@ -519,11 +536,12 @@ type TranscriberSuite struct{ transcribing }
 type transcribing struct {
 	serverSuite
 	transcriber *Transcriber
-	// wordsAlone opens each transcriber asking about no pauses (AskOnPauses(nil)), and
-	// interims has it write the words so far while the caller talks, which the suites that
-	// count each request leave off.
+	// wordsAlone opens each transcriber asking about no pauses (AskOnPauses(nil)), interims
+	// has it write the words so far while the caller talks, which the suites that count each
+	// request leave off, and languages are the callers' it is opened for.
 	wordsAlone bool
 	interims   bool
+	languages  []string
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -545,6 +563,7 @@ func (s *transcribing) SetupTest() {
 	s.serverSuite.SetupTest()
 	s.server.words = "Two tickets to Bilbao, please."
 	s.client.format = Opus
+	s.languages = []string{"en", "pt-BR"}
 	s.floor = 16 // about -66 dBFS
 	// The voice and the noise start over, so that a test hears the same line whatever ran
 	// before it: over noise near voiceLevel, which frames the detector takes for speech
@@ -564,7 +583,7 @@ func (s *transcribing) reopen(now func() time.Time) {
 }
 
 func (s *transcribing) openReading(now func() time.Time) {
-	s.transcriber = NewTranscriber(s.client, "", []string{"en", "pt-BR"}, slog.New(slog.DiscardHandler))
+	s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
 	s.transcriber.now = now
 	if s.wordsAlone {
 		s.transcriber.AskOnPauses(nil)

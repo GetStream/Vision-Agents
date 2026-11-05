@@ -300,7 +300,14 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	p.words, p.audioMs, p.wordsMs = &text, float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
 	waiting, utterance, audioMs, wordsMs := p.ended == nil, p.utterance, p.audioMs, p.wordsMs
 	t.mu.Unlock()
-	if waiting && t.interims && text != "" {
+	if text == "" {
+		t.finish(c.epoch)
+		return
+	}
+	// The utterance's first words at a pause say what language it is spoken in, which its
+	// interims are held to: a pause's words in another are kept for the final, not shown.
+	spoken := t.sent.establish(utterance, words.Language)
+	if waiting && t.interims && (words.Language == "" || words.Language == spoken) {
 		t.send(stt.Transcript{
 			Participant:      c.participant,
 			Mode:             stt.ModeReplacement,

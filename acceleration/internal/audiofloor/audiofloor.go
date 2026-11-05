@@ -378,12 +378,30 @@ func (c *Client) Decide(ctx context.Context, agent Agent, turn Turn, audio harne
 	return answer, err
 }
 
-// Words is what a decision's pass wrote of its audio: all of it, as POST /v1/transcribe
-// would, empty when nothing was said or the server heard noise.
+// Words is what a request for words wrote of its audio: all of it, as POST /v1/transcribe
+// does and a decision's pass can, empty when nothing was said or the server heard noise.
+// Language is the language the server heard the words in, by its own name for it
+// ("English"), which it takes back as one of a request's languages; a server that does not
+// say leaves it empty. Noise says why the text is empty when the server heard something it
+// does not write: "language" is words in a language the callers don't speak.
 type Words struct {
-	Text string
-	Ms   float64
-	Err  error
+	Text     string
+	Language string
+	Noise    string
+	Ms       float64
+	Err      error
+}
+
+// transcriptJSON is the words as the server writes them, in a transcription's answer and
+// a decision's second line.
+type transcriptJSON struct {
+	Text     string `json:"text"`
+	Language string `json:"language"`
+	Noise    string `json:"noise"`
+}
+
+func (t *transcriptJSON) words(ms float64) Words {
+	return Words{Text: t.Text, Language: t.Language, Noise: t.Noise, Ms: ms}
 }
 
 // DecideWords is Decide that also has the server write the words of all of audio in the
@@ -489,11 +507,9 @@ func (c *Client) decideWords(ctx context.Context, target string, body []byte, co
 		defer cancel()
 		defer resp.Body.Close()
 		var line struct {
-			Transcript *struct {
-				Text string `json:"text"`
-			} `json:"transcript"`
-			Error string  `json:"transcript_error"`
-			Ms    float64 `json:"transcript_ms"`
+			Transcript *transcriptJSON `json:"transcript"`
+			Error      string          `json:"transcript_error"`
+			Ms         float64         `json:"transcript_ms"`
 		}
 		switch err := lines.Decode(&line); {
 		case err != nil:
@@ -501,17 +517,18 @@ func (c *Client) decideWords(ctx context.Context, target string, body []byte, co
 		case line.Transcript == nil:
 			said <- Words{Err: stack.Wrap(&TranscriptError{Request: req.URL.Path + ": the words", Message: line.Error})}
 		default:
-			said <- Words{Text: line.Transcript.Text, Ms: line.Ms}
+			said <- line.Transcript.words(line.Ms)
 		}
 	}()
 	return answer, said, resp.StatusCode, nil
 }
 
-// Transcribe is what was said in audio, by callers who speak languages, BCP 47 tags, or any
-// language when there are none: empty when nothing was, or when the server heard noise.
-func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages []string) (string, error) {
+// Transcribe is what was said in audio, by callers who speak languages, BCP 47 tags or the
+// server's own names for them (Words.Language), or any language when there are none: empty
+// when nothing was, or when the server heard noise.
+func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages []string) (Words, error) {
 	if len(audio.Data) == 0 {
-		return "", stack.Wrap(errors.New("audiofloor: no audio heard yet"))
+		return Words{}, stack.Wrap(errors.New("audiofloor: no audio heard yet"))
 	}
 	target := c.url + "/v1/transcribe"
 	if len(languages) > 0 {
@@ -519,22 +536,21 @@ func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages 
 	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(audio.Data))
 	if err != nil {
-		return "", stack.Wrap(err)
+		return Words{}, stack.Wrap(err)
 	}
 	req.Header.Set("Content-Type", audio.Type)
 	var said struct {
-		Transcript *struct {
-			Text string `json:"text"`
-		} `json:"transcript"`
-		Error string `json:"transcript_error"`
+		Transcript *transcriptJSON `json:"transcript"`
+		Error      string          `json:"transcript_error"`
+		Ms         float64         `json:"transcript_ms"`
 	}
 	if _, err := c.do(req, &said); err != nil {
-		return "", err
+		return Words{}, err
 	}
 	if said.Transcript == nil {
-		return "", stack.Wrap(&TranscriptError{Request: "transcribe", Message: said.Error})
+		return Words{}, stack.Wrap(&TranscriptError{Request: "transcribe", Message: said.Error})
 	}
-	return said.Transcript.Text, nil
+	return said.Transcript.words(said.Ms), nil
 }
 
 type toolJSON struct {

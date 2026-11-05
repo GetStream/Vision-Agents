@@ -347,7 +347,10 @@ func (t *Transcriber) transcribe() {
 				}
 			default:
 				failed = 0
-				words = strings.TrimSpace(said)
+				words = strings.TrimSpace(said.Text)
+				if words != "" {
+					t.sent.establish(r.utterance, said.Language)
+				}
 			}
 		}
 		if words != "" {

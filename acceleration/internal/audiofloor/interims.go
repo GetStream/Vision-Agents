@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -28,37 +29,49 @@ const interimEvery = time.Second
 var interims = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "chorus_asr_interims_total",
-	Help:      "Words asked for while the caller talked on, by what became of them: written, late (newer words or the utterance's final went out first), empty, refused (every lane busy: 503, 429 or busy) or failed. None is asked for again.",
+	Help: "Words asked for while the caller talked on, by what became of them: written, late (newer words or the utterance's final went out first), " +
+		"unstable (they did not carry on the words shown), empty, foreign (in a language other than the utterance's), refused (every lane busy: 503, 429 or busy) or failed. None is asked for again.",
 }, []string{"outcome"})
 
 // sentWords is the last words of an utterance to have gone out, which later words of it are
 // held to: none after its final, which has the last word, and none of less audio than words
 // already out, as an interim answered late would be, so that what a watcher sees never goes
 // back. Every transcript the session sends goes through it (send), so a final and an interim
-// answered as it goes out can't cross.
+// answered as it goes out can't cross. It also keeps the language an utterance is spoken in,
+// the one the server heard its first words in at a pause, which its interims are held to.
 type sentWords struct {
-	mu        sync.Mutex
+	mu sync.Mutex
+	// utterance is the newest utterance words have gone out of, upTo how much of its audio
+	// the last of them were of, text what they said, and done whether they were its final.
 	utterance int64
 	upTo      time.Duration
+	text      string
 	done      bool
+	// language is the language of utterance spokenOf's first words at a pause, as the
+	// server named it (Words.Language).
+	language string
+	spokenOf int64
 }
 
 // send sends transcript unless words of its utterance that supersede it have gone out, and
-// says whether it did.
-func (t *Transcriber) send(transcript stt.Transcript) bool {
+// says what became of it: written, or why not. An interim is held to the words shown as
+// well (carriesOn).
+func (t *Transcriber) send(transcript stt.Transcript) string {
 	s := &t.sent
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	upTo := time.Duration(transcript.AudioDurationMs * float64(time.Millisecond))
 	switch {
 	case transcript.Utterance < s.utterance:
-		return false
+		return "late"
 	case transcript.Utterance == s.utterance && (s.done || (!transcript.Final() && upTo <= s.upTo)):
-		return false
+		return "late"
+	case transcript.Interim && transcript.Utterance == s.utterance && !carriesOn(s.text, transcript.Text):
+		return "unstable"
 	}
-	s.utterance, s.upTo, s.done = transcript.Utterance, upTo, transcript.Final()
+	s.utterance, s.upTo, s.text, s.done = transcript.Utterance, upTo, transcript.Text, transcript.Final()
 	t.emitter.Send(transcript)
-	return true
+	return "written"
 }
 
 // ended records that utterance is over with nothing more to send: a check ended it on words
@@ -79,13 +92,115 @@ func (s *sentWords) over(utterance int64) bool {
 	return utterance < s.utterance || (utterance == s.utterance && s.done)
 }
 
+// establish keeps language as the one utterance is spoken in, unless its first words have
+// said already, and says which it is. An empty language, from a server that does not say,
+// establishes nothing.
+func (s *sentWords) establish(utterance int64, language string) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if utterance > s.spokenOf && language != "" {
+		s.language, s.spokenOf = language, utterance
+	}
+	return s.spokenLocked(utterance)
+}
+
+// spoken is the language utterance is spoken in, or empty until its first words at a pause
+// have said.
+func (s *sentWords) spoken(utterance int64) string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.spokenLocked(utterance)
+}
+
+func (s *sentWords) spokenLocked(utterance int64) string {
+	if s.spokenOf != utterance {
+		return ""
+	}
+	return s.language
+}
+
+// carriesOn says next, an interim, goes on from shown, the words of the utterance a watcher
+// sees: in no script shown is not in, with at least as many words, opening on the same word
+// and keeping at least half of shown's. The model writes the whole utterance each time, and
+// over noise or speech in another language two writings of the same audio can differ
+// wholesale: a watcher is shown the first, and words that don't carry it on wait for the
+// final.
+func carriesOn(shown, next string) bool {
+	if shown == "" {
+		return true
+	}
+	if scripts(next)&^scripts(shown) != 0 {
+		return false
+	}
+	before, after := plainWords(shown), plainWords(next)
+	if len(before) == 0 || len(after) < len(before) || before[0] != after[0] {
+		return false
+	}
+	has := map[string]bool{}
+	for _, w := range after {
+		has[w] = true
+	}
+	var kept int
+	for _, w := range before {
+		if has[w] {
+			kept++
+		}
+	}
+	return 2*kept >= len(before)
+}
+
+// plainWords is text as words: lowercase, letters, digits and apostrophes alone.
+func plainWords(text string) []string {
+	return strings.Fields(strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsLetter(r), unicode.IsDigit(r), r == '\'':
+			return unicode.ToLower(r)
+		}
+		return ' '
+	}, text))
+}
+
+// scriptTables are the scripts letters are told apart by; a letter in none is one more.
+var scriptTables = []*unicode.RangeTable{unicode.Latin, unicode.Han, unicode.Hiragana, unicode.Katakana, unicode.Hangul,
+	unicode.Devanagari, unicode.Cyrillic, unicode.Arabic, unicode.Hebrew, unicode.Greek, unicode.Thai}
+
+// scripts is the set of scripts text's letters are in, a bit each.
+func scripts(text string) (set uint) {
+	for _, r := range text {
+		if !unicode.IsLetter(r) {
+			continue
+		}
+		bit := uint(1) << len(scriptTables)
+		for i, table := range scriptTables {
+			if unicode.Is(table, r) {
+				bit = 1 << i
+				break
+			}
+		}
+		set |= bit
+	}
+	return set
+}
+
 // interim asks for the words so far while the caller talks on, once interimEvery of speech
 // has come since they were last asked for, by a pause's first check or an interim, less
 // often as the utterance grows past Window: one at a time, on a goroutine of its own, so
-// that it holds up no pause check and no final. It runs on the session's goroutine, on a
-// frame of speech.
+// that it holds up no pause check and no final. The words are asked for in the utterance's
+// own language once its first words at a pause have said which (sentWords.establish), and
+// until then in the languages the callers were declared to speak; with none declared they
+// are not asked for yet, as the server would guess the language of a second of speech, and
+// a watcher would see the words switch language and script from one interim to the next. It
+// runs on the session's goroutine, on a frame of speech.
 func (t *Transcriber) interim(participant stt.Participant, heard int64) {
 	if !t.interims || t.interimOut.Load() {
+		return
+	}
+	utterance := t.utterance + 1
+	languages, spoken := t.languages, t.sent.spoken(utterance)
+	switch {
+	case spoken != "":
+		languages = []string{spoken}
+	case len(languages) == 0:
 		return
 	}
 	length := time.Duration(heard-t.start) * frame
@@ -96,18 +211,20 @@ func (t *Transcriber) interim(participant stt.Participant, heard int64) {
 	t.spoken = 0
 	t.interimOut.Store(true)
 	t.running.Add(1)
-	go t.writeInterim(participant, t.utterance+1, t.heard.Last(length))
+	go t.writeInterim(participant, utterance, t.heard.Last(length), languages, spoken)
 }
 
-// writeInterim asks for the words of audio, the utterance so far, and sends them as an
-// interim of the utterance unless newer words of it, or its final, have gone out meanwhile.
-// A server that is busy or fails costs nothing but this request: it is not asked again.
-func (t *Transcriber) writeInterim(participant stt.Participant, utterance int64, audio harness.Audio) {
+// writeInterim asks for the words of audio, the utterance so far, in languages, and sends
+// them as an interim of the utterance unless newer words of it, or its final, have gone out
+// meanwhile, or they are in a language other than spoken, the utterance's own, when that is
+// known. A server that is busy or fails costs nothing but this request: it is not asked
+// again.
+func (t *Transcriber) writeInterim(participant stt.Participant, utterance int64, audio harness.Audio, languages []string, spoken string) {
 	defer t.running.Done()
 	defer t.interimOut.Store(false)
 	start := time.Now()
 	ctx, cancel := context.WithTimeout(t.ctx, transcribeTimeout+audio.Duration)
-	said, err := t.client.Transcribe(ctx, audio, t.languages)
+	said, err := t.client.Transcribe(ctx, audio, languages)
 	cancel()
 	if t.ctx.Err() != nil {
 		return
@@ -118,12 +235,18 @@ func (t *Transcriber) writeInterim(participant stt.Participant, utterance int64,
 			"participant", participant.ID, "utterance", utterance, "error", err)
 		return
 	}
-	words := strings.TrimSpace(said)
-	if words == "" {
+	words := strings.TrimSpace(said.Text)
+	switch {
+	case said.Noise == "language", spoken != "" && said.Language != "" && said.Language != spoken:
+		interims.WithLabelValues("foreign").Inc()
+		t.logger.Debug("an interim in a language other than the utterance's is not shown",
+			"participant", participant.ID, "utterance", utterance, "language", said.Language, "spoken", spoken, "noise", said.Noise)
+		return
+	case words == "":
 		interims.WithLabelValues("empty").Inc()
 		return
 	}
-	sent := t.send(stt.Transcript{
+	interims.WithLabelValues(t.send(stt.Transcript{
 		Participant:      participant,
 		Mode:             stt.ModeReplacement,
 		Interim:          true,
@@ -133,12 +256,7 @@ func (t *Transcriber) writeInterim(participant stt.Participant, utterance int64,
 		Model:            t.model,
 		ProcessingTimeMs: float64(time.Since(start).Microseconds()) / 1000,
 		AudioDurationMs:  float64(audio.Duration.Microseconds()) / 1000,
-	})
-	if sent {
-		interims.WithLabelValues("written").Inc()
-	} else {
-		interims.WithLabelValues("late").Inc()
-	}
+	})).Inc()
 }
 
 // interimFailure is why an interim was not written, as interims counts it: refused by a

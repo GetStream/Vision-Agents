@@ -195,7 +195,7 @@ func (h *floorHarness) warm(t *testing.T) {
 		Instructions: "A warm-up agent.", Audio: stream.Last(audiofloor.Window), Paused: 500 * time.Millisecond, FirstPause: true,
 	})
 	require.NoError(t, err)
-	t.Logf("warm: %q", said)
+	t.Logf("warm: %q in %s", said.Text, said.Language)
 }
 
 // 7. A new agent's first turn registers it (POST /v1/agents) inside the Hearer's deadline,

@@ -36,10 +36,115 @@ func (s *InterimSuite) ending(pEOT float64) {
 // outcomes is what became of the interims asked so far, by outcome.
 func outcomes() map[string]float64 {
 	out := map[string]float64{}
-	for _, outcome := range []string{"written", "late", "empty", "refused", "failed"} {
+	for _, outcome := range []string{"written", "late", "unstable", "empty", "foreign", "refused", "failed"} {
 		out[outcome] = testutil.ToFloat64(interims.WithLabelValues(outcome))
 	}
 	return out
+}
+
+// askedIn are the languages each request for words alone named, in order.
+func (s *InterimSuite) askedIn() []string {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	return append([]string(nil), s.server.languages...)
+}
+
+// became waits for one more interim to have had outcome.
+func (s *InterimSuite) became(outcome string, before map[string]float64) {
+	s.T().Helper()
+	s.Eventually(func() bool { return outcomes()[outcome] > before[outcome] }, 5*time.Second, time.Millisecond,
+		"no interim became %s: %v, then %v", outcome, before, outcomes())
+}
+
+// With no languages declared, an interim's language is the utterance's own: the one the
+// server heard its first words in, at a pause, which the words so far are then asked for in.
+// Before that nothing is asked for, as a guess on a second of speech would be, and words
+// that come back in another language, the server's own refusal (noise: language) or words it
+// names otherwise, are dropped. A pause's words in another language are kept for the final
+// and not shown either.
+func (s *InterimSuite) TestInterimsAreAskedForInTheUtterancesOwnLanguage() {
+	s.languages = nil
+	s.reopen(time.Now)
+	s.ending(0.1)
+	s.say(2000, true)
+	s.none()
+	s.Zero(s.transcribed(), "no words asked for alone before the utterance's language is known")
+
+	s.say(220, false)
+	s.answered()
+	shown := next[stt.Transcript](&s.transcribing)
+	s.True(shown.Interim, "the pause's words, in the language the server heard")
+	s.say(1000, true)
+	first := next[stt.Transcript](&s.transcribing)
+	s.True(first.Interim)
+	s.Equal([]string{"English"}, s.askedIn(), "asked for in the language of the pause's words")
+
+	for _, foreign := range []struct{ language, noise string }{{"Hindi", ""}, {"English", "language"}} {
+		before := outcomes()
+		s.server.mu.Lock()
+		s.server.language, s.server.noise = foreign.language, foreign.noise
+		s.server.mu.Unlock()
+		s.say(1000, true)
+		s.became("foreign", before)
+		s.none()
+	}
+	s.server.mu.Lock()
+	s.server.language, s.server.noise, s.server.words = "Portuguese", "", "Duas passagens para Bilbau, por favor."
+	s.server.mu.Unlock()
+	s.say(220, false)
+	s.answered()
+	s.none()
+	s.server.mu.Lock()
+	s.server.language, s.server.words = "English", "Two tickets to Bilbao, please, for tonight."
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.Equal("Two tickets to Bilbao, please, for tonight.", next[stt.Transcript](&s.transcribing).Text)
+}
+
+// With languages declared, the words so far are asked for in them until the utterance's own
+// is known, and in that alone from then on.
+func (s *InterimSuite) TestInterimsNarrowToTheLanguageOfTheFirstWords() {
+	s.ending(0.1)
+	s.say(1000, true)
+	s.True(next[stt.Transcript](&s.transcribing).Interim)
+	s.say(220, false)
+	s.answered()
+	s.True(next[stt.Transcript](&s.transcribing).Interim, "the pause's words")
+	s.say(1000, true)
+	s.True(next[stt.Transcript](&s.transcribing).Interim)
+	s.Equal([]string{"en,pt-BR", "English"}, s.askedIn())
+}
+
+// An interim never takes a watcher's line back. Two writings of the same audio can differ
+// wholesale over noise or speech in another language, so words that don't carry on the ones
+// shown are dropped: fewer words, a script the shown words are not in, or an opening and
+// words that are not theirs. The final is as it is.
+func (s *InterimSuite) TestAnInterimThatGoesBackOnTheWordsShownIsDropped() {
+	s.say(1000, true)
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
+	for _, unstable := range []string{
+		"Two tickets to Bilbao.",
+		"Two tickets to Bilbao, please. 性格 木气 太 木",
+		"Bye, bye, biga. Bye, there. Bye, biga. Bye, kill the jago.",
+		"Two tickets, two tickets, two tickets, two tickets, two tickets.",
+	} {
+		before := outcomes()
+		s.server.mu.Lock()
+		s.server.words = unstable
+		s.server.mu.Unlock()
+		s.say(1000, true)
+		s.became("unstable", before)
+		s.none()
+	}
+	s.server.mu.Lock()
+	s.server.words = "Two tickets to Bilbao, please, for tonight."
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.Equal("Two tickets to Bilbao, please, for tonight.", next[stt.Transcript](&s.transcribing).Text)
+	s.say(220, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal("Two tickets to Bilbao, please, for tonight.", end.Text)
 }
 
 // While the caller talks on, the words so far are written about once a second of speech, as
