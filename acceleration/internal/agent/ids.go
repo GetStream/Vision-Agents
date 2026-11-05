@@ -67,7 +67,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	// linked are the parts of the links the tools returned (linkParts), but for the parts the
 	// call each answers was sent: a link that holds them writes back what the model asked for.
 	// Each comes with its line and the words that may name its kind: its line's, those of the
-	// keys it stands under and the tool's name.
+	// keys it stands under and the tool's name. A link's own words name nothing: its host and
+	// path are where it points, so https://channels.example.com/u/U0… is no channel's link.
 	type toolLink struct {
 		part  string
 		in    line
@@ -111,7 +112,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				for _, text := range strings.Split(html.UnescapeString(value), "\n") {
 					for _, part := range linkParts(text) {
 						if !strings.Contains(alphanumeric(sent[message.ToolCallID]), part) {
-							named := slices.Concat(lineWords(text), lineWords(strings.Join(under, " ")), lineWords(called[message.ToolCallID]))
+							named := slices.Concat(lineWords(link.ReplaceAllString(text, " ")), lineWords(strings.Join(under, " ")), lineWords(called[message.ToolCallID]))
 							linked = append(linked, toolLink{part, line{text, sent[message.ToolCallID], len(wrote)}, named})
 						}
 					}
@@ -946,15 +947,28 @@ var idWord = regexp.MustCompile(`[\p{L}\p{Nd}_#-]+`)
 // and the ID in brackets, so a name of any length stands between them (labelledAs). That
 // reading holds only where labelled is true: no other line labels the ID as another kind.
 //
+// The one word between is a name only where nothing says it is not. A label is named by its
+// last word (labelNames): in "Channel owner: U0…" a colon ends the label at "owner", so U0…
+// is an owner. And a thing named before its kind has its name: in "#help channel admin U0…"
+// the word after the kind is not the channel's. A name marked with # is a name either way,
+// "Channel #help: C0…".
+//
 // The word for the kind is a word of its own (holdsKind), and not the ID's: "#ops-channel" is
 // a channel's name, not the word "channel", and "public_channel" listed as a channel's type
-// is no channel's ID.
+// is no channel's ID. Nor is it a word of a link on the line, whose host and path say where
+// the link points, not what the ID is.
 func besideKind(line, wanted, kind string, labelled bool) bool {
 	if labelled && slices.ContainsFunc(labelledAs(line, wanted), func(label []string) bool { return labelNames(label, kind) }) {
 		return true
 	}
 	words := lineWords(line)
+	spans := wordSpans(line)
 	ends := phraseEnds(line)
+	links := link.FindAllStringIndex(line, -1)
+	inLink := func(word []int) bool {
+		return slices.ContainsFunc(links, func(found []int) bool { return found[0] <= word[0] && word[1] <= found[1] })
+	}
+	isID := func(word string) bool { return alphanumeric(word) == "id" }
 	// A kind may take more than one word: "phone number" for phone_number_id.
 	size := len(strings.Fields(kind))
 	for at, word := range words {
@@ -962,7 +976,8 @@ func besideKind(line, wanted, kind string, labelled bool) bool {
 			continue
 		}
 		for start := 0; start+size <= len(words); start++ {
-			if start <= at && at < start+size || !holdsKind(words[start:start+size], kind, strings.Contains) {
+			if start <= at && at < start+size || !holdsKind(words[start:start+size], kind, strings.Contains) ||
+				slices.ContainsFunc(spans[start:start+size], inLink) {
 				continue
 			}
 			var between []string
@@ -979,8 +994,12 @@ func besideKind(line, wanted, kind string, labelled bool) bool {
 				between, limit = words[at+1:start], 0
 			} else if at >= start+size {
 				between = words[start+size : at]
+				if name := slices.DeleteFunc(slices.Clone(between), isID); len(name) == 1 && !strings.HasPrefix(name[0], "#") &&
+					(strings.Contains(line[spans[start+size][1]:spans[at][0]], ":") || start > 0 && strings.HasPrefix(words[start-1], "#")) {
+					limit = 0
+				}
 			}
-			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= limit {
+			if len(slices.DeleteFunc(slices.Clone(between), isID)) <= limit {
 				return true
 			}
 		}
@@ -1005,12 +1024,7 @@ func lineWords(line string) []string {
 // "public_channel - Creator", or a tab or a gap of two spaces or more stands there, as in the
 // columns of a text table. A word followed by one space alone does not: "channel owner".
 func phraseEnds(line string) []bool {
-	var spans [][]int
-	for _, span := range idWord.FindAllStringIndex(line, -1) {
-		if alphanumeric(line[span[0]:span[1]]) != "" {
-			spans = append(spans, span)
-		}
-	}
+	spans := wordSpans(line)
 	ends := make([]bool, len(spans))
 	for i, span := range spans {
 		if i == len(spans)-1 {
@@ -1021,6 +1035,17 @@ func phraseEnds(line string) []bool {
 		ends[i] = strings.TrimSpace(gap) != "" || strings.ContainsRune(gap, '\t') || strings.Contains(gap, "  ")
 	}
 	return ends
+}
+
+// wordSpans are where each of lineWords(line) stands in line, as start and end offsets.
+func wordSpans(line string) [][]int {
+	var spans [][]int
+	for _, span := range idWord.FindAllStringIndex(line, -1) {
+		if alphanumeric(line[span[0]:span[1]]) != "" {
+			spans = append(spans, span)
+		}
+	}
+	return spans
 }
 
 // plainWords are the words of text the person or the model wrote, lowercase, split at every
@@ -1060,7 +1085,8 @@ var bracketedID = regexp.MustCompile(`\((?:(?i:id):\s*)?([\w-]+)\)`)
 
 // labelledAs returns the label of each field "<label>: <name> (<wanted>)" on line, as its words:
 // ["channel"] for "Channel: Group DM (ID: C0…)". The field ends at a " - " or another label
-// or bracket, so "Creator: Ana Lind (<@U0…)" and "Channel #x by U0…" have none.
+// or bracket, so "Creator: Ana Lind (<@U0…)" and "Channel #x by U0…" have none. A link's words
+// are no label's: "https://team.example.com/channel: Ana Lind (U0…)" labels nothing.
 func labelledAs(line, wanted string) [][]string {
 	var labels [][]string
 	for _, found := range bracketedID.FindAllStringSubmatchIndex(line, -1) {
@@ -1075,7 +1101,7 @@ func labelledAs(line, wanted string) [][]string {
 			field = field[cut+3:]
 		}
 		if colon := strings.LastIndex(field, ":"); colon >= 0 {
-			labels = append(labels, lineWords(field[:colon]))
+			labels = append(labels, lineWords(link.ReplaceAllString(field[:colon], " ")))
 		}
 	}
 	return labels
