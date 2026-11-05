@@ -370,8 +370,8 @@ func (s *RouterStartSuite) TestARouterHandedASocketServesOnItAndWaitsForTheProxy
 
 	s.Eventually(func() bool { return healthy(public) }, 10*time.Second, 50*time.Millisecond,
 		"nothing answered on the socket the router was handed")
-	// The old router lets go of the proxy address, as a draining one does (handOverMetrics's
-	// sibling, handOverProxy).
+	// The old router lets go of the proxy address, as a draining router does through
+	// handOverProxy.
 	s.Require().NoError(old.Close())
 	s.Eventually(func() bool { return servesProxy(settings.CodeSandbox.ProxyAddr) }, 10*time.Second, 50*time.Millisecond,
 		"the router handed a socket did not take the proxy address the old router let go of")
