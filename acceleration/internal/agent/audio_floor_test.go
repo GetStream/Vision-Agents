@@ -270,6 +270,18 @@ func TestAPauseChecksRulingIsTheFlowControllers(t *testing.T) {
 
 }
 
+// A caller the transcriber says is in an utterance is heard, words or none, so the silence a
+// check-in fills is the line's alone: a caller counting slowly, whose words come at the end,
+// was checked in on mid-count.
+func TestACallerInAnUtteranceIsHeard(t *testing.T) {
+	a := &Agent{}
+	before := time.Now()
+	pauseAsker{a}.Hearing(stt.Participant{ID: "p"})
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	require.False(t, a.lastHeardAt.Before(before), "the caller was not heard")
+}
+
 // A pause check over the agent ends the caller's turn at its pause with no bar, the floor not
 // being free: its ruling stands if the agent has gone quiet before the turn is put. Asked again
 // with the floor free, the model's end-of-turn bars started over on words it had ended, and

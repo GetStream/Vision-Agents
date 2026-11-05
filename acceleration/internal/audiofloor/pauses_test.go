@@ -25,6 +25,20 @@ type asking struct {
 	// stops for them.
 	overheard []Ruled
 	stops     bool
+	// hearing counts the times the agent was told the caller is in an utterance.
+	hearing int
+}
+
+func (a *asking) Hearing(stt.Participant) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hearing++
+}
+
+func (a *asking) heardSoFar() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.hearing
 }
 
 func (a *asking) Hearer() *Hearer { return a.hearer }
@@ -187,6 +201,25 @@ func (s *PausesSuite) TestACallerTalkingOverTheAgentIsAskedAboutWithoutAPause() 
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal(int64(1), end.Utterance, "the utterance went on through the checks over the agent, and ended at its pause")
 	s.Len(s.agent.rulings(), 1)
+}
+
+// The agent is told the caller is in an utterance every interval while it lasts, voiced or in
+// a pause the model is waiting on, whether or not any words have been written of it: a caller
+// whose words come only at the turn's end, with interims off or the words so far unstable, is
+// not a silent line the agent should fill. Once the utterance has ended it is told nothing.
+func (s *PausesSuite) TestTheAgentIsToldTheCallerIsTalkingUntilTheTurnEnds() {
+	s.ending(0.1)
+	s.say(1000, true)
+	voiced := s.agent.heardSoFar()
+	s.GreaterOrEqual(voiced, 3, "told while the caller talked")
+	s.say(900, false)
+	s.Greater(s.agent.heardSoFar(), voiced, "told while the model waited on the pause")
+	s.ending(0.999)
+	s.say(300, false)
+	next[stt.Transcript](&s.transcribing)
+	ended := s.agent.heardSoFar()
+	s.say(2000, false)
+	s.Equal(ended, s.agent.heardSoFar(), "told nothing once the turn had ended")
 }
 
 // A check over the agent that stopped it ends the utterance on the words it was ruled on, at

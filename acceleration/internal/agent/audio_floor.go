@@ -267,6 +267,16 @@ func transcriptOf(participant stt.Participant, ruled audiofloor.Ruled) stt.Trans
 		ProcessingTimeMs: ruled.WordsMs, AudioDurationMs: ruled.AudioMs}
 }
 
+// Hearing has the agent take the caller as heard now, while they are in an utterance the
+// model has not ended: a silence is the line's, which the agent may fill with a check-in, only
+// once nobody is talking. Their words come at a pause or at the turn's end, and with interims
+// off or the words so far unstable, a caller counting slowly was checked in on mid-count.
+func (p pauseAsker) Hearing(stt.Participant) {
+	p.a.mu.Lock()
+	defer p.a.mu.Unlock()
+	p.a.lastHeardAt = time.Now()
+}
+
 // Speaking says the agent is talking, as Moment tells the model.
 func (p pauseAsker) Speaking() bool {
 	a := p.a

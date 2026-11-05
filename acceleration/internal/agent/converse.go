@@ -155,7 +155,8 @@ type floor struct {
 	Composing bool
 	// LastSpokeAt is when the agent last published audio.
 	LastSpokeAt time.Time
-	// LastHeardAt is when anyone on the call was last transcribed.
+	// LastHeardAt is when anyone on the call was last transcribed, or heard in an utterance
+	// the transcriber has not ended (pauseAsker.Hearing).
 	LastHeardAt time.Time
 	// LastParticipant is who the agent was last talking to.
 	LastParticipant stt.Participant

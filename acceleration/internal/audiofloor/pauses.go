@@ -39,6 +39,11 @@ type Asker interface {
 	// words are its own voice heard back, which is no reason to stop. It says whether the
 	// agent stopped talking for it, which spends the words on the stop (Ruled.Stopped).
 	Overheard(participant stt.Participant, ruled Ruled) (stopped bool)
+	// Hearing says the caller is in an utterance, voiced or in a pause no check has ended,
+	// whether or not any words of it have been written: the line is not silent. It is said
+	// every interval of the policy while the utterance lasts, on the session's goroutine,
+	// and must not block.
+	Hearing(participant stt.Participant)
 }
 
 // Ruled is what a check ruled on an utterance, and the words it was about: a pause check's
@@ -103,6 +108,9 @@ func (neutralAgent) Speaking() bool { return false }
 
 // Overheard is never asked, as nobody talks over an agent that says nothing.
 func (neutralAgent) Overheard(stt.Participant, Ruled) bool { return false }
+
+// Hearing tells nobody: the transcriber's own agent fills no silence.
+func (neutralAgent) Hearing(stt.Participant) {}
 
 // pause is the pause going on in the utterance being heard, and what its checks said.
 type pause struct {
