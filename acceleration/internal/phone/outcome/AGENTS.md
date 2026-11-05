@@ -50,14 +50,15 @@ and an inbound call the router answers), read when the answered leg ends (`leftO
 - `closed_at` is at or before the leg's end, and
 - `end_reason` is not one that ends the call (`EndsTheCall`): `agent_hangup` and `voicemail`
   end the Stream call, `transferred` leaves the caller with a person, and `hangup` comes after
-  the caller left. An empty reason (the session was stopped, failed, or the router shut down)
-  and `start` or `unanswered` (the agent gave up before the phone joined) count as dropped.
+  the caller left. Every other reason (`closed`, `shutdown`, a failure such as `model_failed`,
+  `start` or `unanswered`, the agent giving up before the phone joined) and an empty one (a
+  session that ended before reasons were kept) count as dropped.
 
 | Case | Signal | Counted as |
 | --- | --- | --- |
 | The person hangs up | the phone leaves while the session is open | `completed` |
 | The agent hangs up (`end_call`) | session end reason `agent_hangup` | `completed` |
-| The agent stops, fails or the router shuts down mid-call | session closed with an empty reason before the phone left | `dropped` |
+| The agent stops, fails or the router shuts down mid-call | session closed with `closed`, `shutdown`, a failure reason (`agent_failed`, `model_failed`, ...) or an empty reason, before the phone left | `dropped` |
 | The phone joins after the agent gave up waiting | session closed with `start` or `unanswered` before the phone left | `dropped` |
 | The network or the vendor cuts the call | none: the phone leaves, as when the person hangs up. The vendors' reports carry no hang-up cause (`phone.CallStatus`) | `completed` (not detected) |
 | The router process dies without closing the session | none: the session row stays open | `completed` (not detected) |
