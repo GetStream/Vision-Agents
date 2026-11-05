@@ -387,6 +387,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A custom connector deleted while a session opens no longer fails it with a 500
+
+When a custom connector was force-deleted while a session that binds it was opening, the session failed with a 500. Now an optional binding is left out, or opens with no sandbox access, and a required one is refused with `connection_unavailable`. A delete a moment earlier already got these answers. (#1765)
+
 ### A router with shards refuses to be a move's source
 
 A router whose calls, sessions, responses, requests and stats are kept in shard databases recorded no changes to them after an export, so `router replicate` from it lost those writes and said nothing. `GET /v1/data/export` and `GET /v1/data/changes` on such a router now answer 400 `not_configured` and say that moving off a router with shards is not supported yet. An unsharded router moves as before, and a router with shards can still be a move's target (AI-2813).
