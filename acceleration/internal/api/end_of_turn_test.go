@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
@@ -178,5 +179,29 @@ func (s *EndOfTurnSuite) TestASessionChoosesForItselfServerSide() {
 		row, err := s.store.StoredSession(context.Background(), s.customerID(), opened.Id)
 		return err == nil && row.EndOfTurn.Preset == "fast"
 	}, settleFor, 20*time.Millisecond, "the session keeps the choice it was opened with")
+	unchosen := s.serverClient.createSession(CreateSessionRequest{ConfigId: &agent.ID})
+	// A chat carried on from its row is one somebody wrote in.
+	respondIn(&s.RouterSuite, s.serverClient, opened.Id, "hello")
+	respondIn(&s.RouterSuite, s.serverClient, unchosen.Id, "hello")
+	s.Require().Eventually(func() bool {
+		for _, id := range []string{opened.Id, unchosen.Id} {
+			if row, err := s.store.StoredSession(context.Background(), s.customerID(), id); err != nil || row.ConversationID == "" {
+				return false
+			}
+		}
+		return true
+	}, settleFor, 20*time.Millisecond, "the chats were never kept")
 	s.serverClient.stopSession(opened.Id)
+	s.serverClient.stopSession(unchosen.Id)
+
+	// Carried on from its row, as a chat that ended in another process is (sessionToAnswer).
+	_, other := s.otherRouter(nil)
+	ctx := context.WithValue(context.Background(), customerContextKey{}, s.customerID())
+	ctx = context.WithValue(ctx, kindContextKey{}, auth.KindServer)
+	reopened, err := other.reopenedFromRow(ctx, opened.Id)
+	s.Require().NoError(err)
+	s.Equal(store.EndOfTurn{Preset: "fast"}, reopened.EndOfTurn, "a reopened session keeps its own choice")
+	reopened, err = other.reopenedFromRow(ctx, unchosen.Id)
+	s.Require().NoError(err)
+	s.Equal(store.EndOfTurn{Preset: "safe"}, reopened.EndOfTurn, "one that chose none takes its config's")
 }
