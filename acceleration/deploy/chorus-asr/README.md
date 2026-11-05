@@ -44,7 +44,9 @@ check fails and the failure is the model's, reported as such, not worked around 
 - **Stopped, then answered.** A correction or a new request ("no, Porto", "and in Lisbon?",
   "stop, what about Porto?" in one breath, or "stop" and then a question): the agent stops
   within 800 ms of the first word, and what the caller says after the words the stop was
-  ruled on is a turn of its own, from the voice after them, answered once. [11, S2, S3, C3]
+  ruled on is a turn of its own, from the voice after them, answered once. Where the model
+  rules a request one more item ("and in Lisbon?" over a forecast), it is shortened, as
+  below, and answered whole. [11, S2, S3, C3]
 - **Shortened.** One more item for the request being answered ("and in Porto?" over a
   forecast): the agent adds nothing more to the reply, stops speaking within 250 ms of the
   ruling, and answers the item. The model was trained on `shorten` as "one more item of the

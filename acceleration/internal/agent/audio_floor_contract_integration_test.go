@@ -165,10 +165,7 @@ func (k *contract) stopsAndAnswered(t *testing.T, name, keyword string, oneBreat
 	defer c.report()
 
 	assert.Empty(t, all[Error](c), "no failure")
-	took, how, gaveWay := c.stoppedAfter(over)
-	if assert.True(t, gaveWay, "the agent stopped or shortened") {
-		assert.LessOrEqual(t, took, stopWithin, "the agent gave way (%s) %s after the caller's first word", how, took.Round(time.Millisecond))
-	}
+	c.gaveWay(t, over)
 	answers := c.decisionsAfter(over.began(), string(ActAnswer))
 	if assert.Len(t, answers, 1, "answered once") {
 		assert.Contains(t, wordsOfText(answers[0].E.Text), keyword, "the answer is to what the caller asked")
@@ -179,6 +176,32 @@ func (k *contract) stopsAndAnswered(t *testing.T, name, keyword string, oneBreat
 	}
 	assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
 	k.measured(t, "C3 "+name, c.answered(over))
+}
+
+// gaveWay holds the agent to the contract's line for what the model ruled over it, first, on
+// what was said: stopped, it is quiet within stopWithin of the caller's first word; shortened,
+// within shortenedWithin of the ruling. Both a correction and one more item are answered.
+func (c *call) gaveWay(t *testing.T, said *cue) {
+	t.Helper()
+	var ruled stampedEvent[OverlapDecided]
+	for _, o := range all[OverlapDecided](c) {
+		if !o.At.Before(said.began()) {
+			ruled = o
+			break
+		}
+	}
+	if !assert.NotEmpty(t, ruled.E.Action, "the agent neither stopped nor shortened") {
+		return
+	}
+	stopped, ok := c.interrupted(said.began())
+	if !assert.True(t, ok, "the agent went on after the model ruled %s", ruled.E.Action) {
+		return
+	}
+	if ruled.E.Action == "shorten" {
+		assert.LessOrEqual(t, stopped.At.Sub(ruled.At), shortenedWithin+frameSlack, "shortened, the agent stopped %s after the ruling", stopped.At.Sub(ruled.At).Round(time.Millisecond))
+		return
+	}
+	assert.LessOrEqual(t, stopped.At.Sub(said.began()), stopWithin, "the agent stopped %s after the caller's first word", stopped.At.Sub(said.began()).Round(time.Millisecond))
 }
 
 // C3. "Stop." over the list, then 1 s later "What's the weather in Porto?": the agent stops,
@@ -252,10 +275,8 @@ func (k *contract) checkInTalkedOver(t *testing.T) {
 	c.edge.say("weather", k.weather)
 	c.until(func() bool { return len(c.edge.replyStarts()) > 0 }, 20*time.Second, "the reply began")
 	c.until(func() bool {
-		return len(all[Responded](c)) > 0 && all[Responded](c)[len(all[Responded](c))-1].E.Purpose == PurposeCheckIn
-	},
-		30*time.Second, "the agent checked in")
-	c.until(func() bool { return len(c.edge.replyStarts()) > 1 }, 10*time.Second, "the check-in was heard")
+		return len(c.decisionsAfter(c.began, string(ActCheckIn))) > 0 && len(c.edge.replyStarts()) > 1
+	}, 30*time.Second, "the agent checked in, and was heard")
 	time.Sleep(1500 * time.Millisecond)
 	over := c.edge.say("andporto", k.clips["andporto"])
 	c.edge.pause(5 * time.Second)
