@@ -391,6 +391,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A repeat `router replicate --once` brings only what changed since the last run
+
+A second `--once` for an app copied before wrote the whole export again, so every row edited on the target since the first copy went back to the source's older copy. A run now saves the source's cursor on the target, and the next run for the app follows the changes from it and writes no row of the export. An app the target already holds with no saved cursor, copied before this release, is refused, and so is one whose last run read the source longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION` (taken to be the source's own); pass `--as` on a repeat run so it opens no export; `--full` copies everything again, as before (AI-2864).
+
 ### A Slack mention is answered when a reply that waited for it can no longer be read
 
 A Slack reply that is not to the bot, in a thread nobody linked yet, waits for the mention that starts the thread. When the connection was pinned meanwhile to a revision that does not read the reply, the mention failed with a 500 on every retry and was never answered. Now that reply is dropped and logged at warn, and the mention is answered. Any other failure to take a waiting reply still fails the mention, and Slack's retry takes both (AI-2743).
