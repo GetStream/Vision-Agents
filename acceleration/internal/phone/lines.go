@@ -23,6 +23,18 @@ const trunkCapacity = 50
 // errLinedElsewhere is line's error for a number on a trunk in another app.
 var errLinedElsewhere = errors.New("lined in another app")
 
+// errRoutedElsewhere is line's error for a number whose stored rule or trunk Stream no longer
+// has while another rule or trunk there still routes it, made by hand or by another router
+// on the app. A second one of ours would take its calls from whoever made that one.
+var errRoutedElsewhere = errors.New("its rule or trunk is gone at Stream, and Stream routes it through another one")
+
+// errTrunkLost is adopt's error for a number whose own trunk Stream no longer has.
+var errTrunkLost = errors.New("its trunk is gone at Stream")
+
+// errTrunkChanged is adopt's error for a number whose rule Stream no longer has and whose own
+// trunk there no longer lists it. Whoever took it off may have put other numbers on it.
+var errTrunkChanged = errors.New("its rule is gone at Stream, and its trunk there no longer lists it")
+
 // TrunkLine is the trunk and rule a number's calls reach Stream through.
 type TrunkLine struct {
 	TrunkID string
@@ -63,10 +75,15 @@ func (s *Service) line(ctx context.Context, stream *Stream, pin int64, held stor
 				line, err = s.lineOn(trunks[i], held.E164, held.StreamRouteID)
 				return err
 			}
-			line, err = s.adopt(ctx, stream, tx, held)
-			return err
 		}
 		joined = &joining{}
+		if held.StreamTrunkID != "" {
+			line, err = s.adopt(ctx, stream, tx, held, joined)
+			if !errors.Is(err, errTrunkLost) {
+				return err
+			}
+			// Nothing at Stream answers the number any more, so it joins as a new one would.
+		}
 		line, err = s.join(ctx, stream, tx, trunks, held, joined)
 		return err
 	})
@@ -97,23 +114,36 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 
 	var trunk store.StreamTrunk
 	var password string
-	roomiest := -1
-	for i, candidate := range trunks {
-		if len(candidate.Numbers) < trunkCapacity && (roomiest < 0 || len(candidate.Numbers) < len(trunks[roomiest].Numbers)) {
-			roomiest = i
+	for joined.trunkID == "" {
+		roomiest := -1
+		for i, candidate := range trunks {
+			if len(candidate.Numbers) < trunkCapacity && (roomiest < 0 || len(candidate.Numbers) < len(trunks[roomiest].Numbers)) {
+				roomiest = i
+			}
 		}
-	}
-	if roomiest >= 0 {
+		if roomiest < 0 {
+			break
+		}
 		trunk = trunks[roomiest]
 		if password, err = s.trunkPassword(trunk); err != nil {
 			return TrunkLine{}, err
 		}
 		trunk.Numbers = append(slices.Clone(trunk.Numbers), held.E164)
-		if err := stream.UpdateTrunk(ctx, trunk.ID, Trunk{Name: name, Numbers: trunk.Numbers, AllowedIPs: allowedIPs}); err != nil {
+		err := stream.UpdateTrunk(ctx, trunk.ID, Trunk{Name: name, Numbers: trunk.Numbers, AllowedIPs: allowedIPs})
+		switch {
+		case notFound(err):
+			if err := s.forgetLostTrunk(ctx, stream, tx, held, trunk.ID, err); err != nil {
+				return TrunkLine{}, err
+			}
+			// The next roomiest takes the number, or a new trunk when none has room.
+			trunks = slices.Delete(slices.Clone(trunks), roomiest, roomiest+1)
+		case err != nil:
 			return TrunkLine{}, err
+		default:
+			joined.trunkID = trunk.ID
 		}
-		joined.trunkID = trunk.ID
-	} else {
+	}
+	if joined.trunkID == "" {
 		id, bridge, err := stream.CreateTrunk(ctx, Trunk{Name: name, Numbers: []string{held.E164}, AllowedIPs: allowedIPs})
 		if err != nil {
 			return TrunkLine{}, err
@@ -164,6 +194,32 @@ func (s *Service) join(ctx context.Context, stream *Stream, tx *store.TrunkGroup
 	return TrunkLine{TrunkID: trunk.ID, RouteID: routeID, Bridge: bridge}, nil
 }
 
+// forgetLostTrunk drops the row of a shared trunk Stream no longer has, so the number
+// joining goes on another trunk and each number left on the row, no longer finding it, lines
+// again on its next call. The number must not be routed at Stream some other way. A trunk
+// Stream still lists answered the update with lost, which is returned and drops nothing.
+func (s *Service) forgetLostTrunk(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, trunkID string, lost error) error {
+	rules, trunks, holds, err := stream.answering(ctx, held.E164, trunkID)
+	if err != nil {
+		return err
+	}
+	if holds {
+		return lost
+	}
+	if len(rules) > 0 || len(trunks) > 0 {
+		return s.routedElsewhere(held, rules, trunks)
+	}
+	return tx.DeleteTrunk(trunkID)
+}
+
+// routedElsewhere is errRoutedElsewhere for the number, with what Stream routes it through
+// logged: the answer to the client does not name another's rule or trunk.
+func (s *Service) routedElsewhere(held store.PhoneNumber, rules, trunks []string) error {
+	s.logger.Warn("a number's line is gone at Stream and another routes it", "number", held.E164,
+		"stored_trunk", held.StreamTrunkID, "stored_route", held.StreamRouteID, "rules", rules, "trunks", trunks)
+	return stack.Wrap(fmt.Errorf("phone: line %s: %w", held.E164, errRoutedElsewhere))
+}
+
 // leave undoes a join that failed. Its transaction rolled back, so the stored trunk, read
 // again under the group's lock, is what Stream should have: without the number, or not
 // there at all for a trunk the join made. Best-effort: a failure is logged, never returned,
@@ -203,8 +259,9 @@ func (s *Service) leave(ctx context.Context, stream *Stream, group store.TrunkGr
 
 // adopt takes a number attached on a trunk of its own, before trunks were shared, into the
 // group as it is: its trunk becomes one the customer's next numbers can join, and its rule
-// reads the call id header.
-func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber) (TrunkLine, error) {
+// reads the call id header. A rule Stream no longer has is made again; a trunk it no longer
+// has is errTrunkLost, and one that no longer lists the number errTrunkChanged.
+func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, joined *joining) (TrunkLine, error) {
 	if len(held.BridgePasswordSealed) == 0 {
 		return TrunkLine{}, stack.Wrap(fmt.Errorf("phone: adopt the trunk of %s: %w", held.E164, store.ErrNoStoredBridge))
 	}
@@ -218,14 +275,19 @@ func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGrou
 	}
 
 	// An update resends every field, so the rule is given again all it was made with.
-	err = stream.UpdateRoute(ctx, held.StreamRouteID, Route{
+	route := Route{
 		Name:          "phone-" + held.E164,
 		TrunkIDs:      []string{held.StreamTrunkID},
 		CalledNumbers: []string{held.E164},
 		CallID:        lineCallTemplate,
 		CallType:      cmp.Or(held.StreamCallType, defaultCallType),
 		Custom:        map[string]string{NumberKey: held.E164},
-	})
+	}
+	routeID := held.StreamRouteID
+	err = stream.UpdateRoute(ctx, routeID, route)
+	if notFound(err) {
+		routeID, err = s.routeAgain(ctx, stream, tx, held, route, joined)
+	}
 	if err != nil {
 		return TrunkLine{}, err
 	}
@@ -240,7 +302,40 @@ func (s *Service) adopt(ctx context.Context, stream *Stream, tx *store.TrunkGrou
 	if err != nil {
 		return TrunkLine{}, err
 	}
-	return TrunkLine{TrunkID: held.StreamTrunkID, RouteID: held.StreamRouteID, Bridge: bridge}, nil
+	return TrunkLine{TrunkID: held.StreamTrunkID, RouteID: routeID, Bridge: bridge}, nil
+}
+
+// routeAgain makes the rule of a number on a trunk of its own again, Stream having lost the
+// stored one, and records it in place of that one.
+func (s *Service) routeAgain(ctx context.Context, stream *Stream, tx *store.TrunkGroupTx, held store.PhoneNumber, route Route, joined *joining) (string, error) {
+	rules, trunks, holds, err := stream.answering(ctx, held.E164, held.StreamTrunkID)
+	if err != nil {
+		return "", err
+	}
+	listsIt := slices.Contains(trunks, held.StreamTrunkID)
+	others := slices.DeleteFunc(trunks, func(id string) bool { return id == held.StreamTrunkID })
+	if len(rules) > 0 || len(others) > 0 {
+		return "", s.routedElsewhere(held, rules, others)
+	}
+	if !holds {
+		return "", stack.Wrap(fmt.Errorf("phone: line %s: %w", held.E164, errTrunkLost))
+	}
+	if !listsIt {
+		return "", stack.Wrap(fmt.Errorf("phone: line %s: %w", held.E164, errTrunkChanged))
+	}
+	routeID, err := stream.CreateRoute(ctx, route)
+	if err != nil {
+		return "", err
+	}
+	joined.routeID = routeID
+	err = tx.SetLine(held.E164, held.StreamTrunkID, routeID, store.NumberBridge{
+		URI: held.BridgeURI, Username: held.BridgeUsername,
+		PasswordSealed: held.BridgePasswordSealed, KEKVersion: held.BridgePasswordKEKVersion,
+	})
+	if err != nil {
+		return "", err
+	}
+	return routeID, nil
 }
 
 // inTrunkGroup is store.InTrunkGroup behind a lock of this process's own. A caller waiting
