@@ -69,3 +69,29 @@ func (s *GivenNamesSuite) TestAGivenHotelDoesNotExcuseAMissingGuestName() {
 	s.True(refused)
 	s.Equal("John Doe", name)
 }
+
+func (s *GivenNamesSuite) TestAStandInNameTheAgentWroteIsNotGroundedByAToolReadingItBack() {
+	// A tool that reads back what the agent said or posted returns the name the agent wrote (AI-2886).
+	said := llm.Message{Role: llm.Assistant, Content: "I will book it for John Doe."}
+	posted := llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: "send_message", Arguments: `{"text":"New booking: John Doe, 2 nights"}`}}}
+	read := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_notes", Arguments: `{}`}}},
+			{Role: llm.ToolResult, ToolCallID: "r1", Content: result},
+		}
+	}
+	given := llm.Message{Role: llm.ToolResult, Content: `{"guest":"John Doe","room":"204"}`}
+	for _, c := range []struct {
+		name    string
+		history []llm.Message
+		refused bool
+	}{
+		{"said, read back", append([]llm.Message{said}, read(`{"notes":"Agent: I will book it for John Doe."}`)...), true},
+		{"posted, read back as text", append([]llm.Message{posted}, read("[bot] New booking: John Doe, 2 nights\n[ana] ok")...), true},
+		{"said, read back on another line than a tool's", append([]llm.Message{said}, read(`{"notes":"Agent: I will book it for John Doe.\nFront desk: John Doe checked in"}`)...), false},
+		{"given by a tool before the agent said it", append([]llm.Message{given, said}, read(`{"notes":"Agent: I will book it for John Doe."}`)...), false},
+	} {
+		_, refused := placeholderName(c.history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
+		s.Equal(c.refused, refused, c.name)
+	}
+}

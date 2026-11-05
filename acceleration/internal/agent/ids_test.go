@@ -712,6 +712,15 @@ func TestTextTheAgentWroteIsNoSourceOfAnID(t *testing.T) {
 		{"a channel the agent read before a search listed it", [][]llm.Message{read(`{"ok":false,"error":"not_in_channel"}`), listed}, "C0HELP002", false},
 		{"a line a tool returned before the agent wrote it", [][]llm.Message{named, {said("Channel: #help (C0HELP002)")}}, "C0HELP002", false},
 		{"a listed channel the agent repeated, read back", [][]llm.Message{listed, {said("Channel: #help (C0HELP002)")}, read(`{"messages":"Bot: Channel: #help (C0HELP002)"}`)}, "C0HELP002", false},
+		// A message read back keeps the channel the agent named in it as a field of its own (AI-2883).
+		{"a channel the agent posted, read back in a field", [][]llm.Message{posted("use <#C0FAKE01>"), read(`{"messages":[{"text":"use <#C0FAKE01>","blocks":[{"type":"channel","channel_id":"C0FAKE01"}]}]}`)}, "C0FAKE01", true},
+		{"a channel the agent said, read back in a nested field", [][]llm.Message{{said("Moved to <#C0FAKE01|help> today")}, read(`{"messages":[{"text":"Moved to <#C0FAKE01|help> today","blocks":[{"elements":[{"elements":[{"type":"channel","channel_id":"C0FAKE01"}]}]}]}]}`)}, "C0FAKE01", true},
+		{"a channel the agent posted, read back as an id", [][]llm.Message{posted("Ask in C0FAKE01 please"), read(`{"messages":[{"text":"Ask in C0FAKE01 please","attachments":[{"id":"C0FAKE01"}]}]}`)}, "C0FAKE01", true},
+		{"a channel the agent posted, read back escaped for HTML in a field", [][]llm.Message{posted("Q&A is in <#C0FAKE01>"), read(`{"messages":[{"text":"Q&amp;A is in <#C0FAKE01>","channel_id":"C0FAKE01"}]}`)}, "C0FAKE01", true},
+		{"a channel another result gave, read back in a field", [][]llm.Message{posted("use <#C0FAKE01>"), read(`{"messages":[{"text":"use <#C0FAKE01>","blocks":[{"channel_id":"C0FAKE01"}]}]}`), read(`{"channel":{"id":"C0FAKE01","name":"help"}}`)}, "C0FAKE01", false},
+		{"a channel a result gave before the agent posted it", [][]llm.Message{read(`{"channel":{"id":"C0FAKE01","name":"help"}}`), posted("use <#C0FAKE01>"), read(`{"messages":[{"text":"use <#C0FAKE01>","blocks":[{"channel_id":"C0FAKE01"}]}]}`)}, "C0FAKE01", false},
+		{"a field holding a channel the agent's read-back line does not name", [][]llm.Message{posted("use <#C0FAKE01>"), read(`{"messages":[{"text":"use <#C0FAKE01>","channel_id":"C0REAL001"}]}`)}, "C0REAL001", false},
+		{"a field read back with a line the agent wrote after it", [][]llm.Message{read(`{"messages":[{"text":"use <#C0FAKE01>","channel_id":"C0FAKE01"}]}`), {said("use <#C0FAKE01>")}}, "C0FAKE01", false},
 	}
 	for _, c := range cases {
 		history := []llm.Message{{Role: llm.User, Content: "What's new?"}}
@@ -721,6 +730,21 @@ func TestTextTheAgentWroteIsNoSourceOfAnID(t *testing.T) {
 		_, _, _, unfound := unfoundID(history, llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":"` + c.id + `"}`}, tools, "")
 		assert.Equal(t, c.unfound, unfound, c.name)
 	}
+}
+
+func TestAnIDAResultReadsBackIsNotListedAsReturned(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.User, Content: "What's new?"},
+		{Role: llm.Assistant, Content: "use <#C0FAKE01>"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_channel", Arguments: `{"channel_id":"C0HELP002"}`}}},
+		{Role: llm.ToolResult, ToolCallID: "r1", Content: `{"channel_id":"C0HELP002","messages":[{"text":"use <#C0FAKE01>","blocks":[{"channel_id":"C0FAKE01"}]}]}`},
+	}
+	_, _, known, unfound := unfoundID(history, llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":"C0FAKE01"}`}, []string{"read_channel"}, "")
+	require.True(t, unfound)
+	assert.Equal(t, []string{"C0HELP002 (channel_id)"}, known, "the field read back is not offered as returned; the channel read is")
+	_, _, known, unfound = unfoundID(history, llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":""}`}, []string{"read_channel"}, "")
+	require.True(t, unfound)
+	assert.ElementsMatch(t, []string{"C0HELP002 (channel_id)", "C0FAKE01 (channel_id)"}, known, "an empty ID is answered with every ID returned")
 }
 
 func TestAnArgumentSentEscapedIsStillAnEcho(t *testing.T) {
@@ -965,5 +989,120 @@ func TestUnsourcedTransferIgnoresANumberQuotedByAFailedTool(t *testing.T) {
 	} {
 		_, unsourced := unsourcedTransfer([]llm.Message{{Role: llm.ToolResult, Content: content}}, call, "")
 		assert.True(t, unsourced, content)
+	}
+}
+
+func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
+	// A tool that reads back what the agent said or posted returns the number the agent wrote:
+	// a near miss of the caller's that the agent wrote is still one nobody gave (AI-2886).
+	said := func(text string) []llm.Message { return []llm.Message{{Role: llm.Assistant, Content: text}} }
+	posted := func(text string) []llm.Message {
+		arguments, err := json.Marshal(map[string]string{"channel_id": "C0HELP002", "text": text})
+		require.NoError(t, err)
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: "send_message", Arguments: string(arguments)}}},
+			{Role: llm.ToolResult, ToolCallID: "s1", Content: `{"ok":true}`},
+		}
+	}
+	read := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_notes", Arguments: `{}`}}},
+			{Role: llm.ToolResult, ToolCallID: "r1", Content: result},
+		}
+	}
+	lookup := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "l1", Name: "find_member", Arguments: `{"last4":"5630"}`}}},
+		{Role: llm.ToolResult, ToolCallID: "l1", Content: `{"member":"Ana Lind","last4":"5630"}`},
+	}
+	cases := []struct {
+		name    string
+		history [][]llm.Message
+		told    string
+		unheard bool
+	}{
+		{"a number the agent said, read back", [][]llm.Message{said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "", true},
+		{"a number the agent posted, read back in a list", [][]llm.Message{posted("Member's last four: 5630"), read(`{"messages":[{"user":"bot","text":"Member's last four: 5630"}]}`)}, "", true},
+		{"a number the agent posted, read back as text", [][]llm.Message{posted("Last four 5630 confirmed"), read("[bot] Last four 5630 confirmed\n[ana] ok")}, "", true},
+		{"a number the agent posted, read back escaped for HTML", [][]llm.Message{posted("Q&A: last four 5630"), read(`{"notes":"Q&amp;A: last four 5630"}`)}, "", true},
+		{"a number the agent said, read back on another line than a tool's", [][]llm.Message{said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that.\nCard on file ends 5630"}`)}, "", false},
+		{"a number a tool returned before the agent said it", [][]llm.Message{lookup, said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "", false},
+		{"a number the operator gave", [][]llm.Message{said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "Test members end in 5630.", false},
+		{"a number the agent sent alone, returned", [][]llm.Message{lookup}, "", false},
+	}
+	for _, c := range cases {
+		history := []llm.Message{{Role: llm.User, Content: "My last four are six three zero five."}}
+		for _, part := range c.history {
+			history = append(history, part...)
+		}
+		_, _, _, unheard := unheardNumber(history, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`}, c.told)
+		assert.Equal(t, c.unheard, unheard, c.name)
+	}
+	heard := []llm.Message{
+		{Role: llm.User, Content: "My last four are five six three zero."},
+		{Role: llm.Assistant, Content: "Your last four are 5630, I have noted that."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_notes", Arguments: `{}`}}},
+		{Role: llm.ToolResult, ToolCallID: "r1", Content: `{"notes":"Agent: Your last four are 5630, I have noted that."}`},
+	}
+	_, _, _, unheard := unheardNumber(heard, llm.ToolCall{Name: "confirm_member", Arguments: `{"last4":"5630"}`}, "")
+	assert.False(t, unheard, "the caller said it")
+}
+
+func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
+	// A tool that reads back what the agent said or posted returns the number the agent wrote,
+	// in whatever form it wrote it: the agent is no source of a number to put a caller through to (AI-2886).
+	said := func(text string) []llm.Message { return []llm.Message{{Role: llm.Assistant, Content: text}} }
+	posted := func(text string) []llm.Message {
+		arguments, err := json.Marshal(map[string]string{"channel_id": "C0HELP002", "text": text})
+		require.NoError(t, err)
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: "send_message", Arguments: string(arguments)}}},
+			{Role: llm.ToolResult, ToolCallID: "s1", Content: `{"ok":true}`},
+		}
+	}
+	read := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_channel", Arguments: `{"channel_id":"C0HELP002"}`}}},
+			{Role: llm.ToolResult, ToolCallID: "r1", Content: result},
+		}
+	}
+	directory := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "d1", Name: "find_department", Arguments: `{"name":"sales"}`}}},
+		{Role: llm.ToolResult, ToolCallID: "d1", Content: `{"department":"Sales","phone":"+1 (555) 010-0199"}`},
+	}
+	checked := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "check_line", Arguments: `{"number":"+15550100199"}`}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"status":"Sales +1 555 010 0199 is open"}`},
+	}
+	checkedLocal := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "check_line", Arguments: `{"number":"(555) 010-0199"}`}}},
+		{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"status":"Sales +1 555 010 0199 is open"}`},
+	}
+	cases := []struct {
+		name      string
+		history   [][]llm.Message
+		to, told  string
+		unsourced bool
+	}{
+		{"a number the agent said, read back", [][]llm.Message{said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "", true},
+		{"a number the agent posted, read back in another form", [][]llm.Message{posted("Call us at +15550100199"), read(`{"messages":[{"text":"Call us at +1 555 010 0199"}]}`)}, "+15550100199", "", true},
+		{"a number the agent posted without its country code, read back", [][]llm.Message{posted("Sales is at (555) 010-0199"), read(`{"messages":[{"text":"Sales is at (555) 010-0199"}]}`)}, "+15550100199", "", true},
+		{"a number the agent posted, read back as text, sent in another form", [][]llm.Message{posted("Sales: +15550100199"), read("[bot] Sales: +15550100199\n[ana] thanks")}, "+1 (555) 010-0199", "", true},
+		{"a number the agent said, read back on another line than a person's", [][]llm.Message{said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now.\nAna: yes, sales is +1 555 010 0199"}`)}, "+15550100199", "", false},
+		{"a number a tool returned before the agent said it", [][]llm.Message{directory, said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "", false},
+		{"a number a tool returned, sent in another form", [][]llm.Message{directory}, "+15550100199", "", false},
+		{"a number the operator gave", [][]llm.Message{said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "Sales: (555) 010-0199", false},
+		{"a number the agent sent alone, returned", [][]llm.Message{checked}, "+15550100199", "", false},
+		{"a number the agent sent alone without its country code, returned", [][]llm.Message{checkedLocal}, "+1 (555) 010-0199", "", false},
+		{"an extension on a line with an agent's line holding its last digits", [][]llm.Message{said("Room 234 is ready."), read(`{"messages":"Bot: Room 234 is ready. Front desk is 1234"}`)}, "1234", "", false},
+	}
+	for _, c := range cases {
+		history := []llm.Message{{Role: llm.User, Content: "Can you put me through to sales?"}}
+		for _, part := range c.history {
+			history = append(history, part...)
+		}
+		arguments, err := json.Marshal(map[string]string{"to": c.to})
+		require.NoError(t, err)
+		_, unsourced := unsourcedTransfer(history, llm.ToolCall{Name: toolTransfer, Arguments: string(arguments)}, c.told)
+		assert.Equal(t, c.unsourced, unsourced, c.name)
 	}
 }
