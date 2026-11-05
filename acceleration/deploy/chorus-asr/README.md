@@ -65,8 +65,8 @@ end_of_turn:
 ```
 
 Left out, an agent keeps what is stored, and a new one ends its turns by the server's
-`default` preset; `end_of_turn: {}` is the default again. A sync (`POST /v1/agents/sync`, as
-every SDK's folder sync sends it), a config's create, replace and patch, and a server-side
+`default` preset; `end_of_turn: {}` is the default again. A sync (`POST /v1/agents/sync`, which
+carries agent.yaml's), a config's create, replace and patch, and a server-side
 `createSession`, which chooses for one session over its config's, all take the same field.
 
 - **What is checked, and when.** A write is refused (400), before anything is stored, when

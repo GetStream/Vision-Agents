@@ -5,9 +5,3 @@ mode: voice
 stt: stream/chorus-asr
 llm: gemini/gemini-3.8-flash
 tts: cartesia/sonic-preview
-
-# A caller who has finished waits at most about 1.1 s for the answer: the measured point
-# with the fewest cut-ins whose p90 wait is within it. preset: and bars: are the other two
-# ways to choose; see acceleration/deploy/chorus-asr/README.md.
-end_of_turn:
-  max_wait_ms: 1100
