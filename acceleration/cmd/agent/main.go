@@ -483,7 +483,7 @@ func speaker(heard agent.Heard) string {
 	return "someone"
 }
 
-// openAudioFloor is the audio floor server the router's settings name (ROUTER_CHORUS_ASR_URL,
+// openAudioFloor is the chorus-asr server the router's settings name (ROUTER_CHORUS_ASR_URL,
 // _MODE and _AUDIO), read as the router reads them, or nil.
 func openAudioFloor() (*audiofloor.Client, audiofloor.Mode, error) {
 	settings, _, err := config.Load("")
@@ -505,7 +505,7 @@ type routers struct {
 }
 
 // buildRouters wires all three routers, using Postgres and Redis when they are configured.
-// The demo is useful without them: it just stops recording usage. An audio floor server, when
+// The demo is useful without them: it just stops recording usage. A chorus-asr server, when
 // there is one, is a transcriber agents can name.
 func buildRouters(ctx context.Context, replyHedge, flowHedge time.Duration, floor *audiofloor.Client, logger *slog.Logger) (routers, func(), error) {
 	config, err := routing.LoadConfig(os.Getenv(configEnvVar))

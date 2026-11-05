@@ -145,7 +145,7 @@ func (s *STTRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
 
 func (s *STTRouterSuite) TestTheAudioFloorIsBuiltOnlyWhereAServerIsNamed() {
 	s.False(DefaultRegistry().Has(audiofloor.ProviderName),
-		"a deployment with no audio floor server should fail to build its transcriber rather than route to it")
+		"a deployment with no chorus-asr server should fail to build its transcriber rather than route to it")
 }
 
 func (s *STTRouterSuite) TestRegistryPassesLanguageHintsOnlyToTheMultilingualModel() {
@@ -662,7 +662,7 @@ func (s *STTRouterSuite) TestTheMockIsStreamedAtByNameAndReachedByNoShortcut() {
 	}
 }
 
-// An agent reaches the audio floor transcriber by naming it, whatever languages it hints
+// An agent reaches the chorus-asr transcriber by naming it, whatever languages it hints
 // at, and no shortcut reaches it.
 func (s *STTRouterSuite) TestTheAudioFloorIsStreamedAtByNameAndReachedByNoShortcut() {
 	config, err := routing.DefaultConfig()

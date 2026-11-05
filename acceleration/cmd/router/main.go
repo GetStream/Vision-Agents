@@ -812,7 +812,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	routers := map[routing.Modality]routing.Inspector{}
 	streams := &api.Streams{}
 
-	// One audio floor server serves every agent: as a transcriber where one names it, and
+	// One chorus-asr server serves every agent: as a transcriber where one names it, and
 	// to the flow controller as the mode says.
 	floor, floorMode := audiofloor.Open(settings.Agent)
 

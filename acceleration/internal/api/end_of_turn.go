@@ -123,9 +123,11 @@ func (s *Server) endOfTurnComplaint(ctx context.Context, chosen, was store.EndOf
 	if reflect.DeepEqual(chosen, was) {
 		return "", "", true
 	}
+	// As the server publishes it now, rather than as the sessions last read it: the agent is
+	// written once, and a session reads the policy again as it goes.
 	asking, cancel := context.WithTimeout(ctx, endOfTurnWait)
 	defer cancel()
-	policy, err := s.audioFloor.Policy(asking)
+	policy, err := s.audioFloor.PolicyNow(asking)
 	if err != nil {
 		s.logger.Warn("could not check an agent's end_of_turn against the chorus-asr server", "error", err)
 		return "end_of_turn is kept unchecked: the chorus-asr server did not say what it publishes, " +

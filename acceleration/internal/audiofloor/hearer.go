@@ -33,12 +33,12 @@ var (
 	checks = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "chorus_asr_checks_total",
-		Help:      "Turns put to chorus-asr, by what became of them. Acting on it, every outcome but answered and superseded is a turn the flow controller decided instead.",
+		Help:      "Turns put to the chorus-asr model, by what became of them. Acting on it, every outcome but answered and superseded is a turn the flow controller decided instead.",
 	}, []string{"outcome"})
 	checkSeconds = promauto.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "chorus_asr_check_seconds",
-		Help:      "How long chorus-asr took to answer a turn, the request included.",
+		Help:      "How long the chorus-asr model took to answer a turn, the request included.",
 		Buckets:   []float64{.01, .025, .05, .1, .25, .5, 1, 2},
 	})
 )
@@ -108,9 +108,15 @@ func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	if err != nil {
 		return Check{}, err
 	}
+	return h.rule(policy, turn, answer)
+}
+
+// rule reads the model's answer about turn by policy and the agent's choice of a point: the
+// ruling of the Hearer's own checks and of a transcriber asking for the agent (Asker).
+func (h *Hearer) rule(policy Policy, turn harness.FlowTurn, answer Answer) (Check, error) {
 	r := answer.Ruling
 	check := Check{Answer: answer, Ended: true, Ruling: harness.Decided{
-		Disposition: harness.Disposition(r.Disposition), Floor: harness.Floor(r.Floor), Tool: r.Tool, Cannot: r.Cannot,
+		Disposition: harness.Disposition(r.Disposition), Floor: harness.Floor(r.Floor),
 	}}
 	if !check.Ruling.Disposition.Valid() || !check.Ruling.Floor.Valid() {
 		return Check{}, stack.Wrap(fmt.Errorf("audiofloor: a ruling the flow controller has no word for: %+v", *r))
@@ -123,7 +129,7 @@ func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error
 	}
 	check.Ending = h.ending(policy)
 	check.Bar = policy.Bar(check.Ending.Bars, turn.Paused, turn.FirstPause)
-	check.InARow = h.inARow.count(turn.Participant, !turn.Waited, turn.Paused, policy.Interval(), *answer.PEOT >= check.Bar)
+	check.InARow = h.inARow.count(turn.ParticipantID, !turn.Waited, turn.Paused, *answer.PEOT >= check.Bar)
 	check.Ended = check.InARow >= check.Ending.ChecksInARow || turn.Paused >= policy.Cap()
 	if !check.Ended {
 		check.Ruling = harness.Decided{Disposition: harness.Wait, Floor: harness.Continue, Again: policy.Interval()}

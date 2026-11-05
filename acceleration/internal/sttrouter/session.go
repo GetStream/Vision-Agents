@@ -156,6 +156,10 @@ func (s *Session) SetKeyterms(terms []string) error {
 	return retuner.SetKeyterms(terms)
 }
 
+// Serving is the provider serving the session now, for what a caller can tell one provider
+// that the session has no word for. A failover replaces it, and the next knows nothing of it.
+func (s *Session) Serving() stt.STT { return s.current() }
+
 // current is the provider serving the session, which a failover replaces.
 func (s *Session) current() stt.STT {
 	s.mu.Lock()

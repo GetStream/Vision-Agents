@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"io"
 	"log/slog"
 	"net/http"
@@ -105,11 +106,13 @@ func TestATurnHearsItsParticipant(t *testing.T) {
 	other := frame(3)
 	other.Participant.ID = "q"
 	v.heard(other)
-	turn := harness.FlowTurn{ID: "t"}
+	turn := harness.FlowTurn{ID: "t", Participant: "Alex"}
 	v.listen(&turn, "p", []harness.Tool{{Name: "book_crossing"}, {Name: toolEndCall}})
 	require.Equal(t, 40*time.Millisecond, turn.Audio.Duration)
 	require.Equal(t, append(frame(1).Audio.Bytes(), frame(2).Audio.Bytes()...), turn.Audio.Data)
 	require.Len(t, turn.Tools, 1)
+	require.Equal(t, "p", turn.ParticipantID, "counted by ID, however the prompt calls them")
+	require.Equal(t, "Alex", turn.Participant)
 }
 
 // A server that never answers costs the caller nothing in shadow mode: asking returns at
@@ -164,6 +167,33 @@ func TestTheTwoRulingsAreComparedInEitherOrder(t *testing.T) {
 	require.Zero(t, pending())
 }
 
+// A participant who has left is let go of: their audio and its encoder, and any ruling on
+// their words still waiting. One who comes back is heard afresh.
+func TestADepartedParticipantIsLetGoOf(t *testing.T) {
+	v := newAudioFloor(audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
+	defer v.close()
+	frame := InboundAudio{Participant: stt.Participant{ID: "p"}, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}}
+	v.heard(frame)
+	v.heard(frame)
+	v.keep("p", audiofloor.Ruled{Check: audiofloor.Check{Ended: true}, Words: "Bye."})
+	v.keep("q", audiofloor.Ruled{Check: audiofloor.Check{Ended: true}, Words: "Hello."})
+	kept := func() (streams, checked int) {
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		return len(v.streams), len(v.checked)
+	}
+	streams, checked := kept()
+	require.Equal(t, [2]int{1, 2}, [2]int{streams, checked})
+
+	v.forget("p")
+	streams, checked = kept()
+	require.Equal(t, [2]int{0, 1}, [2]int{streams, checked}, "p's audio and ruling are gone, q's ruling stays")
+	(*audioFloor)(nil).forget("p")
+
+	v.heard(frame)
+	require.EqualValues(t, 1, v.stream("p").Frames(), "heard afresh")
+}
+
 // Audio of another rate is not what the model hears, and isn't kept.
 func TestOnly16kMonoIsKept(t *testing.T) {
 	v := newAudioFloor(audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Shadow, audiofloor.EndOfTurn{}, quietLogger())
@@ -192,4 +222,49 @@ func TestTheComparisonSaysWhichEndOfTurnItWasReadBy(t *testing.T) {
 
 	require.InDelta(t, before+1, testutil.ToFloat64(counted), 1e-9)
 	require.Contains(t, log.String(), "end_of_turn=preset:fast dictation_guard=fail bar=0.3 in_a_row=1 checks_in_a_row=1 ended=true")
+}
+
+// Acting, the flow controller's ruling on words a pause check ruled on is that check's, for
+// the participant it heard, as the agent was then; on any other words it asks the model.
+func TestAPauseChecksRulingIsTheFlowControllers(t *testing.T) {
+	asked := atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/info":
+			_, _ = w.Write([]byte(floorInfo))
+		case "/v1/agents":
+			_, _ = w.Write([]byte(`{"agent":"a"}`))
+		default:
+			asked.Add(1)
+			_, _ = w.Write([]byte(`{"answer":"wait","p_eot":0.1,"options":[],"ruling":{"disposition":"respond","floor":"continue"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	v := newAudioFloor(audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
+	defer v.close()
+	require.True(t, v.asksOnPauses())
+	ruling := harness.Decided{Disposition: harness.Ignore, Floor: harness.Continue}
+	v.keep("p", audiofloor.Ruled{Check: audiofloor.Check{Ruling: ruling, Ended: true}, Words: "Uh huh."})
+	v.heard(InboundAudio{Participant: stt.Participant{ID: "p"}, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
+
+	other := harness.FlowTurn{ID: "c0", Text: "Uh huh.", Speaking: true}
+	v.listen(&other, "p", nil)
+	turn := harness.FlowTurn{ID: "c1", Text: "uh huh"}
+	v.listen(&turn, "q", nil)
+	v.listen(&turn, "p", nil)
+	got, err := v.acting().Hear(context.Background(), turn)
+	require.NoError(t, err)
+	require.Equal(t, ruling, got, "the check's, on the same words, however written")
+	require.Zero(t, asked.Load())
+
+	again, err := v.acting().Hear(context.Background(), turn)
+	require.NoError(t, err)
+	require.Equal(t, harness.Wait, again.Disposition, "a ruling is used once, and the model is asked after")
+	require.Equal(t, int64(1), asked.Load())
+
+	shadow := newAudioFloor(audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Shadow, audiofloor.EndOfTurn{}, quietLogger())
+	defer shadow.close()
+	require.False(t, shadow.asksOnPauses(), "in shadow the transcriber writes the words alone")
+	require.False(t, (*audioFloor)(nil).asksOnPauses())
+
 }

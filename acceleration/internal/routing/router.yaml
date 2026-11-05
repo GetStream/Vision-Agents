@@ -843,7 +843,7 @@ stt:
     # it declares zxx as the mock below does and is reached only by naming it outright.
     - provider: stream
       model: chorus-asr
-      description: "chorus-asr writing what was said, on the server that rules on the floor."
+      description: "The chorus-asr model writing what was said, on the server that rules on the floor."
       local: true
       languages: [zxx]
       realtime: true

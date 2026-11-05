@@ -142,7 +142,7 @@ type Options struct {
 	// when JudgeTarget names one. Nil or an empty JudgeTarget keeps the language model.
 	Judge       *decisionrouter.Router
 	JudgeTarget string
-	// AudioFloor is an audio floor model the flow controller asks first when
+	// AudioFloor is the chorus-asr model the flow controller asks first when
 	// AudioFloorMode is Act, or beside it when Shadow. Nil or another mode asks it nothing.
 	AudioFloor     *audiofloor.Client
 	AudioFloorMode audiofloor.Mode
@@ -363,7 +363,7 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
-	// audioFloor keeps what the audio floor model hears, and asks it beside the flow
+	// audioFloor keeps what the chorus-asr model hears, and asks it beside the flow
 	// controller in shadow mode. Nil unless Options.AudioFloorMode asks it.
 	audioFloor *audioFloor
 	// decisionStore keeps what the conversation decided for an hour, so a call can be read
@@ -546,6 +546,9 @@ type Agent struct {
 	lastParticipant stt.Participant
 	lastHeardAt     time.Time
 	lastSpokeAt     time.Time
+	// spokeFrom is when the run of speech lastSpokeAt ends began, which is where an echo of
+	// the agent on the caller's line can begin (withoutEcho).
+	spokeFrom time.Time
 	// The native agent's own state. A speech-to-speech model takes one stream, so bound
 	// is the participant whose audio it hears and arrivals is everyone whose audio has
 	// come in, heard or not, which is what a warm transfer counts. waitingSince is when the
@@ -1553,6 +1556,7 @@ func (a *Agent) attend(attendance Attendance) {
 		return
 	}
 	a.unbind(attendance.Participant)
+	a.audioFloor.forget(attendance.Participant.ID)
 	a.mu.Lock()
 	a.departed[attendance.Participant.ID] = time.Time{}
 	listener := a.listeners[attendance.Participant.ID]
@@ -1635,6 +1639,11 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	if err != nil {
 		return nil, fmt.Errorf("agent: start stt for %s: %w", participant.ID, err)
 	}
+	// Acting on chorus-asr, which transcribes as well, the transcriber times the caller's
+	// pauses from the audio and asks about each, the decision and its words in one pass.
+	if pauses, ok := session.Serving().(audiofloor.Pauses); ok && a.audioFloor.asksOnPauses() {
+		pauses.AskOnPauses(pauseAsker{a})
+	}
 
 	a.mu.Lock()
 	if a.closed {
@@ -1711,6 +1720,16 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 				a.logger.Debug("the transcriber sent nothing but silence",
 					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode)
 				continue
+			}
+			if left, echo := a.withoutEcho(typed); echo > 0 {
+				a.logger.Debug("the transcriber heard the agent's own voice on the caller's line",
+					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode,
+					"text", typed.Text, "echo_words", echo, "left", left)
+				echoes.WithLabelValues(strconv.FormatBool(strings.TrimSpace(left) != "")).Inc()
+				if strings.TrimSpace(left) == "" {
+					continue
+				}
+				typed.Text = left
 			}
 			tally.heardWords(typed, partials, finals)
 			a.logger.Debug("transcribed",
@@ -3300,6 +3319,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			}
 			overlapping.published(typed.SynthesisID, typed.Audio.DurationMs())
 			a.mu.Lock()
+			if time.Since(a.lastSpokeAt) > echoRun {
+				a.spokeFrom = time.Now()
+			}
 			a.lastSpokeAt = time.Now()
 			a.mu.Unlock()
 			// The wait ends when the participant can hear something, so this is timed

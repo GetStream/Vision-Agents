@@ -14,7 +14,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
 
-// The audio floor server the router's settings name is a transcriber an agent can name here
+// The chorus-asr server the router's settings name is a transcriber an agent can name here
 // too, with the flow controller's mode off: it asks the server nothing until there are
 // words to write, and then for the words alone.
 func TestTheAudioFloorTranscribesWithTheModeOff(t *testing.T) {

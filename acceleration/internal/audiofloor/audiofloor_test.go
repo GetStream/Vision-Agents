@@ -16,11 +16,14 @@ import (
 	"net/http/httptest"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/require"
 	"github.com/stretchr/testify/suite"
 	"github.com/thesyncim/gopus"
@@ -46,7 +49,7 @@ const testFrontier = `{"max_wait_ms":500,"bars":[{"from_ms":0,"bar":0.8},{"from_
 	`{"max_wait_ms":1400,"bars":[{"from_ms":0,"bar":0.99},{"from_ms":1100,"bar":0.2}],"checks_in_a_row":2,` +
 	`"measured":{"cut_ins":0.0307,"answer_ms_median":1400,"answer_ms_p90":1400,"dictation_pauses_cut":0.1057,"slow_counts_cut":0,"slow_counts":9,"dictation_guard":true}}`
 
-// fakeServer answers as an audio floor server does, with what a test sets.
+// fakeServer answers as a chorus-asr server does, with what a test sets.
 type fakeServer struct {
 	mu         sync.Mutex
 	registered []agentJSON
@@ -58,11 +61,29 @@ type fakeServer struct {
 	languages  []string
 	// refuse is the status /v1/agents answers an agent with tools, fail has /v1/decide
 	// answer 500, and info is /v1/info's body.
-	refuse   int
-	fail     bool
-	info     string
-	decision string
-	words    string
+	refuse int
+	fail   bool
+	info   string
+	// failing is how many transcription requests to answer failWith, before answering,
+	// failDecide has every decision fail, and failingDecides the next that many.
+	failing        int
+	failWith       int
+	failDecide     bool
+	failingDecides int
+	// transcribeGate, when set, holds every transcription request until it is closed, and
+	// held counts the requests waiting at it.
+	transcribeGate chan struct{}
+	held           int
+	// decideAfter is how long a decision takes, and wordsAfter how long its words take after
+	// it.
+	decideAfter time.Duration
+	wordsAfter  time.Duration
+	// withWords counts the decisions asked for their words too, and agents the agents each
+	// decision was about.
+	withWords int
+	agents    []string
+	decision  string
+	words     string
 }
 
 // requests is how many decisions the server was asked for.
@@ -97,12 +118,27 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
+		if f.failing > 0 {
+			f.failing--
+			w.WriteHeader(f.failWith)
+			_, _ = w.Write([]byte(`{"error":"every lane is busy"}`))
+			return
+		}
 		raw, _ := io.ReadAll(r.Body)
 		f.audio, f.types = append(f.audio, raw), append(f.types, r.Header.Get("Content-Type"))
 		f.languages = append(f.languages, r.URL.Query().Get("languages"))
+		if gate := f.transcribeGate; gate != nil {
+			f.held++
+			f.mu.Unlock()
+			<-gate
+			f.mu.Lock()
+		}
 		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q}}`+"\n", f.words)
 	case "/v1/decide":
-		if f.fail {
+		if f.fail || f.failDecide || f.failingDecides > 0 {
+			if f.failingDecides > 0 {
+				f.failingDecides--
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
@@ -128,7 +164,23 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.types = append(f.types, part.Header.Get("Content-Type"))
 		}
 		f.turns = append(f.turns, turn)
+		f.agents = append(f.agents, r.URL.Query().Get("agent"))
+		if f.decideAfter > 0 {
+			f.mu.Unlock()
+			time.Sleep(f.decideAfter)
+			f.mu.Lock()
+		}
 		_, _ = w.Write([]byte(f.decision + "\n"))
+		if r.URL.Query().Get("transcript") == "true" {
+			f.withWords++
+			if f.wordsAfter > 0 {
+				w.(http.Flusher).Flush()
+				f.mu.Unlock()
+				time.Sleep(f.wordsAfter)
+				f.mu.Lock()
+			}
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q},"transcript_ms":3}`+"\n", f.words)
+		}
 	}
 }
 
@@ -181,7 +233,22 @@ func (s *ClientSuite) TestAChangedAgentIsRegisteredAgain() {
 	s.Len(s.server.registered, 2)
 }
 
-// A restarted server has forgotten its agents, and may serve another model and policy.
+// infos is how many times the server was asked for its policy.
+func (s *serverSuite) infos() int {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	return s.server.infos
+}
+
+// publish has the server publish another policy: the same, with default as its default.
+func (s *serverSuite) publish(preset string) {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	s.server.info = strings.Replace(testInfo, `"default":"safe"`, `"default":"`+preset+`"`, 1)
+}
+
+// A restarted server has forgotten its agents, and may serve another model and policy: the
+// policy is read again, in the background, and the last one read stands until then.
 func (s *ClientSuite) TestARestartedServerIsAskedAgain() {
 	_, err := s.client.Policy(context.Background())
 	s.Require().NoError(err)
@@ -190,17 +257,75 @@ func (s *ClientSuite) TestARestartedServerIsAskedAgain() {
 	s.server.mu.Lock()
 	s.server.known = map[string]bool{}
 	s.server.mu.Unlock()
+	s.publish("fast")
 	_, err = s.client.Decide(context.Background(), booking, Turn{}, some)
 	s.Require().NoError(err)
 	s.Len(s.server.registered, 2)
+	s.Eventually(func() bool { return s.infos() == 2 }, 5*time.Second, time.Millisecond)
+	s.Eventually(func() bool {
+		policy, err := s.client.Policy(context.Background())
+		return err == nil && policy.Default == "fast"
+	}, 5*time.Second, time.Millisecond)
+}
+
+// A policy stands for policyTTL, and is then read again in the background: the call that
+// finds it old gets the last one read, and the next the new one.
+func (s *ClientSuite) TestAnOldPolicyIsReadAgainInTheBackground() {
+	var skew atomic.Int64
+	s.client.now = skewed(&skew)
+	first, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.publish("fast")
+	again, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Equal(first.Default, again.Default, "stands within the TTL")
+	s.Equal(1, s.infos())
+
+	skew.Store(int64(policyTTL))
+	old, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Equal("safe", old.Default, "the last one read, while it is read again")
+	s.Eventually(func() bool {
+		policy, err := s.client.Policy(context.Background())
+		return err == nil && policy.Default == "fast"
+	}, 5*time.Second, time.Millisecond)
+	s.Equal(2, s.infos(), "read again once")
+}
+
+// A read that fails leaves the last policy standing, and is tried again after policyRetry.
+func (s *ClientSuite) TestAFailedReadLeavesTheLastPolicyStanding() {
+	var skew atomic.Int64
+	s.client.now = skewed(&skew)
+	_, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.server.mu.Lock()
+	s.server.info = `{"end_of_turn":{}}`
+	s.server.mu.Unlock()
+	skew.Store(int64(policyTTL))
 	_, err = s.client.Policy(context.Background())
 	s.Require().NoError(err)
-	s.Equal(2, s.server.infos)
+	s.Eventually(func() bool { return s.infos() == 2 }, 5*time.Second, time.Millisecond)
+	policy, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Equal("safe", policy.Default)
+	s.Equal(2, s.infos(), "not before policyRetry")
+
+	s.publish("fast")
+	skew.Add(int64(policyRetry))
+	_, err = s.client.Policy(context.Background())
+	s.Require().NoError(err)
+	s.Eventually(func() bool {
+		policy, err := s.client.Policy(context.Background())
+		return err == nil && policy.Default == "fast"
+	}, 5*time.Second, time.Millisecond)
 }
 
 // An agent with more tools than the model has answers for is refused, and isn't offered
-// again until it changes.
+// again until it changes. The server may have moved to another model to refuse it, so its
+// policy is read again, in the background.
 func (s *ClientSuite) TestARefusedAgentIsRefusedUntilItChanges() {
+	_, err := s.client.Policy(context.Background())
+	s.Require().NoError(err)
 	s.server.refuse = http.StatusUnprocessableEntity
 	for range 2 {
 		_, err := s.client.Decide(context.Background(), booking, Turn{}, some)
@@ -208,8 +333,9 @@ func (s *ClientSuite) TestARefusedAgentIsRefusedUntilItChanges() {
 		s.ErrorContains(err, "22 tools")
 	}
 	s.Len(s.server.registered, 1)
-	_, err := s.client.Decide(context.Background(), Agent{Instructions: booking.Instructions}, Turn{}, some)
+	_, err = s.client.Decide(context.Background(), Agent{Instructions: booking.Instructions}, Turn{}, some)
 	s.Require().NoError(err)
+	s.Eventually(func() bool { return s.infos() == 2 }, 5*time.Second, time.Millisecond)
 }
 
 func (s *ClientSuite) TestAServerWithoutAPolicyIsUnsupported() {
@@ -327,7 +453,8 @@ func (s *HearerSuite) TestATurnHasEndedWhenPEndReachesTheBar() {
 	later, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Waited: true, Paused: 1100 * time.Millisecond})
 	s.Require().NoError(err)
 	s.True(later.Ended)
-	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Continue, Tool: "book"}, later.Ruling)
+	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Continue}, later.Ruling)
+	s.Equal("book", later.Answer.Ruling.Tool, "the tool wanted is the answer's, for the log")
 }
 
 func (s *HearerSuite) TestATurnHasEndedAtTheCapWhateverTheModelSays() {
@@ -356,7 +483,10 @@ func (s *HearerSuite) TestATurnIsSaidInTheModelsTerms() {
 }
 
 // TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet.
-type TranscriberSuite struct {
+type TranscriberSuite struct{ transcribing }
+
+// transcribing is a transcriber of a fake server, and the frames it is sent.
+type transcribing struct {
 	serverSuite
 	transcriber *Transcriber
 	// phase and at keep the voice going from one frame to the next, and noise the line's
@@ -371,30 +501,43 @@ func TestTranscriberSuite(t *testing.T) {
 	suite.Run(t, new(TranscriberSuite))
 }
 
-func (s *TranscriberSuite) SetupTest() {
+func (s *transcribing) SetupTest() {
 	s.serverSuite.SetupTest()
 	s.server.words = "Two tickets to Bilbao, please."
 	s.client.format = Opus
 	s.floor = 16 // about -66 dBFS
+	// The voice and the noise start over, so that a test hears the same line whatever ran
+	// before it: over noise near voiceLevel, which frames the detector takes for speech
+	// depends on where the voice's pitch is.
+	s.phase, s.at, s.noise = 0, 0, 0
 	s.open()
 }
 
 // open starts the transcriber, and sends the speech detector's warm-up, as a call's first
 // moments.
-func (s *TranscriberSuite) open() {
+func (s *transcribing) open() { s.openReading(time.Now) }
+
+// reopen closes the transcriber and opens another, reading the clock now.
+func (s *transcribing) reopen(now func() time.Time) {
+	s.Require().NoError(s.transcriber.Close())
+	s.openReading(now)
+}
+
+func (s *transcribing) openReading(now func() time.Time) {
 	s.transcriber = NewTranscriber(s.client, "", []string{"en", "pt-BR"}, slog.New(slog.DiscardHandler))
+	s.transcriber.now = now
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })
 	s.say(300, false)
 }
 
-// pause is long enough to have the words written: the detector's window ends 10 ms before
+// pauseMs is long enough to have the words written: the detector's window ends 10 ms before
 // the newest sample, so a pause is heard a frame late.
-const pause = int((writeAfter + 2*frame) / time.Millisecond)
+const pauseMs = int((writeAfter + 2*frame) / time.Millisecond)
 
 // requests are the server's transcription requests, by how much audio each carried.
-func (s *TranscriberSuite) requests() []int {
+func (s *transcribing) requests() []int {
 	s.server.mu.Lock()
 	defer s.server.mu.Unlock()
 	var out []int
@@ -405,7 +548,7 @@ func (s *TranscriberSuite) requests() []int {
 }
 
 // say sends ms of 20 ms frames of the line's noise, voiced or quiet.
-func (s *TranscriberSuite) say(ms int, voiced bool) {
+func (s *transcribing) say(ms int, voiced bool) {
 	for range ms / 20 {
 		frame := make([]int16, frameSamples)
 		for i := range frame {
@@ -429,12 +572,12 @@ func (s *TranscriberSuite) say(ms int, voiced bool) {
 	}
 }
 
-func (s *TranscriberSuite) send(frame []int16) {
+func (s *transcribing) send(frame []int16) {
 	s.Require().NoError(s.transcriber.ProcessAudio(audio.PcmData{Samples: frame, SampleRate: SampleRate, Channels: 1}, stt.Participant{ID: "p"}))
 }
 
 // next is the next event of type E.
-func next[E stt.Event](s *TranscriberSuite) E {
+func next[E stt.Event](s *transcribing) E {
 	s.T().Helper()
 	for {
 		select {
@@ -449,7 +592,7 @@ func next[E stt.Event](s *TranscriberSuite) E {
 }
 
 // none says no transcript comes.
-func (s *TranscriberSuite) none() {
+func (s *transcribing) none() {
 	s.T().Helper()
 	for {
 		select {
@@ -470,8 +613,8 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 	s.say(1000, true)
 	s.say(180, false)
 	s.Empty(s.requests())
-	s.say(pause-180, false)
-	said := next[stt.Transcript](s)
+	s.say(pauseMs-180, false)
+	said := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeReplacement, said.Mode)
 	s.Equal(int64(1), said.Utterance)
 	s.Equal("Two tickets to Bilbao, please.", said.Text)
@@ -481,13 +624,13 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 	s.Equal("en,pt-BR", s.server.languages[0])
 
 	s.say(500, true)
-	s.say(pause, false)
-	more := next[stt.Transcript](s)
+	s.say(pauseMs, false)
+	more := next[stt.Transcript](&s.transcribing)
 	s.Equal(int64(1), more.Utterance)
 	s.InDelta(said.AudioDurationMs+float64(500+writeAfter.Milliseconds()), more.AudioDurationMs, 60)
 
 	s.say(int(endAfter/time.Millisecond), false)
-	end := next[stt.Transcript](s)
+	end := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal(int64(1), end.Utterance)
 	s.Len(s.requests(), 2, "a final with no speech since the last words asks for none")
@@ -498,8 +641,8 @@ func (s *TranscriberSuite) TestAnUtteranceIsWrittenAtItsPausesAndEndsOnce() {
 func (s *TranscriberSuite) TestSilenceAfterAFinalWritesNothing() {
 	s.say(1000, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	s.Equal(stt.ModeReplacement, next[stt.Transcript](s).Mode)
-	s.Equal(stt.ModeFinal, next[stt.Transcript](s).Mode)
+	s.Equal(stt.ModeReplacement, next[stt.Transcript](&s.transcribing).Mode)
+	s.Equal(stt.ModeFinal, next[stt.Transcript](&s.transcribing).Mode)
 	s.say(15000, false)
 	s.none()
 	s.Len(s.requests(), 1)
@@ -516,8 +659,8 @@ func (s *TranscriberSuite) TestANoisyLineWritesNothingOfItsOwn() {
 	// Over noise as loud as voiceLevel the pause is heard once the detector's score has let
 	// go of the voice, about 200 ms later.
 	s.say(int(endAfter/time.Millisecond)+400, false)
-	s.Equal(stt.ModeReplacement, next[stt.Transcript](s).Mode)
-	s.Equal(stt.ModeFinal, next[stt.Transcript](s).Mode)
+	s.Equal(stt.ModeReplacement, next[stt.Transcript](&s.transcribing).Mode)
+	s.Equal(stt.ModeFinal, next[stt.Transcript](&s.transcribing).Mode)
 	s.say(15000, false)
 	s.none()
 	s.Len(s.requests(), 1)
@@ -528,11 +671,11 @@ func (s *TranscriberSuite) TestANoisyLineWritesNothingOfItsOwn() {
 func (s *TranscriberSuite) TestNoAudioIsWrittenTwice() {
 	s.say(1000, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	next[stt.Transcript](s)
-	s.True(next[stt.Transcript](s).Final())
+	next[stt.Transcript](&s.transcribing)
+	s.True(next[stt.Transcript](&s.transcribing).Final())
 	s.say(600, true)
-	s.say(pause, false)
-	again := next[stt.Transcript](s)
+	s.say(pauseMs, false)
+	again := next[stt.Transcript](&s.transcribing)
 	s.Equal(int64(2), again.Utterance)
 	s.InDelta(float64(100+600+writeAfter.Milliseconds()), again.AudioDurationMs, 40, "the 100 ms since the final, the new speech and its pause")
 	s.Len(s.requests(), 2, "one pass over each utterance")
@@ -543,13 +686,13 @@ func (s *TranscriberSuite) TestNoAudioIsWrittenTwice() {
 func (s *TranscriberSuite) TestSpeechAfterAFinalIsANewUtterance() {
 	s.say(1000, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	next[stt.Transcript](s)
-	first := next[stt.Transcript](s)
+	next[stt.Transcript](&s.transcribing)
+	first := next[stt.Transcript](&s.transcribing)
 	s.True(first.Final())
 	s.say(800, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
 	for _, mode := range []stt.Mode{stt.ModeReplacement, stt.ModeFinal} {
-		said := next[stt.Transcript](s)
+		said := next[stt.Transcript](&s.transcribing)
 		s.Equal(mode, said.Mode)
 		s.Equal(int64(2), said.Utterance)
 	}
@@ -563,8 +706,8 @@ func (s *TranscriberSuite) TestItNeedsNoAgentNorPolicy() {
 	s.server.info = ""
 	s.server.mu.Unlock()
 	s.say(1000, true)
-	s.say(pause, false)
-	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](s).Text)
+	s.say(pauseMs, false)
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
 	s.Empty(s.server.registered)
 	s.Empty(s.server.turns)
 	s.Zero(s.server.infos)
@@ -585,26 +728,170 @@ func (s *TranscriberSuite) TestEmptyWordsAreNothingHeard() {
 // the utterance ends on those.
 func (s *TranscriberSuite) TestAnUtteranceEndsOnItsLastWords() {
 	s.say(1000, true)
-	s.say(pause, false)
-	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](s).Text)
+	s.say(pauseMs, false)
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
 	s.server.mu.Lock()
 	s.server.words = ""
 	s.server.mu.Unlock()
 	s.say(300, true)
 	s.say(int(endAfter/time.Millisecond)+100, false)
-	end := next[stt.Transcript](s)
+	end := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal("Two tickets to Bilbao, please.", end.Text)
 }
 
-// A server that can't write the words hands the call to the next transcriber.
-func (s *TranscriberSuite) TestAServerThatFailsIsFatal() {
+// A server that is busy, down or restarting costs a request, not the session: the words it
+// didn't write are asked for again, of the whole utterance, at its end.
+func (s *TranscriberSuite) TestABusyServerCostsARequestNotTheSession() {
+	for _, status := range []int{http.StatusServiceUnavailable, http.StatusInternalServerError, http.StatusNotFound, http.StatusTooManyRequests} {
+		s.Run(http.StatusText(status), func() {
+			s.SetupTest()
+			failed := testutil.ToFloat64(transcribeFailures.WithLabelValues(strconv.Itoa(status)))
+			s.server.mu.Lock()
+			s.server.failing, s.server.failWith = 1, status
+			s.server.mu.Unlock()
+			s.say(1000, true)
+			s.say(pauseMs, false)
+			s.say(int(endAfter/time.Millisecond), false)
+			end := next[stt.Transcript](&s.transcribing)
+			s.Equal(stt.ModeFinal, end.Mode, "no error, and the utterance ends on its words")
+			s.Equal("Two tickets to Bilbao, please.", end.Text)
+			s.Len(s.requests(), 1, "the failed request carried nothing back, and the end asked again")
+			s.InDelta(float64(300+1000+int(endAfter/time.Millisecond)), float64(s.requests()[0])*1000/SampleRate, 80, "of the whole utterance")
+			s.Equal(failed+1, testutil.ToFloat64(transcribeFailures.WithLabelValues(strconv.Itoa(status))))
+		})
+	}
+}
+
+// A server that isn't there, or doesn't answer in time, is asked again as well.
+func (s *TranscriberSuite) TestAServerThatIsGoneCostsARequestNotTheSession() {
+	failed := testutil.ToFloat64(transcribeFailures.WithLabelValues("connection"))
+	s.client.url = "http://127.0.0.1:1"
+	s.say(1000, true)
+	s.say(pauseMs+100, false)
+	s.Eventually(func() bool { return testutil.ToFloat64(transcribeFailures.WithLabelValues("connection")) > failed }, 5*time.Second, 10*time.Millisecond)
+	s.none()
+}
+
+// noFatal says no fatal error comes.
+func (s *transcribing) noFatal() {
+	s.T().Helper()
+	for {
+		select {
+		case event := <-s.transcriber.Events():
+			failure, ok := event.(stt.Error)
+			s.Require().False(ok && failure.Fatal, "a fatal error: %+v", event)
+		case <-time.After(100 * time.Millisecond):
+			return
+		}
+	}
+}
+
+// skewed is a clock running skew ahead of the wall.
+func skewed(skew *atomic.Int64) func() time.Time {
+	return func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+}
+
+// A server that answers none of three requests for words in a row, the last a window after
+// the first, is down for the call rather than restarting: the session is fatal, and the call
+// goes to the next transcriber rather than on without words. A connection refused counts,
+// as a 5xx and a timeout would.
+func (s *TranscriberSuite) TestAServerDownForTheCallIsFatal() {
+	var skew atomic.Int64
+	s.reopen(skewed(&skew))
+	s.client.url = "http://127.0.0.1:1"
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	s.say(int(endAfter/time.Millisecond), false)
+	s.noFatal()
+
+	skew.Store(int64(failoverWindow))
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	failure := next[stt.Error](&s.transcribing)
+	s.True(failure.Fatal)
+	s.Equal("transcribe", failure.Context)
+	s.ErrorContains(failure.Err, "none of 3 requests for words")
+}
+
+// A server shedding load with 503 or 429 is up, however long it does: those requests are
+// asked again, and never give the session up. Words answered start the count over, so a
+// server that fails now and then is never down for the call.
+func (s *TranscriberSuite) TestABusyServerIsUpAndWordsAnsweredStartTheCountOver() {
+	var skew atomic.Int64
+	s.reopen(skewed(&skew))
+	// failing has the server answer status to the next utterances' requests, two each: the
+	// pause's and the end's, which asks again what the pause was refused.
+	failing := func(status, utterances int) {
+		s.server.mu.Lock()
+		s.server.failing, s.server.failWith = 2*utterances, status
+		s.server.mu.Unlock()
+		for range utterances {
+			s.say(1000, true)
+			s.say(pauseMs, false)
+			s.say(int(endAfter/time.Millisecond), false)
+			skew.Add(int64(failoverWindow))
+		}
+		s.Eventually(func() bool {
+			s.server.mu.Lock()
+			defer s.server.mu.Unlock()
+			return s.server.failing == 0
+		}, 5*time.Second, time.Millisecond)
+	}
+	failing(http.StatusServiceUnavailable, 2)
+	failing(http.StatusTooManyRequests, 1)
+	s.noFatal()
+
+	// Two not answered, then words, then two more: never three in a row.
+	failing(http.StatusInternalServerError, 1)
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	s.Equal(stt.ModeReplacement, next[stt.Transcript](&s.transcribing).Mode)
+	failing(http.StatusInternalServerError, 1)
+	s.noFatal()
+
+	// The third since the words were answered, a window on: down.
 	s.server.mu.Lock()
-	s.server.fail = true
+	s.server.failing, s.server.failWith = 1, http.StatusInternalServerError
 	s.server.mu.Unlock()
 	s.say(1000, true)
-	s.say(pause, false)
-	s.True(next[stt.Error](s).Fatal)
+	s.say(pauseMs, false)
+	s.True(next[stt.Error](&s.transcribing).Fatal)
+}
+
+// A server the router is misconfigured for will never answer, and hands the call to the
+// next transcriber.
+func (s *TranscriberSuite) TestAMisconfiguredServerIsFatal() {
+	for _, status := range []int{http.StatusBadRequest, http.StatusUnauthorized, http.StatusUnsupportedMediaType, http.StatusNotImplemented} {
+		s.Run(http.StatusText(status), func() {
+			s.SetupTest()
+			s.server.mu.Lock()
+			s.server.failing, s.server.failWith = 1, status
+			s.server.mu.Unlock()
+			s.say(1000, true)
+			s.say(pauseMs, false)
+			s.True(next[stt.Error](&s.transcribing).Fatal)
+		})
+	}
+}
+
+// An utterance whose final was dropped, for a server too far behind, leaves its words to
+// nothing after it: the next utterance, with no words of its own, writes nothing.
+func (s *TranscriberSuite) TestADroppedFinalLeavesItsWordsBehind() {
+	stream, err := s.client.NewStream(time.Second)
+	s.Require().NoError(err)
+	s.Require().NoError(stream.Write(speech(SampleRate)))
+	heard := stream.Last(time.Second)
+	participant := stt.Participant{ID: "p"}
+	s.transcriber.requests <- request{participant: participant, utterance: 1, audio: heard}
+	s.Equal("Two tickets to Bilbao, please.", next[stt.Transcript](&s.transcribing).Text)
+	s.server.mu.Lock()
+	s.server.words = ""
+	s.server.mu.Unlock()
+	// Utterance 1's final never came: the queue was full.
+	s.transcriber.requests <- request{participant: participant, utterance: 2, audio: heard}
+	s.transcriber.requests <- request{participant: participant, utterance: 2, final: true}
+	s.none()
 }
 
 // speech is a voice-like test signal: a falling pitch with its harmonics, swelling and
@@ -784,9 +1071,9 @@ func TestAStreamWritesWithoutAllocating(t *testing.T) {
 	require.Zero(t, testing.AllocsPerRun(100, func() { _ = stream.Write(quiet) }))
 }
 
-// benchSpeech is AUDIO_FLOOR_WAV's audio, a 16 kHz mono 16-bit WAV, or the test signal.
+// benchSpeech is CHORUS_ASR_WAV's audio, a 16 kHz mono 16-bit WAV, or the test signal.
 func benchSpeech(b *testing.B, n int) []int16 {
-	path := os.Getenv("AUDIO_FLOOR_WAV")
+	path := os.Getenv("CHORUS_ASR_WAV")
 	if path == "" {
 		return speech(n)
 	}

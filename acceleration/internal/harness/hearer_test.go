@@ -99,11 +99,10 @@ func (s *HearerSuite) ruling(hearer Hearer, turn FlowTurn) Decided {
 }
 
 func (s *HearerSuite) TestTheHearersRulingIsTheFlowControllers() {
-	got := s.ruling(stubHearer{ruling: Decided{Disposition: Respond, Floor: Continue, Tool: "book_crossing"}},
+	got := s.ruling(stubHearer{ruling: Decided{Disposition: Respond, Floor: Continue}},
 		FlowTurn{ID: "t", Text: "book me on the eight o'clock", Ended: true})
 	s.Equal(Heard, got.Ruler)
 	s.Equal(Respond, got.Disposition)
-	s.Equal("book_crossing", got.Tool)
 }
 
 func (s *HearerSuite) TestAHearersWaitSaysWhenToAskAgain() {

@@ -20,6 +20,7 @@ import (
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/knowledge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/live"
@@ -916,6 +917,9 @@ type AgentSuite struct {
 	// regions. builtIn is the region each modality's stub was built in, every time it was.
 	region, twinned string
 	builtIn         *builds
+	// floor is a chorus-asr server the agent asks about turns in floorMode, or nil.
+	floor     *audiofloor.Client
+	floorMode audiofloor.Mode
 
 	agent  *Agent
 	events *collector
@@ -957,6 +961,7 @@ func (s *AgentSuite) SetupTest() {
 	s.duplex = DuplexOptions{}
 	s.speculates = false
 	s.unified = false
+	s.floor, s.floorMode = nil, ""
 	s.performing = ""
 	s.voiceName = ""
 	s.logs = nil
@@ -1208,6 +1213,8 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		Duplex:             s.duplex,
 		SpeculativeReplies: s.speculates,
 		UnifiedReplies:     s.unified,
+		AudioFloor:         s.floor,
+		AudioFloorMode:     s.floorMode,
 		LLM:                reasoner,
 		LLMTarget:          "en-low-latency",
 		STT:                transcriber,
@@ -1535,6 +1542,26 @@ func (s *AgentSuite) TestSomebodyLeavingClosesTheirTranscriptionSession() {
 		defer s.agent.mu.Unlock()
 		return len(s.agent.listeners) == 0
 	}, "a participant who left still has an open transcription session")
+}
+
+// What the chorus-asr model hears of a participant goes with them when they leave.
+func (s *AgentSuite) TestSomebodyLeavingIsNoLongerKeptForTheAudioFloor() {
+	s.floor, s.floorMode = audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Shadow
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	kept := func() bool {
+		v := s.agent.audioFloor
+		v.mu.Lock()
+		defer v.mu.Unlock()
+		_, ok := v.streams[participant.ID]
+		return ok
+	}
+	s.speak(participant)
+	s.eventually(kept, "the audio never reached what the model hears")
+
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+
+	s.eventually(func() bool { return !kept() }, "a participant who left is still kept for the model")
 }
 
 func (s *AgentSuite) TestASlowTranscriberToCloseDoesNotDelayTheNextArrival() {

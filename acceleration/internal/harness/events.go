@@ -70,10 +70,6 @@ type Decided struct {
 	// Ruler is whose answer the decision is, or Deadline or Unusable. Empty when no model's
 	// answer was read for another reason.
 	Ruler Ruler
-	// Tool and Cannot are a Hearer's hints for the reply: the tool the caller is asking for,
-	// or that none of the agent's tools can do what they ask. Neither runs anything.
-	Tool   string
-	Cannot bool
 	// Again is how long a Hearer that waited would have the caller given before it is asked
 	// again: its model is fitted to be asked that often. Zero keeps the cadence's own.
 	Again time.Duration
