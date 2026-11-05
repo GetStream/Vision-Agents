@@ -409,6 +409,9 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 		"sandbox_options:\n  timeout: soon\n",
 		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
+		"end_of_turn:\n  max_wait: 900\n",
+		"end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n",
+		"end_of_turn: fast\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)

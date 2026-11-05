@@ -276,6 +276,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		body.Scheduling = &declared
 	}
 	body.Calls = declareCalls(settings.Calls)
+	body.EndOfTurn = declareEndOfTurn(settings.EndOfTurn)
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}
@@ -321,6 +322,28 @@ func declareCalls(calls *CallSettings) *acceleration.AgentCalls {
 	}
 	if endCall.When != "" {
 		declared.EndCall.When = &endCall.When
+	}
+	return declared
+}
+
+// declareEndOfTurn is what the file says of end_of_turn for the wire, or nil when it says
+// nothing, which leaves the stored choice.
+func declareEndOfTurn(settings *EndOfTurnSettings) *acceleration.EndOfTurn {
+	if settings == nil {
+		return nil
+	}
+	declared := &acceleration.EndOfTurn{}
+	if settings.MaxWaitMs != 0 {
+		wait := int64(settings.MaxWaitMs)
+		declared.MaxWaitMs = &wait
+	}
+	setString(&declared.Preset, settings.Preset)
+	if settings.Bars != nil {
+		bars := make([]acceleration.EndOfTurnBar, 0, len(settings.Bars))
+		for _, bar := range settings.Bars {
+			bars = append(bars, acceleration.EndOfTurnBar{FromMs: int64(bar.FromMs), Bar: bar.Bar})
+		}
+		declared.Bars = &bars
 	}
 	return declared
 }

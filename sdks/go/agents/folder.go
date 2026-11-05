@@ -206,11 +206,14 @@ type Settings struct {
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
 	// Calls are the tools the agent has on a phone call. A sync always sends them, with
 	// the defaults for what the file leaves out, so it replaces what the dashboard set.
-	Calls    *CallSettings     `yaml:"calls"`
-	Keyterms []string          `yaml:"keyterms"`
-	Tags     map[string]string `yaml:"tags"`
-	Video    *VideoSettings    `yaml:"video"`
-	Dispatch *DispatchSettings `yaml:"dispatch"`
+	Calls *CallSettings `yaml:"calls"`
+	// EndOfTurn is how eager chorus-asr's turn-taking is, where the router asks it about
+	// turns. Nil leaves the stored choice; an empty mapping ({}) is the server's default.
+	EndOfTurn *EndOfTurnSettings `yaml:"end_of_turn"`
+	Keyterms  []string           `yaml:"keyterms"`
+	Tags      map[string]string  `yaml:"tags"`
+	Video     *VideoSettings     `yaml:"video"`
+	Dispatch  *DispatchSettings  `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -386,6 +389,31 @@ type TransferDestination struct {
 	When string `yaml:"when"`
 	// Warm announces the caller to the person answering before connecting them.
 	Warm bool `yaml:"warm"`
+}
+
+// EndOfTurnSettings is when chorus-asr has a caller's turn ended: one of MaxWaitMs, Preset
+// and Bars. The router refuses a sync that names more than one, bars that do not begin at 0
+// and rise, each strictly between 0 and 1, or a preset or wait its chorus-asr server does not
+// publish.
+//
+//	end_of_turn:
+//	    max_wait_ms: 900
+type EndOfTurnSettings struct {
+	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
+	// milliseconds: the server's measured point with the fewest cut-ins within it.
+	MaxWaitMs int `yaml:"max_wait_ms"`
+	// Preset is one of the presets the server publishes, such as safe or fast.
+	Preset string `yaml:"preset"`
+	// Bars are the agent's own: the first from 0 ms, each later one from further into the
+	// pause. Nil when the file names none.
+	Bars []EndOfTurnBar `yaml:"bars"`
+}
+
+// EndOfTurnBar is what chorus-asr's p_eot must reach for the turn to have ended, at a check
+// from FromMs into the pause on.
+type EndOfTurnBar struct {
+	FromMs int     `yaml:"from_ms"`
+	Bar    float64 `yaml:"bar"`
 }
 
 // ChannelSettings is one line the agent is reachable on.
