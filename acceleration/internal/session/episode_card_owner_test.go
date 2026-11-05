@@ -4,6 +4,7 @@ package session
 
 import (
 	"log/slog"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -182,7 +183,7 @@ func (s *EpisodeReadingSuite) TestACallPlacedIntoAnotherCallTypeNamesNobodyOnThe
 func (s *EpisodeReadingSuite) TestACallWhoseCalleeIsNotKnownFilesNoCardUnderItsOwnLine() {
 	s.startsWithin(300 * time.Millisecond)
 	call := uuid.NewString()
-	s.chat.PutCall("agent", call, "sip-"+line)
+	s.chat.PutCall("agent", call, "sip-00"+strings.TrimPrefix(line, "+"))
 
 	created := s.opens(s.placedSpec(call, true))
 
@@ -213,24 +214,22 @@ func (s *EpisodeReadingSuite) TestAnInboundCallerWhoJoinsAfterTheAgentGetsTheirC
 	s.Equal(1, callers())
 }
 
-// Defect: the vendor's leg of a placed call is the first phone to join it, under the line's own
-// number; a card waiting for the caller took it as the person.
-func (s *EpisodeReadingSuite) TestTheLineJoiningItsOwnCallGetsNoCard() {
+// Defect: the vendor's leg of a placed call can be the first phone to join it, under the
+// line's own number, written as the carrier writes it; a card waiting for the caller took it
+// as the person rather than the caller who joined next.
+func (s *EpisodeReadingSuite) TestTheLineJoiningItsOwnCallIsNotTheCaller() {
 	edge := s.attended()
 	call := uuid.NewString()
 	s.chat.PutCall("agent", call)
 	created := s.opens(s.inboundSpec(call, true))
 
-	edge.arrives(stt.Participant{ID: "leg-" + uuid.NewString(), UserID: "sip-" + line})
+	edge.arrives(stt.Participant{ID: "leg-" + uuid.NewString(), UserID: "sip-00" + strings.TrimPrefix(line, "+")})
+	edge.arrives(stt.Participant{ID: "caller-" + uuid.NewString(), UserID: "sip-" + lateCaller})
 
-	lines := s.contactRows(line)
-	select {
-	case <-s.cardWritersDone():
-	case <-time.After(settleFor):
-		s.FailNow("the card writer never stopped")
-	}
-	s.Empty(callEpisodesIn(s.store, created.ID()))
-	s.Zero(lines())
+	db, lines, callers := s.store, s.contactRows(line), s.contactRows(lateCaller)
+	s.Require().Eventually(func() bool { return len(callEpisodesIn(db, created.ID())) == 1 }, settleFor, 10*time.Millisecond)
+	s.Equal(1, callers())
+	s.Zero(lines(), "the line's own number is nobody's omni-channel")
 }
 
 // Defect: a card that waits for the caller with no end holds a goroutine for as long as the

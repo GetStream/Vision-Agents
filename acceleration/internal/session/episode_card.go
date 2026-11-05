@@ -220,10 +220,7 @@ func (c *callCards) party(created *Session, spec Spec, stream streamapp.Bound) (
 	}
 	ctx, cancel = context.WithTimeout(c.ctx, startTimeout(spec.Phone))
 	defer cancel()
-	if heard := created.awaitCaller(ctx); !ownLine(spec, heard) {
-		return heard, nil
-	}
-	return "", nil
+	return created.awaitCaller(ctx), nil
 }
 
 func (c *callCards) write(ctx context.Context, created *Session, spec Spec, number string) error {

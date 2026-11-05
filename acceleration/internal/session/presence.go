@@ -146,7 +146,10 @@ func (s *Session) observe(run *presence, event Event) {
 		}
 		if number, ok := phone.CallerNumber(reported.Participant.UserID); ok {
 			s.callerSeen.Store(true)
-			s.hearCaller(number)
+			// The line's own number is the vendor's leg of a call the agent placed.
+			if !ownLine(spec, number) {
+				s.hearCaller(number)
+			}
 			if spec.Voicemail != nil {
 				s.answered()
 			}
@@ -188,8 +191,8 @@ func startTimeout(phone *PhoneSpec) time.Duration {
 	return inboundStartTimeout
 }
 
-// hearCaller keeps the number of the first phone caller to join the session's call, for a
-// card that waits for them (awaitCaller).
+// hearCaller keeps the number of the first phone caller to join the session's call, the line
+// itself aside, for a card that waits for them (awaitCaller).
 func (s *Session) hearCaller(number string) {
 	s.callerMu.Lock()
 	defer s.callerMu.Unlock()
