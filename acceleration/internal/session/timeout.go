@@ -39,15 +39,15 @@ const (
 	// EndCreateNoCredit is a session Create gave up on because the customer's credit or spend
 	// limits refused the work.
 	EndCreateNoCredit EndReason = "create_no_credit"
-	// EndAgentFailed is a session whose agent left the call by itself for a failure of the
-	// router's own, such as its playback queue filling.
+	// EndAgentFailed is a session whose agent left the call by itself, or answered no turn, for
+	// a failure of the router's own, such as its playback queue filling.
 	EndAgentFailed EndReason = "agent_failed"
 	// EndModelFailed is a session whose model vendor failed it: its speech-to-speech session
 	// ended and could not be replaced, or its model failed a turn and answered none.
 	EndModelFailed EndReason = "model_failed"
-	// EndModelKeyRefused is EndModelFailed on the customer's side: the last model to fail ran on
-	// the customer's own key or the customer's own model.
-	EndModelKeyRefused EndReason = "model_key_refused"
+	// EndModelConfigRefused is EndModelFailed on the customer's side: the last model to fail ran
+	// on the customer's own key or own model, or refused a setting it was asked for.
+	EndModelConfigRefused EndReason = "model_config_refused"
 	// EndModelNoCredit is a session whose model's work the customer's credit or spend limits
 	// refused, so the agent answered no turn or left the call.
 	EndModelNoCredit EndReason = "model_no_credit"
@@ -113,10 +113,11 @@ var EndReasons = []EndInfo{
 	{EndCreateConfigRefused, "a setting of the session was refused, or no model it names is allowed",
 		FaultCustomerConfig, StageStarting, true},
 	{EndCreateNoCredit, "the credit or spend limits refused the session's work", FaultCustomerCredit, StageStarting, true},
-	{EndAgentFailed, "the agent left the call for a failure of the router's own", FaultRouter, StageConversation, true},
+	{EndAgentFailed, "the agent left the call or answered no turn for a failure of the router's own",
+		FaultRouter, StageConversation, true},
 	{EndModelFailed, "a model vendor failed: the agent left the call or answered no turn", FaultVendor, StageConversation, true},
-	{EndModelKeyRefused, "the model failed on the customer's own key or model, and the agent answered no turn",
-		FaultCustomerConfig, StageConversation, true},
+	{EndModelConfigRefused, "the model failed on the customer's own key or model, or refused a setting, and the " +
+		"agent answered no turn", FaultCustomerConfig, StageConversation, true},
 	{EndModelNoCredit, "the credit or spend limits refused the model's work, and the agent answered no turn",
 		FaultCustomerCredit, StageConversation, true},
 }

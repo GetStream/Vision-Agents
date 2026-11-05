@@ -85,7 +85,7 @@ func (s *Session) failedFor() EndReason {
 	case FaultCustomerCredit:
 		return EndModelNoCredit
 	case FaultCustomerConfig:
-		return EndModelKeyRefused
+		return EndModelConfigRefused
 	case FaultVendor:
 		return EndModelFailed
 	}
@@ -136,7 +136,7 @@ func createFailure(err error) EndReason {
 // a model the customer's policies do not allow is the customer's configuration.
 func faultOf(err error) (Fault, bool) {
 	switch {
-	case policy.Transient(err), errors.Is(err, agent.ErrPlaybackFull):
+	case policy.Transient(err), errors.Is(err, policy.ErrSpendCheckUnavailable), errors.Is(err, agent.ErrPlaybackFull):
 		return FaultRouter, true
 	case policy.Code(err) != "":
 		return FaultCustomerCredit, true
