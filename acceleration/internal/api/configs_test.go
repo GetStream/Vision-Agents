@@ -2197,6 +2197,155 @@ func (s *ConfigsSuite) readOnlyTools(id string) map[string]bool {
 	return readOnly
 }
 
+// Every tool calcom.yaml, calendly.yaml, github.yaml, gong.yaml, hubspot.yaml, linear_app.yaml,
+// metabase.yaml, notion.yaml and sentry.yaml list in read_only_tools only reads, so a binding
+// granting only those sits beside nessy (AI-2777). linear_app grants a few of linear.yaml's,
+// which it lists too (TestToolsetSuite/TestLinearAppListsTheReadOnlyToolsLinearDoes).
+func (s *ConfigsSuite) TestNessyBesideOnlyTheReadOnlyToolsOfTheOtherMCPConnectorsIsAccepted() {
+	s.useInternalApp()
+
+	created := s.createConfig(map[string]any{"name": "athena", "connectors": []map[string]any{
+		sessionNessy("customers"),
+		sessionGranting("calcom", "scheduling", "get_app_link", "get_me", "get_event_types",
+			"get_event_type", "get_event_type_settings", "get_event_type_history",
+			"get_scheduling_config", "get_crm_sync_errors", "get_events", "get_event",
+			"get_bookings", "get_booking", "get_booking_attendees", "get_booking_attendee",
+			"get_booking_routing_trace", "get_org_team_bookings", "get_org_user_bookings",
+			"get_schedules", "get_schedule", "get_default_schedule", "get_availability",
+			"get_busy_times", "get_connected_calendars", "get_conferencing_apps", "get_my_teams",
+			"get_org_teams", "get_team_memberships", "get_team_membership", "get_org_memberships",
+			"get_org_membership", "get_org_attributes", "get_org_attribute",
+			"get_attribute_options", "get_user_attributes", "get_user_attribute_history",
+			"get_org_routing_forms", "get_org_routing_form_responses", "get_team_routing_forms",
+			"get_routing_form", "get_routing_form_history", "describe_api_operation"),
+		sessionGranting("calendly", "booking", "event_types-list_event_types",
+			"event_types-get_event_type", "event_types-list_event_type_available_times",
+			"event_types-list_event_type_availability_schedule",
+			"locations-list_user_meeting_locations", "meetings-list_events", "meetings-get_event",
+			"meetings-list_event_invitees", "meetings-get_event_invitee",
+			"meetings-get_invitee_no_show", "availability-list_user_availability_schedules",
+			"availability-get_user_availability_schedule", "availability-list_user_busy_times",
+			"routing_forms-list_routing_forms", "routing_forms-get_routing_form",
+			"routing_forms-list_routing_form_submissions",
+			"routing_forms-get_routing_form_submission", "users-get_current_user",
+			"users-get_user", "organizations-get_organization",
+			"organizations-list_organization_memberships",
+			"organizations-get_organization_membership",
+			"organizations-list_organization_invitations", "notetaker-list_recaps",
+			"notetaker-get_recap", "notetaker-get_recap_transcript", "list_calendly_skills"),
+		sessionGranting("github", "code", "get_me", "get_team_members", "get_teams", "ui_get",
+			"get_commit", "get_file_contents", "get_latest_release", "get_release_by_tag",
+			"get_tag", "list_branches", "list_commits", "list_releases",
+			"list_repository_collaborators", "list_tags", "search_code", "search_commits",
+			"search_repositories", "get_label", "issue_read", "list_issue_fields",
+			"list_issue_types", "list_issues", "search_issues", "list_pull_requests",
+			"pull_request_read", "search_pull_requests", "search_users", "actions_get",
+			"actions_list", "get_job_logs"),
+		sessionGranting("gong", "calls", "generate_brief"),
+		sessionGranting("hubspot", "crm", "get_user_details", "get_organization_details",
+			"discover_hubspot_schema", "search_crm_objects", "get_crm_objects",
+			"search_properties", "get_properties", "search_owners",
+			"get_campaign_attribution_reports", "read_campaign_data", "search_conversations",
+			"get_conversation_channel_metadata", "search_intent_signals",
+			"get_marketing_email_analytics", "get_content_analytics_report", "get_aeo_metrics",
+			"render_asset", "tool_guidance"),
+		sessionGranting("metabase", "analytics", "browse_collection", "browse_data",
+			"execute_query", "get_content", "get_parameter_values", "glossary", "learn",
+			"render_drill_through", "run_saved_question", "search", "visualize_query"),
+		sessionGranting("notion", "docs", "notion-download-attachment", "notion-download-skill",
+			"notion-fetch", "notion-get-async-task", "notion-get-comments",
+			"notion-get-enabled-skills", "notion-get-file-download-urls", "notion-get-groups",
+			"notion-get-self", "notion-get-session-status", "notion-get-suggested-edit",
+			"notion-get-teams", "notion-get-tool-access", "notion-get-users",
+			"notion-get-version-changes", "notion-list-favorite-pages",
+			"notion-list-page-backlinks", "notion-list-private-pages", "notion-list-recent-pages",
+			"notion-list-session-events", "notion-list-shared-pages", "notion-memory-search",
+			"notion-query-data-sources", "notion-query-meeting-notes",
+			"notion-query-multiple-data-sources", "notion-query-sessions",
+			"notion-read-session-event", "notion-search-agents",
+			"notion-search-sessions", "notion-view-version", "notion-wait-session"),
+		sessionGranting("sentry", "errors", "find_alert_rules", "find_dashboards",
+			"find_dropped_events", "find_dsns", "find_metric_monitors", "find_monitors",
+			"find_organizations", "find_projects", "find_releases", "find_teams",
+			"find_uptime_monitors", "get_agent_conversation_details",
+			"get_ai_conversation_details", "get_alert_options", "get_alert_rule",
+			"get_dashboard_details", "get_event_attachment", "get_event_stacktrace",
+			"get_issue_activity", "get_issue_breadcrumbs", "get_issue_details",
+			"get_issue_tag_values", "get_issue_user_reports", "get_latest_base_snapshot",
+			"get_metric_monitor_details", "get_monitor_details", "get_profile",
+			"get_profile_details", "get_release_details", "get_replay_details",
+			"get_sentry_mcp_info", "get_sentry_resource", "get_snapshot", "get_snapshot_image",
+			"get_span_details", "get_trace_details", "get_uptime_monitor_details",
+			"search_agent_conversations", "search_ai_conversations", "whoami"),
+		sessionGranting("linear_app", "tracker", "get_issue", "list_issues", "get_attachment"),
+	}})
+
+	s.Len(value(created.Connectors), 10)
+}
+
+// HubSpot, Notion and Sentry have no golden, so this pins every tool their vendors list that
+// their read_only_tools leave out (AI-2777): a binding granting all of them is refused, and the
+// 400 names exactly these. Cal.com, Calendly, GitHub and Gong have goldens; their bindings grant the
+// tools left out for a reason other than a write: a search of public docs or an API catalog, a
+// call of any operation, a routing form response, a booking link anyone may open, a workflow
+// run, a question the model sends to Gong's AI. A tool added to any list drops out of the message
+// and fails the test.
+func (s *ConfigsSuite) TestNessyBesideAToolTheOtherMCPConnectorsLeaveOutNamesExactlyThoseTools() {
+	s.useInternalApp()
+	calcom := []string{"search_docs", "find_api_operation", "call_api_operation",
+		"calculate_routing_form_slots"}
+	calendly := []string{"scheduling_links-create_single_use_scheduling_link", "shares-create_share"}
+	github := []string{"actions_run_trigger", "issue_write"}
+	hubspot := []string{"manage_aeo_prompts", "manage_aeo_recommendations", "manage_blog_post",
+		"manage_campaign_objects", "manage_crm_objects", "manage_custom_pipelines",
+		"manage_custom_properties", "manage_landing_page", "manage_marketing_email",
+		"manage_onboarding", "manage_segment", "manage_website_page", "query_crm_data",
+		"submit_feedback"}
+	gong := []string{"ask_account", "ask_deal"}
+	notion := []string{"notion-ai-search", "notion-calendar-cancel-events",
+		"notion-calendar-create-events", "notion-calendar-list-calendar-resources",
+		"notion-calendar-list-calendars", "notion-calendar-list-contacts",
+		"notion-calendar-list-coworkers-events", "notion-calendar-list-events",
+		"notion-calendar-update-events", "notion-connector-search", "notion-convert-page-to-skill",
+		"notion-create-attachment", "notion-create-comment", "notion-create-database",
+		"notion-create-file-upload", "notion-create-folder", "notion-create-pages",
+		"notion-create-suggested-edit", "notion-create-view", "notion-delete-comment",
+		"notion-delete-databases", "notion-delete-pages", "notion-duplicate-page",
+		"notion-move-pages", "notion-resolve-suggested-edit", "notion-restore-pages",
+		"notion-restore-version", "notion-search", "notion-send-message-to-session", "notion-set-comment-reaction",
+		"notion-set-discussion-resolved", "notion-spawn-session", "notion-stop-session",
+		"notion-update-comment", "notion-update-data-source", "notion-update-enabled-skills",
+		"notion-update-folder", "notion-update-page", "notion-update-view", "notion-upload-skill"}
+	sentry := []string{"add_issue_note", "add_team_to_project", "analyze_issue_with_seer",
+		"create_alert_rule", "create_dsn", "create_metric_monitor", "create_monitor",
+		"create_project", "create_team", "create_uptime_monitor", "delete_alert_rule",
+		"delete_metric_monitor", "delete_monitor_environment", "delete_uptime_monitor", "get_doc",
+		"link_issue", "onboarding_status_update", "remove_team_from_project", "search_docs",
+		"search_errors", "search_events", "search_issue_events", "search_issues", "search_logs",
+		"search_metrics", "search_profiles", "search_replays", "search_traces",
+		"submit_feedback_to_sentry_team", "unlink_issue", "update_alert_rule", "update_dsn",
+		"update_issue", "update_metric_monitor", "update_project", "update_uptime_monitor"}
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", map[string]any{
+		"name": "athena", "connectors": []map[string]any{
+			sessionNessy("customers"),
+			sessionGranting("calcom", "scheduling", calcom...),
+			sessionGranting("calendly", "booking", calendly...),
+			sessionGranting("github", "code", github...),
+			sessionGranting("gong", "calls", gong...),
+			sessionGranting("hubspot", "crm", hubspot...),
+			sessionGranting("notion", "docs", notion...),
+			sessionGranting("sentry", "errors", sentry...),
+		},
+	})
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, `or add to each binding's require_approval its tools that do not only read: `+
+		`"scheduling" `+strings.Join(calcom, ", ")+`; "booking" `+strings.Join(calendly, ", ")+
+		`; "code" `+strings.Join(github, ", ")+`; "calls" `+strings.Join(gong, ", ")+`; "crm" `+strings.Join(hubspot, ", ")+
+		`; "docs" `+strings.Join(notion, ", ")+`; "errors" `+strings.Join(sentry, ", "))
+}
+
 // nessy.yaml's source says outbound: false, so nessy alone, or twice, is accepted.
 func (s *ConfigsSuite) TestNessyAloneIsAccepted() {
 	s.useInternalApp()
@@ -2288,6 +2437,23 @@ func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOf
 	}})
 
 	s.Len(value(created.Connectors), 4)
+}
+
+// TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfTheOtherMCPConnectors is the control:
+// the base, f82b5987a, answered 201 to the same request (checked by running this test on that
+// commit).
+func (s *ConfigsSuite) TestAConfigWithoutASensitiveConnectorKeepsTheWriteToolsOfTheOtherMCPConnectors() {
+	created := s.createConfig(map[string]any{"name": "builder", "connectors": []map[string]any{
+		sessionGranting("calcom", "scheduling", "create_booking", "search_docs"),
+		sessionGranting("calendly", "booking", "shares-create_share"),
+		sessionGranting("github", "code", "issue_write"),
+		sessionGranting("hubspot", "crm", "manage_crm_objects", "query_crm_data"),
+		sessionGranting("linear_app", "tracker", "save_issue"),
+		sessionGranting("notion", "docs", "notion-update-page", "notion-connector-search"),
+		sessionGranting("sentry", "errors", "update_issue", "search_issues"),
+	}})
+
+	s.Len(value(created.Connectors), 7)
 }
 
 // TestAnUpdateKeepingABindingToAForceDeletedConnectorIsAccepted: a forced connector delete

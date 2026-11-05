@@ -472,7 +472,11 @@ func (s *ConsentSuite) TestLinearAppConnectsWithTheCustomersClientAtItsPinnedEnd
 	s.Equal("https://api.linear.app", manifest.Endpoints["api_base"])
 	s.Equal("https://mcp.linear.app/mcp", manifest.Endpoints["mcp"])
 	s.Equal("https://api.linear.app/oauth/revoke", manifest.Endpoints["revoke"], "a disconnect revokes the token at Linear")
-	s.Equal([]core.SourceRule{{Kind: "mcp", Endpoint: "mcp"}}, manifest.Sources, "the MCP tools")
+	s.Require().Len(manifest.Sources, 1, "the MCP tools")
+	// Its read_only_tools are linear.yaml's (TestToolsetSuite/TestLinearAppListsTheReadOnlyToolsLinearDoes).
+	source := manifest.Sources[0]
+	source.ReadOnlyTools = nil
+	s.Equal(core.SourceRule{Kind: "mcp", Endpoint: "mcp"}, source, "the MCP tools")
 	s.Equal(core.RateLimitPerUser, manifest.RateLimit.Per)
 	raw, err := fs.ReadFile(providers.FS, "linear_app.yaml")
 	s.Require().NoError(err)
