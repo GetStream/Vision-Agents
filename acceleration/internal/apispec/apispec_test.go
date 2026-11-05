@@ -4,10 +4,12 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/danielgtaylor/huma/v2"
 	"github.com/stretchr/testify/suite"
 	"gopkg.in/yaml.v3"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/apispec"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/server"
 )
 
@@ -83,6 +85,16 @@ func (s *DeprecatedParamsSuite) TestEveryParameterTaggedDeprecatedIsMarkedOnTheP
 
 		s.Equal(tagged, marked, name)
 	}
+}
+
+func (s *DeprecatedParamsSuite) TestAParameterDeclaredByReferenceIsLeftAsWritten() {
+	byReference := &huma.Param{Ref: "#/components/parameters/Cursor"}
+	tagged := &huma.Param{Name: "api_key_id", In: "query", Schema: &huma.Schema{Type: huma.TypeString, Deprecated: true}}
+
+	apispec.DeprecateParams(nil, &huma.Operation{Parameters: []*huma.Param{byReference, tagged}})
+
+	s.False(byReference.Deprecated)
+	s.True(tagged.Deprecated, "a reference before a tagged parameter stops nothing")
 }
 
 // params lists every operation parameter of a rendered document as "operationId in name",

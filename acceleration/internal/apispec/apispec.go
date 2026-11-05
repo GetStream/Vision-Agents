@@ -9,6 +9,7 @@ import "github.com/danielgtaylor/huma/v2"
 // (https://spec.openapis.org/oas/v3.1.0#parameter-object). Add it to OnAddOperation.
 func DeprecateParams(_ *huma.OpenAPI, operation *huma.Operation) {
 	for _, param := range operation.Parameters {
+		// A parameter declared by hand as a $ref has no schema.
 		if param.Schema != nil && param.Schema.Deprecated {
 			param.Deprecated = true
 		}
