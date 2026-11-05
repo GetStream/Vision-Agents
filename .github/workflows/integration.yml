@@ -2,7 +2,9 @@ name: Integration (router)
 # The router's `-tags integration` suites that need Postgres, each package in its own job on its
 # own Postgres and Redis. CI (unit) runs `go test ./...` without the tag, so these ran only on
 # laptops. Not a required check. Vendor suites (tts, stt, llm, sts, search, imagegen, detection)
-# need API keys, so they are not here. imagerouter and dlc skip themselves on CI: AI-2040.
+# need API keys, so they are not here. internal/campaign, internal/phone/outcome,
+# internal/searchrouter and internal/simulation are Postgres suites left out of the matrix too
+# (simulation also needs an OpenAI key). imagerouter and dlc are left out of the matrix: AI-2040.
 # mem0 is the exception: whose memories a session reads is decided by mem0's own filters, so
 # the jobs marked `mem0` run its live suites with the MEM0_API_KEY secret, and skip them on a
 # fork's pull request, which is given no secrets.
