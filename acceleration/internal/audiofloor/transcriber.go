@@ -17,8 +17,8 @@ import (
 
 // ProviderName and DefaultModel name the transcriber in routing.
 const (
-	ProviderName = "audiofloor"
-	DefaultModel = "audio-floor"
+	ProviderName = "stream"
+	DefaultModel = "chorus-asr"
 )
 
 // A frame is speech when it is loud enough and the speech detector, Opus's neural speech

@@ -483,7 +483,7 @@ func speaker(heard agent.Heard) string {
 	return "someone"
 }
 
-// openAudioFloor is the audio floor server the router's settings name (ROUTER_AUDIO_FLOOR_URL,
+// openAudioFloor is the audio floor server the router's settings name (ROUTER_CHORUS_ASR_URL,
 // _MODE and _AUDIO), read as the router reads them, or nil.
 func openAudioFloor() (*audiofloor.Client, audiofloor.Mode, error) {
 	settings, _, err := config.Load("")

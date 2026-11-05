@@ -20,8 +20,8 @@ const audioFloorPending = 64
 
 var audioFloorCompared = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
-	Name:      "agent_audio_floor_compared_total",
-	Help:      "Turns both the flow controller and, in shadow mode, the audio floor model ruled on, by each one's disposition and floor, and the end-of-turn bars the model's was read by: preset:NAME, max_wait_ms:N for the frontier point fitted to N, or custom for the agent's own. The model's ruling is not acted on.",
+	Name:      "agent_chorus_asr_compared_total",
+	Help:      "Turns both the flow controller and, in shadow mode, chorus-asr ruled on, by each one's disposition and floor, and the end-of-turn bars the model's was read by: preset:NAME, max_wait_ms:N for the frontier point fitted to N, or custom for the agent's own. The model's ruling is not acted on.",
 }, []string{"controller_disposition", "model_disposition", "controller_floor", "model_floor", "end_of_turn"})
 
 // audioFloor keeps each participant's last 16 s for the audio floor model, encoded once as

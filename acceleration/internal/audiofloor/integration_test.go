@@ -20,12 +20,12 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
-// recording is the server ROUTER_AUDIO_FLOOR_URL names and AUDIO_FLOOR_WAV's audio, a 16 kHz
+// recording is the server ROUTER_CHORUS_ASR_URL names and AUDIO_FLOOR_WAV's audio, a 16 kHz
 // mono 16-bit WAV of a caller asking something.
 func recording(t *testing.T) (string, []int16) {
-	url, wav := os.Getenv("ROUTER_AUDIO_FLOOR_URL"), os.Getenv("AUDIO_FLOOR_WAV")
+	url, wav := os.Getenv("ROUTER_CHORUS_ASR_URL"), os.Getenv("AUDIO_FLOOR_WAV")
 	if url == "" || wav == "" {
-		t.Skip("needs ROUTER_AUDIO_FLOOR_URL and AUDIO_FLOOR_WAV")
+		t.Skip("needs ROUTER_CHORUS_ASR_URL and AUDIO_FLOOR_WAV")
 	}
 	raw, err := os.ReadFile(wav)
 	require.NoError(t, err)

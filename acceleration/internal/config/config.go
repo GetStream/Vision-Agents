@@ -371,7 +371,7 @@ type Agent struct {
 	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
 	FlowJudge string `koanf:"flow_judge"`
 	// AudioFloorURL is an audio floor server (internal/audiofloor). Its model transcribes
-	// for an agent that names audiofloor/audio-floor as its transcriber, and AudioFloorMode
+	// for an agent that names stream/chorus-asr as its transcriber, and AudioFloorMode
 	// says what the flow controller does with its rulings: off (the default), shadow (asks
 	// it beside the flow controller and acts on nothing it says) or act (asks it first, and
 	// the flow controller decides the turns it doesn't answer in time). AudioFloorAudio is
@@ -556,8 +556,8 @@ var variables = map[string]string{
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
 	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
-	"agent.audio_floor_url":     "ROUTER_AUDIO_FLOOR_URL",
-	"agent.audio_floor_mode":    "ROUTER_AUDIO_FLOOR_MODE",
+	"agent.audio_floor_url":     "ROUTER_CHORUS_ASR_URL",
+	"agent.audio_floor_mode":    "ROUTER_CHORUS_ASR_MODE",
 	"agent.audio_floor_audio":   "ROUTER_AUDIO_FLOOR_AUDIO",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
@@ -776,10 +776,10 @@ func (c Config) validate() error {
 	case "", "off":
 	case "shadow", "act":
 		if c.Agent.AudioFloorURL == "" {
-			return fmt.Errorf("config: agent.audio_floor_mode %q needs agent.audio_floor_url (ROUTER_AUDIO_FLOOR_URL)", c.Agent.AudioFloorMode)
+			return fmt.Errorf("config: agent.audio_floor_mode %q needs agent.audio_floor_url (ROUTER_CHORUS_ASR_URL)", c.Agent.AudioFloorMode)
 		}
 	default:
-		return fmt.Errorf("config: agent.audio_floor_mode (ROUTER_AUDIO_FLOOR_MODE) is off, shadow or act, got %q", c.Agent.AudioFloorMode)
+		return fmt.Errorf("config: agent.audio_floor_mode (ROUTER_CHORUS_ASR_MODE) is off, shadow or act, got %q", c.Agent.AudioFloorMode)
 	}
 	switch c.Agent.AudioFloorAudio {
 	case "", "opus", "pcm":

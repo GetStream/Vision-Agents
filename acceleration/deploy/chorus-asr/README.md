@@ -1,6 +1,6 @@
-# An audio floor model
+# chorus-asr
 
-One speech model that hears the caller's last 16 s and answers the flow controller's
+chorus-asr is one speech model that hears the caller's last 16 s and answers the flow controller's
 question from the audio: whether the caller has finished, what to do with the words
 (respond, clarify, ignore), what to do about the agent's own speech (stop, shorten,
 continue), and which of the agent's tools is wanted. The same server can write down what
@@ -11,7 +11,7 @@ It plugs in twice, and each is optional:
 - **Decisions.** The flow controller's `Hearer` (`internal/harness/hearer.go`), beside
   `Judge`. A `Judge` is asked named questions about written state; this model is asked
   about the audio, in the words it was trained on, which only its server can write.
-- **Transcripts.** The `audiofloor/audio-floor` transcriber, an `stt.STT` like any other,
+- **Transcripts.** The `stream/chorus-asr` transcriber, an `stt.STT` like any other,
   chosen by an agent that names it as its STT. With it a call runs no other transcriber.
   At each pause of 200 ms it writes the whole utterance so far, as a replacement of the
   words before, and it ends the utterance at a pause of 2.5 s. When to answer
@@ -21,8 +21,8 @@ It plugs in twice, and each is optional:
 
 | Variable | Purpose |
 | --- | --- |
-| `ROUTER_AUDIO_FLOOR_URL` | The server, such as `http://floor:8080`. Adds the `audiofloor/audio-floor` transcriber |
-| `ROUTER_AUDIO_FLOOR_MODE` | `off` (default); `shadow`, which asks the model about each turn beside the flow controller and acts on nothing it says; or `act`, which asks it first and acts on its ruling |
+| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`. Adds the `stream/chorus-asr` transcriber |
+| `ROUTER_CHORUS_ASR_MODE` | `off` (default); `shadow`, which asks the model about each turn beside the flow controller and acts on nothing it says; or `act`, which asks it first and acts on its ruling |
 | `ROUTER_AUDIO_FLOOR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
 
 `cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`).
@@ -92,12 +92,12 @@ header line.
 
 ## Transcription alone
 
-The transcriber needs only `ROUTER_AUDIO_FLOOR_URL`. With `ROUTER_AUDIO_FLOOR_MODE=off`,
-an agent that names `audiofloor/audio-floor` as its `stt` gets the model's words and the
+The transcriber needs only `ROUTER_CHORUS_ASR_URL`. With `ROUTER_CHORUS_ASR_MODE=off`,
+an agent that names `stream/chorus-asr` as its `stt` gets the model's words and the
 flow controller it would have had anyway:
 
 ```yaml
-stt: audiofloor/audio-floor
+stt: stream/chorus-asr
 ```
 
 It registers no agent and asks for no decision: each request is `POST /v1/transcribe`,
@@ -144,11 +144,11 @@ approval is untouched. Acting, a decision's `Ruler` is `heard`.
 - **Acting.** The model has a third of the flow controller's deadline: 1 s for a pause,
   250 ms for words over the agent. A timeout, an error, a refused agent (more than 21
   customer tools), or a server without a policy leaves the turn to the flow controller,
-  language model or judge, with the other two thirds. `router_audio_floor_checks_total`
+  language model or judge, with the other two thirds. `router_chorus_asr_checks_total`
   counts each check by outcome; acting, every outcome but `answered` and `superseded` is a
   turn the flow controller decided.
 - **Shadow.** One question at a time, none waited for: a slow server costs a call nothing.
-  `router_agent_audio_floor_compared_total` counts both rulings by disposition and floor,
+  `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
   and the preset, and a debug log line carries `p_end`, the preset and its bar, the pause,
   first check and first pause.
 - **Transcripts.** A server that is down when the session starts, or that fails a
@@ -236,6 +236,6 @@ never ended the utterance; the new one wrote both replacements and the final.
 ## Test it
 
 ```bash
-ROUTER_AUDIO_FLOOR_URL=http://127.0.0.1:8080 AUDIO_FLOOR_WAV=caller.wav \
+ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 AUDIO_FLOOR_WAV=caller.wav \
   go test -tags integration -run TestARealServer -v ./internal/audiofloor/
 ```

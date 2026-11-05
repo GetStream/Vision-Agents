@@ -674,7 +674,7 @@ func (s *STTRouterSuite) TestTheAudioFloorIsStreamedAtByNameAndReachedByNoShortc
 	s.T().Cleanup(router.Close)
 
 	for _, hints := range [][]string{nil, {"en"}, {"es", "fr"}} {
-		served, err := s.startOn(router, Request{Target: "audiofloor/audio-floor", LanguageHints: hints})
+		served, err := s.startOn(router, Request{Target: "stream/chorus-asr", LanguageHints: hints})
 		s.Require().NoErrorf(err, "hints %v", hints)
 		s.Equal(audiofloor.DefaultModel, served)
 	}
