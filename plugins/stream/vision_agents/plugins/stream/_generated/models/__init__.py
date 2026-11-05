@@ -13,8 +13,14 @@ from .agent_changes import AgentChanges
 from .agent_channels import AgentChannels
 from .agent_config import AgentConfig
 from .agent_config_patch import AgentConfigPatch
+from .agent_config_patch_mcp_servers_item import AgentConfigPatchMcpServersItem
+from .agent_config_patch_plugin_events_item import AgentConfigPatchPluginEventsItem
+from .agent_config_patch_plugins_item_type_1 import AgentConfigPatchPluginsItemType1
 from .agent_config_patch_tags import AgentConfigPatchTags
 from .agent_config_request import AgentConfigRequest
+from .agent_config_request_mcp_servers_item import AgentConfigRequestMcpServersItem
+from .agent_config_request_plugin_events_item import AgentConfigRequestPluginEventsItem
+from .agent_config_request_plugins_item_type_1 import AgentConfigRequestPluginsItemType1
 from .agent_config_request_tags import AgentConfigRequestTags
 from .agent_config_tags import AgentConfigTags
 from .agent_connector_binding import AgentConnectorBinding
@@ -299,8 +305,6 @@ from .manage_limit_grant_input import ManageLimitGrantInput
 from .manage_limit_input import ManageLimitInput
 from .manage_limit_reset_input import ManageLimitResetInput
 from .manage_status import ManageStatus
-from .mcp_server import McpServer
-from .mcp_server_branding import McpServerBranding
 from .modality import Modality
 from .model_call_timing import ModelCallTiming
 from .model_overwrites import ModelOverwrites
@@ -332,9 +336,6 @@ from .place_call_request_custom import PlaceCallRequestCustom
 from .place_call_request_headers import PlaceCallRequestHeaders
 from .place_call_request_tags import PlaceCallRequestTags
 from .placed_call import PlacedCall
-from .plugin_event import PluginEvent
-from .plugin_event_arguments import PluginEventArguments
-from .plugin_with_options import PluginWithOptions
 from .policy import Policy
 from .policy_budget import PolicyBudget
 from .policy_data_policy import PolicyDataPolicy
@@ -507,6 +508,9 @@ from .stt_options_overwrites import SttOptionsOverwrites
 from .subject_usage import SubjectUsage
 from .suspend_telephony_request import SuspendTelephonyRequest
 from .sync_agent_request import SyncAgentRequest
+from .sync_agent_request_mcp_servers_item import SyncAgentRequestMcpServersItem
+from .sync_agent_request_plugin_events_item import SyncAgentRequestPluginEventsItem
+from .sync_agent_request_plugins_item_type_1 import SyncAgentRequestPluginsItemType1
 from .sync_agent_request_tags import SyncAgentRequestTags
 from .sync_agent_result import SyncAgentResult
 from .tag_key_summary import TagKeySummary
@@ -599,8 +603,14 @@ __all__ = (
     "AgentChannels",
     "AgentConfig",
     "AgentConfigPatch",
+    "AgentConfigPatchMcpServersItem",
+    "AgentConfigPatchPluginEventsItem",
+    "AgentConfigPatchPluginsItemType1",
     "AgentConfigPatchTags",
     "AgentConfigRequest",
+    "AgentConfigRequestMcpServersItem",
+    "AgentConfigRequestPluginEventsItem",
+    "AgentConfigRequestPluginsItemType1",
     "AgentConfigRequestTags",
     "AgentConfigTags",
     "AgentConnectorBinding",
@@ -879,8 +889,6 @@ __all__ = (
     "ManageLimitInput",
     "ManageLimitResetInput",
     "ManageStatus",
-    "McpServer",
-    "McpServerBranding",
     "Modality",
     "ModelCallTiming",
     "ModelOverwrites",
@@ -912,9 +920,6 @@ __all__ = (
     "PlaceCallRequestHeaders",
     "PlaceCallRequestTags",
     "PlacedCall",
-    "PluginEvent",
-    "PluginEventArguments",
-    "PluginWithOptions",
     "Policy",
     "PolicyBudget",
     "PolicyDataPolicy",
@@ -1087,6 +1092,9 @@ __all__ = (
     "SubjectUsage",
     "SuspendTelephonyRequest",
     "SyncAgentRequest",
+    "SyncAgentRequestMcpServersItem",
+    "SyncAgentRequestPluginEventsItem",
+    "SyncAgentRequestPluginsItemType1",
     "SyncAgentRequestTags",
     "SyncAgentResult",
     "TagKeySummary",

@@ -85,6 +85,17 @@ func (c *Conversation) PublishVoiceNote(ctx context.Context, note VoiceNote) (Ph
 
 // upload stores a file on the conversation's channel as uploader.
 func (c *Conversation) upload(ctx context.Context, file sandbox.File, uploader string) (sandbox.Attachment, error) {
+	// The file goes where the conversation is kept.
+	client, err := c.chat(ctx)
+	if err != nil {
+		return sandbox.Attachment{}, err
+	}
+	return Upload(ctx, client, strings.TrimPrefix(c.data.CID, "agent:"), file, uploader)
+}
+
+// Upload stores a file on the agent channel channelID as uploader, as an image when its MIME
+// type is image/*, and returns where Chat's CDN serves it. The channel must exist.
+func Upload(ctx context.Context, client *getstream.Stream, channelID string, file sandbox.File, uploader string) (sandbox.Attachment, error) {
 	name := filepath.Base(file.Name)
 	if name == "." || name == string(filepath.Separator) || len(file.Data) == 0 {
 		return sandbox.Attachment{}, errors.New("conversation: a file needs a name and something in it")
@@ -100,12 +111,7 @@ func (c *Conversation) upload(ctx context.Context, file sandbox.File, uploader s
 		return sandbox.Attachment{}, err
 	}
 
-	// The file goes where the conversation is kept.
-	client, err := c.chat(ctx)
-	if err != nil {
-		return sandbox.Attachment{}, err
-	}
-	channel := client.Chat().Channel("agent", strings.TrimPrefix(c.data.CID, "agent:"))
+	channel := client.Chat().Channel("agent", channelID)
 	by := &getstream.OnlyUserID{ID: uploader}
 	var url *string
 	if strings.HasPrefix(file.MIME, "image/") {

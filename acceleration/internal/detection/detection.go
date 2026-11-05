@@ -158,12 +158,19 @@ type Detection struct {
 type Result struct {
 	Detections []Detection
 	// Billed is how many images the vendor charged for, which is more than one for a
-	// vendor asked once per class. Zero means one.
+	// vendor asked once per class, or for a Workflow whose steps each ran over the image
+	// or a crop of it. Zero means one.
 	Billed int
+	// InputTokens and OutputTokens are what a vendor that bills by the token read and
+	// wrote across its calls, as Moondream does. Zero for one that bills by the image.
+	InputTokens, OutputTokens int64
 }
 
-// Used is the images the vendor charged for.
+// Used is the tokens the vendor charged for, or the images when it counted none.
 func (r Result) Used() pricing.Quantities {
+	if r.InputTokens > 0 || r.OutputTokens > 0 {
+		return pricing.Quantities{pricing.InputTokens: r.InputTokens, pricing.OutputTokens: r.OutputTokens}
+	}
 	return pricing.Quantities{pricing.Images: int64(max(r.Billed, 1))}
 }
 

@@ -137,12 +137,7 @@ func (s *SessionConnectorsSuite) TestARowStillNamingPluginsRunsItsBuiltInAndCust
 		s.Run(kind, func() {
 			mine, echo := s.connection(s.client, connector)
 			config := s.config(s.binding("crm", connector, "session", "", echo))
-			stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config)
-			s.Require().NoError(err)
-			stored.Plugins = []store.PluginEntry{{Name: "linear"}, {Name: "slack", User: true}}
-			stored.PluginEvents = []store.PluginEvent{{Plugin: "linear", Event: "issue.created"}}
-			stored.MCPServers = []store.MCPServer{{Name: "wwsd", URL: "https://mcp.wwsd.invalid/mcp"}}
-			s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &stored))
+			nameRetired(s.T(), s.store, config)
 
 			opened := s.client.createSession(s.session(config, map[string]string{"crm": mine}))
 			ran := s.toolRanOn(s.serverClient.actingFor(s.client), s.client.opens("/v1/agents/sessions/"+opened.Id+"/events"), opened.Id)
@@ -643,7 +638,7 @@ func (s *SessionConnectorsSuite) TestASlackThreadSessionUsesTheAppsConnectionsOn
 }
 
 // threadChannel is a Slack thread's thread channel, linked and created in Stream Chat as the
-// channel bridge does on the thread's first message (channelbridge.Bridge.writeInto), with
+// channel bridge does on the thread's first message (channelbridge.Bridge.openThread), with
 // two people of the thread writing in it.
 func (s *SessionConnectorsSuite) threadChannel(channel, connector, connection, config string) {
 	ctx := context.Background()

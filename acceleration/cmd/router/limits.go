@@ -11,6 +11,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/limitnotice"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	usageservice "github.com/GetStream/Vision-Agents/acceleration/internal/usage"
@@ -60,19 +61,39 @@ func newPolicies(settings config.Config, configs *appconfig.Store, usageClient *
 	if err != nil {
 		return nil, nil, err
 	}
+	notices := limitNotices(settings, configs, logger)
 	closeCounters := func() {
 		if counters != nil {
 			counters.Close()
 		}
+		if notices != nil {
+			notices.Close()
+		}
 	}
-	enforcer, err := policy.New(configs, policy.Settings{
+	policySettings := policy.Settings{
 		Mode: settings.Limits.Mode, Usage: usageClient, Counters: counters, Holds: holds, Notified: notified,
-	}, logger)
+	}
+	if notices != nil {
+		policySettings.LimitHit = notices.Hit
+	}
+	enforcer, err := policy.New(configs, policySettings, logger)
 	if err != nil {
 		closeCounters()
 		return nil, nil, err
 	}
 	return enforcer, closeCounters, nil
+}
+
+// limitNotices is what posts the first time each organization reaches a money limit to
+// ROUTER_LIMITS_SLACK_CHANNEL, or nil when that or its token is unset, limits are off or there
+// is no Postgres to keep the notices in.
+func limitNotices(settings config.Config, configs *appconfig.Store, logger *slog.Logger) *limitnotice.Notifier {
+	token := strings.TrimSpace(settings.Limits.SlackToken)
+	channel := strings.TrimSpace(settings.Limits.SlackChannel)
+	if token == "" || channel == "" || settings.Limits.Mode == config.LimitsOff || configs.DB() == nil {
+		return nil
+	}
+	return limitnotice.New(configs.DB(), limitnotice.NewSlack(token, channel), sandboxEnvironment(), logger)
 }
 
 // usageCounters connects to the Redis the usage service keeps its spend counters in, or nil

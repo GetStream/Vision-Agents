@@ -142,7 +142,7 @@ type createAuthorizationRequest struct {
 }
 
 // maxReturnURLBytes bounds return_url: 2048 is the length the router takes for every other URL
-// it keeps (ConnectorEventDestinationRequest.url, McpServer.url).
+// it keeps (ConnectorEventDestinationRequest.url).
 const maxReturnURLBytes = 2048
 
 // AuthorizationRequest is what a backend may tell a consent it starts.

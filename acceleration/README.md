@@ -128,6 +128,7 @@ the other commands that read them there.
 | `ROUTER_CODE_SANDBOX_PROXY_PUBLIC_URL` | The proxy as a sandbox reaches it, `http://<public IPv4 address>:port`, for `ROUTER_CODE_SANDBOX_BROKER=proxy`. The router refuses to start with that broker and this, the CA certificate, the proxy address or the CA key missing, or with a host name or an IPv6 address here: the sandbox reaches that address alone and has no DNS. `https://` has the proxy serve TLS on `ROUTER_CODE_SANDBOX_PROXY_ADDR` with a certificate for that address the CA signs; the proxy broker refuses it until the sandbox has a local forwarder for TLS |
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
+| `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
 | `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user's devices may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
@@ -1638,7 +1639,7 @@ between:
 | `tavily/basic`        | Index plus a written summary in the same round trip               |
 | `exa/auto`            | Exa choosing between its neural and keyword indexes               |
 | `tavily/advanced`     | Crawls the pages it finds rather than trusting the snippet        |
-| `perplexity/sonar`, `perplexity/sonar-pro` | A model reads the pages and writes the answer |
+| `perplexity/sonar`    | A model searches the web and writes the answer                    |
 
 A session that names nothing gets `search-fast`. Sonar is a target rather than a fork:
 because it is a language model in the middle of a conversation, whether it is worth its
@@ -2381,6 +2382,13 @@ Three endpoints move a customer between two deployments, all server-side only:
 `cmd/router replicate` is both halves at once: the copy, and everything that happens after
 the copy, which is what makes the switchover free of a window where writes are lost.
 
+An export starts recording the app's changes, then waits until every write transaction open in
+the source's shared database when recording started has ended, and only then reads its snapshot.
+So every write of the app to a table the export carries is in the export or in the changes after its cursor,
+including one that was in progress when the export started. A shard's tables record no changes:
+their rows come across as the export read them. A transaction still open after 30 seconds makes the
+export answer 503: run it again.
+
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \
   --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
@@ -2470,9 +2478,14 @@ Changes are captured by a trigger per table writing into `data_changes`, gated o
 `data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
 starts the capture and reading a page refreshes it, so an abandoned move stops recording by
 itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
-rather than silently missing writes. Each change records `pg_current_xact_id()`, and the
-cursor never passes `pg_snapshot_xmin(pg_current_snapshot())`, so a sequence number handed
-out by a transaction that has not committed yet cannot be stepped over.
+rather than silently missing writes. A change is numbered when it is written and seen when
+its transaction commits, so a transaction that commits late can hold a lower number than
+one already seen. Each transaction that records a change holds a shared advisory lock
+naming the highest number handed out before its first one, until it ends, and the cursor
+never passes the lowest such lock: no change at or below the cursor can still appear. While
+a transaction recording a change is open, every customer's feed waits for it; an open
+transaction that records nothing holds no feed back. Pruning drops only the oldest
+numbers, so what is kept runs without a gap from the oldest change kept.
 
 ## Test
 

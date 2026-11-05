@@ -424,6 +424,9 @@ func (a Alias) matches(provider ProviderConfig) bool {
 type ModalityConfig struct {
 	Providers []ProviderConfig `yaml:"providers"`
 	Aliases   map[string]Alias `yaml:"aliases"`
+	// Retired names a model that is no longer offered and the target to ask for instead,
+	// so a caller still pinned to it is told where to go rather than that it never existed.
+	Retired map[string]string `yaml:"retired"`
 	// aliasOrder is the order the aliases were written in, which a map forgets.
 	aliasOrder []string
 }
@@ -716,7 +719,25 @@ func (c ModalityConfig) validate() error {
 			return fmt.Errorf("alias %s prefers %s, which does not meet its own requirements", name, alias.Prefer)
 		}
 	}
+
+	for _, name := range slices.Sorted(maps.Keys(c.Retired)) {
+		if c.declares(name) {
+			return fmt.Errorf("%s is retired and still declared", name)
+		}
+		if instead := c.Retired[name]; !c.declares(instead) {
+			return fmt.Errorf("%s is retired for %s, which is not declared", name, instead)
+		}
+	}
 	return nil
+}
+
+// declares reports whether target is a provider/model or a shortcut of this modality.
+func (c ModalityConfig) declares(target string) bool {
+	if _, ok := c.Provider(target); ok {
+		return true
+	}
+	_, ok := c.Aliases[target]
+	return ok
 }
 
 // Config is the whole capability configuration, one section per modality. A modality the

@@ -14,8 +14,9 @@
 #         token_endpoint_auth_methods_supported [client_secret_post],
 #         code_challenge_methods_supported [S256], no revocation_endpoint.
 id: hubspot
-# A new revision for any change to what this file says; see AGENTS.md.
-revision: 1
+# A new revision for any change to what this file says; see AGENTS.md. 2 lists the tools that
+# only read.
+revision: 2
 # [plugin]
 name: HubSpot
 category: Customers
@@ -54,3 +55,32 @@ client:
 sources:
   - kind: mcp
     endpoint: mcp
+    # The tools that only read, from «Available tools» in [setup] (opened again 2026-11-05; 32
+    # tools, none marked read-only, so each name and what it does is from its entry there):
+    # each gets, searches, lists or reads, and none says it changes anything. render_asset
+    # «Display[s] a read-only preview card»; tool_guidance returns usage instructions. Left
+    # out: every manage_ tool, which creates, updates, publishes or acts (manage_aeo_prompts
+    # and manage_onboarding too, which also read); submit_feedback, which sends the model's
+    # text to HubSpot; and query_crm_data, which runs SQL the model writes «with
+    # HubSpot-specific extensions»: [setup] does not list the functions it takes, so whether a
+    # query can reach outside the account is unverified, as bigquery.yaml leaves out
+    # execute_sql_readonly. A tool added later is left out too.
+    read_only_tools:
+      - get_user_details
+      - get_organization_details
+      - discover_hubspot_schema
+      - search_crm_objects
+      - get_crm_objects
+      - search_properties
+      - get_properties
+      - search_owners
+      - get_campaign_attribution_reports
+      - read_campaign_data
+      - search_conversations
+      - get_conversation_channel_metadata
+      - search_intent_signals
+      - get_marketing_email_analytics
+      - get_content_analytics_report
+      - get_aeo_metrics
+      - render_asset
+      - tool_guidance

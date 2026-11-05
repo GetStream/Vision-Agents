@@ -41,6 +41,9 @@ const maxInitialDigits = 32
 // think a number was bought when it was not.
 var ErrNotImplemented = errors.New("phone: not implemented for this vendor")
 
+// ErrCallNotFound is a call the customer did not place from here.
+var ErrCallNotFound = errors.New("phone: no such call")
+
 // ErrAddressRequired is a number the vendor sells only with a verified address, which is not
 // supported: numbers outside the US and Canada.
 var ErrAddressRequired = errors.New("phone: this number needs a verified address")

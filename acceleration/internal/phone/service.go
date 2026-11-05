@@ -1196,7 +1196,7 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	// The vendor bills the call from when the person answers, which is when their phone joins
 	// the Stream call: the leg rings until then, and one never answered is not billed.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
-		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor,
+		StreamAppPK: pin, CallType: callType, CallID: callID, Vendor: held.Vendor, VendorCallID: dialed.VendorCallID,
 		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	}, false)
 	sites := placedSites{streamSIPHost: BridgeHost(outbound.Bridge.URI)}
@@ -1635,8 +1635,8 @@ func (s *Service) allowlistFor(vendor string) ([]string, error) {
 // sharedLine is the line a call from the number goes out on, or false when the call makes a
 // trunk and rule of its own: the vendor cannot name the call on its leg, there is no key to
 // seal a shared trunk's password with, the number was attached before its password was
-// kept, or it is attached in another app. A number lined in another app only to place calls
-// moves its line here.
+// kept, it is attached in another app, or Stream routes it through a rule or trunk its line
+// did not make. A number lined in another app only to place calls moves its line here.
 func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, provider Provider, held store.PhoneNumber) (TrunkLine, bool, error) {
 	if StreamLegOf(provider) != StreamLegShared {
 		return TrunkLine{}, false, nil
@@ -1649,7 +1649,8 @@ func (s *Service) sharedLine(ctx context.Context, stream *Stream, pin int64, pro
 		}
 	}
 	line, err := s.line(ctx, stream, pin, held)
-	if errors.Is(err, ErrNoSealer) || errors.Is(err, store.ErrNoStoredBridge) || errors.Is(err, errLinedElsewhere) {
+	if errors.Is(err, ErrNoSealer) || errors.Is(err, store.ErrNoStoredBridge) ||
+		errors.Is(err, errLinedElsewhere) || errors.Is(err, errRoutedElsewhere) {
 		return TrunkLine{}, false, nil
 	}
 	if err != nil {
@@ -1859,7 +1860,8 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	// they answer.
 	s.OpenLeg(ctx, request.Owner, store.CallLeg{
 		StreamAppPK: request.StreamApp, CallType: callType, CallID: request.CallID, Vendor: held.Vendor,
-		Direction: store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
+		VendorCallID: placed.VendorCallID,
+		Direction:    store.Outbound, LocalNumber: request.From, RemoteNumber: request.To,
 	}, false)
 	if !shared {
 		if err := s.store.RecordCallResource(ctx, resource); err != nil {
@@ -1878,13 +1880,24 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 //
 // The call is named by the id its vendor gave when it was dialled. An inbound call has no
 // such id here, because it arrived at Stream rather than being made from this service, so
-// only calls placed from here can be pressed at.
-func (s *Service) SendDigits(ctx context.Context, vendor, vendorCallID, digits string) error {
+// only calls placed from here can be pressed at. The vendor accounts are shared, so a call
+// customerID did not place is ErrCallNotFound, as one nobody placed is.
+func (s *Service) SendDigits(ctx context.Context, customerID, vendor, vendorCallID, digits string) error {
 	if vendorCallID == "" {
 		return stack.Wrap(errors.New("phone: pressing digits needs the call to press them on"))
 	}
 	if err := ValidateDigits(digits); err != nil {
 		return err
+	}
+	if s.store == nil {
+		return stack.Wrap(errors.New("phone: pressing digits needs a database"))
+	}
+	placed, err := s.store.PlacedCallLeg(ctx, customerID, vendor, vendorCallID)
+	if err != nil {
+		return err
+	}
+	if !placed {
+		return stack.Wrap(ErrCallNotFound)
 	}
 	provider, err := s.provider(vendor)
 	if err != nil {

@@ -106,13 +106,15 @@ func (e *Enforcer) Book(ctx context.Context, owner routing.Owner, micros int64) 
 		return e.bookingRefused(organization, "unchecked", errBookingUnchecked, err)
 	}
 	if !booked {
+		reason, refusal := "spend_hard_limit", refusedWith(ErrSystemLimit,
+			"this costs %s, which would take the organization past its spend hard limit", dollars(need))
 		if credit-others < need {
-			return e.bookingRefused(organization, "no_credit", refusedWith(ErrNoCredits,
+			reason, refusal = reasonNoCredit, refusedWith(ErrNoCredits,
 				"the organization has %s of credit to spend, and this costs %s; add credit first",
-				dollars(max(credit-others, 0)), dollars(need)), nil)
+				dollars(max(credit-others, 0)), dollars(need))
 		}
-		return e.bookingRefused(organization, "spend_hard_limit", refusedWith(ErrSystemLimit,
-			"this costs %s, which would take the organization past its spend hard limit", dollars(need)), nil)
+		e.limitHit(organization, owner.CustomerID, attributed.OrganizationTier, reason, true, refusal)
+		return e.bookingRefused(organization, reason, refusal, nil)
 	}
 
 	b := &booking{enforcer: e, organization: organization, id: id}

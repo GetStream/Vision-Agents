@@ -70,6 +70,8 @@ type EpisodeReadingSuite struct {
 
 	customerID, configID string
 	now                  time.Time
+	// dated is the time the suite's Stream Chat dates messages by: now until at sets another.
+	dated time.Time
 }
 
 func TestEpisodeReadingSuite(t *testing.T) {
@@ -99,6 +101,7 @@ func (s *EpisodeReadingSuite) SetupTest() {
 	s.Require().NoError(err)
 	s.customerID, s.configID = "cards-"+uuid.NewString(), "config-"+uuid.NewString()
 	s.now = time.Now().UTC().Truncate(time.Second)
+	s.dated = s.now
 	s.model = &recordingLLM{}
 	s.manager = s.managerOver()
 }
@@ -228,6 +231,7 @@ func (s *EpisodeReadingSuite) handed(params llm.ResponseParams) []map[string]any
 func (s *EpisodeReadingSuite) at(seconds int) time.Time {
 	at := s.now.Add(time.Duration(seconds) * time.Second)
 	s.chat.At(at)
+	s.dated = at
 	return at
 }
 
@@ -329,9 +333,10 @@ func (s *EpisodeReadingSuite) smsThread(number, author, text string) (string, om
 	return thread, opened
 }
 
-// chatNow is the time the suite's Stream Chat dates messages by.
+// chatNow is the time the suite's Stream Chat dates messages by, which an episode opened for
+// the message written next starts at: a card's lines are those of its episode, from its start.
 func (s *EpisodeReadingSuite) chatNow() time.Time {
-	return s.now
+	return s.dated
 }
 
 // textSession opens the session on a thread channel the message hook opens, and tells it

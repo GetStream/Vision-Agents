@@ -64,6 +64,34 @@ func (s *SIPTrunkSuite) SetupTest() {
 	s.Require().NoError(err)
 }
 
+// placed opens the outbound leg customerID placed through its own trunk, as vendorCallID.
+func (s *SIPTrunkSuite) placed(customerID, vendorCallID string) {
+	_, err := s.store.OpenCallLeg(s.ctx, &store.CallLeg{
+		CustomerID: customerID, CallType: "default", CallID: "session-" + vendorCallID,
+		Vendor: SIPTrunkVendor, VendorCallID: vendorCallID, Direction: store.Outbound,
+		LocalNumber: "+15125550100", RemoteNumber: "+15125550101",
+	})
+	s.Require().NoError(err)
+}
+
+func (s *SIPTrunkSuite) TestDigitsOnACallThroughATrunkReachTheTrunkProvider() {
+	s.placed("acme", "call-1")
+
+	err := s.service.SendDigits(s.ctx, "acme", SIPTrunkVendor, "call-1", "12")
+	s.EqualError(err, "phone: digits cannot be pressed on a call through a customer's own sip trunk")
+	s.Equal([]string{"call-1:12"}, s.trunks.digits)
+}
+
+func (s *SIPTrunkSuite) TestALineCannotPressDigitsOnACallAnotherCustomerPlaced() {
+	s.placed("acme", "call-2")
+	line := s.service.Line(LineOptions{
+		Owner: routing.Owner{CustomerID: "globex"}, Vendor: SIPTrunkVendor, VendorCallID: "call-2",
+	})
+
+	s.ErrorIs(line.SendDigits(s.ctx, "12"), ErrCallNotFound)
+	s.Empty(s.trunks.digits)
+}
+
 func (s *SIPTrunkSuite) create(customerID, password string) store.SIPTrunk {
 	trunk, err := s.service.CreateSIPTrunk(s.ctx, customerID, SIPTrunkSettings{
 		Name: "main", Host: "trunk.example.com", Username: "agent", Password: &password, LateOffer: true,

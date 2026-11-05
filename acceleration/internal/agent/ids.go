@@ -3,6 +3,9 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"html"
+	"maps"
+	"net/url"
 	"regexp"
 	"slices"
 	"strings"
@@ -20,8 +23,9 @@ import (
 // Only an ID one of the tools hands out is checked: "case_id" when there is an open_case,
 // "booking_id" when there is a find_booking. Any other ID, such as a card_id, is the
 // caller's to give, and so is one the caller said along with what it is ("my case is
-// 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631").
-// The error code "seven twenty", said where no case was mentioned, is not a case. An ID
+// 6631"), or said in answer to the agent asking for it ("What's your case number?" "6631"),
+// or pasted inside a link, as a whole part of its path or a whole value of its query (linkParts):
+// a link names what each of its parts is by where it stands. The error code "seven twenty", said where no case was mentioned, is not a case. An ID
 // written in told, the instructions the operator gave the agent, is the operator's to give.
 func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told string) (key, value string, known []string, found bool) {
 	var arguments map[string]any
@@ -37,6 +41,16 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	// the question.
 	type answer struct{ question, said string }
 	var answers []answer
+	// pasted are the parts of the links the caller wrote.
+	var pasted []string
+	// sent are the arguments of each call, by its ID, their escapes undone: a result that
+	// writes one of them back echoes the model, it does not return it, however the model
+	// escaped it ("\u0043" for "C").
+	sent := map[string]string{}
+	// lines are the lines a JSON result writes out for people, with the arguments of the
+	// call it answers.
+	type line struct{ text, sent string }
+	var lines []line
 	var question string
 	for _, message := range history {
 		switch message.Role {
@@ -44,9 +58,16 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 			if strings.TrimSpace(message.Content) != "" {
 				question = message.Content
 			}
+			for _, made := range message.ToolCalls {
+				sent[made.ID] = asWritten(made.Arguments)
+			}
 		case llm.User:
 			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
 			said.WriteString(" " + heard)
+			// A link is read as the person wrote it: a shared channel passes their text on in
+			// a JSON envelope, which writes & as \u0026, and a chat may pass it on escaped for
+			// HTML, & as &amp;. Either way a link would end, or its query split, at the escape.
+			pasted = append(pasted, linkParts(html.UnescapeString(asWritten(message.Content)))...)
 			if question != "" {
 				answers = append(answers, answer{strings.ToLower(question), alphanumeric(heard)})
 			}
@@ -63,6 +84,13 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				texts = append(texts, text)
 			} else {
 				results = append(results, result)
+				// A result may write its answer out under a key of its own: a list of channels
+				// as "1. #general (C0123) - public_channel".
+				for _, text := range prose(result) {
+					for _, written := range strings.Split(text, "\n") {
+						lines = append(lines, line{written, sent[message.ToolCallID]})
+					}
+				}
 			}
 		}
 	}
@@ -81,7 +109,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		if wanted == "" {
 			return name, text, collectIDs(results), true
 		}
-		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) {
+		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) ||
+			slices.Contains(pasted, wanted) {
 			continue
 		}
 		if slices.ContainsFunc(answers, func(given answer) bool {
@@ -101,6 +130,12 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 				}
 			})
 		}
+		// A line written out gives an ID only beside the word for what it is (besideKind), and
+		// only one the call it answers was not sent: "No bookings found for Ana at 7pm" does
+		// not return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
+		returned = returned || slices.ContainsFunc(lines, func(written line) bool {
+			return besideKind(written.text, wanted, entityOf(name)) && !strings.Contains(alphanumeric(written.sent), wanted)
+		})
 		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
 			return name, text, ids, true
 		}
@@ -718,12 +753,182 @@ func allObjects(fields map[string]any) bool {
 	return true
 }
 
+// link is a web address written in a message. It ends at the first character a URI cannot
+// hold (RFC 3986 section 2 allows none of space, <, >, ", {, }, |, \, ^ and `), so a link
+// written in brackets or quotes ends at them.
+var link = regexp.MustCompile("(?i)https?://[^\\s<>\"{}|\\\\^`]+")
+
+// linkParts returns every path segment and query value of the links in text, each
+// alphanumeric. Only whole parts are given: the 1793 inside a segment p1793 is not one.
+//
+// Only a part that mixes letters and digits is given. A number alone is as often a page, a
+// year or a size as an ID, and letters alone are a word, a name or a section: neither is an
+// ID of a kind the link leaves unnamed. A number the person means as an ID still counts
+// where what they wrote names its kind, as "…/cases/48213" does.
+func linkParts(text string) []string {
+	var parts []string
+	add := func(part string) {
+		if part = alphanumeric(part); strings.ContainsFunc(part, unicode.IsLetter) && strings.ContainsFunc(part, unicode.IsDigit) {
+			parts = append(parts, part)
+		}
+	}
+	for _, written := range link.FindAllString(text, -1) {
+		address, err := url.Parse(written)
+		if err != nil {
+			continue
+		}
+		// Each segment is unescaped after the split, so an escaped "/" stays inside its segment.
+		for _, escaped := range strings.Split(address.EscapedPath(), "/") {
+			segment, err := url.PathUnescape(escaped)
+			if err != nil {
+				continue
+			}
+			add(segment)
+		}
+		for _, values := range address.Query() {
+			for _, value := range values {
+				add(value)
+			}
+		}
+	}
+	return parts
+}
+
+// asWritten is text with the escapes of JSON undone: the keys and values of a JSON value, one
+// per line, each number as it was written. Text that is not JSON is returned as it is.
+func asWritten(text string) string {
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(text))
+	decoder.UseNumber()
+	if !json.Valid([]byte(text)) || decoder.Decode(&value) != nil {
+		return text
+	}
+	var written []string
+	var walk func(any)
+	walk = func(value any) {
+		switch typed := value.(type) {
+		case string:
+			written = append(written, typed)
+		case json.Number:
+			written = append(written, typed.String())
+		case []any:
+			for _, inner := range typed {
+				walk(inner)
+			}
+		case map[string]any:
+			for _, key := range slices.Sorted(maps.Keys(typed)) {
+				written = append(written, key)
+				walk(typed[key])
+			}
+		}
+	}
+	walk(value)
+	return strings.Join(written, "\n")
+}
+
+// prose returns the strings of more than one word a JSON result holds, wherever they are. A
+// string of one word under a key that is not an ID's is left out, so that a card listed
+// under "cards" does not pass as an order.
+func prose(value any) []string {
+	switch typed := value.(type) {
+	case string:
+		if len(strings.Fields(typed)) > 1 {
+			return []string{typed}
+		}
+	case []any:
+		var texts []string
+		for _, inner := range typed {
+			texts = append(texts, prose(inner)...)
+		}
+		return texts
+	case map[string]any:
+		var texts []string
+		for _, inner := range typed {
+			texts = append(texts, prose(inner)...)
+		}
+		return texts
+	}
+	return nil
+}
+
 // holdsValue reports whether a result written as text gives wanted as one of its words, as
 // a bare ID answered alone does. wanted is already alphanumeric.
 func holdsValue(result, wanted string) bool {
-	return slices.ContainsFunc(strings.FieldsFunc(result, func(r rune) bool {
+	return slices.ContainsFunc(idWords(result), func(word string) bool { return alphanumeric(word) == wanted })
+}
+
+// idWords are the words of text an ID can be, its _, - and # kept: "T-6631" is one word.
+func idWords(text string) []string {
+	return strings.FieldsFunc(text, func(r rune) bool {
 		return !unicode.IsLetter(r) && !unicode.IsDigit(r) && !strings.ContainsRune("_-#", r)
-	}), func(word string) bool { return alphanumeric(word) == wanted })
+	})
+}
+
+// besideKind reports whether a line written for people gives wanted as the ID of kind. A line
+// names a thing by its kind, its name and its ID side by side: "Channel: #help (ID: C0…)",
+// "#help (C0…) - public_channel". So between the word for the kind and the ID stands at most
+// one word, the thing's name, besides the word "ID". Any more ties the ID to another word: in
+// "Channel #x by U0…", U0… is whoever made the channel. A label ends that doubt: in
+// "Channel: Group DM (ID: C0…)" the label "Channel:" opens a field whose value is the name
+// and the ID in brackets, so a name of any length stands between them (labelledName).
+func besideKind(line, wanted, kind string) bool {
+	if labelledName(line, wanted, kind) {
+		return true
+	}
+	var words []string
+	for _, word := range idWords(line) {
+		// A mark alone, the dash in "#help - C0…", is no word.
+		if alphanumeric(word) != "" {
+			words = append(words, strings.ToLower(word))
+		}
+	}
+	// A kind may take more than one word: "phone number" for phone_number_id.
+	size := len(strings.Fields(kind))
+	for at, word := range words {
+		if alphanumeric(word) != wanted {
+			continue
+		}
+		for start := 0; start+size <= len(words); start++ {
+			if !strings.Contains(strings.Join(words[start:start+size], " "), kind) {
+				continue
+			}
+			var between []string
+			if at < start {
+				between = words[at+1 : start]
+			} else if at >= start+size {
+				between = words[start+size : at]
+			}
+			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= 1 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bracketedID is an ID in brackets, with or without the word "ID": "(C0…)", "(ID: C0…)".
+var bracketedID = regexp.MustCompile(`\((?:(?i:id):\s*)?([\w-]+)\)`)
+
+// labelledName reports whether line has a field "<kind>: <name> (<wanted>)": the label of kind,
+// then the name, then wanted in brackets. The field ends at a " - " or another label or
+// bracket, so "Creator: Ana Lind (<@U0…)" and "Channel #x by U0…" give no channel.
+func labelledName(line, wanted, kind string) bool {
+	for _, found := range bracketedID.FindAllStringSubmatchIndex(line, -1) {
+		if alphanumeric(line[found[2]:found[3]]) != wanted {
+			continue
+		}
+		field := strings.ToLower(line[:found[0]])
+		if cut := strings.LastIndexAny(field, "()"); cut >= 0 {
+			field = field[cut+1:]
+		}
+		if cut := strings.LastIndex(field, " - "); cut >= 0 {
+			field = field[cut+3:]
+		}
+		if at := strings.LastIndex(field, kind+":"); at >= 0 && !strings.Contains(field[at+len(kind)+1:], ":") {
+			return true
+		}
+	}
+	return false
 }
 
 // alphanumeric lowercases text and drops everything but letters and digits, so "T-6631"

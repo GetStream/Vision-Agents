@@ -82,7 +82,7 @@ A fixture is data that many tests read, loaded once: `s.useFixture("standard")` 
 
 ## Integration tests
 
-- They skip when `ROUTER_POSTGRES_DSN` or `ROUTER_REDIS_ADDR` is unset. Both are required: the quota, the page queue and the live client are real.
+- `internal/testenv` sets `ROUTER_POSTGRES_DSN` and `ROUTER_REDIS_ADDR` from `testing.yaml`, so they do not skip when the shell leaves them unset. Both are required: the quota, the page queue and the live client are real.
 - Run them with:
 
 ```bash

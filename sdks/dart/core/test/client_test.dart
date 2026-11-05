@@ -691,6 +691,57 @@ void main() {
       });
     });
 
+    test(
+      'sends what the person did in a reply\'s UI with their words, still under a request id',
+      () async {
+        router.answer(
+          'POST /v1/agents/sessions/s1/responses',
+          Answer(202, responseJson('r1', status: 'running')),
+        );
+        final responses = agents.sessions.responses('s1');
+
+        await responses.create(
+          'Update the plan',
+          uiAction: {
+            'v': 1,
+            'message_id': 'reply-1',
+            'format': 'a2ui',
+            'name': 'update_plan',
+            'payload': {
+              'pace': 'relaxed',
+              'nights': 2,
+              'interests': ['food', 'museums'],
+              'flexible': true,
+            },
+          },
+        );
+        final acted = router.last('POST /v1/agents/sessions/s1/responses').json;
+        await responses.create('Plain', uiAction: {});
+        final empty = router.last('POST /v1/agents/sessions/s1/responses').json;
+
+        expect(acted, {
+          'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
+          'text': 'Update the plan',
+          'ui_action': {
+            'v': 1,
+            'message_id': 'reply-1',
+            'format': 'a2ui',
+            'name': 'update_plan',
+            'payload': {
+              'pace': 'relaxed',
+              'nights': 2,
+              'interests': ['food', 'museums'],
+              'flexible': true,
+            },
+          },
+        });
+        expect(empty, {
+          'request_id': matches(RegExp(r'^[0-9a-f]{32}$')),
+          'text': 'Plain',
+        }, reason: 'an empty action is not sent');
+      },
+    );
+
     test('lists a page of turns, oldest first, with their finish times', () async {
       router.answer(
         'GET /v1/agents/sessions/s1/responses',

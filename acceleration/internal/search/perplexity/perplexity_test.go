@@ -74,10 +74,16 @@ func (s *PerplexitySuite) SetupTest() {
 // the pages.
 func (s *PerplexitySuite) sonar() *Provider {
 	provider, err := New(Options{
-		APIKey: "test-key", Model: "sonar-pro", BaseURL: s.web.server.URL,
+		APIKey: "test-key", Model: "sonar", BaseURL: s.web.server.URL,
 	})
 	s.Require().NoError(err)
 	return provider
+}
+
+func (s *PerplexitySuite) TestSonarProIsRefusedSinceTheAgentAPIHasNoSuchModel() {
+	_, err := New(Options{APIKey: "test-key", Model: "sonar-pro", BaseURL: s.web.server.URL})
+
+	s.ErrorContains(err, `"sonar-pro" is neither the search index nor sonar`)
 }
 
 func (s *PerplexitySuite) TestAKeyIsRequired() {
@@ -116,49 +122,90 @@ func (s *PerplexitySuite) TestTheIndexReturnsPagesAndNoSummary() {
 func (s *PerplexitySuite) TestASonarModelAsksTheOneThatWritesTheAnswer() {
 	// The model is what chooses the endpoint, which is how Sonar is an option a routing
 	// target picks rather than a second provider to configure.
+	// Probed on 3b7a53f97: /chat/completions with "sonar-pro", the Sonar Chat Completions
+	// Perplexity stopped supporting on 2026-09-27.
 	s.web.respond = `{
-		"choices":[{"message":{"content":"I-70 is clear through the Eisenhower Tunnel."}}],
-		"search_results":[{"title":"COtrip","url":"https://cotrip.org","snippet":"No closures."}]
+		"output":[
+			{"type":"search_results","queries":["I-70 traffic"],
+			 "results":[{"id":1,"title":"COtrip","url":"https://cotrip.org","snippet":"No closures.","source":"web"}]},
+			{"type":"message","role":"assistant","status":"completed",
+			 "content":[{"type":"output_text","text":"I-70 is clear through the Eisenhower Tunnel.","annotations":[]}]}
+		]
 	}`
 
 	found, err := s.sonar().Search(s.ctx, search.Query{Text: "traffic on I-70"})
 	s.Require().NoError(err)
 
-	s.Equal("/chat/completions", s.web.path)
-	s.Equal("sonar-pro", s.web.body["model"])
+	s.Equal("/v1/agent", s.web.path)
+	s.Equal("perplexity/sonar", s.web.body["model"])
+	s.Equal("traffic on I-70", s.web.body["input"])
+	s.Equal([]any{map[string]any{"type": "web_search", "max_results": float64(5)}}, s.web.body["tools"])
+	s.Equal(map[string]any{"type": "web_search"}, s.web.body["tool_choice"], "it searches rather than answer from memory")
 	s.Equal("I-70 is clear through the Eisenhower Tunnel.", found.Answer)
 	s.Require().Len(found.Documents, 1)
 	s.Equal("https://cotrip.org", found.Documents[0].URL)
+	s.Equal("No closures.", found.Documents[0].Text)
 	s.Zero(found.VendorCostMicros(), "an answer that says no cost has none")
 }
 
-func (s *PerplexitySuite) TestASonarAnswerKeepsWhatPerplexitySaidItCost() {
+func (s *PerplexitySuite) TestASonarAnswerIsPricedOnItsTokensAndSearches() {
+	// Probed on 3b7a53f97: requests 1 whatever the answer read, which priced a long answer
+	// like a short one.
 	s.web.respond = `{
-		"choices":[{"message":{"content":"The tunnel is open."}}],
-		"usage":{"prompt_tokens":9,"completion_tokens":90,"total_tokens":99,"search_context_size":"low",
-			"cost":{"input_tokens_cost":0.000027,"output_tokens_cost":0.00135,"request_cost":0.006,"total_cost":0.007377}}
+		"output":[{"type":"message","content":[{"type":"output_text","text":"The tunnel is open."}]}],
+		"usage":{"input_tokens":1200,"input_tokens_details":{"cached_tokens":200,"cache_read_input_tokens":200},
+			"output_tokens":90,"tool_calls_details":{"search_web":{"invocation":2}},
+			"cost":{"input_cost":0.00025,"cache_read_cost":0.0000125,"output_cost":0.000225,
+				"tool_calls_cost":0.005,"total_cost":0.0054875,"currency":"USD"}}
 	}`
 
 	found, err := s.sonar().Search(s.ctx, search.Query{Text: "is the tunnel open"})
 	s.Require().NoError(err)
 
-	s.EqualValues(7_377, found.VendorCostMicros())
-	s.Equal(pricing.Quantities{pricing.Requests: 1}, found.Used(), "the price is still the request's")
+	s.EqualValues(5_488, found.VendorCostMicros())
+	s.Equal(pricing.Quantities{
+		pricing.InputTokens:       1_000,
+		pricing.CachedInputTokens: 200,
+		pricing.OutputTokens:      90,
+		pricing.Requests:          2,
+	}, found.Used(), "fresh input, cached input, output, and one request per web search")
 }
 
-func (s *PerplexitySuite) TestAnAnswerWithOnlyCitationsStillSaysWhereItCameFrom() {
-	// An answer nobody can check is worse than no answer, so the older citations shape is
-	// read when the newer one is absent.
+func (s *PerplexitySuite) TestASonarAnswerThatSearchedNothingBillsOnlyItsTokens() {
 	s.web.respond = `{
-		"choices":[{"message":{"content":"The tunnel is open."}}],
-		"citations":["https://cotrip.org"]
+		"output":[{"type":"message","content":[{"type":"output_text","text":"Paris."}]}],
+		"usage":{"input_tokens":40,"output_tokens":3}
 	}`
 
-	found, err := s.sonar().Search(s.ctx, search.Query{Text: "traffic on I-70"})
+	found, err := s.sonar().Search(s.ctx, search.Query{Text: "capital of France"})
 	s.Require().NoError(err)
 
-	s.Require().Len(found.Documents, 1)
-	s.Equal("https://cotrip.org", found.Documents[0].URL)
+	s.Equal(pricing.Quantities{
+		pricing.InputTokens: 40, pricing.CachedInputTokens: 0, pricing.OutputTokens: 3, pricing.Requests: 0,
+	}, found.Used())
+	s.Empty(found.Documents)
+}
+
+func (s *PerplexitySuite) TestASonarAnswerKeepsNoMoreSourcesThanAsked() {
+	// Probed live on 3b7a53f97 with a limit of 2: 15 sources, from two searches.
+	s.web.respond = `{"output":[
+		{"type":"search_results","results":[{"url":"https://a.example"},{"url":"https://b.example"}]},
+		{"type":"search_results","results":[{"url":"https://c.example"}]},
+		{"type":"message","content":[{"type":"output_text","text":"Open."}]}
+	]}`
+
+	found, err := s.sonar().Search(s.ctx, search.Query{Text: "is it open", Limit: 2})
+	s.Require().NoError(err)
+
+	s.Equal([]any{map[string]any{"type": "web_search", "max_results": float64(2)}}, s.web.body["tools"])
+	s.Len(found.Documents, 2)
+}
+
+func (s *PerplexitySuite) TestTheIndexIsStillPricedAsOneRequest() {
+	found, err := s.provider.Search(s.ctx, search.Query{Text: "traffic"})
+	s.Require().NoError(err)
+
+	s.Equal(pricing.Quantities{pricing.Requests: 1}, found.Used())
 }
 
 func (s *PerplexitySuite) TestAQuestionWithNothingInItIsNotSent() {

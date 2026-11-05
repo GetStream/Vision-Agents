@@ -690,6 +690,64 @@ func (s *ServerSuite) TestListUsageFiltersByTeam() {
 	s.refused(http.StatusBadRequest, http.MethodGet, "/v1/manage/accounts/"+s.organization+"/usage?user_id=u1", nil)
 }
 
+// keyedUsage ships one event started by hook:chat and one by the fixture's key, and answers
+// the hook:chat one.
+func (s *ServerSuite) keyedUsage() usage.Event {
+	hook := usagetest.Event(s.organization, func(e *usage.Event) { e.APIKey = "hook:chat" })
+	s.ship(hook, usagetest.Event(s.organization))
+	return hook
+}
+
+// listedBothWays lists the organization's usage with query, through manage and through the
+// customer view, and answers each one's usage ids.
+func (s *ServerSuite) listedBothWays(query string) (manage, customer []uuid.UUID) {
+	var managed server.UsageEventPage
+	s.ok(http.StatusOK, &managed, http.MethodGet, "/v1/manage/accounts/"+s.organization+"/usage?"+query, nil)
+	for _, event := range managed.Items {
+		manage = append(manage, event.UsageID)
+	}
+	var viewed usage.CustomerUsagePage
+	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage?"+query, &viewed)
+	for _, event := range viewed.Items {
+		customer = append(customer, event.UsageID)
+	}
+	return manage, customer
+}
+
+func (s *ServerSuite) TestListUsageFiltersByAPIKeyID() {
+	hook := s.keyedUsage()
+
+	for _, query := range []string{"api_key_id=hook:chat", "api_key_id=hook:chat&api_key=", "api_key_id=hook:chat&api_key=hook:chat"} {
+		manage, customer := s.listedBothWays(query)
+		s.Equal([]uuid.UUID{hook.UsageID}, manage, query)
+		s.Equal([]uuid.UUID{hook.UsageID}, customer, query)
+	}
+	manage, customer := s.listedBothWays("api_key_id=")
+	s.Len(manage, 2, "an empty api_key_id filters nothing")
+	s.Len(customer, 2, "an empty api_key_id filters nothing")
+}
+
+func (s *ServerSuite) TestListUsageStillFiltersByTheOldNameAPIKey() {
+	hook := s.keyedUsage()
+
+	for _, query := range []string{"api_key=hook:chat", "api_key=hook:chat&api_key_id="} {
+		manage, customer := s.listedBothWays(query)
+		s.Equal([]uuid.UUID{hook.UsageID}, manage, query)
+		s.Equal([]uuid.UUID{hook.UsageID}, customer, query)
+	}
+}
+
+func (s *ServerSuite) TestListUsageRefusesTwoDifferentKeys() {
+	s.keyedUsage()
+	query := "api_key_id=hook:chat&api_key=key"
+
+	refused := s.refused(http.StatusBadRequest, http.MethodGet, "/v1/manage/accounts/"+s.organization+"/usage?"+query, nil)
+	s.Contains(refused.Detail, "api_key_id")
+	s.Contains(refused.Detail, "api_key ")
+	status, answer := s.read(usage.PathAccounts+"/"+s.organization+"/usage?"+query, "Authorization", "Bearer "+s.service.Token)
+	s.Equal(http.StatusBadRequest, status, string(answer))
+}
+
 func (s *ServerSuite) TestListUsageTakesATimeRange() {
 	base := time.Now().Add(-time.Hour).UTC().Truncate(time.Second)
 	inside := usagetest.Event(s.organization, func(e *usage.Event) { e.OccurredAt = base.Add(10 * time.Minute) })

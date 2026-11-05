@@ -2,6 +2,10 @@
 
 ## Features
 
+### The operator hears of each organization's first money limit
+
+With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, the router posts to that Slack channel the first time each organization is refused at its credit, at Stream's spend hard limit for the day or the month, or at one of its own spend limits. In `shadow` it posts what would have been refused, and says the work was admitted. Each post names the organization, its tier, the app and the refusal as the caller was answered. It is sent once per organization and kind of limit across every router: the router that writes the organization's `limit_notices` row posts it, and one whose post failed is posted by the next router to sweep. A suspension, a user's own limit and a money check that could not be read are not posted (AI-1918).
+
 ### The router reads a page into Markdown
 
 `POST /v1/ocr` takes a JPEG or PNG of a page, up to 10 MB, and answers with its text as Markdown, its headings, lists and tables kept. `ocr-default` asks Mistral OCR 4.1 first and fails over, after 45 seconds or an error, to gpt-6-luna and then gemini-3.8-flash. It never fails over to a model that cannot see a picture. `options.target` names another shortcut, `ocr-vision` among them, or one model, as the other modalities do, and `options.data_policy` applies the ZDR and region rules. Each page is one usage row with the model that read it: Mistral's is priced by the page at $4 per 1,000, and a vision model's by the tokens it took. A request is checked against the spend limits before the page is sent. A page every model failed is a 200 with `status: failed` and an `error_code`. `GET /v1/ocr/providers` and `GET /v1/ocr/routes` list the models and shortcuts (AI-2611).
@@ -16,7 +20,7 @@ A file uploaded to a knowledge base is read for what its figures show as well as
 
 ### A reply can be UI the agent writes
 
-An agent can answer with UI rather than text, written in a fenced block of its reply whose info string is `ui:<format>` or `ui:<format>@<version>`, or OpenUI's `openui-lang`. The router knows no format: it sends the block to Stream Chat as the message's `custom.ai_ui` when it fits in the message's custom data, and the words around it as the text, which push notifications, external threads and clients that cannot show the UI show instead. A person's message keeps a block they wrote as their words. StreamChatAI's generative UI shows it in place of the text. What the person does in it comes back with their next message as `ui_action` on `POST /v1/agents/sessions/{id}/responses`, which their message carries as `custom.ai_ui_action` and the model is told after their words, with the opening words of the reply it was in. Go has `client.UIAction`, Swift `Responses.create(_:uiAction:)`, JavaScript `responses.create(text, { uiAction })` and Kotlin `Responses.create(text, uiAction = ...)`, whose SDK now depends on Stream Chat 7.18.0.
+An agent can answer with UI rather than text, written in a fenced block of its reply whose info string is `ui:<format>` or `ui:<format>@<version>`, or OpenUI's `openui-lang`. The router knows no format: it sends the block to Stream Chat as the message's `custom.ai_ui` when it fits in the message's custom data, and the words around it as the text, which push notifications, external threads and clients that cannot show the UI show instead. A person's message keeps a block they wrote as their words. StreamChatAI's generative UI shows it in place of the text. What the person does in it comes back with their next message as `ui_action` on `POST /v1/agents/sessions/{id}/responses`, which their message carries as `custom.ai_ui_action` and the model is told after their words, with the opening words of the reply it was in. Go has `client.UIAction`, Swift `Responses.create(_:uiAction:)`, JavaScript `responses.create(text, { uiAction })`, Kotlin `Responses.create(text, uiAction = ...)`, whose SDK now depends on Stream Chat 7.18.0, and Dart `responses.create(text, uiAction: action.toJson())`.
 
 The `swift_assistant` example plans a trip as interactive UI, in A2UI or OpenUI, as its settings choose: a map, the person's own calendar for those days, a tab per day and a form to change the plan, drawn with the app's own components.
 
@@ -327,11 +331,19 @@ The router now streams to `fish/transcribe-stream-1`, reachable by name or by an
 
 Every reply the agent abandons logs one INFO line, `the agent was interrupted`, with `cause` (`settled`, `talking`, `unheard`, `api`, `provider`, `voice_lost`, `voice_refused`), `ruler` (`primary`, `fallback`, `deadline`, `unusable`, `none`), `took_ms`, the caller's `words`, `played_ms` and `echo`: whether the words were the reply's own (`most` from two words in three, `some`, `none`, or `no_words` when there were no words to compare; `echo_share` gives the share). The same labels count in `router_agent_interruptions_total{cause,ruler,echo}` and are on the `agent.turn` span as `turn.interrupt.cause`, `.ruler` and `.echo`. A caller talking over the agent while no model ruled within 750 ms now counts as ruler `deadline`, and a controller answer that could not be read as ruler `unusable`, in `router_agent_flow_decisions_total` and `router_agent_flow_decision_seconds` too, where both were `none`. `finished speaking` logs `synthesis_cut` in place of `interrupted`, and `turn_abandoned` (AI-2207).
 
+### A connection's tools say which only read
+
+`GET /v1/agents/connections/{id}/tools` gives each tool `read_only`: true when, in the connector's latest revision, every source lists it in `read_only_tools` or says it sends nothing out (`outbound: false`); false when the connector is gone. A binding may grant such a tool by name beside a sensitive connector such as Nessy without `require_approval`; the config save refuses any other tool there unless `require_approval` holds it. It is the same rule the save checks, so an admin can preselect the tools that only read without guessing from their names: Linear's `list_issues` is `read_only`, its `search_documentation` and `save_issue` are not (AI-2788).
+
 ## Breaking Changes
 
 ### A usage or spend read names a key as `api_key_id`
 
 `listUsageEvents`, `getSpend`, `listLimits`, `listLimitGrants` and `getLimitUsage` (and their `manage*` twins) now name a key in the query as `api_key_id`, where they took `api_key`. Stream's proxy requires `api_key=<app key>` on every call and forwards it, so through the proxy every usage list and spend read was narrowed to the caller's own key. Rows that an origin started (`hook:chat`, `phone:inbound`, `job:<name>`) or that another key of the app started could not be read, and `getLimitUsage` refused every subject but a key. `api_key` in the query is now only the credential. A read that still sends a key as `api_key` gets every key's rows back. Request bodies and response fields keep `api_key`. `plugins/stream` keeps its `api_key=` argument and sends it as `api_key_id` (AI-2684).
+
+### The generated clients lose the plugin and MCP server types
+
+`PluginEntry`, `PluginWithOptions`, `PluginEvent`, `McpServer` and `McpServerBranding` are gone from the spec and from every generated client (Go, Python `plugins/stream`, JavaScript, .NET, Ruby, Rust, PHP). `plugins`, `plugin_events` and `mcp_servers` stay on `AgentConfigRequest`, `AgentConfigPatch` and `SyncAgentRequest`, deprecated, as lists with no schema of their own (`plugins`: strings or objects; the other two: objects), so code that built them from those types no longer compiles. The router answers as before: a non-empty list is the same 400, and `[]`, `null` or a left-out key saves. (#1742)
 
 ### The router refuses `plugins`, `plugin_events` and `mcp_servers` and serves none of them
 
@@ -371,6 +383,46 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### An export no longer misses a write that was in progress when it started
+
+A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).
+
+### The usage service filters its usage list by `api_key_id`
+
+The usage service's `listUsage` (`GET /v1/manage/accounts/{organization_id}/usage`) and its customer view `readAccountUsage` silently ignored `api_key_id`, and answered every key's events. Stream's staff gateway refuses `api_key` in the query, so staff could not filter by key at all. Both operations now take the key as `api_key_id`. `api_key` is still read for one release; given with `api_key_id`, it must name the same key, or the call is a 400 (AI-2797).
+
+### `router replicate` no longer misses a change that commits late
+
+`GET /v1/data/changes` and an export could hand out a cursor past a change whose transaction was still running, when a transaction that started earlier had committed a higher number, and that change never reached the new deployment. Pruning could also drop a newer change and keep an older one, so a cursor between them carried on past the gap without a 410. Now the cursor stops below every change still in flight, an open transaction that records no change no longer holds the feed back, and pruning drops only the oldest numbers (AI-2741).
+
+### A tool call with an ID pasted in a link, or listed by a tool, is no longer refused
+
+The agent refused a tool call whose ID the person had only pasted inside a link, such as a channel in a thread's link, unless they also named what the ID was. An ID that is a whole segment of a link's path, or a whole value of its query, in the person's own message now counts as theirs. An ID a tool wrote out in a text field of its JSON answer, as Slack's channel search lists `#help (C…) - public_channel` under `results`, now counts as returned when its line names what the ID is (`channel` for a `channel_id`) and the call that got the answer was not sent that ID. An ID the person or a tool never gave is still refused (AI-2791).
+
+### An ID guard reads links as written and takes a listed ID only beside its kind
+
+The agent's ID guard read a link the person wrote in a shared channel only up to its first `&`, because the channel passes their text on in JSON, which writes `&` as `\u0026`; a link escaped for HTML (`&amp;`) lost its query the same way. Both are now read as the person wrote them. A link part counts as an ID of any kind only when it mixes letters and digits: a page number, a year or a word in a link no longer passes as one, and a number still counts where the person's text names its kind (`…/cases/48213`). A line of a tool's text gives an ID only beside the word for its kind, with at most the thing's name and the word `ID` between: `Channel: #help (C…)` still gives the channel, and `Channel #x by U…` no longer gives `U…` as one. A query the model wrote with JSON escapes (`\u0043…`) and the tool wrote back is still its own echo, not an ID the tool returned (AI-2798, AI-2799, AI-2800, AI-2801).
+
+### Gmail, Google Calendar, Linear and Slack tools that only read sit beside a sensitive connector
+
+A config that binds a sensitive connector such as Nessy was refused when it also granted a tool of Gmail, Google Calendar, Linear or Slack, even one that only reads, because their manifests listed no `read_only_tools`. Gmail revision 4, Google Calendar revision 3, Linear revision 3 and Slack revision 7 now list the tools their vendor pages or tool descriptions say only read: Gmail's thread, message, draft and label reads, Calendar's event and calendar reads and `suggest_time`, Linear's get and list tools, and Slack's search, read and list tools. A binding granting only those by name is accepted. Any other tool, such as Gmail's `create_draft`, Linear's `extract_images` and Slack's `slack_send_message`, still needs the binding's `require_approval` (AI-2756).
+
+### Tools of nine more connectors that only read sit beside a sensitive connector
+
+A config that binds a sensitive connector such as Nessy was refused when it also granted a tool of Cal.com, Calendly, GitHub, Gong, HubSpot, Linear (own OAuth app), Metabase, Notion or Sentry, even one that only reads, because their manifests listed no `read_only_tools`. Cal.com revision 3, Calendly revision 3, GitHub revision 10, Gong revision 3, HubSpot revision 2, Linear (own OAuth app) revision 3, Metabase revision 3, Notion revision 2 and Sentry revision 2 now list the tools their vendor pages or server source say only read, such as Cal.com's `get_bookings`, GitHub's `get_file_contents`, Notion's `notion-fetch` and Sentry's `get_issue_details`. A binding granting only those by name is accepted. Any other tool still needs the binding's `require_approval`: one that writes, and one that can send data out of the account, such as Notion's `notion-connector-search`, Sentry's natural-language `search_issues`, HubSpot's `query_crm_data` and Calendly's `shares-create_share`. Instacart, Shopify and Salesforce list none: Instacart's and Shopify's tools all send data out, and Salesforce's tool reference could not be read (AI-2777).
+
+### A number whose Stream SIP rule or trunk is gone lines again
+
+A number whose stored Stream SIP routing rule had been deleted at Stream failed every call it placed and every `POST /v1/phone/numbers/{e164}/attach` with "can't be found". The router now makes the rule again on the number's trunk and keeps its id. A number whose trunk is gone joins a shared trunk, and a shared trunk Stream lost is replaced for the next number that joins it. Each of that trunk's other numbers moves to a working trunk on its next outbound call; calls to it reach an agent again only once it is detached and attached again. When Stream still routes the number through a rule or trunk this router did not store, the router makes no second one and fails with an error that says so (AI-2699).
+
+### A new phone link starts the number clean
+
+`PUT /v1/agents/users/{user_id}` linked a user to a number together with everything the number had said before: the user's app chat then read the SMS and call cards of the number's last holder, or of anyone who texted from it before the link. Now, under an agent config with `episode_cards` on, the number's earlier episodes stay on an omni-channel of their own, and only what the number says after the link reaches the user. The user's own texts from before the link are not joined either. The same link sent again changes nothing (AI-2716, #1728).
+
+### A linked user's chat reads none of the number's earlier texts through its next SMS
+
+After `PUT /v1/agents/users/{user_id}` linked a user to a number, the card of the number's next SMS episode joined the user. While that episode was in progress, its card still held the last 20 texts of the number's SMS thread, including those sent before the link. So the user's app chat could read them until the episode was summarized. A card in progress now holds only the lines of its own episode, as a call's card and a summary already did. An app chat card in progress no longer repeats the earlier runs of its channel either (AI-2716, #1741).
+
 ### An app's first `router replicate --once` is not refused as expired
 
 `GET /v1/data/changes` answered 410 to the cursor of an app's own export when other apps that are moving had changes after it, so the first `--once` stopped with "the source no longer keeps the changes since that cursor" and only a rerun went on. Change numbers are shared by every app, so those numbers are not a sign of pruning. Now a cursor gets 410 only when it is older than the oldest change still kept and the app has a change kept (AI-2683).
@@ -378,6 +430,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A repeat copy keeps a connection authorized again where it moved to
 
 `router replicate --once` and `POST /v1/data/import` reset each connector connection to `needs_reauthorization`, even one the owner had authorized again on the destination, whose credentials then no longer opened. A connection that is `connected` on the destination now keeps its state and credentials: a rename, a disconnect or a soft delete at the source no longer reaches it, while a hard delete still does. A connection not authorized there still arrives needing it, with the source's edits (AI-2656).
+
+### A WhatsApp photo reaches the agent
+
+A WhatsApp photo now reaches the agent itself, with or without a caption, and the agent answers from the photo and its caption. Before, the agent read the caption alone, and a photo without one got no reply. The router downloads the photo with the business number's access token and stores a copy on the thread channel in Stream Chat. It sends that token to Graph and `lookaside.fbsbx.com` only. If the photo cannot be downloaded or stored, its caption is still answered, and a photo sent alone gets no reply. The router downloads no video or document; their captions are answered as before. A connection takes `whatsapp` revision 3 at its next credential save. A channel manifest can name a file by its id (`media.id`), give an `also` kind its own `media`, and say where such a file is with `messages.media_lookup` (AI-2740).
 
 ### A WhatsApp photo's, video's and document's caption is answered
 

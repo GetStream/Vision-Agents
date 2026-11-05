@@ -224,14 +224,72 @@ ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
 	return nil
 }
 
+// ErrWritesOpen says a transaction that wrote before a capture started was still open when
+// WaitForOpenWrites gave up on it.
+var ErrWritesOpen = errors.New("store: a write from before the capture started is still open")
+
+// WaitForOpenWrites returns once every transaction that had written to the shared database
+// when it was called has ended, or ErrWritesOpen past within. Called right after
+// StartDataCapture, it is what lets an export read nothing short.
+//
+// The trigger asks whether its customer is moving in a query of its own, after its row is
+// written: record_data_change is VOLATILE, so under READ COMMITTED, the level every write
+// here runs at, each of its queries takes a new snapshot
+// (https://www.postgresql.org/docs/current/xfunc-volatility.html). A write whose query ran
+// before the capture committed records nothing, and if it is still open when the export
+// reads, it is in neither. Such a transaction took its transaction id, and the lock on it,
+// before its row and so before that query, so it holds that lock now. A transaction whose
+// query comes later sees the capture and records its change. The lock goes once the commit
+// is visible, as record_data_change's notes on CommitTransaction say, so a snapshot taken
+// after this returns holds every row of the ones waited for.
+//
+// Only this database's transactions: ids are counted across the whole Postgres server, whose
+// other databases write nothing of this one's. A shard's tables record no changes
+// (watchDataChanges), so a shard has nothing to wait for.
+func (s *Store) WaitForOpenWrites(ctx context.Context, within time.Duration) error {
+	deadline := time.Now().Add(within)
+	var open []string
+	if err := s.db.QueryRowContext(ctx, `
+SELECT COALESCE(array_agg(l.transactionid::text), '{}') FROM pg_locks l
+JOIN pg_stat_activity a ON a.pid = l.pid
+WHERE l.locktype = 'transactionid'
+  AND a.datid = (SELECT oid FROM pg_database WHERE datname = current_database())`,
+	).Scan(pgdialect.Array(&open)); err != nil {
+		return fmt.Errorf("store: open writes: %w", err)
+	}
+	for pause := migrateLockFirst; len(open) > 0; pause = min(2*pause, migrateLockMost) {
+		if time.Now().After(deadline) {
+			return ErrWritesOpen
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(min(pause, time.Until(deadline))):
+		}
+		if err := s.db.QueryRowContext(ctx, `
+SELECT COALESCE(array_agg(transactionid::text), '{}') FROM pg_locks
+WHERE locktype = 'transactionid' AND transactionid::text = ANY(?)`,
+			pgdialect.Array(open)).Scan(pgdialect.Array(&open)); err != nil {
+			return fmt.Errorf("store: open writes: %w", err)
+		}
+	}
+	return nil
+}
+
 // ExportCustomer writes every row belonging to a customer and returns the cursor their
 // changes carry on from.
 //
 // The rows are read in one repeatable-read transaction, so what comes out is the customer
-// as they were at one moment rather than a stitch of several. The cursor is taken in the
-// same transaction and is deliberately conservative: a change at or below it is already
-// in these rows, and one above it may or may not be, which is safe because applying a
-// change twice lands in the same place as applying it once.
+// as they were at one moment rather than a stitch of several. The cursor is the newest
+// change kept at or below the watermark taken right before that transaction, 0 with none,
+// and is deliberately conservative: a change at or below it is already in these rows, and
+// one above it may or may not be, which is safe because applying a change twice lands in
+// the same place as applying it once. It is not the watermark itself: with no change kept
+// at or below it, Changes would read a number rolled back right after it as a change
+// pruned, and refuse the cursor.
+//
+// Call it after StartDataCapture and WaitForOpenWrites, in that order: on its own it still misses
+// a write that was open when the capture started and commits after the snapshot.
 //
 // What is not here: the audio behind a voice sample and a call recording, which live in
 // an object bucket rather than in Postgres. The rows naming them come across, and copying
@@ -242,6 +300,12 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 		return 0, errors.New("store: a customer id is required")
 	}
 
+	// Before the transaction, whose snapshot is taken at its first statement: every change at
+	// or below the mark has then ended before the snapshot and is in it.
+	mark, err := s.changeWatermark(ctx)
+	if err != nil {
+		return 0, err
+	}
 	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
 	if err != nil {
 		return 0, fmt.Errorf("store: export: %w", err)
@@ -249,7 +313,8 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
 
 	var cursor int64
-	if err := tx.QueryRowContext(ctx, changeWatermark).Scan(&cursor); err != nil {
+	if err := tx.QueryRowContext(ctx,
+		"SELECT COALESCE(MAX(seq), 0) FROM data_changes WHERE seq <= ?", mark).Scan(&cursor); err != nil {
 		return 0, fmt.Errorf("store: export cursor: %w", err)
 	}
 
@@ -408,16 +473,39 @@ func addNumbers(a, b json.Number) json.Number {
 	return json.Number(strconv.FormatFloat(fx+fy, 'f', -1, 64))
 }
 
-// changeWatermark is the highest sequence number every change at or below has committed.
+// changeWatermark is a sequence number every change at or below has ended: committed and
+// visible to any statement started after it returns, or rolled back.
 //
 // Taking the highest number that can be seen would be wrong: the numbers are handed out
 // when a row is inserted and become visible when its transaction commits, so a reader
 // could step over a lower number belonging to a transaction still in flight and never
-// come back for it. This stops below the oldest transaction still running.
-const changeWatermark = `
-SELECT COALESCE(
-    (SELECT MIN(seq) - 1 FROM data_changes WHERE tx >= pg_snapshot_xmin(pg_current_snapshot())),
-    (SELECT COALESCE(MAX(seq), 0) FROM data_changes))`
+// come back for it. Nor does any committed row bound what a transaction still running
+// holds, whatever the order of their transaction ids. So each transaction recording a
+// change holds a lock naming the highest number handed out before its first one
+// (record_data_change), and this stops at the lowest such lock.
+//
+// The two reads are in this order, each its own statement. A number at or below the
+// first was handed out before it, so its transaction's lock was taken before the second:
+// either the lock is there and the mark is below the number, or its transaction has ended.
+func (s *Store) changeWatermark(ctx context.Context) (int64, error) {
+	var handedOut int64
+	if err := s.db.QueryRowContext(ctx,
+		"SELECT CASE WHEN is_called THEN last_value ELSE last_value - 1 END FROM data_changes_seq_seq",
+	).Scan(&handedOut); err != nil {
+		return 0, fmt.Errorf("store: change watermark: %w", err)
+	}
+	var held sql.NullInt64
+	if err := s.db.QueryRowContext(ctx, `
+SELECT MIN((classid::bigint << 32) | objid::bigint) FROM pg_locks
+WHERE locktype = 'advisory' AND objsubid = 2
+  AND database = (SELECT oid FROM pg_database WHERE datname = current_database())`).Scan(&held); err != nil {
+		return 0, fmt.Errorf("store: change watermark: %w", err)
+	}
+	if held.Valid && held.Int64 < handedOut {
+		return held.Int64, nil
+	}
+	return handedOut, nil
+}
 
 func (s *Store) exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
 	query, args := table.selectRows(customerID)
@@ -1213,28 +1301,51 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		limit = 500
 	}
 
+	// Read first, so the statements after it see every change at or below it.
+	mark, err := s.changeWatermark(ctx)
+	if err != nil {
+		return nil, 0, err
+	}
+
 	// Sequence numbers are shared by every customer and pruning drops the oldest of all of
 	// them, so a gap before this customer's first change is the other customers' changes,
 	// not a pruned one: only a cursor older than the oldest change kept has lost any. With
 	// none of theirs kept, a quiet customer and one whose every change aged out look the
-	// same, and the follower that is only waiting is not refused.
+	// same, and the follower that is only waiting is not refused. Pruning drops only numbers
+	// at or below the mark it read, so the gap right after a cursor at or above this mark is
+	// a change still in flight rather than a pruned one. The mark can go down: the trigger
+	// reads the sequence and takes its lock in two statements, and a mark read between them
+	// is above that lock. A prune in that window can drop an aged-out change before this
+	// check sees it, so the follower is refused (ErrChangesExpired) on a later read, not
+	// handed a gap.
+	//
+	// This check and the rows are one snapshot: a prune between two statements would drop
+	// rows after the cursor, and the rows read would then start above them with the check
+	// already passed. The mark is read before the transaction, as in an export, so every
+	// change at or below it has ended before the snapshot is taken.
+	tx, err := s.db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelRepeatableRead, ReadOnly: true})
+	if err != nil {
+		return nil, 0, fmt.Errorf("store: changes: %w", err)
+	}
+	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
+
 	var kept sql.NullInt64
 	var theirs bool
-	if err := s.db.QueryRowContext(ctx,
+	if err := tx.QueryRowContext(ctx,
 		"SELECT (SELECT MIN(seq) FROM data_changes), EXISTS (SELECT 1 FROM data_changes WHERE customer_id = ?)",
 		customerID).Scan(&kept, &theirs); err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
-	if after > 0 && theirs && kept.Int64 > after+1 {
+	if after > 0 && after < mark && theirs && kept.Int64 > after+1 {
 		return nil, 0, ErrChangesExpired
 	}
 
-	rows, err := s.db.QueryContext(ctx, fmt.Sprintf(`
+	rows, err := tx.QueryContext(ctx, `
 SELECT seq, table_name, op, key, payload, at
 FROM data_changes
-WHERE customer_id = ? AND seq > ? AND seq <= (%s)
+WHERE customer_id = ? AND seq > ? AND seq <= ?
 ORDER BY seq
-LIMIT ?`, changeWatermark), customerID, after, limit)
+LIMIT ?`, customerID, after, mark, limit)
 	if err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
@@ -1361,12 +1472,26 @@ func (s *Store) deleteRow(ctx context.Context, db bun.IDB, customerID string, ch
 
 // PruneDataChanges drops the changes and the capture rows nobody can still use. It
 // returns how many changes it removed.
+//
+// It drops only the oldest numbers, the ones below the first change still young and at
+// or below the watermark, so what is kept is everything from one number on and a cursor
+// before it is told it expired (Changes). By age alone it could keep a lower number and
+// drop a higher one: a change's time is when its transaction started, not when it was
+// numbered, and one still in flight is not seen at all.
 func (s *Store) PruneDataChanges(ctx context.Context, retention time.Duration) (int64, error) {
 	if retention <= 0 {
 		return 0, nil
 	}
-	result, err := s.db.ExecContext(ctx,
-		"DELETE FROM data_changes WHERE at < now() - make_interval(secs => ?)", retention.Seconds())
+	mark, err := s.changeWatermark(ctx)
+	if err != nil {
+		return 0, err
+	}
+	// LEAST ignores a NULL: with no change still young, the mark is the only bound.
+	result, err := s.db.ExecContext(ctx, `
+DELETE FROM data_changes
+WHERE at < now() - make_interval(secs => ?)
+  AND seq <= LEAST(?, (SELECT MIN(seq) - 1 FROM data_changes WHERE at >= now() - make_interval(secs => ?)))`,
+		retention.Seconds(), mark, retention.Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("store: prune data changes: %w", err)
 	}

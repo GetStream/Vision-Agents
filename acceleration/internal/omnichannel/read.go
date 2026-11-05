@@ -352,7 +352,7 @@ func (c *Cards) tell(ctx context.Context, card store.EpisodeCard) (told, error) 
 			return out, nil
 		}
 	}
-	out.Lines, err = linesOf(ctx, bound, card, maxCardLines, false)
+	out.Lines, err = linesOf(ctx, bound, card, maxCardLines)
 	return out, err
 }
 
@@ -381,9 +381,11 @@ func writtenAsCard(message getstream.MessageWithChannelResponse) bool {
 }
 
 // linesOf is the last lines, at most most, of a card's thread channel said during its
-// episode: before Until, and for a call not before it started, since a call channel can hold
-// other callers' calls. fromStart bounds a thread's lines by its start too, as the summary
-// reads them (Closer): a thread channel holds every episode of its thread, one after another.
+// episode: before Until and not before it started, for a session reading the card as for its
+// summary (Closer). A call channel can hold other callers' calls, and a thread channel holds
+// every episode of its thread, one after another: a number's SMS thread holds what it texted
+// before a link set those episodes aside (store.LinkUserPhone), so the card of its next
+// episode, in progress, never hands them to the linked user.
 // A channel that is not the customer's has none, and so has a call card whose window holds a
 // person's line by anybody but the card's caller: two callers on one call id at once, or a
 // line written late at the window's edge, are never handed to either.
@@ -401,7 +403,7 @@ func writtenAsCard(message getstream.MessageWithChannelResponse) bool {
 // its replies to another caller out: such a card gives no lines, to a session or to its
 // summary, which therefore fails (Closer, summary_failed). Example: two calls with agent_id "front-desk" both write into agent:front-desk; the
 // agent's «Thanks Alice» lands inside Bob's call.
-func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard, most int, fromStart bool) ([]line, error) {
+func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard, most int) ([]line, error) {
 	call := card.Source == store.EpisodeCall
 	if call && (card.CallID == "" || card.ThreadChannel != chatlog.ChannelType+":"+card.CallID) {
 		return nil, nil
@@ -438,7 +440,7 @@ func linesOf(ctx context.Context, bound streamapp.Bound, card store.EpisodeCard,
 	var lines []line
 	for _, message := range messages {
 		at := message.CreatedAt.Time
-		if at == nil || (card.Until != nil && at.After(*card.Until)) || ((call || fromStart) && at.Before(card.StartedAt)) {
+		if at == nil || (card.Until != nil && at.After(*card.Until)) || at.Before(card.StartedAt) {
 			continue
 		}
 		if message.Custom[conversation.RefusedField] == true {

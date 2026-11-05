@@ -595,7 +595,8 @@ func (s *Server) transferPhoneCall(ctx context.Context, request *transferPhoneCa
 
 // pressPhoneDigits presses digits on a call placed from here.
 func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigitsRequest) (*struct{}, error) {
-	if _, ok := CustomerFrom(ctx); !ok {
+	customerID, ok := CustomerFrom(ctx)
+	if !ok {
 		return nil, errMissingCustomer
 	}
 	if request.Body == nil {
@@ -605,7 +606,10 @@ func (s *Server) pressPhoneDigits(ctx context.Context, request *pressPhoneDigits
 		return nil, errNoTelephony
 	}
 
-	err := s.phone.SendDigits(ctx, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
+	err := s.phone.SendDigits(ctx, customerID, request.Body.Vendor, request.VendorCallId, request.Body.Digits)
+	if errors.Is(err, phone.ErrCallNotFound) {
+		return nil, notFound("No call with this vendor_call_id was placed from here.")
+	}
 	if errors.Is(err, phone.ErrNotImplemented) {
 		return nil, notFound(err.Error())
 	}

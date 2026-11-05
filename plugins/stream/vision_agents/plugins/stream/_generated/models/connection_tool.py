@@ -23,6 +23,10 @@ class ConnectionTool:
         description (str):
         input_schema (ConnectionToolInputSchema): The JSON Schema of its arguments.
         name (str): The tool's name at the provider. An agent config grants it by this name.
+        read_only (bool): Whether the tool only reads, as the connector's latest revision says: every source of the
+            connector lists it in read_only_tools or says outbound: false (a grant by name does not say which source a tool
+            comes from). False too when the connector is gone. A binding may grant such a tool by name beside a sensitive
+            connector without require_approval; any other tool there needs require_approval.
         schema_digest (str): The SHA-256 of its name, description and input schema. A grant pins it, so a tool whose
             schema changes is not offered until it is granted again.
         needs_scopes (list[str] | None | Unset): The scopes a call of the tool needs, as the connector says. Absent when
@@ -32,6 +36,7 @@ class ConnectionTool:
     description: str
     input_schema: ConnectionToolInputSchema
     name: str
+    read_only: bool
     schema_digest: str
     needs_scopes: list[str] | None | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
@@ -42,6 +47,8 @@ class ConnectionTool:
         input_schema = self.input_schema.to_dict()
 
         name = self.name
+
+        read_only = self.read_only
 
         schema_digest = self.schema_digest
 
@@ -61,6 +68,7 @@ class ConnectionTool:
                 "description": description,
                 "input_schema": input_schema,
                 "name": name,
+                "read_only": read_only,
                 "schema_digest": schema_digest,
             }
         )
@@ -79,6 +87,8 @@ class ConnectionTool:
         input_schema = ConnectionToolInputSchema.from_dict(d.pop("input_schema"))
 
         name = d.pop("name")
+
+        read_only = d.pop("read_only")
 
         schema_digest = d.pop("schema_digest")
 
@@ -103,6 +113,7 @@ class ConnectionTool:
             description=description,
             input_schema=input_schema,
             name=name,
+            read_only=read_only,
             schema_digest=schema_digest,
             needs_scopes=needs_scopes,
         )

@@ -65,5 +65,5 @@ func (l *Line) SendDigits(ctx context.Context, digits string) error {
 		return errors.New("phone: this call was not placed from here, so there is no " +
 			"leg to press digits on")
 	}
-	return l.service.SendDigits(ctx, l.options.Vendor, l.options.VendorCallID, digits)
+	return l.service.SendDigits(ctx, l.options.Owner.CustomerID, l.options.Vendor, l.options.VendorCallID, digits)
 }

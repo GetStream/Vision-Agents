@@ -22,8 +22,9 @@
 #         agent:delivery:write".
 id: metabase
 # A new revision for any change to what this file says; see AGENTS.md. Revision 2 (AI-1394)
-# names the tools that need a scope scopes.list leaves out, so they are not offered.
-revision: 2
+# names the tools that need a scope scopes.list leaves out, so they are not offered. 3 lists the
+# tools that only read.
+revision: 3
 name: Metabase
 category: Analytics
 # [mcp]: tools «for searching, browsing, querying, and creating content», «scoped to the
@@ -111,3 +112,22 @@ sources:
         needs_scopes: [agent:content:write]
       - name: subscription_write
         needs_scopes: [agent:delivery:write]
+    # The tools that only read: each tool [tools] (opened again 2026-11-05) marks
+    # «Read-only.», which are the ones that need agent:content:read or agent:query:run. The
+    # other 12 it marks «Can overwrite or delete existing data or content.» or «Creates or
+    # changes content.», and the source above does not offer them. The model writes no SQL
+    # here: execute_query takes «A fresh structured query ... never SQL», and
+    # run_saved_question runs a question a person saved. visualize_query and
+    # render_drill_through draw a chart of such a query. A tool added later is left out.
+    read_only_tools:
+      - browse_collection
+      - browse_data
+      - execute_query
+      - get_content
+      - get_parameter_values
+      - glossary
+      - learn
+      - render_drill_through
+      - run_saved_question
+      - search
+      - visualize_query

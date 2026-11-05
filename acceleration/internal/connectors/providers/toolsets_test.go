@@ -115,6 +115,45 @@ func (s *ToolsetSuite) TestMetabaseOffersOnlyTheToolsItsScopesReach() {
 		"glossary", "learn", "run_saved_question", "search"}, names)
 }
 
+// TestEveryToolMetabaseOffersOnlyReads (AI-2777): against a server listing the 23 tools
+// https://www.metabase.com/docs/latest/ai/mcp-tools lists on 2026-11-05, the 11 that revision 3
+// offers are the 11 that page marks «Read-only.», and its read_only_tools names those and no
+// tool it does not offer.
+func (s *ToolsetSuite) TestEveryToolMetabaseOffersOnlyReads() {
+	srv := s.listing("metabase", "alert_write", "bookmark_content", "browse_collection", "browse_data",
+		"collection_write", "dashboard_write", "document_write", "duplicate_content", "execute_query",
+		"execute_sql", "get_content", "get_parameter_values", "glossary", "learn", "measure_write",
+		"metric_write", "question_write", "render_drill_through", "run_saved_question", "search",
+		"segment_write", "subscription_write", "visualize_query")
+	manifest := s.manifest("metabase")
+	resolved, err := manifest.Resolve(oauth2code.Name, map[string]string{"host": "metabase.example.com"}, nil)
+	s.Require().NoError(err)
+	resolved.Endpoints["mcp"] = srv.URL
+
+	specs, err := mcp.New().Discover(s.ctx, core.ResolvedBinding{Binding: core.Binding{Name: "metabase"}, Manifest: resolved, HTTP: srv.Client()})
+
+	s.Require().NoError(err)
+	var names []string
+	for _, spec := range specs {
+		names = append(names, spec.Name)
+	}
+	s.Len(names, 11)
+	s.ElementsMatch(names, manifest.Sources[0].ReadOnlyTools)
+}
+
+// TestLinearAppListsTheReadOnlyToolsLinearDoes: linear_app.yaml and linear.yaml reach the same
+// MCP server, https://mcp.linear.app/mcp, so a tool only reads on one when it does on the other
+// (AI-2777).
+func (s *ToolsetSuite) TestLinearAppListsTheReadOnlyToolsLinearDoes() {
+	app, linear := s.manifest("linear_app"), s.manifest("linear")
+
+	s.Equal(linear.Endpoints["mcp"], app.Endpoints["mcp"])
+	s.Require().Len(app.Sources, 1)
+	s.Require().Len(linear.Sources, 1)
+	s.Require().NotEmpty(linear.Sources[0].ReadOnlyTools)
+	s.Equal(linear.Sources[0].ReadOnlyTools, app.Sources[0].ReadOnlyTools)
+}
+
 // TestAGrantOfDriveMeetsWhatGoogleWriteToolsNeed: Google's tool pages take drive for each write
 // tool (google_drive.yaml, google_docs.yaml), so a grant holding drive, such as one moved from a
 // plugin that asked for it, needs nothing more; one holding only the read scopes does.
