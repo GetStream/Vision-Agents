@@ -383,6 +383,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A video question that would be refused is refused before its videos are fetched
+
+A response with videos that its conversation would refuse to begin, because an answer is still running, the conversation is not open or the text is past 1 MiB, was refused only after up to two videos of 50 MB each were fetched and sampled. It is now refused first, with the same error (AI-2657, #PR).
+
 ### An export no longer misses a write that was in progress when it started
 
 A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).

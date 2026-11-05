@@ -72,7 +72,7 @@ func (s *Server) createResponse(ctx context.Context, request *createResponseRequ
 		return nil, invalidRequest(fmt.Sprintf("at most %d videos go with one response", maxVideos))
 	}
 	if len(videos) > 0 {
-		sample, err := found.SampleVideos(ctx, value(request.Body.RequestId))
+		sample, err := found.SampleVideos(ctx, value(request.Body.RequestId), request.Body.Text)
 		if err != nil {
 			return nil, refusedResponse(err)
 		}
