@@ -204,12 +204,14 @@ func (s *UserPhonesSuite) TestAPutAnswersTheNumberInE164AndIsIdempotent() {
 	formatted := s.person[:2] + " (" + s.person[2:5] + ") " + s.person[5:8] + "-" + s.person[8:]
 
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+formatted+`"}`, &user))
-	s.Equal(AgentUser{UserID: s.user, Phone: &s.person}, user, "the router's form, not the one sent")
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, PhoneHistorySince: user.PhoneHistorySince}, user, "the router's form, not the one sent")
 	s.Require().Equal([]string{s.person}, s.links(), "kept as an SMS from it names it")
+	first := user.PhoneHistorySince
+	s.Require().NotNil(first, "from the link on")
 	user = AgentUser{}
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, &user))
 
-	s.Equal(AgentUser{UserID: s.user, Phone: &s.person}, user)
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, PhoneHistorySince: first}, user)
 	s.Equal([]string{s.person}, s.links())
 }
 
@@ -264,8 +266,9 @@ func (s *UserPhonesSuite) TestAnUnlinkedNumberReadsNoneOfTheUsersCards() {
 	s.idle()
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "bob here"), time.Now()))
 	turns = s.took(3)
-	s.NotContains(s.cardsBefore(turns[2].text, "first"), chatSummary, "bob's SMS reads none of anya's cards")
-	s.Contains(s.cardsBefore(turns[2].text, "first"), "Bob asked about his bill.")
+	s.NotContains(turns[2].text, chatSummary, "bob's SMS reads none of anya's cards")
+	s.NotContains(turns[2].text, "user: first", "nor what the number texted before his link")
+	s.Contains(turns[2].text, "Bob asked about his bill.")
 }
 
 // Catches a new number that leaves the old one on the user's omni-channel: the old number
@@ -349,6 +352,88 @@ func (s *UserPhonesSuite) TestAnEndUserCannotLinkAUser() {
 
 	s.Equal(http.StatusForbidden, status)
 	s.Empty(s.links())
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	status, _ = s.client.call(http.MethodGet, "/v1/agents/users/"+s.user, "")
+	s.Equal(http.StatusForbidden, status, "nor read whose number a user has")
+}
+
+// The ticket's example on the customer's line: the number texts before the link, the customer
+// links the user to it with each request, and the number texts again. Catches a boundary that
+// one of the two reads ignores: the SMS session's thread history (the model recites it) and the
+// user's chat cards.
+func (s *UserPhonesSuite) TestTheLinksHistoryDecidesWhatTheThreadAndTheChatRead() {
+	turns := 0
+	for _, c := range []struct {
+		fields string
+		reads  bool
+	}{
+		{"", false}, {`, "include_phone_history": false`, false}, {`, "include_phone_history": true`, true},
+		{`, "phone_history_since": "` + time.Now().Add(-time.Minute).UTC().Format(time.RFC3339) + `"`, true},
+		{`, "include_phone_history": false, "phone_history_since": "SINCE"`, false},
+	} {
+		s.user, s.person = "user-"+s.utils.uuid(), s.utils.number()
+		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "allergic to penicillin"), time.Now()))
+		turns++
+		s.took(turns)
+		s.idle()
+		s.chatCard()
+		since := strings.ReplaceAll(c.fields, "SINCE", time.Now().UTC().Format(time.RFC3339Nano))
+
+		s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"`+since+`}`, nil))
+
+		s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "what do you know about me?"), time.Now()))
+		turns++
+		s.Equal(c.reads, strings.Contains(s.took(turns)[turns-1].text, "penicillin"), "the thread, %s", c.fields)
+		sms := 1
+		if c.reads {
+			sms = 2
+		}
+		s.Equal(sms, countOf(s.chatReads(s.user), store.EpisodeSMS), "the chat, %s", c.fields)
+	}
+}
+
+// Catches a request whose two fields say two things, a boundary in the future, a word on a
+// number's past with no number, and fields of the wrong shape, taken as a link.
+func (s *UserPhonesSuite) TestAPhoneHistoryThatSaysNothingSureIsRefused() {
+	for _, body := range []string{
+		`"include_phone_history": true, "phone_history_since": "2026-11-02T00:00:00Z"`,
+		`"phone_history_since": "` + time.Now().Add(time.Hour).UTC().Format(time.RFC3339) + `"`,
+	} {
+		status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/users/"+s.user, `{"phone": "`+s.person+`", `+body+`}`)
+		s.Equal(http.StatusBadRequest, status, body)
+		s.Contains(string(payload), "phone_history_since", body)
+		s.Contains(string(payload), string(ErrorTypeInvalidRequest), body)
+	}
+	status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/users/"+s.user, `{"phone": null, "include_phone_history": false}`)
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(string(payload), "need a phone")
+	for _, body := range []string{`"include_phone_history": "yes"`, `"phone_history_since": "2026-11-02"`, `"phone_history_since": 1762041600`} {
+		status, payload := s.serverClient.call(http.MethodPut, "/v1/agents/users/"+s.user, `{"phone": "`+s.person+`", `+body+`}`)
+		s.Equal(http.StatusBadRequest, status, body)
+		s.Contains(string(payload), codeValidationFailed, body)
+	}
+	s.Empty(s.links())
+}
+
+// Catches a GET that answers another field than the one stored, and a re-PUT with neither field
+// that moves what is stored.
+func (s *UserPhonesSuite) TestAGetAnswersTheStoredBoundary() {
+	get := func() AgentUser {
+		var user AgentUser
+		s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/users/"+s.user, "", &user))
+		return user
+	}
+	s.Equal(AgentUser{UserID: s.user}, get(), "no link")
+	all := true
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`", "include_phone_history": true}`, nil))
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, IncludePhoneHistory: &all}, get())
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, IncludePhoneHistory: &all}, get(), "neither field keeps it")
+	since := time.Date(2026, 11, 2, 0, 0, 0, 0, time.UTC)
+	var put AgentUser
+	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`", "phone_history_since": "2026-11-02T03:00:00+03:00"}`, &put))
+	s.Equal(AgentUser{UserID: s.user, Phone: &s.person, PhoneHistorySince: &since}, put)
+	s.Equal(put, get())
 }
 
 // LinqSandboxSuite is the Linq line of a customer the sandbox holds, under an agent with
@@ -405,6 +490,17 @@ func (s *LinqSandboxSuite) rows(query string) int {
 	var count int
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(), query, s.customerID()).Scan(&count))
 	return count
+}
+
+// countOf is how many of sources are source.
+func countOf(sources []string, source string) int {
+	n := 0
+	for _, each := range sources {
+		if each == source {
+			n++
+		}
+	}
+	return n
 }
 
 // cardsBefore is what a turn's session was handed before the thread's history: the recited
