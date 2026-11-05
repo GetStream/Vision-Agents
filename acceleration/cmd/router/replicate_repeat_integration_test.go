@@ -78,7 +78,7 @@ func (s *ReplicateRepeatSuite) emptyStore(name string) *store.Store {
 // serveSource answers the export and the changes from the source store, as internal/api/datamove.go
 // does.
 func (s *ReplicateRepeatSuite) serveSource(w http.ResponseWriter, r *http.Request) {
-	if err := s.source.StartDataCapture(r.Context(), "acme", time.Hour); err != nil {
+	if err := s.source.StartDataCapture(r.Context(), "acme", time.Hour, time.Second); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
@@ -346,7 +346,7 @@ func (s *ReplicateRepeatSuite) TestACursorReadLongerAgoThanTheRetentionIsRefused
 func (s *ReplicateRepeatSuite) TestACursorTheSourceNoLongerKeepsTheChangesOfNamesFull() {
 	// A change before the first copy gives its cursor a number the source can lose.
 	s.recorded(1)
-	s.Require().NoError(s.source.StartDataCapture(s.ctx, "acme", time.Hour))
+	s.Require().NoError(s.source.StartDataCapture(s.ctx, "acme", time.Hour, time.Second))
 	s.tagged(s.source, 1, "before the copy")
 	s.Require().NoError(s.once("acme", false))
 	s.tagged(s.source, 1, "pruned")

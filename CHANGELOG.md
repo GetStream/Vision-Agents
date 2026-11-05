@@ -391,6 +391,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A repeatable read write is not lost by a move
+
+A repeatable read or serializable transaction that took its snapshot before an export started recording, and wrote after, was in neither the export nor its changes. Its write is now refused with a serialization failure, the error those levels are retried on, and the retry is recorded. An export waits up to 30 seconds for such a transaction that wrote before it started, then answers 503, as it does for any open write; a transaction that only reads holds no export (AI-2814).
+
 ### A repeat `router replicate --once` brings only what changed since the last run
 
 A second `--once` for an app copied before wrote the whole export again, so every row edited on the target since the first copy went back to the source's older copy. A run now saves the source's cursor on the target, and the next run for the app follows the changes from it and writes no row of the export. An app the target already holds with no saved cursor, copied before this release, is refused, and so is one whose last run read the source longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION` (taken to be the source's own); pass `--as` on a repeat run so it opens no export; `--full` copies everything again, as before (AI-2864).
