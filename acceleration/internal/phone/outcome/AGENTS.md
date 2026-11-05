@@ -76,7 +76,8 @@ and an inbound call the router answers), read when the answered leg ends (`leftO
 | The session row cannot be read | a store error, logged at WARN | its stored outcome |
 
 An alert on the share of failed or dropped calls per vendor reads
-`outcome=~"failed|dropped"` over all outcomes of that vendor and direction.
+`outcome=~"failed|dropped|refused"` over all outcomes of that vendor and direction. `refused`
+is a dial the vendor refused, so a vendor that refuses every dial raises the share.
 
 ## Carrier KPIs
 
@@ -110,7 +111,8 @@ Short calls are counted for every vendor: they come from Stream's join and leave
 Ratios, per vendor:
 
 - network failures (NER style): `outcome=~"failed|refused"` over all outcomes of
-  `router_phone_call_outcomes_total`; `busy` and `no_answer` are the callee's.
+  `router_phone_call_outcomes_total`; `busy` and `no_answer` are the callee's. Vonage stores
+  `rejected` as `busy`, and that includes carrier rejections: read its `sip_responses` codes.
 - SEER (RFC 6076 §4.7), for a vendor that reports a code on every final report (`twilio`,
   `vonage`, `sip_trunk`): `code=~"200|480|486|600|603"` over all codes but `3..`.
 - short calls: `router_phone_short_calls_total` over `outcome=~"completed|dropped"`.

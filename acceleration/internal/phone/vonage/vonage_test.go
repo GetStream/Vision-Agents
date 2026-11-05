@@ -372,6 +372,14 @@ func vonageRejected(sipCode string) []byte {
 		`"sip_code":` + sipCode + `}`)
 }
 
+func (s *VonageSuite) TestOnlyRingingMarksThePhoneRinging() {
+	for _, word := range []string{"started", "answered", "busy", "completed", "failed", "unanswered"} {
+		status, err := s.provider.ReadStatus("application/json", []byte(`{"uuid":"call-9","status":"`+word+`"}`))
+		s.Require().NoError(err)
+		s.False(status.Ringing, word)
+	}
+}
+
 func (s *VonageSuite) TestARejectionCarriesItsSIPCode() {
 	status, err := s.provider.ReadStatus("application/json", vonageRejected("404"))
 	s.Require().NoError(err)

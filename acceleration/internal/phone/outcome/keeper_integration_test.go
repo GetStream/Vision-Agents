@@ -283,6 +283,17 @@ func (s *KeeperSuite) TestACallWhoseAgentLeftItOnTheLineIsCountedDroppedAndStore
 	s.Equal(Completed, call.Outcome, "what is stored stays as it was")
 }
 
+func (s *KeeperSuite) TestADroppedCallUnderSixSecondsIsCountedDroppedOnceAndShortOnce() {
+	s.placed()
+	s.answered(s.at(1))
+	s.sessionClosed(s.at(2), "")
+
+	s.ended(s.at(4))
+
+	s.countedOnce(outbound, dropped)
+	s.Equal(map[string]float64{"short outbound": 1}, s.carrier())
+}
+
 func (s *KeeperSuite) TestACallItsAgentHungUpIsCountedCompleted() {
 	s.placed()
 	s.answered(s.at(1))
@@ -414,7 +425,10 @@ func (s *KeeperSuite) TestASessionThatCannotBeReadLeavesTheCallCountedAsStored()
 // carrier is every carrier series of the test's vendor that is not zero: sip <code>, short
 // <direction>, and the post-dial delays' count and sum, each but short prefixed with inbound
 // for an inbound series. The vendor is the test's own, so each value is what the test counted.
-func (s *KeeperSuite) carrier() map[string]float64 {
+func (s *KeeperSuite) carrier() map[string]float64 { return s.carrierOf(s.vendor) }
+
+// carrierOf is carrier for the series of vendor.
+func (s *KeeperSuite) carrierOf(vendor string) map[string]float64 {
 	families, err := prometheus.DefaultGatherer.Gather()
 	s.Require().NoError(err)
 	got := map[string]float64{}
@@ -424,7 +438,7 @@ func (s *KeeperSuite) carrier() map[string]float64 {
 			for _, pair := range metric.GetLabel() {
 				labels[pair.GetName()] = pair.GetValue()
 			}
-			if labels["vendor"] != s.vendor {
+			if labels["vendor"] != vendor {
 				continue
 			}
 			prefix := ""
@@ -448,6 +462,26 @@ func (s *KeeperSuite) carrier() map[string]float64 {
 func (s *KeeperSuite) report(token string, report Report) {
 	_, err := s.keeper.Reported(s.ctx, token, report)
 	s.Require().NoError(err)
+}
+
+func (s *KeeperSuite) TestAVendorTheKeeperDoesNotNameIsCountedAsOtherInEveryCarrierSeries() {
+	raw := "unnamed-" + rand.Text()
+	s.call.Vendor = raw
+	before := s.carrierOf(otherVendor)
+	refusedBefore := testutil.ToFloat64(callOutcomes.WithLabelValues(otherVendor, outbound, refused))
+	refusedToken := s.placedAnew()
+	s.Require().NoError(s.keeper.Refused(s.ctx, refusedToken, raw))
+	token := s.placedAnew()
+
+	s.report(token, Report{Word: "ringing", Ringing: true})
+	s.report(token, Report{Outcome: Busy, Word: "busy", SIPCode: 486})
+
+	s.Equal(1.0, testutil.ToFloat64(callOutcomes.WithLabelValues(otherVendor, outbound, refused))-refusedBefore)
+	after := s.carrierOf(otherVendor)
+	s.Equal(1.0, after["sip 486"]-before["sip 486"])
+	s.Equal(1.0, after["delays"]-before["delays"])
+	s.Empty(s.carrierOf(raw), "the vendor's own name makes no series")
+	s.Zero(testutil.ToFloat64(callOutcomes.WithLabelValues(raw, outbound, refused)))
 }
 
 func (s *KeeperSuite) TestAFinalReportsSIPCodeIsCountedOnce() {
