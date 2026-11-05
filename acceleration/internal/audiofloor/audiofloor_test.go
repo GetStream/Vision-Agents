@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -431,13 +432,26 @@ func (s *transcribing) SetupTest() {
 	s.server.words = "Two tickets to Bilbao, please."
 	s.client.format = Opus
 	s.floor = 16 // about -66 dBFS
+	// The voice and the noise start over, so that a test hears the same line whatever ran
+	// before it: over noise near voiceLevel, which frames the detector takes for speech
+	// depends on where the voice's pitch is.
+	s.phase, s.at, s.noise = 0, 0, 0
 	s.open()
 }
 
 // open starts the transcriber, and sends the speech detector's warm-up, as a call's first
 // moments.
-func (s *transcribing) open() {
+func (s *transcribing) open() { s.openReading(time.Now) }
+
+// reopen closes the transcriber and opens another, reading the clock now.
+func (s *transcribing) reopen(now func() time.Time) {
+	s.Require().NoError(s.transcriber.Close())
+	s.openReading(now)
+}
+
+func (s *transcribing) openReading(now func() time.Time) {
 	s.transcriber = NewTranscriber(s.client, "", []string{"en", "pt-BR"}, slog.New(slog.DiscardHandler))
+	s.transcriber.now = now
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })
@@ -683,6 +697,92 @@ func (s *TranscriberSuite) TestAServerThatIsGoneCostsARequestNotTheSession() {
 	s.say(pauseMs+100, false)
 	s.Eventually(func() bool { return testutil.ToFloat64(transcribeFailures.WithLabelValues("connection")) > failed }, 5*time.Second, 10*time.Millisecond)
 	s.none()
+}
+
+// noFatal says no fatal error comes.
+func (s *transcribing) noFatal() {
+	s.T().Helper()
+	for {
+		select {
+		case event := <-s.transcriber.Events():
+			failure, ok := event.(stt.Error)
+			s.Require().False(ok && failure.Fatal, "a fatal error: %+v", event)
+		case <-time.After(100 * time.Millisecond):
+			return
+		}
+	}
+}
+
+// skewed is a clock running skew ahead of the wall.
+func skewed(skew *atomic.Int64) func() time.Time {
+	return func() time.Time { return time.Now().Add(time.Duration(skew.Load())) }
+}
+
+// A server that answers none of three requests for words in a row, the last a window after
+// the first, is down for the call rather than restarting: the session is fatal, and the call
+// goes to the next transcriber rather than on without words. A connection refused counts,
+// as a 5xx and a timeout would.
+func (s *TranscriberSuite) TestAServerDownForTheCallIsFatal() {
+	var skew atomic.Int64
+	s.reopen(skewed(&skew))
+	s.client.url = "http://127.0.0.1:1"
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	s.say(int(endAfter/time.Millisecond), false)
+	s.noFatal()
+
+	skew.Store(int64(failoverWindow))
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	failure := next[stt.Error](&s.transcribing)
+	s.True(failure.Fatal)
+	s.Equal("transcribe", failure.Context)
+	s.ErrorContains(failure.Err, "none of 3 requests for words")
+}
+
+// A server shedding load with 503 or 429 is up, however long it does: those requests are
+// asked again, and never give the session up. Words answered start the count over, so a
+// server that fails now and then is never down for the call.
+func (s *TranscriberSuite) TestABusyServerIsUpAndWordsAnsweredStartTheCountOver() {
+	var skew atomic.Int64
+	s.reopen(skewed(&skew))
+	// failing has the server answer status to the next utterances' requests, two each: the
+	// pause's and the end's, which asks again what the pause was refused.
+	failing := func(status, utterances int) {
+		s.server.mu.Lock()
+		s.server.failing, s.server.failWith = 2*utterances, status
+		s.server.mu.Unlock()
+		for range utterances {
+			s.say(1000, true)
+			s.say(pauseMs, false)
+			s.say(int(endAfter/time.Millisecond), false)
+			skew.Add(int64(failoverWindow))
+		}
+		s.Eventually(func() bool {
+			s.server.mu.Lock()
+			defer s.server.mu.Unlock()
+			return s.server.failing == 0
+		}, 5*time.Second, time.Millisecond)
+	}
+	failing(http.StatusServiceUnavailable, 2)
+	failing(http.StatusTooManyRequests, 1)
+	s.noFatal()
+
+	// Two not answered, then words, then two more: never three in a row.
+	failing(http.StatusInternalServerError, 1)
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	s.Equal(stt.ModeReplacement, next[stt.Transcript](&s.transcribing).Mode)
+	failing(http.StatusInternalServerError, 1)
+	s.noFatal()
+
+	// The third since the words were answered, a window on: down.
+	s.server.mu.Lock()
+	s.server.failing, s.server.failWith = 1, http.StatusInternalServerError
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	s.True(next[stt.Error](&s.transcribing).Fatal)
 }
 
 // A server the router is misconfigured for will never answer, and hands the call to the

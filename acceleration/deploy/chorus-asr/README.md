@@ -336,10 +336,15 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   session: a 5xx, 404, 408 or 429, a timeout or a reset connection is logged and counted in
   `router_chorus_asr_transcribe_failures_total` by status, `timeout` or `connection`, and
   the utterance's words are asked for again, whole, at its end or its next pause after more
-  speech. Only a server the router is misconfigured for (another 4xx, or no policy where
-  one is needed) is fatal, which hands the call to the next transcriber the target names;
-  a target that names this transcriber alone has no next one. A request for words times
-  out at 8 s and the audio's length again.
+  speech. A server the router is misconfigured for (another 4xx, or no policy where one is
+  needed) is fatal at once, and one that is down for the call is fatal after three requests
+  for words in a row it did not answer at all (refused, reset, timed out, or a 5xx, 404 or
+  408; not a 503 or 429, which is a server shedding load, nor words it answered empty), the
+  last at least 8 s after the first, with none answered in between. Either hands the call to
+  the next transcriber the target names, rather than leave it without words; a target that
+  names this transcriber alone has no next one. Decisions are unaffected: a check the server
+  does not answer falls to the flow controller, check by check, whatever became of the
+  words. A request for words times out at 8 s and the audio's length again.
 - **Echo.** A phone with no echo cancellation sends the agent's voice back down the
   caller's line, and the model writes it as the caller's words, or adds it to theirs within
   one utterance. The agent drops a chorus-asr transcript's end that is three or more of its

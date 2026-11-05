@@ -115,6 +115,37 @@ func Misconfigured(err error) bool {
 	return status.Code >= 400 && status.Code < 500
 }
 
+// TranscriptError is a request for words the server answered without them, saying why: it
+// heard noise, or every lane that writes words was busy. The server is up, whatever it said.
+type TranscriptError struct {
+	// Request is which request: transcribe, or a decision's words.
+	Request string
+	Message string
+}
+
+func (e *TranscriptError) Error() string { return "audiofloor: " + e.Request + ": " + e.Message }
+
+// Unreachable says the server did not answer err's request at all: the connection was
+// refused, reset or dropped, the request timed out, or what answered was a 5xx, 404 or 408,
+// as a proxy with nothing behind it answers. A server that answered 503 or 429 is up and
+// shedding load, and one that answered without words (TranscriptError) or refused the
+// request (Misconfigured) is up as well. A session that meets nothing else for a while has
+// a server down for the call, rather than restarting.
+func Unreachable(err error) bool {
+	if Misconfigured(err) {
+		return false
+	}
+	var transcript *TranscriptError
+	if errors.As(err, &transcript) {
+		return false
+	}
+	var status *StatusError
+	if errors.As(err, &status) {
+		return status.Code != http.StatusServiceUnavailable && status.Code != http.StatusTooManyRequests
+	}
+	return true
+}
+
 // The speakers a prompt can name. Training's rows name nobody else, so a participant's own
 // name goes no further than this package.
 const (
@@ -411,7 +442,7 @@ func (c *Client) decideWords(ctx context.Context, target string, body []byte, co
 		case err != nil:
 			said <- Words{Err: stack.Wrap(fmt.Errorf("audiofloor: %s: the words: %w", req.URL.Path, err))}
 		case line.Transcript == nil:
-			said <- Words{Err: stack.Wrap(fmt.Errorf("audiofloor: %s: the words: %s", req.URL.Path, line.Error))}
+			said <- Words{Err: stack.Wrap(&TranscriptError{Request: req.URL.Path + ": the words", Message: line.Error})}
 		default:
 			said <- Words{Text: line.Transcript.Text, Ms: line.Ms}
 		}
@@ -444,7 +475,7 @@ func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages 
 		return "", err
 	}
 	if said.Transcript == nil {
-		return "", stack.Wrap(fmt.Errorf("audiofloor: transcribe: %s", said.Error))
+		return "", stack.Wrap(&TranscriptError{Request: "transcribe", Message: said.Error})
 	}
 	return said.Transcript.Text, nil
 }

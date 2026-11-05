@@ -3,6 +3,7 @@ package audiofloor
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log/slog"
 	"math"
 	"strconv"
@@ -52,6 +53,13 @@ const (
 	// as long again as the audio lasts: the longer the utterance, the longer its words take,
 	// though never as long as it took to say.
 	transcribeTimeout = 8 * time.Second
+	// failoverAfter is how many requests for words in a row the server must not answer
+	// (Unreachable), none answered in between and the last at least failoverWindow after the
+	// first, before the session gives it up as down for the call: one request a pause and one
+	// an utterance's end, so three over the time one request may take is a server that has
+	// not written a word in that long, rather than one restarting between two.
+	failoverAfter  = 3
+	failoverWindow = transcribeTimeout
 	// queued is how many requests may wait for a slow server before the next is dropped.
 	queued      = 8
 	eventBuffer = 64
@@ -73,10 +81,12 @@ var transcribeFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 // server for the words alone (POST /v1/transcribe): no agent, decision or policy. The
 // server writes nothing of noise, and empty words are nothing heard.
 //
-// A server that is busy, down or slow costs a request, not the session: its words are asked
-// for again at the utterance's next pause, or at its end. Only a misconfigured one, which
-// will never answer (Misconfigured), is a fatal error, which hands the call to the next
-// transcriber the routing target names.
+// A server that is busy, restarting or slow costs a request, not the session: its words are
+// asked for again at the utterance's next pause, or at its end. A misconfigured one, which
+// will never answer (Misconfigured), is a fatal error at once, and one that answers none of
+// failoverAfter requests in a row over failoverWindow (Unreachable) is down for the call and
+// a fatal error then: either hands the call to the next transcriber the routing target
+// names, rather than leave it without words.
 type Transcriber struct {
 	client    *Client
 	model     string
@@ -84,6 +94,8 @@ type Transcriber struct {
 	logger    *slog.Logger
 	emitter   *stt.Emitter
 	requests  chan request
+	// now is the clock the failover window is measured by: time.Now, but in tests.
+	now func() time.Time
 	// ctx is the session's lifetime, made in Start, and done closes when transcribe returns.
 	ctx    context.Context
 	cancel context.CancelFunc
@@ -137,7 +149,7 @@ func NewTranscriber(client *Client, model string, languages []string, logger *sl
 	if model == "" {
 		model = DefaultModel
 	}
-	return &Transcriber{client: client, model: model, languages: languages, logger: logger,
+	return &Transcriber{client: client, model: model, languages: languages, logger: logger, now: time.Now,
 		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
 
@@ -248,6 +260,10 @@ func (t *Transcriber) transcribe() {
 	defer close(t.done)
 	var last string
 	var lastOf int64
+	// failed counts the requests in a row the server did not answer (Unreachable), and
+	// failedSince is when the first of them failed.
+	var failed int
+	var failedSince time.Time
 	for {
 		var r request
 		select {
@@ -286,7 +302,19 @@ func (t *Transcriber) transcribe() {
 				if !r.final {
 					t.missed.Store(r.utterance)
 				}
+				if Unreachable(err) {
+					if failed++; failed == 1 {
+						failedSince = t.now()
+					}
+					if down := t.now().Sub(failedSince); failed >= failoverAfter && down >= failoverWindow {
+						t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Context: "transcribe", Fatal: true,
+							Err: stack.Wrap(fmt.Errorf("audiofloor: the server answered none of %d requests for words in %s, the last: %w",
+								failed, down.Round(time.Second), err))})
+						return
+					}
+				}
 			default:
+				failed = 0
 				words = strings.TrimSpace(said)
 			}
 		}
