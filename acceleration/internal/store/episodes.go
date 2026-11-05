@@ -337,11 +337,11 @@ SELECT EXISTS (SELECT 1 FROM agent_configs WHERE episode_cards AND deleted_at IS
 // close or to summarize: one that a config opened with the cards on and has turned them off
 // since closes as any other (AI-2771).
 func (s *Store) AnyEpisodeToSweep(ctx context.Context) (bool, error) {
-	var any bool
-	if err := s.db.NewRaw(anyEpisodeToSweepQuery).Scan(ctx, &any); err != nil {
+	var due bool
+	if err := s.db.NewRaw(anyEpisodeToSweepQuery).Scan(ctx, &due); err != nil {
 		return false, stack.Wrap(fmt.Errorf("store: any episode to sweep: %w", err))
 	}
-	return any, nil
+	return due, nil
 }
 
 // EpisodeCard is an episode as a session reads its card: the episode, and until when its
