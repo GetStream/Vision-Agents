@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 
@@ -327,12 +328,43 @@ func (s *KeeperSuite) TestAnInboundCallItsAgentLeftOnTheLineIsCountedDropped() {
 	s.countedOnce(inbound, dropped)
 }
 
+// total is every call counted, at any vendor, read off the registry /metrics serves. No other
+// test in this package counts calls while a suite runs.
+func (s *KeeperSuite) total() float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	var total float64
+	for _, family := range families {
+		if family.GetName() == "router_phone_call_outcomes_total" {
+			for _, metric := range family.GetMetric() {
+				total += metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return total
+}
+
 func (s *KeeperSuite) TestATransfersLegIsNotCounted() {
+	before := s.total()
 	s.answered(s.at(1))
 
 	s.ended(s.at(5))
 
-	s.Empty(s.counted())
+	s.Zero(s.total() - before)
+}
+
+func (s *KeeperSuite) TestAStoreThatFailsFailsTheEndAndCountsNothing() {
+	broken, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "phone_outcome"))
+	s.Require().NoError(err)
+	s.Require().NoError(broken.Close())
+	keeper := NewKeeper(broken, func() time.Time { return s.now }, []string{s.vendor}, slog.New(slog.DiscardHandler))
+	before := s.total()
+
+	err = keeper.Ended(s.ctx, s.call.Key, s.at(1), Leg{Vendor: s.vendor})
+
+	s.Error(err)
+	s.NotErrorIs(err, store.ErrNoPhoneCall)
+	s.Zero(s.total() - before)
 }
 
 func (s *KeeperSuite) TestASessionThatCannotBeReadLeavesTheCallCountedAsStored() {
