@@ -633,11 +633,17 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 		case spec.isKey(shape, column):
 		case spec.name == "phone_numbers" && slices.Contains(lineColumns, column):
 			// A number on a trunk here was attached or given a line here (AttachNumber, SetLine),
-			// since an imported row arrives off any trunk (identity). Where its calls go and which
-			// agent answers them are then this deployment's, so the source's copy of the row, in a
-			// copy taken again or a change applied later, does not detach it.
+			// since an imported row arrives off any trunk (identity). Where its calls go is then
+			// this deployment's, so the source's copy of the row, in a copy taken again or a
+			// change applied later, does not detach it. The agent is too only once attached:
+			// a line alone never wrote it (SetLine), so the source's agent still arrives. A number
+			// the source gave back keeps nothing, as a release here clears the line first.
+			kept := "phone_numbers.stream_trunk_id IS NOT NULL"
+			if column == "config_id" {
+				kept = "phone_numbers.attached_at IS NOT NULL"
+			}
 			assignments = append(assignments, fmt.Sprintf(
-				"%[1]s = CASE WHEN phone_numbers.stream_trunk_id IS NOT NULL THEN phone_numbers.%[1]s ELSE EXCLUDED.%[1]s END", column))
+				"%[1]s = CASE WHEN %[2]s AND EXCLUDED.released_at IS NULL THEN phone_numbers.%[1]s ELSE EXCLUDED.%[1]s END", column, kept))
 		default:
 			assignments = append(assignments, column+" = EXCLUDED."+column)
 		}

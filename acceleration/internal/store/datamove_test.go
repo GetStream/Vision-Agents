@@ -2323,6 +2323,53 @@ func (s *DataMoveSuite) TestCopyingAgainStillUpdatesANumberNotOnATrunkOnTheDesti
 	s.Empty(moved.BridgeURI)
 }
 
+func (s *DataMoveSuite) TestCopyingAgainBringsTheSourcesAgentToANumberOnlyOnALineOnTheDestination() {
+	first := s.seedAgentConfig(s.source, "acme", "first")
+	s.Require().NoError(s.source.RecordNumber(s.ctx, &PhoneNumber{
+		E164: "+15550000134", Vendor: "telnyx", Country: "US", CustomerID: "acme",
+	}))
+	s.Require().NoError(s.source.AttachNumber(s.ctx, "acme", "+15550000134", NumberAttachment{
+		TrunkID: "trunk-there", RouteID: "route-there", CallType: "default", CallID: "call-there", ConfigID: first,
+	}))
+	s.move("acme", "acme")
+	// On a line to place calls, which never wrote an agent.
+	s.Require().NoError(s.destination.InTrunkGroup(s.ctx, TrunkGroup{CustomerID: "acme", StreamAppPK: 42, Vendor: "telnyx"},
+		func(_ context.Context, tx *TrunkGroupTx) error {
+			return tx.SetLine("+15550000134", "trunk-here", "route-here", NumberBridge{})
+		}))
+	second := s.seedAgentConfig(s.source, "acme", "second")
+	s.Require().NoError(s.source.SetNumberAgent(s.ctx, "acme", "+15550000134", second))
+
+	s.move("acme", "acme")
+
+	moved, err := s.destination.Number(s.ctx, "acme", "+15550000134")
+	s.Require().NoError(err)
+	s.Equal(second, moved.ConfigID, "the source's agent arrives")
+	s.Equal("trunk-here", moved.StreamTrunkID, "the line stays")
+}
+
+func (s *DataMoveSuite) TestCopyingAgainDoesNotKeepTheLineOfANumberTheSourceGaveBack() {
+	attached := s.numberAttachedHere("+15550000135")
+	s.Require().NoError(s.source.ReleaseNumber(s.ctx, "acme", "+15550000135", time.Now()))
+
+	s.move("acme", "acme")
+
+	numbers, err := s.destination.CustomerNumbers(s.ctx, "acme", true)
+	s.Require().NoError(err)
+	var moved *PhoneNumber
+	for i := range numbers {
+		if numbers[i].E164 == attached.E164 {
+			moved = &numbers[i]
+		}
+	}
+	s.Require().NotNil(moved)
+	s.NotNil(moved.ReleasedAt)
+	s.Nil(moved.AttachedAt)
+	s.Empty(moved.StreamTrunkID)
+	s.Empty(moved.StreamRouteID)
+	s.Empty(moved.ConfigID)
+}
+
 // numberAttachedHere is a number the source holds, copied here and attached here, as it reads
 // here once attached.
 func (s *DataMoveSuite) numberAttachedHere(e164 string) PhoneNumber {
