@@ -366,16 +366,17 @@ func (s *Service) tell(ctx context.Context, leg store.CallLeg) {
 // MaxCallLength, when the leg sweep, run every LegSweepEvery, ends what nothing else did.
 const refusedFor = MaxCallLength + LegSweepEvery
 
-// Refused marks the customer's arriving call in app as one the router refused: no agent
-// answers it, and it is ended at Stream. Its leg is counted failed when it ends, on whichever
-// node ends it (tell). A mark that cannot be kept is logged, and the call is counted completed.
-func (s *Service) Refused(ctx context.Context, customer string, app int64, callType, callID string) {
+// Refused marks the Stream session session of the customer's arriving call in app as one the
+// router refused: no agent answers it, and it is ended at Stream. Its leg is counted failed when
+// it ends, on whichever node ends it (tell). A mark that cannot be kept is logged, and the call
+// is counted completed.
+func (s *Service) Refused(ctx context.Context, customer string, app int64, callType, callID, session string) {
 	if s.redis == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), outcomeTimeout)
 	defer cancel()
-	command := s.redis.B().Set().Key(refusedKey(customer, app, callType, callID)).Value("1").Ex(refusedFor).Build()
+	command := s.redis.B().Set().Key(refusedKey(customer, app, callType, callID, session)).Value("1").Ex(refusedFor).Build()
 	if err := s.redis.Do(ctx, command).Error(); err != nil {
 		s.logger.Warn("could not mark a refused arriving call; it is counted completed",
 			"customer", customer, "call", callType+":"+callID, "error", err)
@@ -388,7 +389,7 @@ func (s *Service) refused(ctx context.Context, leg store.CallLeg) bool {
 	if s.redis == nil {
 		return false
 	}
-	command := s.redis.B().Exists().Key(refusedKey(leg.CustomerID, leg.StreamAppPK, leg.CallType, leg.CallID)).Build()
+	command := s.redis.B().Exists().Key(refusedKey(leg.CustomerID, leg.StreamAppPK, leg.CallType, leg.CallID, leg.StreamSessionID)).Build()
 	found, err := s.redis.Do(ctx, command).AsInt64()
 	if err != nil {
 		s.logger.Warn("could not tell whether the router refused an arriving call; it is counted completed",
@@ -398,9 +399,11 @@ func (s *Service) refused(ctx context.Context, leg store.CallLeg) bool {
 	return found > 0
 }
 
-// refusedKey names the mark of a refused call. A call's id is unique only within its app.
-func refusedKey(customer string, app int64, callType, callID string) string {
-	return "phone:refused:" + customer + ":" + strconv.FormatInt(app, 10) + ":" + callType + ":" + callID
+// refusedKey names the mark of a refused call. A call's id is unique only within its app, and
+// a number attached before per-caller calls puts every caller in the number's own call, each
+// caller a Stream session of it with a leg of its own: only the refused caller's leg is marked.
+func refusedKey(customer string, app int64, callType, callID, session string) string {
+	return "phone:refused:" + customer + ":" + strconv.FormatInt(app, 10) + ":" + callType + ":" + callID + ":" + session
 }
 
 // SweepLegs ends the legs of this shard open longer than MaxCallLength, and checks the legs

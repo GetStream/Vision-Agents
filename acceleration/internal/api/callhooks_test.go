@@ -156,7 +156,7 @@ func (s *CallHooksSuite) TestAnArrivingCallTheRouterRefusedIsCountedFailedWhenIt
 	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCallAt("default:"+s.callID, arrived)))
 	s.Require().True(s.refused())
 	s.Require().Eventually(func() bool {
-		keys, err := s.live.Redis().Do(context.Background(), s.live.Redis().B().Keys().Pattern("phone:refused:*:"+s.callID).Build()).AsStrSlice()
+		keys, err := s.live.Redis().Do(context.Background(), s.live.Redis().B().Keys().Pattern("phone:refused:*:"+s.callID+":session-1").Build()).AsStrSlice()
 		return err == nil && len(keys) == 1
 	}, settleFor, 10*time.Millisecond, "the refusal was never marked")
 	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
@@ -172,6 +172,47 @@ func (s *CallHooksSuite) TestAnArrivingCallTheRouterRefusedIsCountedFailedWhenIt
 	s.Equal(arrived, legs[0].StartedAt.UTC())
 	s.Equal(ended, legs[0].EndedAt.UTC())
 	s.Equal(store.LegEnded, legs[0].EndReason)
+}
+
+// TestALaterCallerInTheSameCallIsNotCountedRefused catches the refusal marked for the whole
+// call: a number attached before per-caller calls puts every caller in the number's own call, each
+// caller a Stream session with a leg of its own, so one refused caller made every later caller
+// of the number count failed, answered or not.
+func (s *CallHooksSuite) TestALaterCallerInTheSameCallIsNotCountedRefused() {
+	s.numberVendor = "vonage"
+	s.hold("default", s.callID)
+	ctx := context.Background()
+	s.Require().NoError(s.store.SuspendTelephony(ctx, &store.TelephonySuspension{
+		CustomerID: s.customerID(), Reason: "fraud", SuspendedBy: "ops@getstream.io",
+	}))
+	arrived := time.Now().UTC().Add(-2 * time.Minute).Truncate(time.Second)
+	end := func(session string, at time.Time) {
+		s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", fmt.Sprintf(
+			`{"type":"call.session_ended","call_cid":"default:%s","session_id":%q,"created_at":%q,`+
+				`"call":{"cid":"default:%s","id":"%s","type":"default","custom":{}}}`,
+			s.callID, session, at.Format(time.RFC3339), s.callID, s.callID)))
+	}
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCallAt("default:"+s.callID, arrived)))
+	s.Require().True(s.refused())
+	s.Require().Eventually(func() bool {
+		keys, err := s.live.Redis().Do(ctx, s.live.Redis().B().Keys().Pattern("phone:refused:*:"+s.callID+":*").Build()).AsStrSlice()
+		return err == nil && len(keys) == 1
+	}, settleFor, 10*time.Millisecond, "the refusal was never marked")
+	end("session-1", arrived.Add(10*time.Second))
+	s.Require().NoError(s.store.LiftTelephonySuspension(ctx, s.customerID()))
+
+	failed, completed := s.inboundCalls("vonage", "failed"), s.inboundCalls("vonage", "completed")
+	second := arrived.Add(time.Minute)
+	body := strings.ReplaceAll(arrivingCallAt("default:"+s.callID, second), "session-1", "session-2")
+	body = strings.ReplaceAll(body, `"s1"`, `"s2"`)
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", body))
+	end("session-2", second.Add(20*time.Second))
+
+	var legs []store.CallLeg
+	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&legs).Where("call_id = ?", s.callID).Scan(ctx))
+	s.Require().Len(legs, 2, "the second caller opened a leg of its own")
+	s.Equal(1.0, s.inboundCalls("vonage", "completed")-completed, "the second caller counted completed")
+	s.Zero(s.inboundCalls("vonage", "failed")-failed, "the second caller counted failed by the first caller's mark")
 }
 
 // inboundCalls is how many arriving calls at vendor were counted under outcome, read off the

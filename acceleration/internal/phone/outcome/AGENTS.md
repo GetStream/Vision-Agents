@@ -27,9 +27,11 @@ Count once, whatever the order of events:
 - **Inbound**: the store ends a leg once (`ended_at IS NULL` in `internal/store/calllegs.go`),
   and an inbound leg is never revived, so each end the `Keeper` is told is a new call.
 - **Refused inbound**: an arriving call the router refuses is ended at Stream, whose events
-  end its leg on whichever node they reach. The refusing node marks the call in Redis
-  (`phone.Service.Refused`, for `MaxCallLength` + `LegSweepEvery`, by when the leg sweep has ended a leg nothing else did), and
-  the node that ends the leg reads the mark and counts the call `failed`.
+  end its leg on whichever node they reach. The refusing node marks the caller's Stream session
+  of the call in Redis (`phone.Service.Refused`), for `MaxCallLength` + `LegSweepEvery`, by when
+  the leg sweep has ended a leg nothing else did. The node that ends the leg reads the mark and
+  counts the call `failed`. The mark is per session: a number attached before per-caller calls
+  has every caller in one call, and a later caller there was not refused.
 - **Not counted**: a transfer's leg (an outbound leg with no row), and a dial the vendor
   refused (`Keeper.Failed`: it never rang; `router_requests_total` counts the failed dial).
 - **Known gap**: a join that Stream delivers again after the call ended revives the leg
@@ -64,6 +66,8 @@ and an inbound call the router answers), read when the answered leg ends (`leftO
 | An incognito session drops the call | none: an incognito session writes no session row (`internal/session/manager.go`) | `completed` (not detected) |
 | The router refuses an arriving call: a suspended app, an organization that may not pay, a router with no sessions, the number's agent config gone, or its agent could not start (`refuseArrivingCall`, `internal/api/callhooks.go`) | the Redis mark of the refusal, read when the leg ends | `failed` |
 | A refused call's leg ends before its mark is written, or the mark cannot be written or read (Redis down, or the router has none) | no mark, logged at WARN when Redis fails | `completed` (not detected) |
+| No worker takes an arriving call to a number with no agent (`dispatch.Assign` fails, `internal/api/callhooks.go`): nobody answers, and the call is not ended | none: no refusal mark and no session row, logged at ERROR ("nobody could answer an arriving call") | `completed` (not detected) |
+| An arriving call to a number with no agent reaches a router that runs no dispatch: nobody answers, and the call is not ended | none: no refusal mark and no session row, not logged | `completed` (not detected) |
 | Nothing says the leg ended (lost events) | the leg sweep ends it at `MaxCallLength`, logged at ERROR | its stored outcome |
 | The session row cannot be read | a store error, logged at WARN | its stored outcome |
 
