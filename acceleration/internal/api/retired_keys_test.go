@@ -178,6 +178,37 @@ func (s *ConfigsSuite) TestARetiredKeyOfTheWrongShapeIsRefusedByTheSchema() {
 	}
 }
 
+// TestAnEntryOfEitherShapeABaseSaveTookIsRefusedAsRetired: a plugins entry may be a catalog id
+// or an object, as PluginEntry took either, and both get the refusal rather than a schema error
+// (probe on dd9794408: 400 invalid_request with the retired text for each).
+func (s *ConfigsSuite) TestAnEntryOfEitherShapeABaseSaveTookIsRefusedAsRetired() {
+	for label, entry := range map[string]any{"an id": "sentry", "an object": map[string]any{"name": "linear", "readonly": true}} {
+		s.Run(label, func() {
+			status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/configs",
+				map[string]any{"name": "refused-" + s.utils.uuid(), "plugins": []any{entry}})
+
+			s.Equal(http.StatusBadRequest, status)
+			s.Equal(retiredKeys[0].refusal, failure)
+		})
+	}
+}
+
+// An entry of plugin_events or mcp_servers that is not an object is refused by the schema, as
+// on the base (probe on dd9794408: 400 validation_failed for each).
+func (s *ConfigsSuite) TestAPluginEventOrMCPServerThatIsNotAnObjectIsRefusedByTheSchema() {
+	for _, key := range []string{"plugin_events", "mcp_servers"} {
+		for label, sent := range map[string]any{"a number": []any{5}, "a string": []any{"linear"}, "not a list": "linear"} {
+			s.Run(key+"/"+label, func() {
+				status, raw := s.serverClient.call(http.MethodPost, "/v1/agents/configs",
+					map[string]any{"name": "refused-" + s.utils.uuid(), key: sent})
+
+				s.Equal(http.StatusBadRequest, status)
+				s.Contains(string(raw), codeValidationFailed)
+			})
+		}
+	}
+}
+
 // shape is what a write answered: the config's id and the fields it rendered, sorted, less
 // the ones every write stamps.
 type shape struct {
