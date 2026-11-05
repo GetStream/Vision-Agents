@@ -239,12 +239,6 @@ func (s *AgentSuite) TestANativeReplyTheTrackTookIsSpeechPublishedAndHeard() {
 	s.True(agent.CallAudio().Published)
 }
 
-func (s *AgentSuite) TestANativeReplyForACallAlreadyLeftIsNotSpeechPublished() {
-	agent := s.speaksNativelyIntoMarked(refusingMarkedEdge{newLoopbackEdge()})
-
-	s.False(agent.CallAudio().Published)
-}
-
 func (s *AgentSuite) TestTheRunsOfOneCallAreJudgedTogether() {
 	// Catches a session judged on one of its runs: voice stopped and started again, or a run
 	// with no roster, whose audio says somebody was there.

@@ -14,7 +14,7 @@ const (
 	kindWeb   = "web"
 )
 
-// case is an agent.Silence, the definition of each beside it (agent/silence.go).
+// case is an agent.Silence, each defined in agent/silence.go.
 var silentSessions = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "silent_sessions_total",
