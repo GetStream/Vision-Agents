@@ -61,6 +61,11 @@ func Env(names ...string) []string {
 			continue
 		}
 		if keys := Parse(numbered(name)...); len(keys) > 0 {
+			sharedMu.Lock()
+			if _, ok := readFrom[strings.Join(keys, ",")]; !ok {
+				readFrom[strings.Join(keys, ",")] = name
+			}
+			sharedMu.Unlock()
 			return keys
 		}
 	}
@@ -104,6 +109,9 @@ func numbered(name string) []string {
 var (
 	sharedMu sync.Mutex
 	shared   = map[string]*Pool{}
+	// readFrom is the variable Env first read each set of keys from, by the keys joined with
+	// commas. Keys that were never read from one, such as a customer's own, are not in it.
+	readFrom = map[string]string{}
 )
 
 // The status labels of a refusal that came in a websocket frame or close after the handshake,
@@ -136,6 +144,9 @@ func FromEnv(explicit string, envVars ...string) *Pool {
 	if len(envVars) > 0 {
 		pool.name(envVars[0])
 	}
+	if source, ok := readFrom[id]; ok {
+		pool.from(source)
+	}
 	return pool
 }
 
@@ -165,6 +176,9 @@ type ring struct {
 	until []time.Time
 	// keyVar is the variable the keys are read from, "" until a FromEnv names one.
 	keyVar string
+	// source is the variable Env read the keys from, "" for keys it never read: unlike
+	// keyVar, a customer's own key passed to FromEnv beside the router's variable has none.
+	source string
 }
 
 type pin struct {
@@ -264,6 +278,15 @@ func (r *ring) name(keyVar string) {
 	defer r.mu.Unlock()
 	if r.keyVar == "" {
 		r.keyVar = keyVar
+	}
+}
+
+// from gives the ring the variable Env read its keys from, unless it has one.
+func (r *ring) from(source string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.source == "" {
+		r.source = source
 	}
 }
 
@@ -446,6 +469,7 @@ func (p *Pool) sendTimes(ctx context.Context, attempts int, send func(key string
 		if err != nil || key == "" {
 			return response, err
 		}
+		p.observe(key, response)
 		rest, refused := p.refused(response)
 		if refused || rejectsKey(response) {
 			p.countRefused(strconv.Itoa(response.StatusCode))
@@ -589,6 +613,9 @@ func (p *Pool) Dial(
 		key := p.Next()
 		endpoint, header := build(key)
 		conn, response, err := dialer.DialContext(ctx, endpoint, header)
+		if response != nil && key != "" {
+			p.observe(key, response)
+		}
 		if err == nil || response == nil || key == "" {
 			return conn, response, key, err
 		}
