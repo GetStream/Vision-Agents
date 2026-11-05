@@ -108,6 +108,10 @@ type Transcriber struct {
 	// retrying has its audio asked for again at its end, or once more speech has come.
 	missed   atomic.Int64
 	retrying bool
+	// endedByCheck is the last utterance a pause check ended (finish), whose words went out
+	// as its final: words of it asked for alone, at a pause no check could rule on, are of an
+	// utterance that is over.
+	endedByCheck atomic.Int64
 
 	// With an agent asking (AskOnPauses), its checks of the pause going on, each run on a
 	// goroutine of its own, and how many of the utterance's pauses were asked about.
@@ -237,7 +241,9 @@ func (t *Transcriber) ask(r request) {
 
 // transcribe asks for words one request at a time, so that they arrive in the order said.
 // Words that come back empty write nothing, and an utterance ends on the last words of its
-// own that didn't.
+// own that didn't. Words of an utterance a pause check has ended since they were asked for
+// are dropped, asked or answered: its final has gone out, and words after it would be taken
+// for the next utterance's.
 func (t *Transcriber) transcribe() {
 	defer close(t.done)
 	var last string
@@ -248,6 +254,9 @@ func (t *Transcriber) transcribe() {
 		case r = <-t.requests:
 		case <-t.ctx.Done():
 			return
+		}
+		if t.overByCheck(r.utterance) {
+			continue
 		}
 		if r.utterance != lastOf {
 			// An utterance whose final was dropped leaves its words behind, which are
@@ -262,6 +271,9 @@ func (t *Transcriber) transcribe() {
 			cancel()
 			if t.ctx.Err() != nil {
 				return
+			}
+			if t.overByCheck(r.utterance) {
+				continue
 			}
 			switch {
 			case err != nil && Misconfigured(err):
@@ -303,6 +315,9 @@ func (t *Transcriber) transcribe() {
 		}
 	}
 }
+
+// overByCheck says a pause check ended utterance, and its words have gone out.
+func (t *Transcriber) overByCheck(utterance int64) bool { return utterance <= t.endedByCheck.Load() }
 
 // Events carries the transcripts back.
 func (t *Transcriber) Events() <-chan stt.Event { return t.emitter.Events() }

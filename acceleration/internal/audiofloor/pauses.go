@@ -271,6 +271,7 @@ func (t *Transcriber) finish(epoch int64) {
 	ruled, asker, participant, utterance := *p.ended, t.asker, p.participant, p.utterance
 	ruled.Words = *p.words
 	audioMs, wordsMs := p.audioMs, p.wordsMs
+	t.endedByCheck.Store(utterance)
 	t.mu.Unlock()
 	if ruled.Words == "" {
 		return

@@ -259,6 +259,39 @@ func (s *PausesSuite) TestATurnACheckEndedWaitsForItsWords() {
 	s.Equal([2]int{1, 0}, [2]int{withWords, transcripts})
 }
 
+// Words asked for alone, at a pause no check could rule on, are of an utterance that is
+// over once a later check has ended it: they are dropped rather than sent after its final,
+// where they would be taken for the next utterance's and answered again.
+func (s *PausesSuite) TestWordsAskedForAloneAreDroppedOnceACheckEndedTheUtterance() {
+	gate := make(chan struct{})
+	s.server.mu.Lock()
+	s.server.failingDecides = 1
+	s.server.transcribeGate = gate
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(220, false)
+	s.answered()
+	// The check failed, so the pause's words are asked for alone, of a server that is slow.
+	s.say(20, false)
+	s.Eventually(func() bool {
+		s.server.mu.Lock()
+		defer s.server.mu.Unlock()
+		return s.server.held == 1
+	}, 5*time.Second, time.Millisecond)
+
+	// The caller goes on, and the next pause's check ends the utterance on its own words.
+	s.say(600, true)
+	s.say(220, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance)
+	s.Len(s.agent.rulings(), 1)
+
+	// The slow words come back: nothing of the utterance follows its final.
+	close(gate)
+	s.none()
+}
+
 // A pause the server can't rule on is left to the words alone, as with no agent.
 func (s *PausesSuite) TestAPauseTheServerCantRuleOnIsLeftToTheWordsAlone() {
 	s.server.mu.Lock()

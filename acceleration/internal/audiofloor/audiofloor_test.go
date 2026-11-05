@@ -63,11 +63,16 @@ type fakeServer struct {
 	refuse int
 	fail   bool
 	info   string
-	// failing is how many transcription requests to answer failWith, before answering, and
-	// failDecide has every decision fail.
-	failing    int
-	failWith   int
-	failDecide bool
+	// failing is how many transcription requests to answer failWith, before answering,
+	// failDecide has every decision fail, and failingDecides the next that many.
+	failing        int
+	failWith       int
+	failDecide     bool
+	failingDecides int
+	// transcribeGate, when set, holds every transcription request until it is closed, and
+	// held counts the requests waiting at it.
+	transcribeGate chan struct{}
+	held           int
 	// decideAfter is how long a decision takes, and wordsAfter how long its words take after
 	// it.
 	decideAfter time.Duration
@@ -121,9 +126,18 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
 		f.audio, f.types = append(f.audio, raw), append(f.types, r.Header.Get("Content-Type"))
 		f.languages = append(f.languages, r.URL.Query().Get("languages"))
+		if gate := f.transcribeGate; gate != nil {
+			f.held++
+			f.mu.Unlock()
+			<-gate
+			f.mu.Lock()
+		}
 		_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q}}`+"\n", f.words)
 	case "/v1/decide":
-		if f.fail || f.failDecide {
+		if f.fail || f.failDecide || f.failingDecides > 0 {
+			if f.failingDecides > 0 {
+				f.failingDecides--
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			return
 		}
