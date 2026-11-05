@@ -511,12 +511,12 @@ func TestALineLabellingAnIDAsAnotherKindOnlyDoubtsALabel(t *testing.T) {
 	// ID beside its own kind, and not a line a call echoes back the ID it was sent in.
 	tools := []string{"list_channels", "send_message", "read_channel"}
 	read := llm.ToolCall{Name: "read_channel", Arguments: `{"channel_id":"C0HELP002"}`}
-	history := func(listed, echoed string) []llm.Message {
+	history := func(listed, echoed, sent string) []llm.Message {
 		return []llm.Message{
 			{Role: llm.User, Content: "What's new?"},
 			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "list_channels", Arguments: `{"query":"help"}`}}},
 			{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"results":"` + listed + `"}`},
-			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "send_message", Arguments: `{"channel_id":"C0HELP002","text":"hi"}`}}},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "send_message", Arguments: sent}}},
 			{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"results":"` + echoed + `"}`},
 		}
 	}
@@ -524,15 +524,18 @@ func TestALineLabellingAnIDAsAnotherKindOnlyDoubtsALabel(t *testing.T) {
 	for _, c := range []struct {
 		name           string
 		listed, echoed string
+		sent           string
 		unfound        bool
 	}{
-		{"a list row and a send's echo", list, "Message posted to: #help (C0HELP002)", false},
-		{"a list row and a name line", list, "Name: #help (C0HELP002)", false},
-		{"a list row and a channel name line", list, "Channel name: #help (C0HELP002)", false},
-		{"a list row and a line whose name holds a colon", list, "Channel: Standup 10:30 (ID: C0HELP002)", false},
-		{"a label line and a send's echo", "Channel: Group DM (ID: C0HELP002)", "Posted to: Group DM (ID: C0HELP002)", false},
+		{"a list row and a send's echo", list, "Message posted to: #help (C0HELP002)", `{"channel_id":"C0HELP002","text":"hi"}`, false},
+		{"a list row and a name line", list, "Name: #help (C0HELP002)", `{"channel_id":"C0HELP002","text":"hi"}`, false},
+		{"a list row and a channel name line", list, "Channel name: #help (C0HELP002)", `{"channel_id":"C0HELP002","text":"hi"}`, false},
+		{"a list row and a line whose name holds a colon", list, "Channel: Standup 10:30 (ID: C0HELP002)", `{"channel_id":"C0HELP002","text":"hi"}`, false},
+		{"a label line and a send's echo", "Channel: Group DM (ID: C0HELP002)", "Posted to: Group DM (ID: C0HELP002)", `{"channel_id":"C0HELP002","text":"hi"}`, false},
+		{"a list row and a name line a call not sent the ID wrote", list, "Name: #help (C0HELP002)", `{"text":"hi"}`, false},
+		{"a label line and a label a call not sent the ID wrote", "Channel: Group DM (ID: C0HELP002)", "From: Ana Lind (ID: C0HELP002)", `{"text":"hi"}`, true},
 	} {
-		_, _, _, unfound := unfoundID(history(c.listed, c.echoed), read, tools, "")
+		_, _, _, unfound := unfoundID(history(c.listed, c.echoed, c.sent), read, tools, "")
 		assert.Equal(t, c.unfound, unfound, c.name)
 	}
 }
