@@ -144,15 +144,17 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		// A line written out gives an ID only beside the word for what it is (besideKind), and
 		// only one the call it answers was not sent: "No bookings found for Ana at 7pm" does
 		// not return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
-		// An ID is the ID of one thing, so no line gives it where a line labels it as another
-		// (labelledAs): after "From: Ana Lind (ID: U0…)", "Channel: Ana Lind (ID: U0…)" names
-		// the sender, not a channel. "Channel: Group DM (ID: C0…)" still gives one, where no
-		// line labels C0… as anything else.
+		// An ID is the ID of one thing, so no line reads a label as giving it where another
+		// line labels it as another kind (labelledAs): after "From: Ana Lind (ID: U0…)",
+		// "Channel: Ana Lind (ID: U0…)" names the sender, not a channel. Only a label is
+		// doubted: a line beside the kind still gives it, and a line the call was sent the ID in
+		// labels nothing. "Channel: Group DM (ID: C0…)" still gives one, where no line labels
+		// C0… as anything else.
 		other := slices.ContainsFunc(lines, func(written line) bool {
-			return slices.ContainsFunc(labelledAs(written.text, wanted), func(label []string) bool { return !labelNames(label, entityOf(name)) })
+			return !strings.Contains(alphanumeric(written.sent), wanted) && slices.ContainsFunc(labelledAs(written.text, wanted), func(label []string) bool { return !labelNames(label, entityOf(name)) })
 		})
-		returned = returned || !other && slices.ContainsFunc(lines, func(written line) bool {
-			return besideKind(written.text, wanted, entityOf(name)) && !strings.Contains(alphanumeric(written.sent), wanted)
+		returned = returned || slices.ContainsFunc(lines, func(written line) bool {
+			return besideKind(written.text, wanted, entityOf(name), !other) && !strings.Contains(alphanumeric(written.sent), wanted)
 		})
 		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
 			return name, text, ids, true
@@ -888,13 +890,14 @@ func idWords(text string) []string {
 // one word, the thing's name, besides the word "ID". Any more ties the ID to another word: in
 // "Channel #x by U0…", U0… is whoever made the channel. A label ends that doubt: in
 // "Channel: Group DM (ID: C0…)" the label "Channel:" opens a field whose value is the name
-// and the ID in brackets, so a name of any length stands between them (labelledAs).
+// and the ID in brackets, so a name of any length stands between them (labelledAs). That
+// reading holds only where labelled is true: no other line labels the ID as another kind.
 //
 // The word for the kind is a word of its own (holdsKind), and not the ID's: "#ops-channel" is
 // a channel's name, not the word "channel", and "public_channel" listed as a channel's type
 // is no channel's ID.
-func besideKind(line, wanted, kind string) bool {
-	if slices.ContainsFunc(labelledAs(line, wanted), func(label []string) bool { return labelNames(label, kind) }) {
+func besideKind(line, wanted, kind string, labelled bool) bool {
+	if labelled && slices.ContainsFunc(labelledAs(line, wanted), func(label []string) bool { return labelNames(label, kind) }) {
 		return true
 	}
 	words := lineWords(line)
