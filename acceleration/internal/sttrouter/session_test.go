@@ -203,8 +203,20 @@ func (s *SessionSuite) TestARefusalTheNextModelTookOverIsAFailoverOfTheRefusingO
 	s.IsType(stt.Transcript{}, s.speakInto(session))
 	s.IsType(stt.Failover{}, s.speakInto(session))
 
-	s.Equal(map[string]float64{"stt live session vendor": 1}, failovertest.Of(s.T(), s.refusing))
+	s.Equal(map[string]float64{"stt session vendor": 1}, failovertest.Of(s.T(), s.refusing))
 	s.Empty(failovertest.Of(s.T(), s.working), "it took the session over")
+}
+
+func (s *SessionSuite) TestASettingTheModelRefusedIsAFailoverUnderRequest() {
+	router := s.router(1, stt.Error{Err: routing.Refused(errors.New(refusal)), Context: "unaccepted_terms", Fatal: true})
+	defer router.Close()
+	session := s.start(router)
+	defer session.Close()
+
+	s.IsType(stt.Transcript{}, s.speakInto(session))
+	s.IsType(stt.Failover{}, s.speakInto(session))
+
+	s.Equal(map[string]float64{"stt session request": 1}, failovertest.Of(s.T(), s.refusing), "a refusal ErrRequest marks is the setting's, not the vendor's")
 }
 
 func (s *SessionSuite) TestARefusalNoOtherModelTookOverIsNoFailover() {

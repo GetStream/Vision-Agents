@@ -157,8 +157,8 @@ func (s *LLMRouterSuite) TestARefusedCustomerKeyFallsBackToTheDeploymentsInstanc
 	s.Equal("hello", response.OutputText)
 	s.Equal([]string{customerKey, deploymentKey}, at.asked(), "the customer's instance, then the deployment's")
 	after := failovertest.Of(s.T(), anthropic.ProviderName)
-	s.Equal(before["llm "+haiku+" session customer_key"]+1, after["llm "+haiku+" session customer_key"])
-	s.Equal(before["llm "+haiku+" session vendor"], after["llm "+haiku+" session vendor"], "the key was the customer's to fix")
+	s.Equal(before["llm session customer_key"]+1, after["llm session customer_key"])
+	s.Equal(before["llm session vendor"], after["llm session vendor"], "the key was the customer's to fix")
 }
 
 func (s *LLMRouterSuite) TestACustomersKeyForTheEUIsNotUsedForAUSInstance() {
