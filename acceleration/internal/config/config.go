@@ -781,6 +781,19 @@ func (c Config) validate() error {
 	default:
 		return fmt.Errorf("config: agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is off, shadow or act, got %q", c.Agent.AudioFloorMode)
 	}
+	if c.Agent.AudioFloorURL != "" {
+		// The client appends its paths and queries to it, so a query or fragment of its own
+		// would be sent as part of them.
+		server, err := url.Parse(c.Agent.AudioFloorURL)
+		switch {
+		case err != nil:
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL): %w", err)
+		case server.Scheme != "http" && server.Scheme != "https", server.Host == "":
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL) is the server's http or https address, got %q", c.Agent.AudioFloorURL)
+		case server.RawQuery != "" || server.Fragment != "":
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL) takes no query or fragment, got %q", c.Agent.AudioFloorURL)
+		}
+	}
 	switch c.Agent.AudioFloorAudio {
 	case "", "opus", "pcm":
 	default:

@@ -874,6 +874,23 @@ func (s *ConfigSuite) TestAnAudioFloorModeNeedsAServer() {
 	s.Equal("act", settings.Agent.AudioFloorMode)
 }
 
+// The server's address is an http or https URL the client appends its paths to, so one with
+// a query or fragment, or of another scheme, is refused when the settings load rather than
+// at the first call.
+func (s *ConfigSuite) TestTheAudioFloorsURLIsAServersAddress() {
+	for _, bad := range []string{"floor:8080", "ftp://floor:8080", "http:///v1", "http://floor:8080/v1?x=1", "http://floor:8080/#v1", "://floor"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_URL", bad)
+		_, _, err := Load("")
+		s.ErrorContains(err, "ROUTER_CHORUS_ASR_URL", bad)
+	}
+	for _, good := range []string{"http://floor:8080", "https://floor.example/chorus-asr/", "http://127.0.0.1:8792"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_URL", good)
+		settings, _, err := Load("")
+		s.Require().NoError(err, good)
+		s.Equal(good, settings.Agent.AudioFloorURL)
+	}
+}
+
 func (s *ConfigSuite) TestAppModeIsRefusedWithoutPostgres() {
 	s.T().Setenv("ROUTER_STREAM_TENANCY", TenancyApp)
 	s.T().Setenv("ROUTER_POSTGRES_DSN", "")
