@@ -88,7 +88,8 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 
 // read is the person's other episode cards, for a session to start with (T56 and T42,
 // AI-885), when its agent config turned the cards on (Spec.EpisodeCards). Off or record,
-// which writes the cards and reads none, nothing is read: no call, no contact map, no Stream Chat, and the session
+// which writes the cards and reads none, nothing is read: no call, no contact map, no Stream
+// Chat, and the session
 // starts with what it did before the cards existed. On:
 //
 //   - a text session on a thread channel reads the cards of the person its thread's episode

@@ -156,9 +156,6 @@ func (b *Bridge) replyTo(ctx context.Context, thread store.ChannelThread) (strin
 	}
 	contact, err := b.store.ThreadContact(ctx, thread.CustomerID, configs[0].ID, chatlog.ChannelType+":"+thread.ChannelID)
 	if errors.Is(err, store.ErrNoContact) {
-		if thread.ChatPerson == "" {
-			return "", nil
-		}
 		return source.recipientOf(thread.ChatPerson), nil
 	}
 	if err != nil {
