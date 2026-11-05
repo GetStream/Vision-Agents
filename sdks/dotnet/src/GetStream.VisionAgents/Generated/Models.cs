@@ -11306,10 +11306,22 @@ namespace GetStream.VisionAgents.Models
         public string? Description { get; set; } = default!;
 
         /// <summary>
-        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+        /// Whose doing end_reason was. Absent while the session is running.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_fault")]
+        public string? EndFault { get; set; } = default!;
+
+        /// <summary>
+        /// Why the session ended. Absent while it is running, and for a session that ended before this was kept.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("end_reason")]
         public string? EndReason { get; set; } = default!;
+
+        /// <summary>
+        /// How far the session had got when it ended. Absent while it is running.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("end_stage")]
+        public string? EndStage { get; set; } = default!;
 
         /// <summary>
         /// The session this one continued from, empty for one opened fresh.

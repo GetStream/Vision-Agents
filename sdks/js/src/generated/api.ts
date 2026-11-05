@@ -8573,8 +8573,12 @@ export type components = {
                 readonly [key: string]: unknown;
             };
             readonly description?: string;
-            /** @description Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped. */
+            /** @description Whose doing end_reason was. Absent while the session is running. */
+            readonly end_fault?: components["schemas"]["SessionEndFault"];
+            /** @description Why the session ended. Absent while it is running, and for a session that ended before this was kept. */
             readonly end_reason?: components["schemas"]["SessionEndReason"];
+            /** @description How far the session had got when it ended. Absent while it is running. */
+            readonly end_stage?: components["schemas"]["SessionEndStage"];
             /** @description The session this one continued from, empty for one opened fresh. */
             readonly forked_from?: string;
             readonly id: string;
@@ -8652,10 +8656,20 @@ export type components = {
             readonly name: string;
         };
         /**
-         * @description Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+         * @description Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
          * @enum {string}
          */
-        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail";
+        readonly SessionEndFault: "none" | "caller" | "router" | "vendor" | "carrier" | "customer_config" | "customer_credit";
+        /**
+         * @description Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
+         * @enum {string}
+         */
+        readonly SessionEndReason: "agent_hangup" | "transferred" | "hangup" | "start" | "unanswered" | "voicemail" | "closed" | "shutdown" | "agent_failed" | "model_failed" | "model_config_refused" | "model_no_credit";
+        /**
+         * @description How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+         * @enum {string}
+         */
+        readonly SessionEndStage: "ringing" | "conversation";
         /** @description Which sessions to list. A field not listed here is refused rather than ignored. */
         readonly SessionFilter: {
             /** @description The agent name the session was opened against. */
