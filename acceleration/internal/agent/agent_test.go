@@ -3864,6 +3864,30 @@ func (s *AgentSuite) TestAskingWhetherAnythingElseIsNeededIsSomethingTheAgentSai
 	s.Empty(s.model.requests(), "asking for a line is not a turn")
 }
 
+// A check-in is a turn the agent took, not a murmur: a caller who talks over it and is ruled
+// to have the floor stops it, as they would a reply. Said as a murmur, it played to its end
+// over a caller the model had ruled should have the floor.
+func (s *AgentSuite) TestACheckInTheCallerTalksOverIsStopped() {
+	s.join(true)
+	s.voice.silent = true
+	s.model.composes = []string{"Are you still with me, or should I hold on?"}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.agent.checkIn(participant, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	turnID := s.agent.floor().Speaking
+	s.Require().NotEmpty(turnID)
+
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: "give me a second stop", Speaking: true, Overheard: true, AudioMs: 1200, WordsMs: 100}
+	pauseAsker{s.agent}.Overheard(participant, stop)
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the check-in played on over the caller")
+	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept saying the check-in")
+	interrupted, _ := firstOf[Interrupted](s.reported())
+	s.Equal(turnID, interrupted.TurnID)
+}
+
 func (s *AgentSuite) TestALineWrittenAfterTheCallerSpokeIsNotSaid() {
 	s.join(true)
 	written := make(chan struct{})

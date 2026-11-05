@@ -2522,7 +2522,7 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 		return
 	}
 
-	turnID := backchannelPrefix + turnStamp()
+	turnID := ownPrefix + turnStamp()
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
