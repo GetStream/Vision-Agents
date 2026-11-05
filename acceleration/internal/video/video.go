@@ -254,8 +254,14 @@ func frameTimes(ctx context.Context, path string) ([]time.Duration, error) {
 			times = append(times, time.Duration(seconds*float64(time.Second)))
 		}
 	}
-	// Wait closes the pipe, so it comes after the last read.
-	if lines.Err() != nil || command.Wait() != nil || len(times) == 0 {
+	if lines.Err() != nil {
+		// ffprobe blocked on a full pipe would never exit; closing it ends its writes.
+		_ = stdout.Close()
+	}
+	// Wait closes the pipe, so it comes after the last read. It runs even when the read
+	// failed, or ffprobe is never reaped.
+	waitErr := command.Wait()
+	if lines.Err() != nil || waitErr != nil || len(times) == 0 {
 		return nil, stack.Wrap(errNotAVideo)
 	}
 	for i := range times {

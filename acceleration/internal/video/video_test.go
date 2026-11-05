@@ -358,6 +358,26 @@ func (s *VideoSuite) TestTheFrameTimesAreReadOnlyFromAFile() {
 	s.False(hit.Load(), "ffprobe fetched the URL")
 }
 
+// A line over the scanner's limit stops the read; ffprobe must still be reaped, or it stays
+// a zombie for as long as the router runs.
+func (s *VideoSuite) TestFfprobeIsReapedWhenItsOutputCannotBeRead() {
+	bin := s.T().TempDir()
+	pidFile := filepath.Join(bin, "pid")
+	script := "#!/bin/sh\necho $$ > " + pidFile + "\nhead -c 200000 /dev/zero | tr '\\0' a\necho\n"
+	s.Require().NoError(os.WriteFile(filepath.Join(bin, "ffprobe"), []byte(script), 0o755))
+	s.T().Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	_, err := frameTimes(s.T().Context(), "clip.mp4")
+
+	s.ErrorContains(err, "not a video ffmpeg can read")
+	raw, readErr := os.ReadFile(pidFile)
+	s.Require().NoError(readErr)
+	var pid int
+	_, scanErr := fmt.Sscan(string(raw), &pid)
+	s.Require().NoError(scanErr)
+	s.ErrorIs(syscall.Kill(pid, 0), syscall.ESRCH, "ffprobe %d was left unreaped", pid)
+}
+
 func (s *VideoSuite) TestTheFrameTimesAreNotReadThroughAnHLSPlaylist() {
 	dir := s.T().TempDir()
 	canary, opened := s.canary(dir)
