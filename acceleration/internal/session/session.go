@@ -258,6 +258,11 @@ type Session struct {
 	runs        map[*agent.Agent]*presence
 	callerSeen  atomic.Bool
 	settledOnce atomic.Bool
+	// caller is the number of the first phone caller to join the call, set once callerHeard
+	// closes (hearCaller). The channel is made on first use.
+	callerMu    sync.Mutex
+	caller      string
+	callerHeard chan struct{}
 	// machine holds the agent's hang-up while a call that leaves a voicemail is checked.
 	machine machineCheck
 	// connectorsUnavailable are the optional connector bindings the session opened without,
