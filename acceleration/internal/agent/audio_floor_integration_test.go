@@ -4,6 +4,7 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -736,13 +737,34 @@ type call struct {
 // start joins an agent to a new call: the chorus-asr model transcribing, and asked as mode
 // says, with the conversation model and the voice stand-ins.
 func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions string, languages []string) *call {
+	return h.startWith(t, callSetup{mode: mode, instructions: instructions, languages: languages})
+}
+
+// callSetup is what a call is started with. A nil client is the harness's, and an empty
+// endOfTurn the one every call chooses (CHORUS_ASR_END_OF_TURN).
+type callSetup struct {
+	mode         audiofloor.Mode
+	instructions string
+	languages    []string
+	client       *audiofloor.Client
+	endOfTurn    *audiofloor.EndOfTurn
+}
+
+// startWith is start, with what setup says.
+func (h *floorHarness) startWith(t *testing.T, setup callSetup) *call {
+	mode, instructions, languages := setup.mode, setup.instructions, setup.languages
+	client := cmp.Or(setup.client, h.client)
+	endOfTurn := h.endOfTurn
+	if setup.endOfTurn != nil {
+		endOfTurn = *setup.endOfTurn
+	}
 	logs := newLogBook(t, filepath.Join(h.logDir, strings.NewReplacer(" ", "-", "/", "-", ",", "").Replace(t.Name())+".jsonl"))
 	logger := slog.New(&logHandler{book: logs, json: slog.NewJSONHandler(logs.file, &slog.HandlerOptions{Level: slog.LevelDebug})})
 	c := &call{t: t, h: h, began: time.Now(), words: &wordLog{}, logs: logs}
 
 	// The router's own factory for the transcriber, with what it writes kept as it goes.
 	real := sttrouter.NewRegistry()
-	sttrouter.RegisterAudioFloor(real, h.client)
+	sttrouter.RegisterAudioFloor(real, client)
 	transcribers := sttrouter.NewRegistry()
 	transcribers.Register(audiofloor.ProviderName, func(spec routing.Spec) (stt.STT, error) {
 		inner, err := real.Build(audiofloor.ProviderName, spec)
@@ -795,9 +817,9 @@ func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions st
 		STTTarget:      audiofloor.ProviderName + "/" + audiofloor.DefaultModel,
 		TTS:            speaker,
 		TTSTarget:      "en-low-latency",
-		AudioFloor:     h.client,
+		AudioFloor:     client,
 		AudioFloorMode: mode,
-		EndOfTurn:      h.endOfTurn,
+		EndOfTurn:      endOfTurn,
 		LanguageHints:  languages,
 		Logger:         logger,
 	})
@@ -1149,6 +1171,8 @@ type replayEdge struct {
 	starts []time.Time
 	played int
 	thrown []time.Time
+	// audible is when each frame of the agent's speech loud enough to hear was played.
+	audible []time.Time
 }
 
 // cue is a line the caller says: when its speech began and ended on the line.
@@ -1293,6 +1317,7 @@ func (e *replayEdge) run() {
 				e.starts = append(e.starts, now)
 			}
 			e.idle = 0
+			e.audible = append(e.audible, now)
 		}
 		n := min(len(e.script), replayFrame)
 		for i, s := range e.script[:n] {
@@ -1349,6 +1374,20 @@ func (e *replayEdge) drops() []time.Time {
 }
 
 func (e *replayEdge) dropped() int { return len(e.drops()) }
+
+// heardBetween is when the caller heard the agent's speech from from up to to, a frame at a
+// time.
+func (e *replayEdge) heardBetween(from, to time.Time) []time.Time {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	var out []time.Time
+	for _, at := range e.audible {
+		if !at.Before(from) && at.Before(to) {
+			out = append(out, at)
+		}
+	}
+	return out
+}
 
 // heard is how much of the agent's speech the caller heard, its pauses too.
 func (e *replayEdge) heard() time.Duration {
