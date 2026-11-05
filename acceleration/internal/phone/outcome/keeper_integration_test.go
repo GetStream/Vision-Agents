@@ -3,6 +3,7 @@
 package outcome
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"errors"
@@ -32,6 +33,8 @@ type KeeperSuite struct {
 	now    time.Time
 	call   Call
 	vendor string
+	// logs is what the keeper logged in the test.
+	logs *bytes.Buffer
 	// before is what each of the vendor's series held when the test began.
 	before map[[2]string]float64
 }
@@ -53,7 +56,8 @@ func (s *KeeperSuite) SetupSuite() {
 
 func (s *KeeperSuite) SetupTest() {
 	s.vendor = "vendor-" + rand.Text()
-	s.keeper = NewKeeper(s.store, func() time.Time { return s.now }, []string{s.vendor}, slog.New(slog.DiscardHandler))
+	s.logs = &bytes.Buffer{}
+	s.keeper = NewKeeper(s.store, func() time.Time { return s.now }, []string{s.vendor}, slog.New(slog.NewTextHandler(s.logs, nil)))
 	s.before = map[[2]string]float64{}
 	for _, direction := range []string{inbound, outbound} {
 		for _, label := range allLabels {
@@ -318,6 +322,7 @@ func (s *KeeperSuite) TestAnInboundCallIsCountedWhenItsLegEnds() {
 	s.inboundEnded(new(s.at(1)), s.at(5))
 
 	s.countedOnce(inbound, string(Completed))
+	s.Empty(s.logs.String(), "a call with no router session, as a worker answers, is no failure")
 }
 
 func (s *KeeperSuite) TestAnInboundCallItsAgentLeftOnTheLineIsCountedDropped() {
@@ -373,4 +378,5 @@ func (s *KeeperSuite) TestASessionThatCannotBeReadLeavesTheCallCountedAsStored()
 	s.inboundEnded(new(s.at(1)), s.at(5))
 
 	s.countedOnce(inbound, string(Completed))
+	s.Contains(s.logs.String(), "could not tell whether a phone call was dropped")
 }
