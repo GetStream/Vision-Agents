@@ -12,7 +12,6 @@ import (
 
 	getstream "github.com/GetStream/getstream-go/v5"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -386,8 +385,9 @@ func (s *LinqSandboxSuite) SetupTest() {
 
 // Catches a one-to-one chat under a config with episode_cards off, which opens no episode, whose
 // replies would reach nobody the sandbox lists: the person a chat's replies reach is its
-// episode's row, and with none it is the chat's one person (ChatPerson), as the sender admit
-// checked. Its reply and a scheduled delivery go out (AI-2856).
+// episode's row, and with none it is the person who started the chat
+// (store.ChannelThreadStarter), as the sender admit checked. Its reply and a scheduled delivery
+// go out (AI-2856).
 func (s *LinqSandboxSuite) TestAOneToOneChatUnderAConfigWithTheCardsOffIsAnswered() {
 	s.config.EpisodeCards = false
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
@@ -400,19 +400,21 @@ func (s *LinqSandboxSuite) TestAOneToOneChatUnderAConfigWithTheCardsOffIsAnswere
 	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
 }
 
-// A group chat under a config with episode_cards off has no episode and no one person, so its
-// replies reach nobody the sandbox lists, and they are held back, as those of a chat an email
-// handle started are. Catches the fallback taken for a group, whose replies reach everyone in it.
-func (s *LinqSandboxSuite) TestAGroupChatUnderAConfigWithTheCardsOffIsHeldBackInTheSandbox() {
+// A group chat under a config with episode_cards off has no episode and no one person, and its
+// replies and scheduled deliveries reach the person who started it (store.ChannelThreadStarter),
+// whom the sandbox lists, as base 518ac7e9f's did through the episode it opened whatever the
+// config said (AI-2856 R1.1). Catches a group chat with no episode whose replies reach nobody,
+// so the sandbox holds them back.
+func (s *LinqSandboxSuite) TestAGroupChatUnderAConfigWithTheCardsOffIsAnswered() {
 	s.config.EpisodeCards = false
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	chat := s.utils.uuid()
 
 	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, s.person, "hi"), true), time.Now()))
 
-	s.Require().Eventually(func() bool { return s.rows("SELECT count(*) FROM channel_threads WHERE customer_id = ?") == 1 },
-		settleFor, 10*time.Millisecond, "the chat's thread")
-	s.ErrorIs(s.reachable(s.threadChannel(chat)), channelbridge.ErrHeldBack)
+	s.Equal(chat, s.took(1)[0].chat, "the reply")
+	s.Zero(s.rows("SELECT count(*) FROM episodes WHERE customer_id = ?"), "no episode")
+	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
 }
 
 // Catches a link that leaves a chat's replies to its set-aside row's address, retired:<id>,

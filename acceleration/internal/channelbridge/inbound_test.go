@@ -196,6 +196,33 @@ func (s *InboundSuite) TestAThreadUnderAConfigWithTheCardsOffOpensNoEpisodeAndIs
 	s.Zero(s.episodes(), "no episode")
 	s.Zero(s.omniRequests(), "nothing asked of an omni-channel")
 	s.NotContains(s.logs.String(), "could not open the episode")
+	starter, err := s.store.ChannelThreadStarter(s.ctx, thread.ChannelID)
+	s.Require().NoError(err)
+	s.Empty(starter, "a Slack thread is no chat, and has no starter")
+}
+
+// A Linq chat with no episode, under a config with episode_cards off, still names the person
+// who started it, the one its first message's episode would have: the first author the bridge
+// admitted whom the contact map keys, in E.164. A later author does not take the chat over, and
+// an email handle starts none (AI-2856 R1.1). Catches a chat with no starter, whose replies
+// reach nobody the sandbox lists, one the latest author takes over, and a starter written as
+// the author wrote their number rather than as the contact map keys it.
+func (s *InboundSuite) TestAChatWithNoEpisodeNamesThePersonWhoStartedIt() {
+	s.cardsMode(false, false)
+	thread := s.thread("linq")
+	s.queueLinqBy(thread, "m0", "pat@example.com", true)
+	s.queueLinqBy(thread, "m1", "+1 650-555-0100", true)
+	s.queueLinqBy(thread, "m2", "+16505550199", true)
+
+	s.bridge(nil)
+
+	for _, id := range []string{"m0", "m1", "m2"} {
+		s.Require().Eventually(func() bool { return s.row(thread, id).State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond, id)
+	}
+	s.Zero(s.episodes())
+	starter, err := s.store.ChannelThreadStarter(s.ctx, thread.ChannelID)
+	s.Require().NoError(err)
+	s.Equal("+16505550100", starter)
 }
 
 // record writes the thread's card as on does, though no session reads it (AI-2856). Catches
@@ -1284,10 +1311,15 @@ func (s *InboundSuite) TestAdmitDecidesTheChatPersonFromTheMessageAlone() {
 
 // queueLinq queues a Linq message of U0000ALICE in thread, whose raw event says whether the chat is a group.
 func (s *InboundSuite) queueLinq(thread store.ChannelThread, providerMessageID string, isGroup bool) {
+	s.queueLinqBy(thread, providerMessageID, "U0000ALICE", isGroup)
+}
+
+// queueLinqBy queues a Linq message of author in thread, whose raw event says whether the chat is a group.
+func (s *InboundSuite) queueLinqBy(thread store.ChannelThread, providerMessageID, author string, isGroup bool) {
 	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
 		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
-		ConfigID: s.config.ID, ConfigName: s.config.Name, AuthorID: "U0000ALICE", Text: "hi",
+		ConfigID: s.config.ID, ConfigName: s.config.Name, AuthorID: author, Text: "hi",
 		Raw: []byte(fmt.Sprintf(`{"data":{"chat":{"is_group":%t}}}`, isGroup)), NextAttemptAt: time.Now(),
 	}, nil)
 	s.Require().NoError(err)

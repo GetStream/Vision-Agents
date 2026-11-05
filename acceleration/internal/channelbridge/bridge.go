@@ -818,6 +818,23 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 	})
 }
 
+// recordStarter records the author of a chat's message as the person who started the chat
+// (store.SetChannelThreadStarter), at the step whose message would open the chat's episode, so
+// the first one the bridge admits names them whatever the config's episode_cards: the person
+// its replies reach while it has no episode (replyTo). An author the contact map cannot key,
+// such as an email handle, starts no chat, as they open no episode.
+func (b *Bridge) recordStarter(ctx context.Context, thread store.ChannelThread, message core.InboundMessage) error {
+	source := episodeSources[message.ConnectorID]
+	if !source.chats {
+		return nil
+	}
+	person, err := source.person(message.ProviderUnitID, message.AuthorID)
+	if err != nil {
+		return nil
+	}
+	return b.store.SetChannelThreadStarter(ctx, thread.ChannelID, person.Address)
+}
+
 // queuedEpisode opens the episode of a queued message (episode) under its agent config as the
 // store holds it now: the row names the config alone, and whether it writes cards
 // (store.AgentConfig.WritesCards) is the config's to say when the message is written, so a
