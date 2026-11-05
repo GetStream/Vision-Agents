@@ -349,6 +349,50 @@ func (s *DataMoveSuite) TestFollowingAnExpiredRecordingGivesUpOnARepeatableReadW
 	s.Require().NoError(stranger.tx.Rollback())
 }
 
+// The start and the wait after it share one bound, not one each: a repeatable read write holds the
+// start for most of the bound and a read committed write stays open past what is left of it.
+func (s *DataMoveSuite) TestAnExportSpendsOneBoundOnTheStartAndTheWaitTogether() {
+	s.skipOnARouterWithShards()
+	stranger := s.openWrite("another-app-" + s.utils.uuid())
+	looked := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(2 * time.Second)
+	go func() {
+		time.Sleep(1400 * time.Millisecond)
+		_ = looked.tx.Rollback()
+		time.Sleep(1600 * time.Millisecond)
+		_ = stranger.tx.Rollback()
+	}()
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), "still open")
+}
+
+// A repeatable read write that looked before the export, and ends within the bound, only delays it.
+func (s *DataMoveSuite) TestAnExportStartWaitsForARepeatableReadWriteThatEndsWithinTheBound() {
+	s.skipOnARouterWithShards()
+	looked := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(5 * time.Second)
+	go func() { time.Sleep(500 * time.Millisecond); _ = looked.tx.Rollback() }()
+
+	s.export()
+}
+
+// Following the changes of an expired recording waits for such a write within the bound too.
+func (s *DataMoveSuite) TestFollowingAnExpiredRecordingWaitsForARepeatableReadWriteThatEndsWithinTheBound() {
+	s.skipOnARouterWithShards()
+	s.export()
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+	looked := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(5 * time.Second)
+	go func() { time.Sleep(500 * time.Millisecond); _ = looked.tx.Rollback() }()
+
+	status, _ := s.serverClient.call(http.MethodGet, "/v1/data/changes?after=0", nil)
+	s.Equal(http.StatusOK, status)
+}
+
 // A shard's tables record no changes, so a write to one after the export would never reach the
 // changes: a router with a shard of its own refuses to be the source, before it records anything.
 func (s *DataMoveSuite) TestARouterWithAShardOfItsOwnRefusesToBeTheSource() {
