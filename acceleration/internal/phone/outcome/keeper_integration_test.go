@@ -4,11 +4,16 @@ package outcome
 
 import (
 	"context"
+	"crypto/rand"
+	"errors"
+	"log/slog"
 	"os"
+	"sync"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/prometheus/client_golang/prometheus/testutil"
 	"github.com/stretchr/testify/suite"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
@@ -16,7 +21,8 @@ import (
 )
 
 // KeeperSuite keeps calls in a real Postgres. Each test places its calls under a customer of
-// its own, so tests never see each other's rows.
+// its own, so tests never see each other's rows, at a vendor of its own, so it reads only the
+// calls it counted.
 type KeeperSuite struct {
 	suite.Suite
 	ctx    context.Context
@@ -24,6 +30,9 @@ type KeeperSuite struct {
 	keeper *Keeper
 	now    time.Time
 	call   Call
+	vendor string
+	// before is what each of the vendor's series held when the test began.
+	before map[[2]string]float64
 }
 
 func TestKeeperSuite(t *testing.T) { suite.Run(t, new(KeeperSuite)) }
@@ -39,10 +48,17 @@ func (s *KeeperSuite) SetupSuite() {
 	s.Require().NoError(opened.Migrate(s.ctx))
 	s.store = opened
 	s.T().Cleanup(func() { s.Require().NoError(opened.Close()) })
-	s.keeper = NewKeeper(opened, func() time.Time { return s.now })
 }
 
 func (s *KeeperSuite) SetupTest() {
+	s.vendor = "vendor-" + rand.Text()
+	s.keeper = NewKeeper(s.store, func() time.Time { return s.now }, []string{s.vendor}, slog.New(slog.DiscardHandler))
+	s.before = map[[2]string]float64{}
+	for _, direction := range []string{inbound, outbound} {
+		for _, label := range allLabels {
+			s.before[[2]string{direction, label}] = testutil.ToFloat64(callOutcomes.WithLabelValues(s.vendor, direction, label))
+		}
+	}
 	s.now = time.Now().UTC().Truncate(time.Second)
 	s.call = Call{
 		Key: Key{
@@ -52,9 +68,60 @@ func (s *KeeperSuite) SetupTest() {
 			Local:      "+15125550100",
 			Remote:     "+15125550199",
 		},
-		Vendor:  "telnyx",
+		Vendor:  s.vendor,
 		Reports: true,
 	}
+}
+
+// allLabels is every outcome a call is counted under.
+var allLabels = []string{string(Completed), string(Busy), string(NoAnswer), string(Failed), string(Canceled),
+	string(Unknown), dropped}
+
+// counted is every series of the test's vendor that grew in the test, by direction and outcome.
+func (s *KeeperSuite) counted() map[[2]string]float64 {
+	grew := map[[2]string]float64{}
+	for series, before := range s.before {
+		if now := testutil.ToFloat64(callOutcomes.WithLabelValues(s.vendor, series[0], series[1])); now != before {
+			grew[series] = now - before
+		}
+	}
+	return grew
+}
+
+// countedOnce checks the test counted one call, under direction and label.
+func (s *KeeperSuite) countedOnce(direction, label string) {
+	s.Equal(map[[2]string]float64{{direction, label}: 1}, s.counted())
+}
+
+// at is the suite's clock and n seconds.
+func (s *KeeperSuite) at(n int) time.Time { return s.now.Add(time.Duration(n) * time.Second) }
+
+// placedAnew places the suite's call into a Stream call of its own and returns its token.
+func (s *KeeperSuite) placedAnew() string {
+	s.call.CallID = "call-" + uuid.NewString()
+	return s.placed()
+}
+
+func (s *KeeperSuite) reported(token string, reported Outcome) {
+	_, err := s.keeper.Reported(s.ctx, token, reported, string(reported))
+	s.Require().NoError(err)
+}
+
+func (s *KeeperSuite) answered(at time.Time) {
+	s.Require().NoError(s.keeper.Answered(s.ctx, s.call.Key, at))
+}
+
+// ended ends the placed call's leg at at.
+func (s *KeeperSuite) ended(at time.Time) {
+	s.Require().NoError(s.keeper.Ended(s.ctx, s.call.Key, at, Leg{Vendor: s.vendor}))
+}
+
+// sessionClosed keeps the router's session of the suite's call, closed at at for reason.
+func (s *KeeperSuite) sessionClosed(at time.Time, reason string) {
+	s.Require().NoError(s.store.SaveSession(s.ctx, &store.AgentSession{
+		ID: s.call.CallID, CustomerID: s.call.CustomerID, CallType: s.call.CallType, CallID: s.call.CallID,
+	}))
+	s.Require().NoError(s.store.CloseSession(s.ctx, s.call.CallID, at, reason))
 }
 
 func (s *KeeperSuite) placed() string {
@@ -70,7 +137,7 @@ func (s *KeeperSuite) TestAPlacedCallIsReadBack() {
 	call, err := s.keeper.Read(s.ctx, s.call.CustomerID, s.call.CallID)
 	s.Require().NoError(err)
 	s.Equal(s.call.Key, call.Key)
-	s.Equal("telnyx", call.Vendor)
+	s.Equal(s.vendor, call.Vendor)
 	s.True(call.Reports)
 	s.Equal("vendor-call", call.VendorCallID)
 	s.Equal(s.now, call.PlacedAt.UTC())
@@ -94,7 +161,7 @@ func (s *KeeperSuite) TestAReportOnAnUnknownTokenIsUnknown() {
 
 func (s *KeeperSuite) TestAJoinOnACallWithNoRowIsNothing() {
 	s.NoError(s.keeper.Answered(s.ctx, s.call.Key, s.now))
-	s.NoError(s.keeper.Ended(s.ctx, s.call.Key, s.now))
+	s.NoError(s.keeper.Ended(s.ctx, s.call.Key, s.now, Leg{Vendor: s.vendor}))
 }
 
 func (s *KeeperSuite) TestAKeyMatchesByItsOwnNumbersOnly() {
@@ -132,4 +199,146 @@ func (s *KeeperSuite) TestReadManyOmitsCallsWithNoRow() {
 	s.Require().NoError(err)
 	s.Len(calls, 1)
 	s.Equal(s.call.Key, calls[s.call.CallID].Key)
+}
+
+func (s *KeeperSuite) TestABusyCallIsCountedOnceWhenItsLegEnds() {
+	token := s.placed()
+	s.reported(token, Busy)
+	s.Empty(s.counted(), "the phone may still join")
+
+	s.ended(s.at(1))
+	s.ended(s.at(2))
+
+	s.countedOnce(outbound, string(Busy))
+}
+
+func (s *KeeperSuite) TestAReportAfterTheEndCountsNothingMore() {
+	token := s.placed()
+	s.ended(s.at(1))
+
+	s.reported(token, Busy)
+
+	s.countedOnce(outbound, string(NoAnswer))
+}
+
+func (s *KeeperSuite) TestAnAnsweredCallIsCountedOnceAsCompletedWhateverTheOrderOfItsEvents() {
+	orders := map[string]func(token string){
+		"reported, answered, ended": func(token string) { s.reported(token, Completed); s.answered(s.at(1)); s.ended(s.at(2)) },
+		"answered, reported, ended": func(token string) { s.answered(s.at(1)); s.reported(token, NoAnswer); s.ended(s.at(2)) },
+		"busy, answered, ended":     func(token string) { s.reported(token, Busy); s.answered(s.at(1)); s.ended(s.at(2)) },
+		"answered, ended, reported": func(token string) { s.answered(s.at(1)); s.ended(s.at(2)); s.reported(token, Busy) },
+		"answered, ended twice":     func(string) { s.answered(s.at(1)); s.ended(s.at(2)); s.ended(s.at(3)) },
+	}
+	for name, order := range orders {
+		order(s.placedAnew())
+		call, err := s.keeper.Read(s.ctx, s.call.CustomerID, s.call.CallID)
+		s.Require().NoError(err)
+		s.Equal(Completed, call.Outcome, name)
+	}
+
+	s.Equal(map[[2]string]float64{{outbound, string(Completed)}: float64(len(orders))}, s.counted())
+}
+
+func (s *KeeperSuite) TestALegEndingTwiceAtOnceIsCountedOnce() {
+	s.placed()
+	s.answered(s.at(1))
+
+	var ending sync.WaitGroup
+	errs := make([]error, 8)
+	for i := range errs {
+		ending.Go(func() { errs[i] = s.keeper.Ended(s.ctx, s.call.Key, s.at(2), Leg{Vendor: s.vendor}) })
+	}
+	ending.Wait()
+	s.Require().NoError(errors.Join(errs...))
+
+	s.countedOnce(outbound, string(Completed))
+}
+
+func (s *KeeperSuite) TestACallWhoseAgentLeftItOnTheLineIsCountedDroppedAndStoredCompleted() {
+	s.placed()
+	s.answered(s.at(1))
+	s.sessionClosed(s.at(5), "")
+
+	s.ended(s.at(9))
+
+	s.countedOnce(outbound, dropped)
+	call, err := s.keeper.Read(s.ctx, s.call.CustomerID, s.call.CallID)
+	s.Require().NoError(err)
+	s.Equal(Completed, call.Outcome, "what is stored stays as it was")
+}
+
+func (s *KeeperSuite) TestACallItsAgentHungUpIsCountedCompleted() {
+	s.placed()
+	s.answered(s.at(1))
+	s.sessionClosed(s.at(5), "agent_hangup")
+
+	s.ended(s.at(6))
+
+	s.countedOnce(outbound, string(Completed))
+}
+
+func (s *KeeperSuite) TestACallWhoseSessionClosedAfterThePhoneLeftIsCountedCompleted() {
+	s.placed()
+	s.answered(s.at(1))
+	s.sessionClosed(s.at(9), "")
+
+	s.ended(s.at(5))
+
+	s.countedOnce(outbound, string(Completed))
+}
+
+func (s *KeeperSuite) TestAnUnansweredCallIsNeverCountedDropped() {
+	s.placed()
+	s.sessionClosed(s.at(1), "")
+
+	s.ended(s.at(5))
+
+	s.countedOnce(outbound, string(NoAnswer))
+}
+
+func (s *KeeperSuite) TestAVendorTheKeeperDoesNotNameIsCountedAsOther() {
+	other := testutil.ToFloat64(callOutcomes.WithLabelValues(otherVendor, outbound, string(NoAnswer)))
+	s.call.Vendor = "unnamed-" + rand.Text()
+	s.placed()
+
+	s.ended(s.at(1))
+
+	s.Equal(1.0, testutil.ToFloat64(callOutcomes.WithLabelValues(otherVendor, outbound, string(NoAnswer)))-other)
+	s.Zero(testutil.ToFloat64(callOutcomes.WithLabelValues(s.call.Vendor, outbound, string(NoAnswer))))
+}
+
+// inboundEnded ends the leg of a call that arrived on the suite's numbers, answered at answered.
+func (s *KeeperSuite) inboundEnded(answered *time.Time, at time.Time) {
+	leg := Leg{Vendor: s.vendor, Inbound: true, AnsweredAt: answered}
+	s.Require().NoError(s.keeper.Ended(s.ctx, s.call.Key, at, leg))
+}
+
+func (s *KeeperSuite) TestAnInboundCallIsCountedWhenItsLegEnds() {
+	s.inboundEnded(new(s.at(1)), s.at(5))
+
+	s.countedOnce(inbound, string(Completed))
+}
+
+func (s *KeeperSuite) TestAnInboundCallItsAgentLeftOnTheLineIsCountedDropped() {
+	s.sessionClosed(s.at(3), "")
+
+	s.inboundEnded(new(s.at(1)), s.at(5))
+
+	s.countedOnce(inbound, dropped)
+}
+
+func (s *KeeperSuite) TestATransfersLegIsNotCounted() {
+	s.answered(s.at(1))
+
+	s.ended(s.at(5))
+
+	s.Empty(s.counted())
+}
+
+func (s *KeeperSuite) TestASessionThatCannotBeReadLeavesTheCallCountedAsStored() {
+	s.call.CustomerID = ""
+
+	s.inboundEnded(new(s.at(1)), s.at(5))
+
+	s.countedOnce(inbound, string(Completed))
 }

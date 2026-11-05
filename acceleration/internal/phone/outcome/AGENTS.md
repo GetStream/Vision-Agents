@@ -1,0 +1,64 @@
+# internal/phone/outcome
+
+How each phone call ended. The `Keeper` keeps one row per call the router placed
+(`phone_calls`), and `decide` (`outcome.go`) is the one place that turns the vendor's reports
+and the phone's join and leave into its stored outcome: `completed`, `busy`, `no_answer`,
+`failed`, `canceled` or `unknown`. The API and billing read those values: add to them, never
+change one.
+
+## The metric
+
+`router_phone_call_outcomes_total{vendor, direction, outcome}` (`metric.go`) counts each call
+once, when its leg first ends. `phone.Service.tell` (`internal/phone/legs.go`) tells the
+`Keeper` every leg end: a phone leaving, the Stream call ending, or the leg sweep.
+
+| Label | Values |
+| --- | --- |
+| `vendor` | a vendor of `internal/phone/phone.yaml`, or `sip_trunk`; any other name is `other` |
+| `direction` | `outbound`: a call the router placed. `inbound`: a call that arrived on a number |
+| `outcome` | the stored outcome, or `dropped`. An inbound call is `completed` or `dropped` |
+
+Series: at most (vendors + 2) × 9 (7 outbound outcomes, 2 inbound).
+
+Count once, whatever the order of events:
+
+- **Outbound**: the event that first sets the row's `ended_at` counts the call, under the row's
+  lock (`Keeper.decide`). A second end, or a vendor report after the end, counts nothing.
+- **Inbound**: the store ends a leg once (`ended_at IS NULL` in `internal/store/calllegs.go`),
+  and an inbound leg is never revived, so each end the `Keeper` is told is a new call.
+- **Not counted**: a transfer's leg (an outbound leg with no row), and a dial the vendor
+  refused (`Keeper.Failed`: it never rang; `router_requests_total` counts the failed dial).
+- **Known gap**: a join that Stream delivers again after the call ended revives the leg
+  (`ConnectCallLeg`), and the stored outcome becomes `completed`. The call was already counted
+  under the outcome known at its first end (`no_answer`, or `unknown`), and it is not counted again.
+
+## What a dropped call is
+
+A dropped call is an answered call that the router's agent left on the line: the call's
+session closed before the phone left, for a reason that does not end the call. The caller then
+hears nobody. Its stored outcome stays `completed`; only the metric says `dropped`.
+
+The signal is the session row (`agent_sessions`, id = the Stream call id, as for a placed call
+and an inbound call the router answers), read when the answered leg ends (`leftOnTheLine`):
+
+- `closed_at` is at or before the leg's end, and
+- `end_reason` is not one that ends the call (`EndsTheCall`): `agent_hangup` and `voicemail`
+  end the Stream call, `transferred` leaves the caller with a person, and `hangup` comes after
+  the caller left. An empty reason (the session was stopped, failed, or the router shut down)
+  and `start` or `unanswered` (the agent gave up before the phone joined) count as dropped.
+
+| Case | Signal | Counted as |
+| --- | --- | --- |
+| The person hangs up | the phone leaves while the session is open | `completed` |
+| The agent hangs up (`end_call`) | session end reason `agent_hangup` | `completed` |
+| The agent stops, fails or the router shuts down mid-call | session closed with an empty reason before the phone left | `dropped` |
+| The phone joins after the agent gave up waiting | session closed with `start` or `unanswered` before the phone left | `dropped` |
+| The network or the vendor cuts the call | none: the phone leaves, as when the person hangs up. The vendors' reports carry no hang-up cause (`phone.CallStatus`) | `completed` (not detected) |
+| The router process dies without closing the session | none: the session row stays open | `completed` (not detected) |
+| The session close is written after the phone left (the person hangs up within the records writer's delay) | `closed_at` is not yet written when the leg ends | `completed` (not detected) |
+| An inbound call a worker answers (dispatch, no router session) | none: no session row | `completed` (not detected) |
+| Nothing says the leg ended (lost events) | the leg sweep ends it at `MaxCallLength`, logged at ERROR | its stored outcome |
+| The session row cannot be read | a store error, logged at WARN | its stored outcome |
+
+An alert on the share of failed or dropped calls per vendor reads
+`outcome=~"failed|dropped"` over all outcomes of that vendor and direction.
