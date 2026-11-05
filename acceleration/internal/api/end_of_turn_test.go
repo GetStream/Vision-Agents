@@ -56,8 +56,8 @@ func (s *EndOfTurnSuite) refusedSync(endOfTurn any) (int, string) {
 // the config runs by it.
 func (s *EndOfTurnSuite) TestASyncStoresTheChoiceAndTheConfigServesIt() {
 	for name, chosen := range map[string]EndOfTurn{
-		"by-wait":   {MaxWaitMs: pointerTo(900)},
-		"by-preset": {Preset: pointerTo("fast")},
+		"by-wait":   {MaxWaitMs: pointerTo(1200)},
+		"by-preset": {Preset: pointerTo("safe")},
 		"by-bars":   {Bars: &[]EndOfTurnBar{{FromMs: 0, Bar: 0.97}, {FromMs: 900, Bar: 0.25}}},
 	} {
 		synced := s.sync(name, "v1", chosen)
@@ -73,6 +73,15 @@ func (s *EndOfTurnSuite) TestASyncStoresTheChoiceAndTheConfigServesIt() {
 		s.Equal(endOfTurnOr(store.EndOfTurn{}, &chosen), stored.EndOfTurn, name)
 		s.Equal(stored.EndOfTurn, specOf(CreateSessionRequest{}, s.customerID(), &stored).EndOfTurn, name)
 	}
+}
+
+// A wait whose point fails the dictation guard is kept, and the sync says what the point was
+// measured to do to callers reading out a number.
+func (s *EndOfTurnSuite) TestASyncIsToldOfAPointThatFailsTheDictationGuard() {
+	synced := s.sync("eager", "v1", map[string]any{"max_wait_ms": 800})
+	s.Equal(&EndOfTurn{MaxWaitMs: pointerTo(800)}, synced.Config.EndOfTurn)
+	s.Equal([]string{"end_of_turn chooses the 500 ms point, which fails the dictation guard: it ended 9 of 9 slow counts before their last number, " +
+		"and 16.0% of real pauses inside a dictated number, ID or spelled name; an agent whose callers read those out wants a point that passes"}, synced.Warnings)
 }
 
 // Left out, the stored choice stays, as every setting a directory leaves out does; an empty
@@ -92,7 +101,7 @@ func (s *EndOfTurnSuite) TestASyncRefusesAChoiceTheServerCannotRunWithAClearErro
 		says      string
 	}{
 		{map[string]any{"preset": "eager"}, `end_of_turn.preset: there is no preset "eager"; the model's are fast and safe`},
-		{map[string]any{"max_wait_ms": 400}, "end_of_turn.max_wait_ms is 400, under every wait the model was measured at: the quickest has a caller wait 600 ms at p90"},
+		{map[string]any{"max_wait_ms": 400}, "end_of_turn.max_wait_ms is 400, under every wait the model was measured at: the quickest has a caller wait 800 ms at p90"},
 		{map[string]any{"max_wait_ms": 900, "preset": "fast"}, "end_of_turn names max_wait_ms and preset: it takes one of max_wait_ms, preset and bars"},
 		{map[string]any{"bars": []map[string]any{{"from_ms": 300, "bar": 0.9}}}, "end_of_turn.bars[0].from_ms is 300: the first bar begins at 0 ms into the pause"},
 		{map[string]any{"bars": []map[string]any{{"from_ms": 0, "bar": 0.9}, {"from_ms": 900, "bar": 0.3}, {"from_ms": 600, "bar": 0.2}}},

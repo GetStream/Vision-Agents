@@ -14,13 +14,17 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// chorusASRInfo is what a chorus-asr server publishes: two presets, and a measured frontier
-// whose quickest point has a caller wait 600 ms at p90.
-const chorusASRInfo = `{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0,"interval_ms":300,"cap_ms":2500,"default":"safe",` +
-	`"presets":{"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}]},"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}]}},` +
-	`"frontier":[` +
-	`{"max_wait_ms":600,"bars":[{"from_ms":0,"bar":0.7},{"from_ms":300,"bar":0.35}],"measured":{"cut_ins":0.15,"answer_ms_median":400,"answer_ms_p90":600,"dictation_pauses_cut":0.4}},` +
-	`{"max_wait_ms":1200,"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"measured":{"cut_ins":0.045,"answer_ms_median":1100,"answer_ms_p90":1100,"dictation_pauses_cut":0.126}}]}}`
+// chorusASRInfo is what a chorus-asr server publishes: presets naming the points of its
+// measured frontier, whose quickest has a caller wait 800 ms at p90 and fails the dictation
+// guard.
+const chorusASRInfo = `{"template":"t","end_of_turn":{"first_check_ms":200,"first_pause_logit":0,"interval_ms":300,"cap_ms":2500,` +
+	`"default":"safe","presets":{"safe":1100,"fast":500},"frontier":[` +
+	`{"max_wait_ms":500,"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}],"checks_in_a_row":1,` +
+	`"measured":{"cut_ins":0.1451,"answer_ms_median":500,"answer_ms_p90":800,"dictation_pauses_cut":0.16,"slow_counts_cut":9,"slow_counts":9,"dictation_guard":false}},` +
+	`{"max_wait_ms":1100,"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"checks_in_a_row":1,` +
+	`"measured":{"cut_ins":0.0454,"answer_ms_median":1100,"answer_ms_p90":1100,"dictation_pauses_cut":0.1257,"slow_counts_cut":0,"slow_counts":9,"dictation_guard":true}},` +
+	`{"max_wait_ms":1400,"bars":[{"from_ms":0,"bar":0.99},{"from_ms":1100,"bar":0.2}],"checks_in_a_row":2,` +
+	`"measured":{"cut_ins":0.0307,"answer_ms_median":1400,"answer_ms_p90":1400,"dictation_pauses_cut":0.1057,"slow_counts_cut":0,"slow_counts":9,"dictation_guard":true}}]}}`
 
 // chorusASRServer is a chorus-asr server answering /v1/info with info, or 500 when info is
 // empty, and counting the times it was asked.
@@ -49,8 +53,8 @@ func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishes(t *testing.T) {
 	s := serverAsking(client, audiofloor.Act)
 	for _, chosen := range []store.EndOfTurn{
 		{},
-		{Preset: "fast"},
-		{MaxWaitMs: 600},
+		{Preset: "safe"},
+		{MaxWaitMs: 1100},
 		{MaxWaitMs: 5000},
 		{Bars: []store.EndOfTurnBar{{FromMs: 0, Bar: 0.9}, {FromMs: 800, Bar: 0.4}}},
 	} {
@@ -58,12 +62,19 @@ func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishes(t *testing.T) {
 		require.True(t, ok, "%+v: %s", chosen, message)
 		require.Empty(t, warning)
 	}
+	// A point that fails the dictation guard is kept, and the app is told what it does.
+	for _, chosen := range []store.EndOfTurn{{Preset: "fast"}, {MaxWaitMs: 800}} {
+		warning, message, ok := s.endOfTurnComplaint(context.Background(), chosen, store.EndOfTurn{})
+		require.True(t, ok, "%+v: %s", chosen, message)
+		require.Equal(t, "end_of_turn chooses the 500 ms point, which fails the dictation guard: it ended 9 of 9 slow counts before their last number, "+
+			"and 16.0% of real pauses inside a dictated number, ID or spelled name; an agent whose callers read those out wants a point that passes", warning)
+	}
 	for _, c := range []struct {
 		chosen store.EndOfTurn
 		says   string
 	}{
 		{store.EndOfTurn{Preset: "eager"}, `end_of_turn.preset: there is no preset "eager"; the model's are fast and safe`},
-		{store.EndOfTurn{MaxWaitMs: 300}, "end_of_turn.max_wait_ms is 300, under every wait the model was measured at: the quickest has a caller wait 600 ms at p90"},
+		{store.EndOfTurn{MaxWaitMs: 500}, "end_of_turn.max_wait_ms is 500, under every wait the model was measured at: the quickest has a caller wait 800 ms at p90"},
 		{store.EndOfTurn{MaxWaitMs: 900, Preset: "fast"}, "end_of_turn names max_wait_ms and preset: it takes one of max_wait_ms, preset and bars"},
 		{store.EndOfTurn{Bars: []store.EndOfTurnBar{{FromMs: 100, Bar: 0.9}}}, "end_of_turn.bars[0].from_ms is 100: the first bar begins at 0 ms into the pause"},
 		{store.EndOfTurn{Bars: []store.EndOfTurnBar{{FromMs: 0, Bar: 0.9}, {FromMs: 0, Bar: 0.5}}}, "end_of_turn.bars[1].from_ms is 0, not after bars[0]'s 0"},

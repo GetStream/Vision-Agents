@@ -41,7 +41,7 @@ The two agents end their turns by the server's default. An agent chooses otherwi
 `end_of_turn` on its config (`POST /v1/agents/sync`, `PATCH /v1/agents/configs/{id}`), or a
 server-side `createSession` for one session: one of `max_wait_ms` (the measured point with the
 fewest cut-ins that answers within it at p90), `preset` (one of the server's, such as `safe`
-or `fast`) or `bars` of your own. `max_wait_ms` needs a server whose policy publishes measured
-points; the router refuses the sync with the presets to use instead when it publishes none.
-The trade-off each choice makes is in
+or `fast`) or `bars` of your own. A wait under the quickest point's p90 is refused, and one
+whose point fails the dictation guard is kept with a warning saying what it does to callers
+reading out numbers. The trade-off each point makes is in
 [acceleration/deploy/chorus-asr](../../../acceleration/deploy/chorus-asr/README.md#how-eager-turn-taking-is-end_of_turn).

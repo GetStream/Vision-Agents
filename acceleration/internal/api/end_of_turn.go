@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"fmt"
 	"reflect"
+	"strconv"
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -15,17 +17,18 @@ import (
 // EndOfTurn is an agent's choice of how eager chorus-asr's turn-taking is.
 type EndOfTurn struct {
 	MaxWaitMs *int            `json:"max_wait_ms,omitempty" minimum:"1" example:"900" doc:"The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's."`
-	Preset    *string         `json:"preset,omitempty" minLength:"1" example:"safe" doc:"One of the presets the chorus-asr server publishes, by name, such as safe or fast. Refused when the server publishes none by that name."`
-	Bars      *[]EndOfTurnBar `json:"bars,omitempty" minItems:"1" maxItems:"16" doc:"Bars of the agent's own: the first from 0 ms, each later one from further into the pause. At each check of a pause, the turn has ended when p_eot reaches the last bar to have begun."`
+	Preset    *string         `json:"preset,omitempty" minLength:"1" example:"safe" doc:"One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name."`
+	Bars      *[]EndOfTurnBar `json:"bars,omitempty" minItems:"1" maxItems:"16" doc:"Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers."`
 }
 
 func (*EndOfTurn) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "When chorus-asr has a caller's turn ended, where the router asks it about " +
 		"turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. " +
-		"Whichever is named replaces only the bars: when a pause is checked, how much more a turn's " +
-		"first pause asks, and the pause that ends a turn whatever the model says stay the server's. " +
-		"What a preset or a wait means is the policy of the model the server runs, read when a pause " +
-		"is checked; one that model no longer publishes ends turns by its default."
+		"A preset or a wait chooses one of the server's measured points: its bars, and how many checks " +
+		"in a row of one pause must reach them. When a pause is checked, how much more a turn's first " +
+		"pause asks, and the pause that ends a turn whatever the model says stay the server's. What a " +
+		"preset or a wait means is the policy of the model the server runs, read when a pause is " +
+		"checked; one that model no longer publishes ends turns by its default."
 	schema.AdditionalProperties = false
 	return schema
 }
@@ -104,7 +107,8 @@ func asksAboutTurns(client *audiofloor.Client, mode audiofloor.Mode) *audiofloor
 // the router asks the server about turns, so a preset or wait the server doesn't have is
 // refused while the agent is written. A choice the server could not be asked about is kept,
 // with a warning: the agent is not refused for a server that is down, and a choice that turns
-// out to name nothing the server publishes ends turns by its default.
+// out to name nothing the server publishes ends turns by its default. So is one that chooses a
+// point failing the dictation guard, with what it was measured to do.
 func (s *Server) endOfTurnComplaint(ctx context.Context, chosen, was store.EndOfTurn) (warning, message string, ok bool) {
 	choice := session.EndOfTurnOf(chosen)
 	if err := choice.Check(); err != nil {
@@ -127,8 +131,23 @@ func (s *Server) endOfTurnComplaint(ctx context.Context, chosen, was store.EndOf
 		return "end_of_turn is kept unchecked: the chorus-asr server did not say what it publishes, " +
 			"and a preset or wait it does not publish ends turns by its default", "", true
 	}
-	if _, err := policy.Resolve(choice); err != nil {
+	ending, err := policy.Resolve(choice)
+	if err != nil {
 		return "", err.Error(), false
 	}
-	return "", "", true
+	return guardWarning(ending), "", true
+}
+
+// guardWarning says, of a measured point that fails the dictation guard, what it was measured
+// to do to callers reading out a number, an ID or a spelled name: the app asking for it is
+// told rather than finding out on a call.
+func guardWarning(ending audiofloor.Ending) string {
+	point := ending.Point
+	if point == nil || point.Measured.DictationGuard {
+		return ""
+	}
+	m := point.Measured
+	return fmt.Sprintf("end_of_turn chooses the %d ms point, which fails the dictation guard: it ended %d of %d slow counts before their last number, "+
+		"and %s of real pauses inside a dictated number, ID or spelled name; an agent whose callers read those out wants a point that passes",
+		point.MaxWaitMs, m.SlowCountsCut, m.SlowCounts, strconv.FormatFloat(100*m.DictationPausesCut, 'f', 1, 64)+"%")
 }

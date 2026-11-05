@@ -54,7 +54,7 @@ end_of_turn:
 
 ```yaml
 end_of_turn:
-  preset: fast        # one of the server's presets, by name
+  preset: fast        # one of the server's presets, each naming a measured point
 ```
 
 ```yaml
@@ -69,66 +69,76 @@ Left out, an agent keeps what is stored, and a new one ends its turns by the ser
 carries agent.yaml's), a config's create, replace and patch, and a server-side
 `createSession`, which chooses for one session over its config's, all take the same field.
 
+The server measured a frontier of points on held-out calls, and these are the points of the
+checkpoint this was written against. Each point's bars apply from `from_ms` into a pause, and
+the turn has ended once as many checks of the pause in a row as its "In a row" have reached
+their bar:
+
+| Point | Chosen by | Bars | In a row | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts cut | Dictation guard |
+| --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- |
+| 500 ms | `preset: fast`, `max_wait_ms` 800 to 1,099 | 0.8 from 0 ms, 0.3 from 500 ms | 1 | 14.5% | 500 ms, 800 ms | 16.0% | 9 of 9 | fails |
+| 1,100 ms | `preset: safe` (default), `max_wait_ms` 1,100 to 1,399 | 0.995 from 0 ms, 0.2 from 1,100 ms | 1 | 4.5% | 1,100 ms, 1,100 ms | 12.6% | 0 of 9 | passes |
+| 1,400 ms | `max_wait_ms` 1,400 and over | 0.99 from 0 ms, 0.2 from 1,100 ms | 2 | 3.1% | 1,400 ms, 1,400 ms | 10.6% | 0 of 9 | passes |
+
+Cut-ins are the share of mid-turn pauses a point ended a turn in. Real dictation pauses are a
+caller's pauses inside a number, an ID or a spelled name; slow counts are counts read one
+number a second, cut when the turn ended before their last number. A point passes the dictation
+guard when it cuts at most 16.2% of the dictation pauses and no slow count. An agent whose
+callers read out numbers or IDs, or spell names, wants a point that passes.
+
+- **How a wait chooses.** `max_wait_ms` takes the point with the fewest cut-ins whose measured
+  p90 wait is within it. That is the measured wait, not the one a point was fitted to: the
+  500 ms point answers in 800 ms at p90, so a wait of 800 ms gets it, and a wait under 800 ms
+  gets nothing measured and is refused.
 - **What is checked, and when.** A write is refused (400), before anything is stored, when
   `end_of_turn` names more than one of the three, when its bars don't begin at 0 ms and rise,
   or one isn't strictly between 0 and 1, when the server publishes no preset by that name,
   or when `max_wait_ms` is shorter than every measured point's p90 wait. A device may not
-  choose a session's (403). When the router asks chorus-asr nothing about turns
-  (`ROUTER_CHORUS_ASR_MODE` off), or its server can't say what it publishes, the choice is
-  kept and a sync says so in `warnings`.
-- **What it replaces.** Only the bars. When a pause is checked, how much more a turn's first
-  pause asks, and the cap stay the server's, which are fitted to its model.
+  choose a session's (403). A sync that chooses a point failing the dictation guard is stored,
+  and its `warnings` say what the point does to slow counts and dictation pauses. When the
+  router asks chorus-asr nothing about turns (`ROUTER_CHORUS_ASR_MODE` off), or its server
+  can't say what it publishes, the choice is kept and the sync's `warnings` say so.
+- **What it replaces.** A point brings its bars and its checks in a row; bars of your own end a
+  turn at the first check that reaches its bar. When a pause is checked, how much more a turn's
+  first pause asks, and the cap stay the server's, which are fitted to its model. A run of checks
+  is one pause's, one after another: the caller speaking, a check not asked about or not
+  answered, or one under its bar starts it again.
 - **When it is read.** At each check, against the policy of the model the server runs then.
   A preset or wait that model no longer publishes, as after a new checkpoint, ends the
   session's turns by its default, and a warning says so once per session.
-- **What you see.** `router_agent_chorus_asr_compared_total` counts each shadow comparison by
-  the bars it was read by, its `end_of_turn` label: `preset:NAME`, `max_wait_ms:N` for the
-  frontier point fitted to `N` (whatever wait the agent asked for), or `custom` for its own,
-  and the shadow log line carries the same with the bar it was held to.
+- **What you see.** Once a session, and again if it changes, the router logs the point its
+  turns end by: `end_of_turn`, `checks_in_a_row`, `dictation_guard`, and the point's
+  `max_wait_ms`, `cut_ins`, `answer_ms_p90`, `dictation_pauses_cut`, `slow_counts_cut` and
+  `slow_counts`. `router_agent_chorus_asr_compared_total` counts each shadow comparison by its
+  `end_of_turn` label, `preset:NAME`, `max_wait_ms:N` for the point fitted to `N` (whatever
+  wait the agent asked for) or `custom` for its own, and its `dictation_guard` label, `pass`,
+  `fail` or `unmeasured`; the shadow log line carries both, with the bar it was held to and
+  the checks in a row so far.
 
-The trade-off, measured on held-out calls for the checkpoint this was written against:
-
-| Choice | Bars | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts |
-| --- | --- | --- | --- | --- | --- |
-| `preset: safe` (default) | 0.995 from 0 ms, 0.20 from 1,100 ms | 4.5% | 1,100 ms, 1,100 ms | 12.6% | none of 9 cut |
-| `preset: fast` | 0.8 from 0 ms, 0.3 from 500 ms | 14.5% | 500 ms, 800 ms | within the limit | one cut after "One" |
-
-`max_wait_ms` chooses among the points of a server's frontier
-([below](#wire-protocol)), with the fewest cut-ins whose p90 wait is within it, so the
-table a checkpoint's server publishes is the one to choose by. That checkpoint's server
-publishes these two presets and no frontier, so on it `max_wait_ms` is refused, naming the
-presets to use instead. Bars of your own were not measured: measure them on your own calls
-before relying on them.
+Bars of your own were not measured: measure them on your own calls before relying on them.
 
 ## Wire protocol
 
-`GET /v1/info`: what the server serves, here with each preset's `measured` left out:
+`GET /v1/info`: what the server serves, here with two of its three points left out:
 
 ```
-{"template":"v3.5","conversation_on_free_floor":false,"end_of_turn":{"first_check_ms":200,"first_pause_logit":0,"interval_ms":300,"cap_ms":2500,"default":"safe","presets":{"fast":{"bars":[{"from_ms":0,"bar":0.8},{"from_ms":500,"bar":0.3}],"measured":{...}},"safe":{"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"measured":{...}}}},"max_tools":21,"sample_rate":16000,"window_samples":256000}
+{"template":"v3.5","conversation_on_free_floor":false,"end_of_turn":{"first_check_ms":200,"interval_ms":300,"cap_ms":2500,"first_pause_logit":0,"fitted_to":"...","measured_on":"...","default":"safe","presets":{"safe":1100,"fast":500},"frontier":[...,{"max_wait_ms":1100,"bars":[{"from_ms":0,"bar":0.995},{"from_ms":1100,"bar":0.2}],"checks_in_a_row":1,"measured":{"cut_ins":0.0454,"answer_ms_median":1100,"answer_ms_p90":1100,"dictation_pauses_cut":0.1257,"slow_counts_cut":0,"slow_counts":9,"dictation_guard":true}},...]},"max_tools":21,"sample_rate":16000,"window_samples":256000}
 ```
 
 `end_of_turn` is fitted to the server's model. A pause is checked `first_check_ms` into it
-and every `interval_ms` after, and the turn has ended at the first check where `p_eot`
-reaches the bar of the last of the agent's `bars` to have begun by then, `from_ms` into the
-pause, raised by `first_pause_logit` in log-odds on the turn's first pause. At `cap_ms` of
-pause it has ended whatever the model says. The bars are the agent's choice (see
-[How eager turn-taking is](#how-eager-turn-taking-is-end_of_turn)): a preset, a point of
-the frontier, or its own, and the `default` preset for an agent that chooses none. These
-values belong to one checkpoint, and another one comes with its own.
-
-`end_of_turn.frontier`, when the server measured one, is bars fitted to each of several
-waits, and what they did on held-out calls:
-
-```
-"frontier":[{"max_wait_ms":N,"bars":[{"from_ms":0,"bar":B0},{"from_ms":T1,"bar":B1}],"measured":{"cut_ins":C,"answer_ms_median":M,"answer_ms_p90":P,"dictation_pauses_cut":D}}, ...]
-```
-
-`cut_ins` is the share of turns ended while the caller was still speaking, `answer_ms_median`
-and `answer_ms_p90` how long a caller who had finished waited for the answer, and
-`dictation_pauses_cut` the share of real pauses inside a dictated value taken for an end. A
-point without them, or a frontier whose bars don't begin at 0 ms and rise, makes the policy
-incomplete, as a preset without its bars does.
+and every `interval_ms` after. At each check the bar is that of the last of the point's
+`bars` to have begun, `from_ms` into the pause, raised by `first_pause_logit` in log-odds on
+the turn's first pause, and the check reaches it when `p_eot` is at least the bar. The turn
+has ended at the first check that reaches its bar with the `checks_in_a_row - 1` checks of
+the pause before it, and at `cap_ms` of pause whatever the model says. `frontier` is the
+measured points, `presets` name points by their `max_wait_ms`, and `default` is the preset
+for an agent that chooses none (see
+[How eager turn-taking is](#how-eager-turn-taking-is-end_of_turn)). A point's `measured` is
+what it did on held-out calls: `cut_ins`, `answer_ms_median`, `answer_ms_p90`,
+`dictation_pauses_cut`, `slow_counts_cut` of `slow_counts`, and `dictation_guard`. A policy
+without a frontier, a point the router can't run as written, or a preset naming no point is
+one the router doesn't act on, as a server without a policy is. These values belong to one
+checkpoint, and another one comes with its own.
 
 `POST /v1/agents`: an agent, by what it was told and its customer tools. The router's own
 tools (ending or transferring the call, pressing keys, the knowledge and web lookups,
@@ -198,15 +208,16 @@ the newest sample, which at a pause of 200 ms or more is quiet.
 ## How a ruling maps onto the flow controller
 
 The server says what, and the router says when. `ruling` is what to do once the turn has
-ended; with the floor free the router has it ended when `p_eot` reaches the bar for this
-check, and otherwise rules wait and puts the same words again after `interval_ms`. The
+ended; with the floor free the router has it ended when `p_eot` has reached the bar at as many
+checks in a row as the agent's point asks, and otherwise rules wait and puts the same words
+again after `interval_ms`. The
 first check of a pause is the first time its words are put (`FlowTurn.Waited` false), the
 turn's first pause is one before any wait, and the pause runs from when the words last
 changed.
 
 | Model | `Decided.Disposition` | `Decided.Floor` | Also |
 | --- | --- | --- | --- |
-| floor free, `p_eot` under the agent's bar and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
+| floor free, fewer checks in a row at the agent's bar than its point asks, and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
 | `respond`, `clarify`, `ignore` | as said | `continue` | |
 | `cannot` | `respond` | `continue` | `Cannot` |
 | a tool | `respond` | `continue` | `Tool` |
@@ -226,8 +237,9 @@ approval is untouched. Acting, a decision's `Ruler` is `heard`.
   turn the flow controller decided.
 - **Shadow.** One question at a time, none waited for: a slow server costs a call nothing.
   `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
-  and the `end_of_turn` bars the model's was read by, and a debug log line carries `p_end`,
-  the same `end_of_turn` and its bar, the pause, first check and first pause.
+  and the `end_of_turn` and `dictation_guard` it was read by, and a debug log line carries
+  `p_end`, the same two, the bar and the checks in a row, the pause, first check and first
+  pause.
 - **Transcripts.** A server that is down when the session starts, or that fails a
   request, is a fatal error, which hands the call to the next transcriber the target names.
   The words since the last ones written are lost. A target that names this transcriber

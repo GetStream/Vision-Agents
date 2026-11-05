@@ -21,8 +21,8 @@ const audioFloorPending = 64
 var audioFloorCompared = promauto.NewCounterVec(prometheus.CounterOpts{
 	Namespace: "router",
 	Name:      "agent_chorus_asr_compared_total",
-	Help:      "Turns both the flow controller and, in shadow mode, chorus-asr ruled on, by each one's disposition and floor, and the end-of-turn bars the model's was read by: preset:NAME, max_wait_ms:N for the frontier point fitted to N, or custom for the agent's own. The model's ruling is not acted on.",
-}, []string{"controller_disposition", "model_disposition", "controller_floor", "model_floor", "end_of_turn"})
+	Help:      "Turns both the flow controller and, in shadow mode, chorus-asr ruled on, by each one's disposition and floor, and how the model's was read: end_of_turn, preset:NAME, max_wait_ms:N for the measured point fitted to N, or custom for the agent's own bars, and dictation_guard, whether that point passes the dictation guard (pass, fail, or unmeasured for the agent's own). The model's ruling is not acted on.",
+}, []string{"controller_disposition", "model_disposition", "controller_floor", "model_floor", "end_of_turn", "dictation_guard"})
 
 // audioFloor keeps each participant's last 16 s for the audio floor model, encoded once as
 // it arrives. Acting, the model is the flow controller's Hearer. In shadow mode it is asked
@@ -197,7 +197,7 @@ func (v *audioFloor) settle(candidate string, say func(*audioFloorTurn)) {
 	}
 	model, controller := turn.model.Ruling, turn.controller
 	audioFloorCompared.WithLabelValues(string(controller.Disposition), string(model.Disposition), string(controller.Floor), string(model.Floor),
-		turn.model.EndOfTurn).Inc()
+		turn.model.Ending.Name, turn.model.Ending.Guard()).Inc()
 	answer := turn.model.Answer
 	var pEnd any
 	if answer.PEOT != nil {
@@ -207,7 +207,8 @@ func (v *audioFloor) settle(candidate string, say func(*audioFloorTurn)) {
 		"controller_disposition", controller.Disposition, "controller_floor", controller.Floor,
 		"model_disposition", model.Disposition, "model_floor", model.Floor,
 		"model_answer", answer.Answer, "model_p", answer.AnswerProbability, "p_end", pEnd,
-		"end_of_turn", turn.model.EndOfTurn, "bar", turn.model.Bar, "ended", turn.model.Ended, "paused_ms", turn.paused.Milliseconds(),
+		"end_of_turn", turn.model.Ending.Name, "dictation_guard", turn.model.Ending.Guard(),
+		"bar", turn.model.Bar, "in_a_row", turn.model.InARow, "checks_in_a_row", turn.model.Ending.ChecksInARow, "ended", turn.model.Ended, "paused_ms", turn.paused.Milliseconds(),
 		"first_check", turn.firstCheck, "first_pause", turn.firstPause,
 		"tool", model.Tool, "cannot", model.Cannot, "took_ms", turn.took.Milliseconds())
 }
