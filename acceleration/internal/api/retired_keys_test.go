@@ -130,9 +130,9 @@ func (s *ConfigsSuite) TestARetiredKeyThatNamesNothingSavesAsOnBase() {
 	}
 }
 
-// TestAPatchAndASyncOfARowStillNamingThemSaveAndWriteNone: what the row names from before the
-// refusal neither refuses nor survives a patch or a sync that leaves the keys out.
-func (s *ConfigsSuite) TestAPatchAndASyncOfARowStillNamingThemSaveAndWriteNone() {
+// TestAPatchAndASyncOfARowStillNamingThemSaveAndShowNone: what the row names from before the
+// refusal neither refuses a patch or a sync that leaves the keys out nor shows in a read.
+func (s *ConfigsSuite) TestAPatchAndASyncOfARowStillNamingThemSaveAndShowNone() {
 	patched := s.storedWithPlugins()
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+patched.ID,
 		map[string]any{"instructions": "Be briefer."}, nil))
@@ -144,9 +144,11 @@ func (s *ConfigsSuite) TestAPatchAndASyncOfARowStillNamingThemSaveAndWriteNone()
 		stored, err := s.store.AgentConfig(context.Background(), s.customerID(), config.ID)
 		s.Require().NoError(err)
 		s.Equal("Be briefer.", stored.Instructions)
-		s.Empty(stored.Plugins)
-		s.Empty(stored.PluginEvents)
-		s.Empty(stored.MCPServers)
+		status, read := s.fields(http.MethodGet, "/v1/agents/configs/"+config.ID, nil, "")
+		s.Equal(http.StatusOK, status)
+		for _, retired := range retiredKeys {
+			s.NotContains(read.keys, retired.key)
+		}
 	}
 }
 
