@@ -28,6 +28,13 @@ const (
 // an export is a rare call whose caller can come back, so it is told to rather than held.
 const exportWritesWait = 30 * time.Second
 
+// errShardedSource refuses a move off a router with shards. A shard's tables (calls, call
+// bridges, recordings, sessions, responses, requests and their stats) record no changes
+// (watchDataChanges), so a write to one after the export would be lost by a move that says
+// it lost nothing.
+var errShardedSource = notConfigured("moving a customer off a router with shards is not supported yet: " +
+	"changes to the shards' calls, sessions, responses, requests and stats after an export cannot be followed")
+
 // dataLine is one line of an export.
 //
 // Rows, and then a last line naming the cursor their changes carry on from. It is last
@@ -49,6 +56,10 @@ type dataLine struct {
 func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := s.dataMover(w, r)
 	if !ok {
+		return
+	}
+	if s.store.HasShards() {
+		writeError(w, errShardedSource)
 		return
 	}
 
@@ -148,6 +159,10 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 func (s *Server) listDataChanges(w http.ResponseWriter, r *http.Request) {
 	customerID, ok := s.dataMover(w, r)
 	if !ok {
+		return
+	}
+	if s.store.HasShards() {
+		writeError(w, errShardedSource)
 		return
 	}
 

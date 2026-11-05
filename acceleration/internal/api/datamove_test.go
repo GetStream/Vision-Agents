@@ -6,8 +6,10 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"log/slog"
 	"math/rand/v2"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,6 +20,7 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // DataMoveSuite covers the three ways a customer's data goes in or out: the snapshot, the
@@ -64,6 +67,7 @@ func (s *DataMoveSuite) TestAnExportCarriesTheAppsOwnRows() {
 }
 
 func (s *DataMoveSuite) TestAnotherAppsRowsAreNotInTheExport() {
+	s.skipOnARouterWithShards()
 	stranger := s.data.backendOfAnotherApp()
 	var theirs AgentConfig
 	s.Require().Equal(http.StatusCreated, stranger.do(http.MethodPost, "/v1/agents/configs",
@@ -104,6 +108,7 @@ func (s *DataMoveSuite) TestFollowingTheChangesFromWhereTheLastPageEndedRepeatsN
 // The numbers are shared by every app, so the ones between the export's cursor and the app's
 // first change after it can be another moving app's.
 func (s *DataMoveSuite) TestTheFirstChangeAfterAnExportIsAnsweredWhenAnotherAppChangedInBetween() {
+	s.skipOnARouterWithShards()
 	stranger := s.data.backendOfAnotherApp()
 	s.Require().Equal(http.StatusOK, stranger.do(http.MethodGet, "/v1/data/export", nil, nil))
 	theirs := func() {
@@ -123,6 +128,7 @@ func (s *DataMoveSuite) TestTheFirstChangeAfterAnExportIsAnsweredWhenAnotherAppC
 }
 
 func (s *DataMoveSuite) TestACursorThatIsNotOneIsRefused() {
+	s.skipOnARouterWithShards()
 	status, failure := s.serverClient.failure(http.MethodGet, "/v1/data/changes?after=yesterday", nil)
 
 	s.Equal(http.StatusBadRequest, status)
@@ -130,6 +136,7 @@ func (s *DataMoveSuite) TestACursorThatIsNotOneIsRefused() {
 }
 
 func (s *DataMoveSuite) TestMoreChangesThanEitherEndCanHoldAreRefused() {
+	s.skipOnARouterWithShards()
 	status, failure := s.serverClient.failure(http.MethodGet, "/v1/data/changes?limit=5000", nil)
 
 	s.Equal(http.StatusBadRequest, status)
@@ -207,6 +214,7 @@ func (s *DataMoveSuite) TestSomethingThatIsNotAnExportIsRefused() {
 }
 
 func (s *DataMoveSuite) TestOnlyTheAppsOwnBackendMayTakeTheDataOut() {
+	s.skipOnARouterWithShards()
 	s.assertPosture(serverOnly, func(as *testClient) int {
 		status, _ := as.call(http.MethodGet, "/v1/data/export", nil)
 		return status
@@ -221,6 +229,7 @@ func (s *DataMoveSuite) TestOnlyTheAppsOwnBackendMayWriteDataIn() {
 }
 
 func (s *DataMoveSuite) TestOnlyTheAppsOwnBackendMayFollowTheChanges() {
+	s.skipOnARouterWithShards()
 	// An export somebody may not have is no safer if the change feed hands the same rows
 	// over one at a time.
 	s.assertPosture(serverOnly, func(as *testClient) int {
@@ -232,6 +241,7 @@ func (s *DataMoveSuite) TestOnlyTheAppsOwnBackendMayFollowTheChanges() {
 // A write whose trigger looked for the recording before the export started it recorded
 // nothing, so an export whose snapshot is read while it is open cannot have it either.
 func (s *DataMoveSuite) TestAWriteOpenWhenAnExportStartsIsInTheExportOrItsChanges() {
+	s.skipOnARouterWithShards()
 	open := s.openWrite(s.customerID())
 	s.waitAtMost(100 * time.Millisecond)
 
@@ -251,6 +261,7 @@ func (s *DataMoveSuite) TestAWriteOpenWhenAnExportStartsIsInTheExportOrItsChange
 }
 
 func (s *DataMoveSuite) TestAnExportWaitsForAWriteOpenWhenItStartedToCommit() {
+	s.skipOnARouterWithShards()
 	open := s.openWrite(s.customerID())
 	type answer struct {
 		status int
@@ -292,6 +303,7 @@ func (s *DataMoveSuite) TestAnExportWaitsForAWriteOpenWhenItStartedToCommit() {
 // Postgres cannot tell another app's open write from this one's, so the export is bounded and
 // answers rather than hangs.
 func (s *DataMoveSuite) TestAnExportGivesUpOnAWriteThatStaysOpen() {
+	s.skipOnARouterWithShards()
 	stranger := s.openWrite("another-app-" + s.utils.uuid())
 	s.waitAtMost(100 * time.Millisecond)
 
@@ -301,6 +313,58 @@ func (s *DataMoveSuite) TestAnExportGivesUpOnAWriteThatStaysOpen() {
 
 	s.Require().NoError(stranger.tx.Rollback())
 	s.export()
+}
+
+// A shard's tables record no changes, so a write to one after the export would never reach the
+// changes: a router with a shard of its own refuses to be the source, before it records anything.
+func (s *DataMoveSuite) TestARouterWithAShardOfItsOwnRefusesToBeTheSource() {
+	s.refusesToBeTheSource(store.Options{DSN: s.sharedDSN(), ShardDSN: s.shardDSN()})
+}
+
+// A router writing its calls in the shared database still reads the other shards' calls, whose
+// writes no change records either.
+func (s *DataMoveSuite) TestARouterReadingOtherShardsRefusesToBeTheSource() {
+	shared := s.sharedDSN()
+	s.refusesToBeTheSource(store.Options{DSN: shared, Shards: map[string]string{"here": shared, "there": s.shardDSN()}})
+}
+
+// refusesToBeTheSource asserts a router on the databases options names refuses the export and the
+// changes, and starts no recording for the caller.
+func (s *DataMoveSuite) refusesToBeTheSource(options store.Options) {
+	served, err := store.OpenShards(options)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.NoError(served.Close()) })
+	other, _, _ := s.otherNodeServingFrom(served, nil, s.sealer, slog.New(slog.DiscardHandler))
+	source := s.serverClient.on(other)
+
+	for _, path := range []string{"/v1/data/export", "/v1/data/changes?after=0"} {
+		status, body := source.call(http.MethodGet, path, nil)
+		var refused ErrorResponse
+		s.Require().NoError(json.Unmarshal(body, &refused), path)
+
+		s.Equal(http.StatusBadRequest, status, path)
+		s.Equal(codeNotConfigured, refused.Error.Code, path)
+		s.Contains(refused.Error.Message, "with shards is not supported yet", path)
+	}
+	var capturing bool
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT EXISTS (SELECT 1 FROM data_change_capture WHERE customer_id = ?)", s.customerID()).Scan(&capturing))
+	s.False(capturing, "a refused move started recording the app's changes")
+}
+
+// sharedDSN is the suite's database, which a router of shards shares.
+func (s *DataMoveSuite) sharedDSN() string {
+	return testDatabase(s.T(), os.Getenv("ROUTER_POSTGRES_DSN"))
+}
+
+// shardDSN is a migrated database of this suite's own, for one shard's tables.
+func (s *DataMoveSuite) shardDSN() string {
+	dsn := testenv.Database(s.sharedDSN(), "moveshard")
+	shard, err := store.Open(dsn)
+	s.Require().NoError(err)
+	defer shard.Close()
+	s.Require().NoError(migrate(context.Background(), shard, dsn))
+	return dsn
 }
 
 // openWrite writes an agent config of a customer in a transaction the test ends.
@@ -341,8 +405,20 @@ func (s *DataMoveSuite) cursorOf(exported string) int64 {
 	return *cursor
 }
 
+// skipOnARouterWithShards skips a test that takes the suite's own router as a move's source,
+// which refuses to be one when ROUTER_POSTGRES_SHARD_DSN gives it shards (see the refusal tests
+// below).
+func (s *DataMoveSuite) skipOnARouterWithShards() {
+	// Sharded, not HasShards: the refusal is what HasShards decides, and a test that skipped on
+	// it would skip, rather than fail, if it said true for every router.
+	if s.store.Sharded() {
+		s.T().Skip("a router with shards refuses to be a move's source")
+	}
+}
+
 // export reads the whole snapshot, one JSON object per line.
 func (s *DataMoveSuite) export() []dataLine {
+	s.skipOnARouterWithShards()
 	status, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
 	s.Require().Equal(http.StatusOK, status)
 
@@ -362,6 +438,7 @@ func (s *DataMoveSuite) export() []dataLine {
 // deployment, so a change written a moment ago is readable once what was in flight beside
 // it has committed.
 func (s *DataMoveSuite) changesSince(after int64) changedRows {
+	s.skipOnARouterWithShards()
 	var page changedRows
 	s.Require().EventuallyWithT(func(c *assert.CollectT) {
 		page = changedRows{}
