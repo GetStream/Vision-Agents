@@ -67,9 +67,11 @@ type fakeServer struct {
 	info     string
 	noPolicy bool
 	// failing is how many transcription requests to answer failWith, before answering,
-	// failDecide has every decision fail, and failingDecides the next that many.
+	// busy how many to answer without words, every lane busy, failDecide has every decision
+	// fail, and failingDecides the next that many.
 	failing        int
 	failWith       int
+	busy           int
 	failDecide     bool
 	failingDecides int
 	// transcribeGate, when set, holds every transcription request until it is closed, and
@@ -129,6 +131,11 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.failing--
 			w.WriteHeader(f.failWith)
 			_, _ = w.Write([]byte(`{"error":"every lane is busy"}`))
+			return
+		}
+		if f.busy > 0 {
+			f.busy--
+			_, _ = w.Write([]byte(`{"transcript_error":"busy"}` + "\n"))
 			return
 		}
 		raw, _ := io.ReadAll(r.Body)
@@ -498,8 +505,11 @@ type TranscriberSuite struct{ transcribing }
 type transcribing struct {
 	serverSuite
 	transcriber *Transcriber
-	// wordsAlone opens each transcriber asking about no pauses (AskOnPauses(nil)).
+	// wordsAlone opens each transcriber asking about no pauses (AskOnPauses(nil)), and
+	// interims has it write the words so far while the caller talks, which the suites that
+	// count each request leave off.
 	wordsAlone bool
+	interims   bool
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -545,6 +555,7 @@ func (s *transcribing) openReading(now func() time.Time) {
 	if s.wordsAlone {
 		s.transcriber.AskOnPauses(nil)
 	}
+	s.transcriber.interims = s.interims
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })
@@ -593,6 +604,13 @@ func (s *transcribing) say(ms int, voiced bool) {
 
 func (s *transcribing) send(frame []int16) {
 	s.Require().NoError(s.transcriber.ProcessAudio(audio.PcmData{Samples: frame, SampleRate: SampleRate, Channels: 1}, stt.Participant{ID: "p"}))
+}
+
+// transcribed is how many requests for words alone (POST /v1/transcribe) the server has had.
+func (s *transcribing) transcribed() int {
+	s.server.mu.Lock()
+	defer s.server.mu.Unlock()
+	return len(s.server.audio) - len(s.server.turns)
 }
 
 // answered waits for the check asked to have answered.

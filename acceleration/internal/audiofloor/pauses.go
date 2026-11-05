@@ -157,7 +157,9 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 	p.checks++
 	p.asked, p.inFlight, p.participant, p.utterance = t.quiet, true, participant, t.utterance+1
 	if p.checks == 1 {
+		// The first check writes the words so far, so no interim is due for a while.
 		t.pauses++
+		t.spoken = 0
 	}
 	c := pauseCheck{epoch: p.epoch, first: p.checks == 1, firstPause: t.pauses == 1, paused: t.quiet, at: heard,
 		participant: participant, asked: time.Now()}
@@ -269,7 +271,9 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	t.finish(c.epoch)
 }
 
-// await keeps the words of a pause's first check, once written.
+// await keeps the words of a pause's first check, once written, and shows them meanwhile
+// (Interim) when the check did not end the turn: they are the words so far, written anyway,
+// and the final is as it would be without them.
 func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	defer t.running.Done()
 	var words Words
@@ -294,7 +298,21 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	}
 	text := strings.TrimSpace(words.Text)
 	p.words, p.audioMs, p.wordsMs = &text, float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
+	waiting, utterance := p.ended == nil, p.utterance
 	t.mu.Unlock()
+	if waiting && t.interims && text != "" {
+		t.send(stt.Transcript{
+			Participant:      c.participant,
+			Mode:             stt.ModeReplacement,
+			Interim:          true,
+			Utterance:        utterance,
+			Text:             text,
+			Provider:         ProviderName,
+			Model:            t.model,
+			ProcessingTimeMs: p.wordsMs,
+			AudioDurationMs:  p.audioMs,
+		})
+	}
 	t.finish(c.epoch)
 }
 
@@ -312,13 +330,13 @@ func (t *Transcriber) finish(epoch int64) {
 	ruled, asker, participant, utterance := *p.ended, t.asker, p.participant, p.utterance
 	ruled.Words = *p.words
 	audioMs, wordsMs := p.audioMs, p.wordsMs
-	t.endedByCheck.Store(utterance)
 	t.mu.Unlock()
 	if ruled.Words == "" {
+		t.sent.ended(utterance)
 		return
 	}
 	asker.Ruled(participant, ruled)
-	t.emitter.Send(stt.Transcript{
+	t.send(stt.Transcript{
 		Participant:      participant,
 		Mode:             stt.ModeFinal,
 		Utterance:        utterance,

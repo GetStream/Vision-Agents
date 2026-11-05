@@ -288,7 +288,9 @@ func (h *floorHarness) oneFinal(t *testing.T, mode audiofloor.Mode, bed []float6
 			assert.Zero(t, echo, "[transcriber] the agent's voice written as the caller's: %q", f.T.Text)
 		}
 		assert.Len(t, utterances, 1, "[transcriber] one utterance")
-		assert.Equal(t, 1, c.wordRequests(), "one request for the words of the turn")
+		// Interims asked while the caller talked are before this; the turn's words are the
+		// pause's one request.
+		assert.Len(t, c.wordRequestsSince(said.ended().Add(h.firstCheck()/2)), 1, "one request for the words of the turn once the caller stopped")
 	} else {
 		callers, voice, both := byEcho(finals)
 		t.Logf("[transcriber] with the agent's voice echoed, %d finals in %d utterances: the caller's %q, the agent's voice alone %q, the caller's with the agent's voice on the end %q",
@@ -505,8 +507,9 @@ func (h *floorHarness) transcriptionAlone(t *testing.T) {
 	if assert.Len(t, stopped, 1, "one request for the words once the caller stopped") {
 		assert.Equal(t, "/v1/decide", stopped[0].path, "the decision and the words in one pass: %s %s?%s", stopped[0].method, stopped[0].path, stopped[0].query)
 	}
-	for _, r := range c.requests() {
-		assert.NotEqual(t, "/v1/transcribe", r.path, "words asked for alone: %s %s at %s", r.method, r.path, c.since(r.start))
+	for _, r := range c.requestsTo("/v1/transcribe") {
+		// The words alone are asked for only while the caller talks, as interims.
+		assert.True(t, r.start.Before(stopped[0].start), "words asked for alone once the caller stopped: %s %s at %s", r.method, r.path, c.since(r.start))
 	}
 }
 
@@ -813,10 +816,8 @@ func (c *call) asking() bool {
 	return false
 }
 
-// wordRequests are the requests for words: transcripts, and decisions that wrote words too.
-func (c *call) wordRequests() int { return len(c.wordRequestsSince(c.began)) }
-
-// wordRequestsSince are the requests for words started at or after at.
+// wordRequestsSince are the requests for words started at or after at: transcripts, and
+// decisions that wrote words too.
 func (c *call) wordRequestsSince(at time.Time) []exchange {
 	var out []exchange
 	for _, r := range c.requests() {
@@ -860,7 +861,11 @@ func (c *call) report() {
 		}
 	}
 	for _, w := range c.words.all() {
-		add(w.At, "words   %s #%d %q (%.0f ms of audio in %.0f ms)", w.T.Mode, w.T.Utterance, w.T.Text, w.T.AudioDurationMs, w.T.ProcessingTimeMs)
+		mode := string(w.T.Mode)
+		if w.T.Interim {
+			mode = "interim"
+		}
+		add(w.At, "words   %s #%d %q (%.0f ms of audio in %.0f ms)", mode, w.T.Utterance, w.T.Text, w.T.AudioDurationMs, w.T.ProcessingTimeMs)
 	}
 	for _, e := range c.events.all() {
 		switch typed := e.E.(type) {

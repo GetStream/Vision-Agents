@@ -147,10 +147,11 @@ last frame, and a pause costs one request:
   the reply is asked for at once. Over the agent a check has no bar: the model's ruling ends
   the turn, `stop`, `shorten`, `continue` or `ignore`, and words heard over a reply reach the
   flow controller as settled words.
-- **Nothing in between.** Words of a pause the model waits on are kept for its end, and
-  nothing is written while the caller talks, so nothing supersedes a ruling or interrupts a
-  reply about audio already ruled on. Speech after a pause the model waited on begins
-  another: its first check writes the whole utterance again.
+- **Live words, acted on at the end.** While the caller talks the transcriber shows the
+  words so far, as interims ([Live words](#live-words)), and the agent shows them and acts
+  on none: nothing supersedes a ruling or interrupts a reply about audio already ruled on.
+  Speech after a pause the model waited on begins another: its first check writes the whole
+  utterance again.
 
 With another transcriber a point is applied to the words as they hold still (the first
 check once they have held still for the cadence's 350 ms gap). With `stream/chorus-asr`
@@ -214,6 +215,51 @@ then the decision; the rain question was answered 1.08 to 1.10 s after the voice
 person's recording of the weather question, "Hi." was a turn of its own and the question was
 answered 1.07 and 1.19 s after the voice; with turns from the audio the pause after "Hi." was
 waited on (p_eot 0.43 and 0.39 at 200 ms) and the question answered at 692 and 735 ms.
+
+### Live words
+
+A caller counting slowly for 40 s saw nothing until the turn ended. In every mode the
+transcriber now shows the words so far while the caller talks, as interim transcripts
+(`replacement` of the same utterance, `stt.Transcript.Interim`), as other transcribers do:
+
+- **The words of a pause the model waits on**, which its first check wrote anyway, go out
+  as soon as they are written rather than kept for the turn's end. A caller who pauses
+  between numbers sees each number as they say it, at no extra cost.
+- **About once a second of speech with no pause in it**, the words so far are asked for
+  alone (`POST /v1/transcribe`), the whole utterance so far, which a replacement must be:
+  one at a time per participant, and never again when the server was busy (503, 429 or
+  `transcript_error: busy`) or failed. `router_chorus_asr_interims_total` counts each by
+  what became of it: `written`, `late`, `empty`, `refused` or `failed`.
+- **The final has the last word.** An interim holds up no pause check, no decision and no
+  final: it runs on a goroutine of its own, and one that answers after the final, or after
+  newer words, is dropped, so what a watcher sees never goes back. The final and the turn's
+  end are exactly as they are without interims.
+- **In an agent's call** interims are shown (`Hearing`) under the line the turn is going
+  into and put to nothing: not the cadence, which would read words that hold still for
+  350 ms as a pause, nor the flow controller, an overlap or a backchannel. The agent's own
+  echo is dropped from them as from any chorus-asr transcript. On the router's STT socket
+  they are replacements like any transcriber's.
+
+**What it costs.** The words have no 16 s limit, so an interim of a long utterance would
+grow with it. The audio an interim sends a second of speech is therefore bounded by what a
+decision hears: under 16 s of utterance one is asked once a second, past it less often as
+the utterance grows (every 2 s at 32 s, every 3 s at 48 s), so a caller who talks on sends
+at most the words of 16 s a second however long they go on. On the TPU the words of 16 s
+take 50 to 250 ms and those of 43 s about 430 ms, so a caller talking on without a pause
+holds a transcription lane for at most a quarter of the time, and typically a tenth:
+
+| Transcription lanes | Callers talking on at once before interims are refused |
+| ---: | --- |
+| 1 | 4 at 250 ms a second, 20 at 50 ms |
+| 2 | 8 at 250 ms a second, 40 at 50 ms |
+
+A caller who pauses costs less: the pause's first check writes the words and restarts the
+second. Past that, interims are refused and dropped, and the requests that matter, the
+pause's words and a final asked for alone, which are asked again, queue behind the
+interims still running; a deployment short of lanes turns interims off with
+`ROUTER_CHORUS_ASR_INTERIMS=off`, and the words come at the turn's end as they did.
+Decisions run on their own lanes and are unaffected. Interims are not billed: only finals
+are.
 
 ## Wire protocol
 
@@ -393,8 +439,9 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   one utterance. The agent drops a chorus-asr transcript's end that is three or more of its
   own words, near enough (a quarter of them may be heard wrong), when the audio overlapped
   its speech or came within 1.5 s of it: what is left is the caller's, and an echo alone is
-  nothing heard (`router_agent_chorus_asr_echoes_total`). It does so in every mode; the
-  transcriber itself still writes what it heard. Other transcribers are left as they are.
+  nothing heard (`router_agent_chorus_asr_echoes_total`). It does so in every mode, interims
+  included; the transcriber itself still writes what it heard. Other transcribers are left
+  as they are.
 - **Noise.** The transcriber drops nothing itself. The server returns empty text for audio
   with no speech in it and for words in a language the callers don't speak, and cuts a
   fragment in a script they don't write from either end of the words. Empty text is nothing
@@ -477,8 +524,9 @@ never ended the utterance; the new one wrote both replacements and the final.
   check, under its own agent, and the shadow's under the agent's. In every mode a pause of
   speech costs a words-bearing request, the agent's own echoed voice included, and the
   words of a long utterance hold a lane for seconds on a CPU.
-- Acting with chorus-asr as the transcriber, nothing is written while the caller talks: the
-  words appear when the turn ends.
+- Interims are best effort: a busy server refuses them, one is out at a time, and on a CPU
+  server the words of a long utterance take seconds, so they come late and seldom there. The
+  words the turn is answered on are the final's, whatever the interims showed.
 - A check is asked once the one before has answered, so on a server slower than
   `interval_ms` a decision, as a CPU is over a long utterance's 16 s window, checks come late,
   and a late one starts a run of checks in a row again: a point that asks for two then ends
