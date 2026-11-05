@@ -396,6 +396,26 @@ func (s *EpisodeReadingSuite) TestACardStopsWaitingForTheCallerAtTheSessionsStar
 	s.Empty(callEpisodesIn(s.store, created.ID()))
 }
 
+// Defect: a session that closed before its caller joined kept its card writer, and the session
+// with it, for the whole start timeout (90 s for a placed call).
+func (s *EpisodeReadingSuite) TestACardStopsWaitingForTheCallerWhenTheSessionCloses() {
+	s.startsWithin(time.Minute)
+	s.attended()
+	call := uuid.NewString()
+	s.chat.PutCall("agent", call)
+	created := s.opens(s.inboundSpec(call, true))
+
+	_, err := s.manager.Close(created.ID(), OwnerOf(created.Spec()))
+	s.Require().NoError(err)
+
+	select {
+	case <-s.cardWritersDone():
+	case <-time.After(settleFor):
+		s.FailNow("the card writer still waits for a caller after the session closed")
+	}
+	s.Empty(callEpisodesIn(s.store, created.ID()))
+}
+
 // Defect: a call no phone is on (a device's, a browser's) would wait for a phone caller who is
 // never coming. It writes no card at once, as before.
 func (s *EpisodeReadingSuite) TestACallWithNoPhoneWaitsForNoCaller() {

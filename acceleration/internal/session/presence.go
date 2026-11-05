@@ -192,7 +192,8 @@ func startTimeout(phone *PhoneSpec) time.Duration {
 }
 
 // hearCaller keeps the number of the first phone caller to join the session's call, the line
-// itself aside, for a card that waits for them (awaitCaller).
+// itself aside, for a card that waits for them (awaitCaller). An empty number is nobody: the
+// session closed before a caller joined (Session.close).
 func (s *Session) hearCaller(number string) {
 	s.callerMu.Lock()
 	defer s.callerMu.Unlock()

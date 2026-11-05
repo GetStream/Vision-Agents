@@ -210,7 +210,8 @@ func (c *callCards) Close() {
 // caller is not on the call yet waits for the session to hear them join: the caller can join
 // after the agent, as the call hook is not told who is calling until they have (an inbound
 // leg can open without its caller, store.ConnectCallLeg). It waits as long as the session
-// waits for anybody, its start timeout, past which a phone session nobody joined ends.
+// waits for anybody, its start timeout, past which a phone session nobody joined ends, or until
+// the session closes, whichever is first.
 func (c *callCards) party(created *Session, spec Spec, stream streamapp.Bound) (string, error) {
 	ctx, cancel := context.WithTimeout(c.ctx, callCardTimeout)
 	number, _, err := c.calledParty(ctx, spec, stream)

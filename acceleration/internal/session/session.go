@@ -1676,6 +1676,8 @@ func (s *Session) close() error {
 	s.stopTimeout()
 	s.mu.Unlock()
 	s.checked(false)
+	// A card waiting for the caller waits no longer (awaitCaller).
+	s.hearCaller("")
 
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.
