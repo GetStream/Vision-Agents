@@ -741,7 +741,12 @@ func linkParts(text string) []string {
 		if err != nil {
 			continue
 		}
-		for _, segment := range strings.Split(address.Path, "/") {
+		// Each segment is unescaped after the split, so an escaped "/" stays inside its segment.
+		for _, escaped := range strings.Split(address.EscapedPath(), "/") {
+			segment, err := url.PathUnescape(escaped)
+			if err != nil {
+				continue
+			}
 			parts = append(parts, alphanumeric(segment))
 		}
 		for _, values := range address.Query() {

@@ -243,6 +243,7 @@ func TestAnIDPastedInALinkIsPassedOn(t *testing.T) {
 			{Role: llm.Assistant, Content: "Is it https://team.example.com/archives/C0EX4MPL1 you mean?"},
 			{Role: llm.User, Content: "yes, read it"},
 		}, channel, true},
+		{"an escaped slash inside a segment", user("https://team.example.com/archives/C0X%2FC0EX4MPL1"), channel, true},
 	}
 	for _, c := range cases {
 		_, _, _, unfound := unfoundID(c.history, c.call, tools, "")
