@@ -22,6 +22,61 @@ It plugs in twice, and each is optional:
   transcriber ask about each pause on its behalf, under its own instructions and tools,
   the decision and the words in one request: [Turns from the audio](#turns-from-the-audio).
 
+## The loop's contract
+
+What a caller can count on from an agent that acts on chorus-asr with `stream/chorus-asr` as
+its STT. Each line is held by checks of the replay ([Test it](#test-it)), named in brackets:
+`TestAudioFloorReplay` by number, `TestAudioFloorScenarios` by S, `TestAudioFloorContract` by
+C. The loop acts on the model's rulings and nothing else: where the model rules wrong, the
+check fails and the failure is the model's, reported as such, not worked around in the router.
+
+**While the agent talks**, the caller is ruled on 350 ms voiced into what they say and every
+`interval_ms` while they go on (the words so far), and at their first pause (the words said).
+
+- **Ignored.** A backchannel ("uh-huh", "mm-hmm", "hm hm", "okay", "right", "yeah"), a laugh,
+  a cough, the agent's own voice heard back on the line, somebody in the room speaking
+  another language: the reply plays whole, nothing is shortened or stopped, and nothing is
+  answered afterwards. [1, S7, C1]
+- **Stopped, then quiet.** "Stop", "wait", "hold on": the agent stops within 800 ms of the
+  caller's first word and says nothing more. A stop ruled while the caller is still talking
+  is not a turn (its disposition is `wait`): the words it was ruled on are spent on it. [C2]
+- **Stopped, then answered.** A correction or a new request ("no, Porto", "and in Lisbon?",
+  "stop, what about Porto?" in one breath, or "stop" and then a question): the agent stops
+  within 800 ms of the first word, and what the caller says after the words the stop was
+  ruled on is a turn of its own, from the voice after them, answered once. [11, S2, S3, C3]
+- **Shortened.** One more item for the request being answered ("and in Porto?" over a
+  forecast): the agent adds nothing more to the reply, stops speaking within 250 ms of the
+  ruling, and answers the item. The model was trained on `shorten` as "one more item of the
+  same kind for the request being answered, neither correcting nor replacing it", in a demo
+  that let at most 250 ms of the audio playing finish, as its voice had no word timing; the
+  router's voices have none either. A line the agent says of its own accord, a greeting, a
+  check-in or an update, answers no request, so `shorten` over it stops it. [S4b, S8, C4]
+- **One voice.** The agent never says two things at once, and a stop stops everything it is
+  saying, what is queued at the edge included. [C2, C8]
+
+**After an interruption** the floor is the caller's: their turn ends once, by the agent's
+`end_of_turn` point at its check times from the voice's last frame, and is answered on that
+check's ruling, with no second wait. [S2, C5]
+
+**While the agent listens**, pauses inside a sentence, slow counts and dictation are waited
+through as the agent's `end_of_turn` point was measured to (the table below), and a finished
+turn is answered at that point. The agent says nothing of its own accord, such as a check-in,
+while the model is waiting on the caller to finish. [4, 5, S1a, S6, C6]
+
+**One utterance, one final, one answer.** Each utterance the caller says has one final, and
+each final is answered at most once. [2, C7]
+
+**Waits.** Every wait from the caller's voice to the reply is the policy's (first check,
+interval, bars, cap), the server's time to rule and write the words, or the reply model's. A
+final the model ended is put to the conversation at once, with no settle gap, no grace after
+an overlap and no retry. [8, C5, C7]
+
+What the loop can't know: the model's words and rulings are all it has. A stop ruled on
+misheard words ("let's stop" for "don't stop") is a stop. A stop ruled at a pause, on words
+the caller has finished ("has just said"), means `respond`: the model's options there have no
+stop that leaves nothing to answer, so a "stop" short enough to end at a pause before the
+first check over the agent (under 350 ms voiced) is answered.
+
 ## Configure
 
 | Variable | Purpose |
