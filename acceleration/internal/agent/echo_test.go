@@ -13,9 +13,11 @@ import (
 
 const echoReply = "Tomorrow in Lisbon it will be sunny and warm, with a high of twenty four degrees."
 
-// The agent's words at the end of a transcript are its echo, as the model heard them: what
-// is before them is the caller's, and an echo alone leaves nothing.
-func TestTheAgentsOwnWordsAtTheEndAreItsEcho(t *testing.T) {
+// The agent's words in a transcript are its echo, as the model heard them, before, after
+// and around the caller's own: what is left is the caller's, and an echo alone leaves
+// nothing. A short phrase of the caller's inside a long run of the echo, "and in Porto"
+// over the reply, is theirs, not a quarter of the run misheard.
+func TestTheAgentsOwnWordsAreItsEcho(t *testing.T) {
 	for _, c := range []struct {
 		heard, left string
 		echo        int
@@ -23,10 +25,19 @@ func TestTheAgentsOwnWordsAtTheEndAreItsEcho(t *testing.T) {
 		{"Will it rain in Porto this weekend? Tomorrow in Lisbon it will be sunny and warm.", "Will it rain in Porto this weekend?", 9},
 		{"Tomorrow in Lisbon, it will be sunny and warm, with a high of.", "", 13},
 		{"with a high of 24 degrees.", "", 6},
+		{"With a high of twenty-four degrees.", "", 7},
 		{"Uh huh. sunny and warm", "Uh huh.", 3},
 		{"Will it rain in Porto this weekend?", "Will it rain in Porto this weekend?", 0},
 		{"and warm", "and warm", 0},
 		{"Is it warm in Porto?", "Is it warm in Porto?", 0},
+		{"Tomorrow in Lisbon it will be sunny and warm, and in Porto high of twenty-four degrees.", "and in Porto", 14},
+		{"Tomorrow in Lisbon it will be sunny and warm, and in Porto.", "and in Porto.", 9},
+		{"Tomorrow in Lisbon, it will be sunny and warm. No, no, stop, that's not what I asked.", "No, no, stop, that's not what I asked.", 9},
+		{"Tomorrow in Lisbon, it will be sunny. No.", "No.", 7},
+		// One word of the caller's between two runs of the echo reads as a word of the
+		// agent's misheard: the checks over the agent see the words as they grow, so the
+		// caller's word is the last one when it counts, and two or more are theirs anywhere.
+		{"Tomorrow in Lisbon, it will be sunny. No. With a high of twenty four degrees.", "", 15},
 	} {
 		left, echo := echoed(c.heard, echoReply)
 		require.Equal(t, c.left, left, "%q", c.heard)
