@@ -19,6 +19,7 @@ def _get_kwargs(
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -48,6 +49,8 @@ def _get_kwargs(
     params["to"] = json_to
 
     params["meter"] = meter
+
+    params["origin"] = origin
 
     params["api_key_id"] = api_key_id
 
@@ -140,6 +143,7 @@ def sync_detailed(
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -152,10 +156,10 @@ def sync_detailed(
      Every unit of work recorded for the calling app, or with scope=organization for every app of its
     organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each
     names who it was for, what it was, how much of it there was and what the organization is charged.
-    Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again
-    with cursor for the next page. Work reaches the list once the router has shipped it to the usage
-    service, so the newest may take a moment to appear. With no usage service, or for an app in no
-    organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+    Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with
+    cursor for the next page. Work reaches the list once the router has shipped it to the usage service,
+    so the newest may take a moment to appear. With no usage service, or for an app in no organization,
+    it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 
     Server-side only: a request that is not server-side answers 403 server_side_only.
 
@@ -167,9 +171,10 @@ def sync_detailed(
         from_ (datetime.datetime | Unset): Only events that happened at or after this, inclusive.
         to (datetime.datetime | Unset): Only events that happened before this, exclusive.
         meter (str | Unset): Only this kind of work, such as llm or runtime.
-        api_key_id (str | Unset): Only work started with this public API key, or by this origin of
-            work no key started, such as hook:chat. Named api_key_id because api_key in the query is
-            the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only work started with this public API key, or by this origin of
+            work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -193,6 +198,7 @@ def sync_detailed(
         from_=from_,
         to=to,
         meter=meter,
+        origin=origin,
         api_key_id=api_key_id,
         user_id=user_id,
         team=team,
@@ -216,6 +222,7 @@ def sync(
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -228,10 +235,10 @@ def sync(
      Every unit of work recorded for the calling app, or with scope=organization for every app of its
     organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each
     names who it was for, what it was, how much of it there was and what the organization is charged.
-    Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again
-    with cursor for the next page. Work reaches the list once the router has shipped it to the usage
-    service, so the newest may take a moment to appear. With no usage service, or for an app in no
-    organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+    Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with
+    cursor for the next page. Work reaches the list once the router has shipped it to the usage service,
+    so the newest may take a moment to appear. With no usage service, or for an app in no organization,
+    it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 
     Server-side only: a request that is not server-side answers 403 server_side_only.
 
@@ -243,9 +250,10 @@ def sync(
         from_ (datetime.datetime | Unset): Only events that happened at or after this, inclusive.
         to (datetime.datetime | Unset): Only events that happened before this, exclusive.
         meter (str | Unset): Only this kind of work, such as llm or runtime.
-        api_key_id (str | Unset): Only work started with this public API key, or by this origin of
-            work no key started, such as hook:chat. Named api_key_id because api_key in the query is
-            the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only work started with this public API key, or by this origin of
+            work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -270,6 +278,7 @@ def sync(
         from_=from_,
         to=to,
         meter=meter,
+        origin=origin,
         api_key_id=api_key_id,
         user_id=user_id,
         team=team,
@@ -287,6 +296,7 @@ async def asyncio_detailed(
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -299,10 +309,10 @@ async def asyncio_detailed(
      Every unit of work recorded for the calling app, or with scope=organization for every app of its
     organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each
     names who it was for, what it was, how much of it there was and what the organization is charged.
-    Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again
-    with cursor for the next page. Work reaches the list once the router has shipped it to the usage
-    service, so the newest may take a moment to appear. With no usage service, or for an app in no
-    organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+    Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with
+    cursor for the next page. Work reaches the list once the router has shipped it to the usage service,
+    so the newest may take a moment to appear. With no usage service, or for an app in no organization,
+    it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 
     Server-side only: a request that is not server-side answers 403 server_side_only.
 
@@ -314,9 +324,10 @@ async def asyncio_detailed(
         from_ (datetime.datetime | Unset): Only events that happened at or after this, inclusive.
         to (datetime.datetime | Unset): Only events that happened before this, exclusive.
         meter (str | Unset): Only this kind of work, such as llm or runtime.
-        api_key_id (str | Unset): Only work started with this public API key, or by this origin of
-            work no key started, such as hook:chat. Named api_key_id because api_key in the query is
-            the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only work started with this public API key, or by this origin of
+            work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -340,6 +351,7 @@ async def asyncio_detailed(
         from_=from_,
         to=to,
         meter=meter,
+        origin=origin,
         api_key_id=api_key_id,
         user_id=user_id,
         team=team,
@@ -361,6 +373,7 @@ async def asyncio(
     from_: datetime.datetime | Unset = UNSET,
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
+    origin: str | Unset = UNSET,
     api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
@@ -373,10 +386,10 @@ async def asyncio(
      Every unit of work recorded for the calling app, or with scope=organization for every app of its
     organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each
     names who it was for, what it was, how much of it there was and what the organization is charged.
-    Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again
-    with cursor for the next page. Work reaches the list once the router has shipped it to the usage
-    service, so the newest may take a moment to appear. With no usage service, or for an app in no
-    organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+    Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with
+    cursor for the next page. Work reaches the list once the router has shipped it to the usage service,
+    so the newest may take a moment to appear. With no usage service, or for an app in no organization,
+    it answers 404 billing_not_enabled. A suspended organization reads it all the same.
 
     Server-side only: a request that is not server-side answers 403 server_side_only.
 
@@ -388,9 +401,10 @@ async def asyncio(
         from_ (datetime.datetime | Unset): Only events that happened at or after this, inclusive.
         to (datetime.datetime | Unset): Only events that happened before this, exclusive.
         meter (str | Unset): Only this kind of work, such as llm or runtime.
-        api_key_id (str | Unset): Only work started with this public API key, or by this origin of
-            work no key started, such as hook:chat. Named api_key_id because api_key in the query is
-            the caller's credential, which Stream's proxy requires on every call.
+        origin (str | Unset): Only work started with this public API key, or by this origin of
+            work no key started, such as hook:chat.
+        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
+            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -416,6 +430,7 @@ async def asyncio(
             from_=from_,
             to=to,
             meter=meter,
+            origin=origin,
             api_key_id=api_key_id,
             user_id=user_id,
             team=team,

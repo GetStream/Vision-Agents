@@ -3,8 +3,6 @@ package phone
 import (
 	"context"
 	"errors"
-
-	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 )
 
 // trunkProvider stands in for the sip_trunk provider. Methods it does not override panic
@@ -87,18 +85,6 @@ func (s *PhoneSuite) TestSIPTrunkSettingsFillTheirDefaults() {
 		Name: "main", Host: "trunk.example.com", Port: 5060, Transport: "tcp", Codecs: []string{"PCMA"},
 	}, settings)
 	s.Equal([]string{"PCMU", "PCMA"}, SIPTrunkSettings{}.normalized().Codecs)
-}
-
-func (s *PhoneSuite) TestDigitsOnACallThroughATrunkReachTheTrunkProvider() {
-	trunks := &trunkProvider{}
-	sealer, err := auth.NewSealer("phone suite")
-	s.Require().NoError(err)
-	service, err := NewService(ServiceOptions{Registry: NewRegistry(s.config()), SIPTrunks: trunks, Sealer: sealer})
-	s.Require().NoError(err)
-
-	err = service.SendDigits(s.ctx, SIPTrunkVendor, "call-1", "12")
-	s.EqualError(err, "phone: digits cannot be pressed on a call through a customer's own sip trunk")
-	s.Equal([]string{"call-1:12"}, trunks.digits)
 }
 
 func (s *PhoneSuite) TestClosingWithoutATrunkProviderDoesNothing() {

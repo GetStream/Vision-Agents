@@ -258,6 +258,11 @@ type Session struct {
 	runs        map[*agent.Agent]*presence
 	callerSeen  atomic.Bool
 	settledOnce atomic.Bool
+	// caller is the number of the first phone caller to join the call, set once callerHeard
+	// closes (hearCaller). The channel is made on first use.
+	callerMu    sync.Mutex
+	caller      string
+	callerHeard chan struct{}
 	// machine holds the agent's hang-up while a call that leaves a voicemail is checked.
 	machine machineCheck
 	// connectorsUnavailable are the optional connector bindings the session opened without,
@@ -730,18 +735,26 @@ func (s *Session) CheckRespond(ctx context.Context, id, text string, images bool
 
 // SampleVideos refuses what Respond, or RespondCommand with command id, would refuse a
 // question with videos for, before the videos are fetched and sampled: work that is wasted on
-// a refused question. sample is false for a retry of a command already taken, which is
-// answered with its receipt and never shown to the model again, unless a dispatch worker's
-// server is answering it now (AwaitCommand).
-func (s *Session) SampleVideos(ctx context.Context, id string) (sample bool, err error) {
+// a refused question. text is what was typed with it. sample is false for a retry of a command
+// already taken, which is answered with its receipt and never shown to the model again, unless
+// a dispatch worker's server is answering it now (AwaitCommand).
+func (s *Session) SampleVideos(ctx context.Context, id, text string) (sample bool, err error) {
 	if s.persisted == nil {
 		return true, nil
 	}
+	// A message handed on to a worker is begun as a follow-up, which holds no limit on its text.
+	if s.spec.Dispatched {
+		text = ""
+	}
 	if id == "" {
-		if !s.Voicing() && s.spec.Caller.UserID != "" {
+		if s.Voicing() {
+			return true, nil
+		}
+		if s.spec.Caller.UserID != "" {
 			return false, stack.Wrap(errPersonalNeedsCommand)
 		}
-		return true, nil
+		_, err := s.persisted.CheckBegin("", text)
+		return err == nil, stack.Wrap(err)
 	}
 	if err := s.persisted.CheckCaller(ctx, s.spec.Caller.UserID); err != nil {
 		return false, stack.Wrap(err)
@@ -749,7 +762,10 @@ func (s *Session) SampleVideos(ctx context.Context, id string) (sample bool, err
 	s.commandMu.Lock()
 	defer s.commandMu.Unlock()
 	if _, err := s.persisted.Command(id); err != nil {
-		return true, nil
+		// A command not taken is begun as a new one: the conversation must be open and its
+		// last response finished, and the text within its limit (CheckBegin).
+		_, err := s.persisted.CheckBegin(id, text)
+		return err == nil, stack.Wrap(err)
 	}
 	_, waiting := s.awaiting[id]
 	return waiting, nil
@@ -1671,6 +1687,8 @@ func (s *Session) close() error {
 	s.stopTimeout()
 	s.mu.Unlock()
 	s.checked(false)
+	// A card waiting for the caller waits no longer (awaitCaller).
+	s.hearCaller("")
 
 	// The tools go first so a model waiting on one is told the call ended rather than
 	// waiting out a timeout against a conversation that is already over.

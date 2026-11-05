@@ -28,6 +28,7 @@ import (
 	"github.com/google/uuid"
 	"gopkg.in/yaml.v3"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/apispec"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/usage/ledger"
 )
@@ -133,6 +134,7 @@ func (s *Server) register(router chi.Router) huma.API {
 					},
 				},
 			},
+			OnAddOperation: []huma.AddOpFunc{apispec.DeprecateParams},
 		},
 		Formats:       huma.DefaultFormats,
 		DefaultFormat: "application/json",

@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
@@ -414,6 +415,17 @@ func callerOf(event callEvent) string {
 	return phoneCallerOf(event).number
 }
 
+// phoneNumberOf is phone.CallerNumber in E.164, as every other number in the API is, when the
+// carrier wrote it with 00 for the plus. One that does not say it is international is kept as
+// it came, since its country cannot be told.
+func phoneNumberOf(participantID string) (string, bool) {
+	number, ok := phone.CallerNumber(participantID)
+	if person, err := omnichannel.Phone(number); ok && err == nil {
+		return person.Address, true
+	}
+	return number, ok
+}
+
 // phoneCaller is the phone in a call, and its user session there.
 type phoneCaller struct {
 	number        string
@@ -426,7 +438,7 @@ func phoneCallerOf(event callEvent) phoneCaller {
 		return phoneCaller{}
 	}
 	for _, participant := range event.Call.Session.Participants {
-		if caller, ok := phone.CallerNumber(participant.User.ID); ok {
+		if caller, ok := phoneNumberOf(participant.User.ID); ok {
 			return phoneCaller{number: caller, UserSessionID: participant.UserSessionID}
 		}
 	}
@@ -457,7 +469,7 @@ func (s *Server) phoneJoinedOrLeft(r *http.Request, origin hookOrigin, eventType
 	participant := event.Participant.UserSessionID
 	var err error
 	if eventType == getstream.EventTypeCallSessionParticipantJoined {
-		number, _ := phone.CallerNumber(event.Participant.User.ID)
+		number, _ := phoneNumberOf(event.Participant.User.ID)
 		err = s.phone.Connect(r.Context(), origin.scope(), callType, callID, event.SessionID, participant, number,
 			eventTime(event.CreatedAt))
 	} else {

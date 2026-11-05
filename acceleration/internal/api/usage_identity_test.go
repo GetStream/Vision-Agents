@@ -208,6 +208,27 @@ func (s *UsageIdentitySuite) TestSpendWithNoKeyInTheQueryCountsEveryKey() {
 	s.Equal(int64(2), s.spentCount(""))
 }
 
+// origin is the key-or-origin filter's public name, and api_key_id its old one (AI-2811).
+func (s *UsageIdentitySuite) TestSpendIsNarrowedToAnOrigin() {
+	s.searched(s.client)
+	s.hookRow()
+	proxied := "api_key=" + url.QueryEscape(s.app.key)
+
+	s.Equal(int64(1), s.spentCount("origin=hook%3Achat"))
+	s.Equal(int64(1), s.spentCount(proxied+"&origin="+url.QueryEscape(s.app.key)))
+	s.Equal(int64(1), s.spentCount("origin=hook%3Achat&api_key_id=hook%3Achat"))
+	s.Equal(int64(1), s.spentCount("origin=&api_key_id=hook%3Achat"))
+	s.Equal(int64(1), s.spentCount("api_key_id=hook%3Achat"), "the old name still narrows")
+	s.Equal(int64(2), s.spentCount("origin="), "an empty origin narrows nothing")
+}
+
+func (s *UsageIdentitySuite) TestASpendFilterNamingTwoOriginsIsRefused() {
+	status, message := s.serverClient.failure(http.MethodGet, s.spendPath("origin=hook%3Achat&api_key_id="+url.QueryEscape(s.app.key)), nil)
+
+	s.Equal(http.StatusBadRequest, status, message)
+	s.Contains(message, "origin and api_key_id ")
+}
+
 func (s *UsageIdentitySuite) TestASpendFilterNamingTwoTeamsIsRefused() {
 	status, payload := s.serverClient.call(http.MethodGet, s.spendPath("team=finance&category=team:sales"), nil)
 

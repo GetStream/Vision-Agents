@@ -462,6 +462,8 @@ type CallLeg struct {
 	StreamSessionID    string `bun:"stream_session_id,notnull"`
 	ParticipantSession string `bun:"participant_session,notnull"`
 	Vendor             string `bun:"vendor,notnull"`
+	// VendorCallID is the vendor's id for an outbound leg. Empty for an inbound one.
+	VendorCallID string `bun:"vendor_call_id,nullzero"`
 	// Direction is Inbound or Outbound.
 	Direction    string `bun:"direction,notnull"`
 	LocalNumber  string `bun:"local_number,notnull"`
@@ -624,7 +626,7 @@ type AgentConfig struct {
 	// carry on. The zero value is the router's default.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
 	// EndOfTurn is when chorus-asr has a caller's turn ended in the config's sessions, as
-	// the config chose (20261215120000_end_of_turn.sql). The zero value is the server's
+	// the config chose (20261216090000_end_of_turn.sql). The zero value is the server's
 	// default.
 	EndOfTurn EndOfTurn `bun:"end_of_turn,type:jsonb,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty

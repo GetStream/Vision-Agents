@@ -73,6 +73,10 @@ func unnamedShard(dsn string) string {
 // Sharded reports whether this shard's calls are kept apart from the shared database.
 func (s *Store) Sharded() bool { return s.shard != s.db }
 
+// HasShards reports whether any shard's tables are kept outside the shared database: this
+// shard's own, or another shard's.
+func (s *Store) HasShards() bool { return s.Sharded() || len(s.peers) > 0 }
+
 // shards is every shard's database, this one's first.
 func (s *Store) shards() []bun.IDB {
 	all := make([]bun.IDB, 0, 1+len(s.peers))

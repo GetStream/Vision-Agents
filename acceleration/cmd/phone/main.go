@@ -424,6 +424,7 @@ func press(ctx context.Context, arguments []string) error {
 	vendor := flags.String("vendor", "telnyx", "vendor carrying the call")
 	callID := flags.String("call-id", "", "the vendor call id dialling returned")
 	digits := flags.String("digits", "", "what to press, e.g. 1 or 4123")
+	customer := flags.String("customer", "demo", "customer that placed the call")
 	if err := flags.Parse(arguments); err != nil {
 		return err
 	}
@@ -437,7 +438,7 @@ func press(ctx context.Context, arguments []string) error {
 	}
 	defer cleanup()
 
-	if err := service.SendDigits(ctx, *vendor, *callID, *digits); err != nil {
+	if err := service.SendDigits(ctx, *customer, *vendor, *callID, *digits); err != nil {
 		return err
 	}
 	fmt.Printf("pressed %s on %s\n", *digits, *callID)

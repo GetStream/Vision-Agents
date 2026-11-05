@@ -2470,7 +2470,7 @@ export type paths = {
         readonly get?: never;
         /**
          * Link a user to a phone number
-         * @description Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+         * @description Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -2821,6 +2821,7 @@ export type paths = {
          * What has happened to this app's rows since a cursor
          * @description Oldest first, for replaying onto the deployment that took the export. A change is only returned once every transaction older than it has committed, so following the cursor never steps over a row, and a change carries the row as it now reads rather than the columns that changed, so applying one twice is the same as applying it once.
          *     Changes are only recorded for an app that has exported, and only for as long as the deployment's retention window. A cursor older than what is still kept is answered 410, which means export again.
+         *     A router with shards cannot be the source of a move and answers 400 `not_configured`.
          *     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
          */
         readonly get: operations["listDataChanges"];
@@ -2843,6 +2844,7 @@ export type paths = {
          * Everything this app has, as newline-delimited JSON
          * @description One line per row, `{"table": ..., "row": {...}}`, and a last line `{"cursor": ..., "customer": ..., "at": ...}`. The cursor comes last because it is also what says the export finished: a stream that broke halfway has no cursor line, so half a copy cannot be mistaken for a whole one. The rows are read at one moment rather than stitched together, and exporting starts recording changes so that `listDataChanges` carries on from exactly where this left off.
          *     Only the calling app's rows are here, and credentials are not: an API key secret, an OAuth access token and an OAuth refresh token stay with the deployment that holds them, so an imported plugin connection has to be authorized again. The audio behind a voice sample and a call recording lives in an object bucket rather than in this database; the rows naming those objects are here, and copying the bucket is yours to do.
+         *     A router with shards cannot be the source of a move and answers 400 `not_configured`.
          *     Server-side only, and refused entirely when the router runs with ROUTER_AUTH_MODE=noauth, where naming a customer is all it takes to be one.
          */
         readonly get: operations["exportData"];
@@ -3972,7 +3974,7 @@ export type paths = {
         };
         /**
          * What the calling customer spent, grouped
-         * @description Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:api_key", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
+         * @description Spend across every modality at once, which is what a bill is. group_by decides what the series are: "modality" for where the money went, who asked for it ("who:app", "who:origin", "who:user", "who:team" or "who:category"), or a cost label for what it was spent on. "who:origin" groups by the key the work was started with, or the origin of work no key started, such as hook:chat; "who:api_key" is its old name, still read for one release. A label key holds no ':', so a label named app is still grouped by as group_by=app. "who:team" groups by the team the user's token named, work with none under the empty value; "who:category" by the other usage categories, and a request carrying several counts once in each, so those rows add up to more than the total.
          *     scope=organization counts every app of the caller's organization rather than the caller's app alone; grouped by "who:user" the value is then <app_id>/<user_id>, since a user id is only unique within its app.
          *     Only the biggest values keep a series of their own, because a label such as customer_id has as many values as the customer has customers. The rest are summed into "other", and spend carrying no such label at all into the empty value, so the rows still add up to the total.
          *     Reads the request rows rather than the rollups, so today's spend is there without a rollup having run.
@@ -4133,7 +4135,7 @@ export type paths = {
         };
         /**
          * List the usage events
-         * @description Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, api_key_id, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
+         * @description Every unit of work recorded for the calling app, or with scope=organization for every app of its organization (app_id narrows that to one), newest first: by when it happened, then by usage_id. Each names who it was for, what it was, how much of it there was and what the organization is charged. Narrow it by from and to, meter, origin, user_id, and team or category; send the filters again with cursor for the next page. Work reaches the list once the router has shipped it to the usage service, so the newest may take a moment to appear. With no usage service, or for an app in no organization, it answers 404 billing_not_enabled. A suspended organization reads it all the same.
          *
          *     Server-side only: a request that is not server-side answers 403 server_side_only.
          */
@@ -4659,7 +4661,7 @@ export type components = {
         /** @description Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none. */
         readonly AgentUserRequest: {
             /**
-             * @description The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: under an agent with episode_cards on when the link is made, the user reads none of its earlier cards. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+             * @description The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
              * @example +15551234567
              */
             readonly phone: string | null;
@@ -10068,7 +10070,10 @@ export type components = {
         readonly UsageEvent: {
             /** @description The agent the work was done for. */
             readonly agent_id?: string;
-            /** @description The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>. */
+            /**
+             * @deprecated
+             * @description The old name of origin, the same value, still answered for one release.
+             */
             readonly api_key: string;
             /** @description The app the work was for. */
             readonly app_id: string;
@@ -10096,6 +10101,8 @@ export type components = {
              * @description When the work happened.
              */
             readonly occurred_at: string;
+            /** @description Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:<name>. */
+            readonly origin: string;
             /** @description Who did the work, such as openai. */
             readonly provider?: string;
             /** @description What within the request the work was for, such as subagent. */
@@ -17249,7 +17256,7 @@ export interface operations {
             readonly 402: components["responses"]["PaymentRequired"];
             readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
-            /** @description This deployment has no database to export from, changes cannot be recorded, or a write that was open when the export started is still open after 30 seconds: try again. */
+            /** @description This deployment has no database to export from, or cannot record changes; or a write that was open when the export started is still open after 30 seconds: try again. */
             readonly 503: {
                 headers: {
                     readonly [name: string]: unknown;
@@ -19870,17 +19877,22 @@ export interface operations {
     readonly getSpend: {
         readonly parameters: {
             readonly query: {
-                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                /**
+                 * @deprecated
+                 * @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+                 */
                 readonly api_key_id?: string;
                 /** @description Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several. */
                 readonly category?: readonly string[];
                 /** @description Start of the window, inclusive. */
                 readonly from: string;
                 readonly granularity?: components["schemas"]["Granularity"];
-                /** @description "modality", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by. */
+                /** @description "modality", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by. */
                 readonly group_by?: string;
                 /** @description How many values keep a series of their own. */
                 readonly limit?: number;
+                /** @description Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. */
+                readonly origin?: string;
                 /** @description Whose spend: app, the default, or organization. */
                 readonly scope?: components["schemas"]["SpendScope"];
                 /** @description Only count requests carrying every one of these cost labels, each written "key:value". Repeat for several. */
@@ -20169,7 +20181,10 @@ export interface operations {
     readonly listUsageEvents: {
         readonly parameters: {
             readonly query?: {
-                /** @description Only work started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call. */
+                /**
+                 * @deprecated
+                 * @description The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
+                 */
                 readonly api_key_id?: string;
                 /** @description With scope=organization, only this app's events. With scope=app the app is the caller's, and another is refused. */
                 readonly app_id?: string;
@@ -20183,6 +20198,8 @@ export interface operations {
                 readonly limit?: number;
                 /** @description Only this kind of work, such as llm or runtime. */
                 readonly meter?: string;
+                /** @description Only work started with this public API key, or by this origin of work no key started, such as hook:chat. */
+                readonly origin?: string;
                 /** @description Whose events: app, the default, or organization. */
                 readonly scope?: components["schemas"]["SpendScope"];
                 /** @description Only work for this team: its users' tokens name it in their team claim. Not with category. */

@@ -1807,8 +1807,16 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 // team:<name>, which every row the team's users asked for carries.
 func usageFilterOf(request *getSpendRequest) (store.UsageFilter, error) {
 	var who store.UsageFilter
+	var origin, apiKeyID string
+	if given := request.Origin.ptr(); given != nil {
+		origin = *given
+	}
 	if key := request.APIKeyID.ptr(); key != nil {
-		who.APIKey = *key
+		apiKeyID = *key
+	}
+	var err error
+	if who.APIKey, err = usageOrigin(origin, apiKeyID); err != nil {
+		return store.UsageFilter{}, err
 	}
 	if user := request.UserID.ptr(); user != nil {
 		who.UserID = *user
@@ -2172,8 +2180,10 @@ func (s *Server) registerServer(api huma.API) {
 		Summary:     "What the calling customer spent, grouped",
 		Description: "Spend across every modality at once, which is what a bill is. group_by decides what the " +
 			"series are: \"modality\" for where the money went, who asked for it (\"who:app\", " +
-			"\"who:api_key\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
-			"was spent on. A label key holds no ':', so a label named app is still grouped by as " +
+			"\"who:origin\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
+			"was spent on. \"who:origin\" groups by the key the work was started with, or the origin of work " +
+			"no key started, such as hook:chat; \"who:api_key\" is its old name, still read for one " +
+			"release. A label key holds no ':', so a label named app is still grouped by as " +
 			"group_by=app. \"who:team\" groups by the team the user's token named, work with none under the " +
 			"empty value; \"who:category\" by the other usage categories, and a request carrying several " +
 			"counts once in each, so those rows add up to more than the total.\n" +
@@ -2189,7 +2199,7 @@ func (s *Server) registerServer(api huma.API) {
 		// Declared rather than read off the input, so the default is documented without
 		// being filled in: the handler tells a parameter left out from one sent.
 		Parameters: []*huma.Param{
-			{Name: "group_by", In: "query", Description: "\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
+			{Name: "group_by", In: "query", Description: "\"modality\", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by.", Schema: &huma.Schema{Type: huma.TypeString, Default: "modality"}},
 			{Name: "limit", In: "query", Description: "How many values keep a series of their own.", Schema: &huma.Schema{Type: huma.TypeInteger, Minimum: bound(1), Maximum: bound(50), Default: 6}},
 		},
 		Responses: map[string]*huma.Response{
@@ -2335,14 +2345,15 @@ func (SpendScope) Schema(registry huma.Registry) *huma.Schema {
 }
 
 type getSpendRequest struct {
-	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", who asked (who:app, who:api_key, who:user, who:team or who:category), or the cost label to group by."`
+	GroupBy     optionalParam[string]      `query:"group_by" doc:"\"modality\", who asked (who:app, who:origin, who:user, who:team or who:category), or the cost label to group by."`
 	Scope       optionalParam[SpendScope]  `query:"scope" doc:"Whose spend: app, the default, or organization."`
 	Granularity optionalParam[Granularity] `query:"granularity"`
 	From        time.Time                  `query:"from" doc:"Start of the window, inclusive." required:"true"`
 	To          time.Time                  `query:"to" doc:"End of the window, exclusive." required:"true"`
 	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
 	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
-	APIKeyID    optionalParam[string]      `query:"api_key_id" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat. Named api_key_id because api_key in the query is the caller's credential, which Stream's proxy requires on every call." maxLength:"255"`
+	Origin      optionalParam[string]      `query:"origin" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
+	APIKeyID    optionalParam[string]      `query:"api_key_id" deprecated:"true" doc:"The old name of origin, still read for one release. Given with origin, it must name the same key or origin." maxLength:"255"`
 	UserID      optionalParam[string]      `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
 	Team        optionalParam[string]      `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
 	Category    optionalParam[[]string]    `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`

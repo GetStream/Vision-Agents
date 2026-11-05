@@ -88,6 +88,15 @@ func (s *CallHooksSuite) TestAnArrivingCallReachesTheWorkerOfWhoeverHoldsTheNumb
 	}
 }
 
+func (s *CallHooksSuite) TestACallerWrittenWith00ReachesTheWorkerInE164() {
+	s.Equal("+442079460018", s.callerReaching("sip-00442079460018"))
+}
+
+func (s *CallHooksSuite) TestACallerNotWrittenAsInternationalReachesTheWorkerAsItCame() {
+	s.Equal("5550001111", s.callerReaching("sip-5550001111"),
+		"a national number could be of any country, so it is not guessed at")
+}
+
 // Deployment mode acts on every delivery of a call event, as it always has: only a new message
 // is recorded, for Stream Chat's delivery of it.
 func (s *CallHooksSuite) TestACallDeliveredTwiceIsActedOnTwice() {
@@ -736,6 +745,23 @@ func (s *CallHooksSuite) holdBridged(callType, callID, bridgeURI string) {
 // arrive delivers a signed call.session_started for one call, as Stream would.
 func (s *CallHooksSuite) arrive(cid string) int {
 	return s.signedly("/v1/phone/hooks/stream", s.arriving(cid))
+}
+
+// callerReaching is the caller number a worker is handed for a call whose SIP participant is
+// participantID.
+func (s *CallHooksSuite) callerReaching(participantID string) string {
+	s.hold("default", s.callID)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
+	body := strings.Replace(s.arriving("default:"+s.callID), `"sip-+15550001111"`, fmt.Sprintf("%q", participantID), 1)
+	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", body))
+	select {
+	case call := <-worker.Calls():
+		return call.CallerNumber
+	case <-time.After(settleFor):
+		s.FailNow("the call never reached the worker")
+		return ""
+	}
 }
 
 // arriving is what Stream sends when a caller lands in a call.
