@@ -632,6 +632,7 @@ func TestALinkAToolReturnedGivesOnlyAnIDOfTheKindItsWordsName(t *testing.T) {
 		{"a link whose subdomain names the kind", "search", `{"results":"https://channel.example.com/U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a link whose path names the kind", "search", `{"results":"see https://team.example.com/channels/C0HELP002"}`, `{"channel_id":"C0HELP002"}`, true},
 		{"a link whose path names the kind just before the ID", "search", `{"results":"see https://team.example.com/channel/U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a link whose last word names the kind, after the ID", "search", `{"results":"see https://team.example.com/U0ANA001/channel"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a link whose query key names the kind", "search", `{"results":"see https://team.example.com/view?channel=U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a link whose path names a case", "search", `{"results":"Opened https://desk.example.com/cases/CS0A6631"}`, `{"case_id":"CS0A6631"}`, true},
 		{"a link whose path is a label", "search", `{"results":"https://team.example.com/channel: Ana Lind (U0ANA001)"}`, `{"channel_id":"U0ANA001"}`, true},
