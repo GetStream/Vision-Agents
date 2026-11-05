@@ -175,7 +175,7 @@ func (c *Clients) Readiness(ctx context.Context, bound Bound) (Readiness, error)
 // sent: only then is a Stream user a request names one a token Stream checked says. An app
 // with no client, or one Stream could not be asked about (err), is taken as one that does not.
 func (c *Clients) ChecksTokens(ctx context.Context, bound Bound) (bool, error) {
-	if c == nil || bound.Client == nil {
+	if bound.Client == nil {
 		return false, nil
 	}
 	readiness, err := c.Readiness(ctx, bound)
