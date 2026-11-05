@@ -4,6 +4,7 @@ package store
 
 import (
 	"errors"
+	"fmt"
 	"io/fs"
 	"maps"
 	"os"
@@ -221,6 +222,67 @@ func (s *StoreSuite) TestSlackRevisionSixSeedsOverTheRevisionFiveTheBuildBeforeS
 			s.Equal("user_id read from $.authed_user.id; live Slack sends top-level user_id", reason)
 		}
 	}
+}
+
+// TestTheReadOnlyToolsSeedOverTheRevisionsTheBuildBeforeStored (AI-2777): each of these files
+// lists read_only_tools at the revision here, which is a change, so a new revision rather than
+// an edit the seeder refuses. The build before held each file without the list, one revision
+// down. Every other built-in stays.
+func (s *StoreSuite) TestTheReadOnlyToolsSeedOverTheRevisionsTheBuildBeforeStored() {
+	listed := map[string]int{"calcom": 3, "calendly": 3, "github": 10, "gong": 3, "hubspot": 2, "linear_app": 3,
+		"metabase": 3, "notion": 2, "sentry": 2}
+	before := fstest.MapFS{}
+	files, err := fs.ReadDir(providers.FS, ".")
+	s.Require().NoError(err)
+	for _, file := range files {
+		raw, err := fs.ReadFile(providers.FS, file.Name())
+		s.Require().NoError(err)
+		before[file.Name()] = &fstest.MapFile{Data: raw}
+	}
+	for id, revision := range listed {
+		var kept []string
+		listing := false
+		for line := range strings.Lines(string(before[id+".yaml"].Data)) {
+			if line == "    read_only_tools:\n" {
+				listing = true
+				continue
+			}
+			if listing && strings.HasPrefix(line, "      - ") {
+				continue
+			}
+			listing = false
+			kept = append(kept, line)
+		}
+		was := strings.Join(kept, "")
+		s.Require().Contains(was, fmt.Sprintf("\nrevision: %d\n", revision), id)
+		was = strings.Replace(was, fmt.Sprintf("\nrevision: %d\n", revision), fmt.Sprintf("\nrevision: %d\n", revision-1), 1)
+		before[id+".yaml"] = &fstest.MapFile{Data: []byte(was)}
+	}
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, before))
+	latest := func() map[string]int {
+		revisions := map[string]int{}
+		for name := range before {
+			definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, strings.TrimSuffix(name, ".yaml"))
+			s.Require().NoError(err)
+			revisions[definition.ID] = definition.Revision
+		}
+		return revisions
+	}
+	was := latest()
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS), "the lists are new revisions, not refused")
+
+	now := latest()
+	for id, revision := range listed {
+		s.Equal(revision-1, was[id], id)
+		s.Equal(revision, now[id], id)
+		definition, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, id)
+		s.Require().NoError(err)
+		s.NotEmpty(definition.Manifest.Sources[0].ReadOnlyTools, id)
+		delete(was, id)
+		delete(now, id)
+	}
+	s.Equal(was, now)
 }
 
 // TestShopifyRevisionTwoSeedsOverTheRevisionOneTheBuildBeforeStored: revision 1 sent the
