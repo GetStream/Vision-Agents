@@ -649,6 +649,23 @@ func (s *DataMoveSuite) TestAnOpenTransactionThatRecordsNothingDoesNotHoldTheFee
 	s.Equal([]string{committed}, handed)
 }
 
+func (s *DataMoveSuite) TestAChangeInFlightInAnotherDatabaseDoesNotHoldTheFeedBack() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	s.Require().NoError(s.destination.StartDataCapture(s.ctx, "acme", time.Hour))
+	elsewhere, err := s.destination.DB().BeginTx(s.ctx, nil)
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { _ = elsewhere.Rollback() })
+	_, err = elsewhere.ExecContext(s.ctx, "SELECT setval('data_changes_seq_seq', 1, false)")
+	s.Require().NoError(err)
+	s.writeIn(elsewhere, "acme", "in flight in the other database")
+	committed := s.seedAgentConfig(s.source, "acme", "committed")
+
+	handed, _ := s.follow("acme", cursor)
+
+	s.Equal([]string{committed}, handed)
+}
+
 func (s *DataMoveSuite) TestAnExportCursorStaysBelowAChangeInFlight() {
 	s.capture("acme")
 	// A sequence that has handed out nothing yet holds the first number it will hand out.

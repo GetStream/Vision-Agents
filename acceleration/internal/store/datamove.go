@@ -1404,11 +1404,12 @@ func (s *Store) PruneDataChanges(ctx context.Context, retention time.Duration) (
 	if err != nil {
 		return 0, err
 	}
+	// LEAST ignores a NULL: with no change still young, the mark is the only bound.
 	result, err := s.db.ExecContext(ctx, `
 DELETE FROM data_changes
-WHERE at < now() - make_interval(secs => ?) AND seq <= ?
-  AND seq < COALESCE((SELECT MIN(seq) FROM data_changes WHERE at >= now() - make_interval(secs => ?)), ?)`,
-		retention.Seconds(), mark, retention.Seconds(), mark+1)
+WHERE at < now() - make_interval(secs => ?)
+  AND seq <= LEAST(?, (SELECT MIN(seq) - 1 FROM data_changes WHERE at >= now() - make_interval(secs => ?)))`,
+		retention.Seconds(), mark, retention.Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("store: prune data changes: %w", err)
 	}

@@ -2470,9 +2470,14 @@ Changes are captured by a trigger per table writing into `data_changes`, gated o
 `data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
 starts the capture and reading a page refreshes it, so an abandoned move stops recording by
 itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
-rather than silently missing writes. Each change records `pg_current_xact_id()`, and the
-cursor never passes `pg_snapshot_xmin(pg_current_snapshot())`, so a sequence number handed
-out by a transaction that has not committed yet cannot be stepped over.
+rather than silently missing writes. A change is numbered when it is written and seen when
+its transaction commits, so a transaction that commits late can hold a lower number than
+one already seen. Each transaction that records a change holds a shared advisory lock
+naming the highest number handed out before its first one, until it ends, and the cursor
+never passes the lowest such lock: no change at or below the cursor can still appear. While
+a transaction recording a change is open, every customer's feed waits for it; an open
+transaction that records nothing holds no feed back. Pruning drops only the oldest
+numbers, so what is kept runs without a gap from the oldest change kept.
 
 ## Test
 

@@ -371,6 +371,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### `router replicate` no longer misses a change that commits late
+
+`GET /v1/data/changes` and an export could hand out a cursor past a change whose transaction was still running, when a transaction that started earlier had committed a higher number, and that change never reached the new deployment. Pruning could also drop a newer change and keep an older one, so a cursor between them carried on past the gap without a 410. Now the cursor stops below every change still in flight, an open transaction that records no change no longer holds the feed back, and pruning drops only the oldest numbers (AI-2741).
+
 ### Gmail, Google Calendar, Linear and Slack tools that only read sit beside a sensitive connector
 
 A config that binds a sensitive connector such as Nessy was refused when it also granted a tool of Gmail, Google Calendar, Linear or Slack, even one that only reads, because their manifests listed no `read_only_tools`. Gmail revision 4, Google Calendar revision 3, Linear revision 3 and Slack revision 7 now list the tools their vendor pages or tool descriptions say only read: Gmail's thread, message, draft and label reads, Calendar's event and calendar reads and `suggest_time`, Linear's get and list tools, and Slack's search, read and list tools. A binding granting only those by name is accepted. Any other tool, such as Gmail's `create_draft`, Linear's `extract_images` and Slack's `slack_send_message`, still needs the binding's `require_approval` (AI-2756).
