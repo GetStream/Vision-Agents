@@ -1002,7 +1002,8 @@ func lineWords(line string) []string {
 
 // phraseEnds reports for each of lineWords(line) whether it ends its phrase: the line ends
 // after it, or a mark stands between it and the next word, as the dash does in
-// "public_channel - Creator". A word followed by a space alone does not: "channel owner".
+// "public_channel - Creator", or a tab or a gap of two spaces or more stands there, as in the
+// columns of a text table. A word followed by one space alone does not: "channel owner".
 func phraseEnds(line string) []bool {
 	var spans [][]int
 	for _, span := range idWord.FindAllStringIndex(line, -1) {
@@ -1012,7 +1013,12 @@ func phraseEnds(line string) []bool {
 	}
 	ends := make([]bool, len(spans))
 	for i, span := range spans {
-		ends[i] = i == len(spans)-1 || strings.TrimSpace(line[span[1]:spans[i+1][0]]) != ""
+		if i == len(spans)-1 {
+			ends[i] = true
+			continue
+		}
+		gap := line[span[1]:spans[i+1][0]]
+		ends[i] = strings.TrimSpace(gap) != "" || strings.ContainsRune(gap, '\t') || strings.Contains(gap, "  ")
 	}
 	return ends
 }

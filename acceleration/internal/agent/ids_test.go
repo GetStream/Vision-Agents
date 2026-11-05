@@ -507,6 +507,10 @@ func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 		{"a channel before its type at the end of the line", `{"results":"#help (C0HELP002) private_channel"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a channel before its type and a comma", `{"results":"#help (C0HELP002) - private_channel, archived"}`, `{"channel_id":"C0HELP002"}`, false},
 		{"a channel before its kind and a bar", `{"results":"C0HELP002 channel | 4 members"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel in a text table row, columns two spaces apart", `{"results":"ID  TYPE  MEMBERS\nC0HELP002  public_channel  12"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel in a text table row, columns a tab apart", `{"results":"C0HELP002\tchannel\t12"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a channel in a text table row, a name before it", `{"results":"#help  C0HELP002  channel  12"}`, `{"channel_id":"C0HELP002"}`, false},
+		{"a person in a text table row of channels, the role column after the kind", `{"results":"Ana Lind  U0ANA001  channel owner"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a kind of two words after the ID", `{"results":"Main line P0NUM001 phone number"}`, `{"phone_number_id":"P0NUM001"}`, false},
 		{"a kind of two words after the ID, then a role", `{"results":"Ana P0NUM001 phone number owner"}`, `{"phone_number_id":"P0NUM001"}`, true},
 	}
