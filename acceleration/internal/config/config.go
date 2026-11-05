@@ -162,6 +162,12 @@ const (
 type Limits struct {
 	// Mode is enforce, shadow or off. Empty is enforce.
 	Mode LimitsMode `koanf:"mode"`
+	// SlackToken and SlackChannel are where the operator is told the first time each
+	// organization is refused at its credit, the spend hard limit or its own spend limits: a
+	// bot token holding chat:write, and the id of a channel the bot is a member of. Either
+	// empty tells nobody.
+	SlackToken   string `koanf:"slack_token"`
+	SlackChannel string `koanf:"slack_channel"`
 }
 
 // Usage is the usage service the router ships the rows it writes to. An empty URL is none:
@@ -581,7 +587,9 @@ var variables = map[string]string{
 	"usage.manage_key": "ROUTER_USAGE_MANAGE_KEY",
 	"usage.redis_url":  "ROUTER_USAGE_REDIS_URL",
 
-	"limits.mode": "ROUTER_LIMITS_MODE",
+	"limits.mode":          "ROUTER_LIMITS_MODE",
+	"limits.slack_token":   "ROUTER_LIMITS_SLACK_TOKEN",
+	"limits.slack_channel": "ROUTER_LIMITS_SLACK_CHANNEL",
 
 	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
 	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
@@ -1099,7 +1107,9 @@ func (c Config) export() error {
 		"usage.manage_key": c.Usage.ManageKey,
 		"usage.redis_url":  c.Usage.RedisURL,
 
-		"limits.mode": string(c.Limits.Mode),
+		"limits.mode":          string(c.Limits.Mode),
+		"limits.slack_token":   c.Limits.SlackToken,
+		"limits.slack_channel": c.Limits.SlackChannel,
 
 		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
 		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),

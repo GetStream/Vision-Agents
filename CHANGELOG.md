@@ -2,6 +2,10 @@
 
 ## Features
 
+### The operator hears of each organization's first money limit
+
+With `ROUTER_LIMITS_SLACK_TOKEN` and `ROUTER_LIMITS_SLACK_CHANNEL` set, the router posts to that Slack channel the first time each organization is refused at its credit, at Stream's spend hard limit for the day or the month, or at one of its own spend limits. In `shadow` it posts what would have been refused, and says the work was admitted. Each post names the organization, its tier, the app and the refusal as the caller was answered. It is sent once per organization and kind of limit across every router: the router that writes the organization's `limit_notices` row posts it, and one whose post failed is posted by the next router to sweep. A suspension, a user's own limit and a money check that could not be read are not posted (AI-1918).
+
 ### The router reads a page into Markdown
 
 `POST /v1/ocr` takes a JPEG or PNG of a page, up to 10 MB, and answers with its text as Markdown, its headings, lists and tables kept. `ocr-default` asks Mistral OCR 4.1 first and fails over, after 45 seconds or an error, to gpt-6-luna and then gemini-3.8-flash. It never fails over to a model that cannot see a picture. `options.target` names another shortcut, `ocr-vision` among them, or one model, as the other modalities do, and `options.data_policy` applies the ZDR and region rules. Each page is one usage row with the model that read it: Mistral's is priced by the page at $4 per 1,000, and a vision model's by the tokens it took. A request is checked against the spend limits before the page is sent. A page every model failed is a 200 with `status: failed` and an `error_code`. `GET /v1/ocr/providers` and `GET /v1/ocr/routes` list the models and shortcuts (AI-2611).
