@@ -195,7 +195,7 @@ func (s *CallHooksSuite) TestALaterCallerInTheSameCallIsNotCountedRefused() {
 	s.Require().Equal(http.StatusOK, s.signedly("/v1/phone/hooks/stream", arrivingCallAt("default:"+s.callID, arrived)))
 	s.Require().True(s.refused())
 	s.Require().Eventually(func() bool {
-		keys, err := s.live.Redis().Do(ctx, s.live.Redis().B().Keys().Pattern("phone:refused:*:"+s.callID+":*").Build()).AsStrSlice()
+		keys, err := s.live.Redis().Do(ctx, s.live.Redis().B().Keys().Pattern("phone:refused:*:"+s.callID+"*").Build()).AsStrSlice()
 		return err == nil && len(keys) == 1
 	}, settleFor, 10*time.Millisecond, "the refusal was never marked")
 	end("session-1", arrived.Add(10*time.Second))
