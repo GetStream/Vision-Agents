@@ -21,7 +21,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     let createdAt: Date
     let custom: [String: RawJSON]?
     let description: String?
-    /// Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered.
+    /// Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
     let endReason: SessionEndReason?
     /// The session this one continued from, empty for one opened fresh.
     let forkedFrom: String?
