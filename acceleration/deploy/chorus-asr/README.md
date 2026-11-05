@@ -31,6 +31,75 @@ The server is started with its model and the `policy.json` that ships with that 
 `GET /v1/info` hands the policy to the router, so nothing about a checkpoint is in the
 router. A server without one answers 501, and the router never acts on it.
 
+Three ways to use it, each a short Go program in
+[examples/routers/chorus_asr_example](../../../examples/routers/chorus_asr_example/README.md):
+
+| Use | Router | Agent |
+| --- | --- | --- |
+| [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL`, `ROUTER_CHORUS_ASR_MODE=act` | `stt: stream/chorus-asr`, its own `tts` |
+| [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL`, `ROUTER_CHORUS_ASR_MODE=act` | any `stt` |
+| [Transcription only](../../../examples/routers/chorus_asr_example/transcribe_only/main.go): the words, through the router's STT | `ROUTER_CHORUS_ASR_URL` | a router config naming `stream/chorus-asr` |
+
+## How eager turn-taking is: `end_of_turn`
+
+How long chorus-asr waits before it takes a pause for the end of a turn is the app's to
+choose, per agent, beside its `stt`, `llm` and `tts`. Waiting longer cuts the caller off less
+often, and answers later. `end_of_turn` takes one of three:
+
+```yaml
+# agent.yaml
+end_of_turn:
+  max_wait_ms: 1100   # the measured point with the fewest cut-ins that answers within 1.1 s at p90
+```
+
+```yaml
+end_of_turn:
+  preset: fast        # one of the server's presets, by name
+```
+
+```yaml
+end_of_turn:
+  bars:               # your own: the first from 0 ms, each later one further into the pause
+    - {from_ms: 0, bar: 0.97}
+    - {from_ms: 900, bar: 0.25}
+```
+
+Left out, an agent keeps what is stored, and a new one ends its turns by the server's
+`default` preset; `end_of_turn: {}` is the default again. A sync (`POST /v1/agents/sync`, as
+every SDK's folder sync sends it), a config's create, replace and patch, and a server-side
+`createSession`, which chooses for one session over its config's, all take the same field.
+
+- **What is checked, and when.** A write is refused (400), before anything is stored, when
+  `end_of_turn` names more than one of the three, when its bars don't begin at 0 ms and rise,
+  or one isn't strictly between 0 and 1, when the server publishes no preset by that name,
+  or when `max_wait_ms` is shorter than every measured point's p90 wait. A device may not
+  choose a session's (403). When the router asks chorus-asr nothing about turns
+  (`ROUTER_CHORUS_ASR_MODE` off), or its server can't say what it publishes, the choice is
+  kept and a sync says so in `warnings`.
+- **What it replaces.** Only the bars. When a pause is checked, how much more a turn's first
+  pause asks, and the cap stay the server's, which are fitted to its model.
+- **When it is read.** At each check, against the policy of the model the server runs then.
+  A preset or wait that model no longer publishes, as after a new checkpoint, ends the
+  session's turns by its default, and a warning says so once per session.
+- **What you see.** `router_agent_chorus_asr_compared_total` counts each shadow comparison by
+  the bars it was read by, its `end_of_turn` label: `preset:NAME`, `max_wait_ms:N` for the
+  frontier point fitted to `N` (whatever wait the agent asked for), or `custom` for its own,
+  and the shadow log line carries the same with the bar it was held to.
+
+The trade-off, measured on held-out calls for the checkpoint this was written against:
+
+| Choice | Bars | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts |
+| --- | --- | --- | --- | --- | --- |
+| `preset: safe` (default) | 0.995 from 0 ms, 0.20 from 1,100 ms | 4.5% | 1,100 ms, 1,100 ms | 12.6% | none of 9 cut |
+| `preset: fast` | 0.8 from 0 ms, 0.3 from 500 ms | 14.5% | 500 ms, 800 ms | within the limit | one cut after "One" |
+
+`max_wait_ms` chooses among the points of a server's frontier
+([below](#wire-protocol)), with the fewest cut-ins whose p90 wait is within it, so the
+table a checkpoint's server publishes is the one to choose by. That checkpoint's server
+publishes these two presets and no frontier, so on it `max_wait_ms` is refused, naming the
+presets to use instead. Bars of your own were not measured: measure them on your own calls
+before relying on them.
+
 ## Wire protocol
 
 `GET /v1/info`: what the server serves, here with each preset's `measured` left out:
@@ -41,17 +110,25 @@ router. A server without one answers 501, and the router never acts on it.
 
 `end_of_turn` is fitted to the server's model. A pause is checked `first_check_ms` into it
 and every `interval_ms` after, and the turn has ended at the first check where `p_eot`
-reaches the bar of the last of a preset's `bars` to have begun by then, `from_ms` into the
+reaches the bar of the last of the agent's `bars` to have begun by then, `from_ms` into the
 pause, raised by `first_pause_logit` in log-odds on the turn's first pause. At `cap_ms` of
-pause it has ended whatever the model says. The presets are how eager turn-taking is, and
-the router applies the one the server names as its `default`. These values belong to one
-checkpoint, and another one comes with its own. The presets of the current one, on held-out
-calls:
+pause it has ended whatever the model says. The bars are the agent's choice (see
+[How eager turn-taking is](#how-eager-turn-taking-is-end_of_turn)): a preset, a point of
+the frontier, or its own, and the `default` preset for an agent that chooses none. These
+values belong to one checkpoint, and another one comes with its own.
 
-| Preset | Bars | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts |
-| --- | --- | --- | --- | --- | --- |
-| `safe` (default) | 0.995 from 0 ms, 0.20 from 1,100 ms | 4.5% | 1,100 ms, 1,100 ms | 12.6% | none of 9 cut |
-| `fast` | 0.8 from 0 ms, 0.3 from 500 ms | 14.5% | 500 ms, 800 ms | within the limit | one cut after "One" |
+`end_of_turn.frontier`, when the server measured one, is bars fitted to each of several
+waits, and what they did on held-out calls:
+
+```
+"frontier":[{"max_wait_ms":N,"bars":[{"from_ms":0,"bar":B0},{"from_ms":T1,"bar":B1}],"measured":{"cut_ins":C,"answer_ms_median":M,"answer_ms_p90":P,"dictation_pauses_cut":D}}, ...]
+```
+
+`cut_ins` is the share of turns ended while the caller was still speaking, `answer_ms_median`
+and `answer_ms_p90` how long a caller who had finished waited for the answer, and
+`dictation_pauses_cut` the share of real pauses inside a dictated value taken for an end. A
+point without them, or a frontier whose bars don't begin at 0 ms and rise, makes the policy
+incomplete, as a preset without its bars does.
 
 `POST /v1/agents`: an agent, by what it was told and its customer tools. The router's own
 tools (ending or transferring the call, pressing keys, the knowledge and web lookups,
@@ -129,7 +206,7 @@ changed.
 
 | Model | `Decided.Disposition` | `Decided.Floor` | Also |
 | --- | --- | --- | --- |
-| floor free, `p_eot` under the preset's bar and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
+| floor free, `p_eot` under the agent's bar and the pause under the cap | `wait` | `continue` | `Again`: `interval_ms` |
 | `respond`, `clarify`, `ignore` | as said | `continue` | |
 | `cannot` | `respond` | `continue` | `Cannot` |
 | a tool | `respond` | `continue` | `Tool` |
@@ -149,8 +226,8 @@ approval is untouched. Acting, a decision's `Ruler` is `heard`.
   turn the flow controller decided.
 - **Shadow.** One question at a time, none waited for: a slow server costs a call nothing.
   `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
-  and the preset, and a debug log line carries `p_end`, the preset and its bar, the pause,
-  first check and first pause.
+  and the `end_of_turn` bars the model's was read by, and a debug log line carries `p_end`,
+  the same `end_of_turn` and its bar, the pause, first check and first pause.
 - **Transcripts.** A server that is down when the session starts, or that fails a
   request, is a fatal error, which hands the call to the next transcriber the target names.
   The words since the last ones written are lost. A target that names this transcriber
