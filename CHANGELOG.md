@@ -383,6 +383,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A short video is sampled into the frames it has
+
+`responses.create` with a video of fewer frames than `max_frames` (8 by default) failed with `video: reading the frame at 812.5ms` when the clip ended inside its last frame: a one second clip at 4 frames a second could not be sampled at its default. The router now picks the frame showing at each sampling moment, which it reads from the clip, and shows a frame once however many moments fall in it, so that clip gives its four frames. A clip with more frames than `max_frames` gives `max_frames` frames as before, each now the frame on screen at its time rather than the next to begin (AI-2658).
+
 ### An export no longer misses a write that was in progress when it started
 
 A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).

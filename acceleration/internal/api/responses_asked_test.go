@@ -200,6 +200,30 @@ func (s *ResponsesAskedSuite) TestAVideoSentWithARequestIDToAPersonalConversatio
 	s.Len(s.chat.Uploads()[before:], 0, "no frame of the video is uploaded")
 }
 
+// A clip with fewer frames than the default eight is shown frame by frame, the one second
+// clip at four frames a second being four: sampling its last eighth used to fail the
+// question as "video: reading the frame at 812.5ms".
+func (s *ResponsesAskedSuite) TestAVideoNamingNoFrameCountShowsTheFramesAShortClipHas() {
+	clip := s.clip()
+	opened := s.client.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	command, text := s.utils.uuid(), "What happens in this clip "+s.utils.uuid()+"?"
+
+	s.Require().Equal(http.StatusAccepted, s.client.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/responses",
+		CreateResponseRequest{RequestId: &command, Text: text,
+			Videos: &[]VideoSource{{Url: "data:video/mp4;base64," + base64.StdEncoding.EncodeToString(clip)}}}, nil))
+
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests() {
+			asked := fmt.Sprint(request.Input)
+			if strings.Contains(asked, text) && strings.Count(asked, "video 1, ") == 4 {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the clip's four frames with the question")
+}
+
 // The retry of a video question already taken is answered from its command: its videos are not
 // fetched again, so a clip that could not be sampled now is not refused, and the model is not
 // asked twice.
