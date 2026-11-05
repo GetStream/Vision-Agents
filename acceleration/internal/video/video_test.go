@@ -269,21 +269,6 @@ func (s *VideoSuite) TestAMomentGetsTheFrameShowingThen() {
 	}
 }
 
-// A seek is told to ffmpeg to the microsecond: at three decimals the frames of a clip
-// faster than 1000 a second cannot be told apart, and a moment gets its neighbour.
-func (s *VideoSuite) TestAFrameOfAClipFasterThanAThousandASecondIsFoundByItsMoment() {
-	clip := s.recordSource("fast.mp4", "testsrc=duration=0.01:size=64x64:rate=4000", "-pix_fmt", "yuv420p")
-	path := filepath.Join(s.T().TempDir(), "fast.mp4")
-	s.Require().NoError(os.WriteFile(path, clip, 0o600))
-
-	for _, n := range []int{5, 7} {
-		jpeg, err := frameAt(s.T().Context(), path, time.Duration(n)*250*time.Microsecond)
-
-		s.Require().NoError(err)
-		s.Equal(s.frame(clip, n), jpeg, "the frame at %d quarter milliseconds", n)
-	}
-}
-
 func (s *VideoSuite) TestAWebMClipIsSampled() {
 	frames, length, err := Frames(s.T().Context(), "data:video/webm;base64,"+base64.StdEncoding.EncodeToString(s.webm), 2)
 
@@ -523,4 +508,11 @@ func (s *PublicOnlySuite) TestTheFetchRefusesAServerOnThisMachine() {
 
 	s.ErrorIs(err, errPrivate)
 	s.False(served, "the request reached the server")
+}
+
+// A seek is told to ffmpeg to the microsecond: at three decimals the frames of a clip
+// faster than 1000 a second cannot be told apart, and a moment gets its neighbour.
+func TestSeekTime(t *testing.T) {
+	assert.Equal(t, "0.001250", seekTime(1250*time.Microsecond))
+	assert.Equal(t, "2.500000", seekTime(2500*time.Millisecond))
 }

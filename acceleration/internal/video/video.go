@@ -265,12 +265,17 @@ func frameTimes(ctx context.Context, path string) ([]time.Duration, error) {
 	return times, nil
 }
 
+// seekTime is a moment as ffmpeg's -ss takes it, to the microsecond.
+func seekTime(at time.Duration) string {
+	return strconv.FormatFloat(at.Seconds(), 'f', 6, 64)
+}
+
 // frameAt is the first frame showing from a moment of the clip on, as a JPEG.
 func frameAt(ctx context.Context, path string, at time.Duration) ([]byte, error) {
 	var stderr bytes.Buffer
 	args := append([]string{"-v", "error"}, readOnlyAClip...)
 	command := exec.CommandContext(ctx, "ffmpeg", append(args,
-		"-ss", strconv.FormatFloat(at.Seconds(), 'f', 6, 64), "-i", path,
+		"-ss", seekTime(at), "-i", path,
 		"-frames:v", "1", "-vf", fmt.Sprintf("scale='min(%d,iw)':-2", frameWidth),
 		"-f", "image2pipe", "-c:v", "mjpeg", "-q:v", "4", "-")...)
 	command.Stderr = &stderr
