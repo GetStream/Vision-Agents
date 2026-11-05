@@ -395,6 +395,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A repeatable read write is not lost by a move
+
+A repeatable read or serializable transaction that took its snapshot before an export started recording, and wrote after, was in neither the export nor its changes. Its write is now refused with a serialization failure, the error those levels are retried on, and the retry is recorded. An export waits up to 30 seconds for such a transaction that wrote before it started, then answers 503, as it does for any open write; a transaction that only reads holds no export (AI-2814).
+
 ### A repeat `router replicate --once` brings only what changed since the last run
 
 A second `--once` for an app copied before wrote the whole export again, so every row edited on the target since the first copy went back to the source's older copy. A run now saves the source's cursor on the target, and the next run for the app follows the changes from it and writes no row of the export. An app the target already holds with no saved cursor, copied before this release, is refused, and so is one whose last run read the source longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION` (taken to be the source's own); pass `--as` on a repeat run so it opens no export; `--full` copies everything again, as before (AI-2864).
@@ -410,6 +414,10 @@ A Slack reply that is not to the bot, in a thread nobody linked yet, waits for t
 ### The agent passes on only an ID a source gave it as that kind
 
 A link a tool returns now gives an ID only of a kind that its line, the keys above it or the tool's name names. A person's profile link from a user lookup is no channel ID, and a message link's timestamp is no case ID; a channel search's permalink still gives the channel. A link or line that a tool reads back and that holds a line the agent wrote earlier, in a reply or in a message it posted, is no source for the IDs in it. An ID before its kind word counts only where that word ends its phrase. So `Ana Lind (U…) - channel owner` and `Owner U… channel admin` give no channel, while `#help (C…) - public_channel` and `C… (channel)` still do (AI-2852, AI-2853, AI-2854).
+
+### A link's address and a role's word name no ID's kind
+
+A link's own host and path no longer name what kind of thing its ID is: `see https://channels.example.com/u/U…` gives no channel. The words beside the link, the keys above it and the tool's name still do, so `Channel link: <link>` and a channel search's permalink still give the channel. A word between the kind and the ID is no longer read as the thing's name where a colon ends a label at it or the thing was named before its kind. So `Channel owner: U…` and `#help channel admin U…` give no channel, while `Channel #help: C…` and `channel help (C…)` still do. A link a tool writes twice, as `<link|host/path>`, names no kind by either copy (AI-2881, AI-2884, #1788).
 
 ### A short video is sampled into the frames it has
 
