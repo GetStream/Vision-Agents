@@ -383,6 +383,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### No app chat episode card in an app that checks no tokens
+
+With auth checks off, a Stream app lets any client send as any user, so an app chat message there no longer opens an episode or writes a card in that user's omni-channel. The same applies when Stream cannot say whether the app checks tokens. The message is answered as before (AI-2763, #1769).
+
 ### An export no longer misses a write that was in progress when it started
 
 A write that was in progress when `GET /v1/data/export` started recording an app's changes could be in neither the export nor the changes after it, so `router replicate` never carried it. An export now waits for such writes to commit before it reads, and answers 503 if one is still open after 30 seconds (AI-2792).
