@@ -284,10 +284,6 @@ components:
       properties:
         agent_id:
           type: string
-        api_key:
-          deprecated: true
-          description: The old name of origin, the same value, still answered for one release.
-          type: string
         app_id:
           type: string
         attributes:
@@ -356,7 +352,6 @@ components:
         - occurred_at
         - app_id
         - origin
-        - api_key
         - usage_categories
         - meter
         - quantities
@@ -917,10 +912,6 @@ components:
       properties:
         agent_id:
           type: string
-        api_key:
-          deprecated: true
-          description: The old name of origin, the same value, still answered for one release.
-          type: string
         app_id:
           type: string
         attributes:
@@ -996,7 +987,6 @@ components:
         - organization_id
         - organization_tier
         - app_id
-        - api_key
         - meter
         - quantities
         - cost_micros
@@ -1393,24 +1383,6 @@ paths:
           name: origin
           schema:
             description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat.
-            type: string
-        - deprecated: true
-          description: An old name of origin, still read for one release. Given with origin or api_key, it must name the same key or origin.
-          explode: false
-          in: query
-          name: api_key_id
-          schema:
-            deprecated: true
-            description: An old name of origin, still read for one release. Given with origin or api_key, it must name the same key or origin.
-            type: string
-        - deprecated: true
-          description: An old name of origin, still read for one release. Given with origin or api_key_id, it must name the same key or origin.
-          explode: false
-          in: query
-          name: api_key
-          schema:
-            deprecated: true
-            description: An old name of origin, still read for one release. Given with origin or api_key_id, it must name the same key or origin.
             type: string
         - description: 'Needs app_id: a user id is only unique within its app.'
           explode: false
@@ -2076,24 +2048,6 @@ paths:
           name: origin
           schema:
             description: Only events started with this public API key, or by this origin of work no key started, such as hook:chat.
-            type: string
-        - deprecated: true
-          description: An old name of origin, still read for one release. Given with origin or api_key, it must name the same key or origin.
-          explode: false
-          in: query
-          name: api_key_id
-          schema:
-            deprecated: true
-            description: An old name of origin, still read for one release. Given with origin or api_key, it must name the same key or origin.
-            type: string
-        - deprecated: true
-          description: An old name of origin, still read for one release. Given with origin or api_key_id, it must name the same key or origin.
-          explode: false
-          in: query
-          name: api_key
-          schema:
-            deprecated: true
-            description: An old name of origin, still read for one release. Given with origin or api_key_id, it must name the same key or origin.
             type: string
         - description: 'Needs app_id: a user id is only unique within its app.'
           explode: false

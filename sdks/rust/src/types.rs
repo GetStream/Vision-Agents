@@ -13282,8 +13282,6 @@ pub struct UsageEvent {
     ///The agent the work was done for.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub agent_id: ::std::option::Option<::std::string::String>,
-    ///The old name of origin, the same value, still answered for one release.
-    pub api_key: ::std::string::String,
     ///The app the work was for.
     pub app_id: ::std::string::String,
     ///What chose the price or explains the work, such as country or direction.

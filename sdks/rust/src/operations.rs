@@ -4752,9 +4752,6 @@ pub struct GetSpendQuery {
     /// Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
-    /// The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_id: Option<String>,
     /// Only count usage for this end user of the app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -4821,9 +4818,6 @@ pub struct ListUsageEventsQuery {
     /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
-    /// The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_id: Option<String>,
     /// Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,

@@ -14998,13 +14998,6 @@ namespace GetStream.VisionAgents.Models
         public string? AgentId { get; set; } = default!;
 
         /// <summary>
-        /// The old name of origin, the same value, still answered for one release.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("api_key")]
-        [System.Obsolete]
-        public string ApiKey { get; set; } = default!;
-
-        /// <summary>
         /// The app the work was for.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("app_id")]

@@ -572,17 +572,16 @@ token, and answer 404 `billing_not_enabled` with no usage service or for an app 
 organization. A server-side caller's `origin` and `user_id` query parameters are filters there,
 as they are on `getSpend`. `origin` is who started the work: a public API key, or the origin of
 work no key started (`hook:chat`, `phone:inbound`, `job:<name>`); each `UsageEvent` names it as
-`origin`. Its old names, the query's `api_key_id` and the event's `api_key`, are still read and
-answered for one release; given beside `origin`, `api_key_id` must name the same one, else 400.
-A key that is only ever a key is named `api_key_id` in the query on the limits and grants lists
-and usage. `api_key` in the query is the caller's credential, which Stream's proxy requires on
-every call. `user_id` in the query only names who a backend acts for, which no account
-read looks at. `listTeams`
-sums the request rows this month when there is no usage service. Staff read the teams of any
+`origin`. Its old name `api_key_id` is refused with a 400 that names `origin`, so a caller
+still sending it never reads every key's events as one key's. A key that is only ever a key is
+named `api_key_id` in the query on the limits and grants lists and usage. `api_key` in the
+query is the caller's credential, which Stream's proxy requires on every call. `user_id` in the
+query only names who a backend acts for, which no account read looks at. `listTeams` sums the
+request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
 `getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:origin`
-(`who:api_key` is its old name, still read for one release), `who:user`, `who:team` (work with no
+(its old name `who:api_key` is refused), `who:user`, `who:team` (work with no
 team under the empty value) or `who:category` (the team left out, and a request counted once in each
 of its categories). A cost label key holds no `:`, so a label named `app` is still `group_by=app`.
 `scope=organization` counts every app of the caller's organization, and there a user is

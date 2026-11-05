@@ -15,8 +15,6 @@ use GetStream\VisionAgents\Json;
 final readonly class UsageEvent
 {
     public function __construct(
-        // The old name of origin, the same value, still answered for one release.
-        public string $apiKey,
         // The app the work was for.
         public string $appId,
         // Whether cost_micros counts against the organization's credit and limits.
@@ -74,7 +72,6 @@ final readonly class UsageEvent
     public static function fromArray(array $data): self
     {
         return new self(
-            apiKey: Json::string($data, 'api_key'),
             appId: Json::string($data, 'app_id'),
             billable: Json::bool($data, 'billable'),
             costMicros: Json::int($data, 'cost_micros'),
@@ -108,7 +105,6 @@ final readonly class UsageEvent
     public function toArray(): array
     {
         $out = [];
-        $out['api_key'] = $this->apiKey;
         $out['app_id'] = $this->appId;
         $out['billable'] = $this->billable;
         $out['cost_micros'] = $this->costMicros;
