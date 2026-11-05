@@ -53,6 +53,16 @@ type SandboxRead struct {
 	// (https://cloud.google.com/bigquery/docs/reference/rest/v2/jobs/query). Its Method is left
 	// out, as a GraphQL read's is, and it is left out of the JSON when false.
 	SQL bool `yaml:"sql,omitempty" json:"sql,omitempty"`
+	// LFS makes it a Git LFS batch endpoint, where a download and an upload are both a POST
+	// (https://github.com/git-lfs/git-lfs/blob/main/docs/api/batch.md): the proxy lets a POST
+	// through only when its body asks to download. Its Method is left out, as a GraphQL read's is,
+	// and it is left out of the JSON when false.
+	LFS bool `yaml:"lfs,omitempty" json:"lfs,omitempty"`
+	// Downloads are the hosts an LFS read's answer sends the client to for the objects
+	// (actions.download.href), which carry their own authorization. The proxy reaches them for
+	// GET and HEAD alone and puts no token in a request to one, so none may be one of the rule's
+	// Hosts.
+	Downloads []string `yaml:"downloads,omitempty" json:"downloads,omitempty"`
 }
 
 var (
@@ -94,17 +104,41 @@ func (m Manifest) checkSandbox(fail func(field, format string, args ...any)) {
 		if !slices.Contains(m.Sandbox.Hosts, read.Host) {
 			fail(field+".host", "%q is not one of sandbox.hosts", read.Host)
 		}
+		body := read.GraphQL || read.SQL || read.LFS
 		switch {
 		case read.GraphQL && read.SQL:
 			fail(field+".sql", "is set beside graphql: a read is one kind of endpoint")
-		case (read.GraphQL || read.SQL) && read.Method != "":
-			fail(field+".method", "%q is set on a GraphQL or SQL read, which takes a POST and leaves its method out", read.Method)
-		case !read.GraphQL && !read.SQL && !sandboxMethod.MatchString(read.Method):
+		case read.LFS && (read.GraphQL || read.SQL):
+			fail(field+".lfs", "is set beside graphql or sql: a read is one kind of endpoint")
+		case body && read.Method != "":
+			fail(field+".method", "%q is set on a GraphQL, SQL or LFS read, which takes a POST and leaves its method out", read.Method)
+		case !body && !sandboxMethod.MatchString(read.Method):
 			fail(field+".method", "%q is not a method in upper-case letters", read.Method)
+		}
+		if len(read.Downloads) > 0 && !read.LFS {
+			fail(field+".downloads", "is set on a read that is no LFS read")
+		}
+		for j, host := range read.Downloads {
+			switch {
+			case !sandboxHost.MatchString(host) || sandboxNumericTLD.MatchString(host):
+				fail(fmt.Sprintf("%s.downloads[%d]", field, j), "%q is not a lowercase host name or *. and a domain, with no scheme, port, path or query", host)
+			case slices.ContainsFunc(m.Sandbox.Hosts, func(entry string) bool { return hostCovers(entry, host) }):
+				fail(fmt.Sprintf("%s.downloads[%d]", field, j), "%q is under one of sandbox.hosts, which get the credential", host)
+			}
 		}
 		// path.Match reports a malformed pattern whatever it is matched against.
 		if _, err := path.Match(read.Path, ""); err != nil || !strings.HasPrefix(read.Path, "/") {
 			fail(field+".path", "%q is not a path pattern starting with /", read.Path)
 		}
 	}
+}
+
+// hostCovers says whether entry, an exact host or *. and a domain, takes host, as the egress
+// matches one: a wildcard takes the domain and every name under it.
+func hostCovers(entry, host string) bool {
+	host = strings.TrimPrefix(host, "*.")
+	if domain, wildcard := strings.CutPrefix(entry, "*."); wildcard {
+		return host == domain || strings.HasSuffix(host, "."+domain)
+	}
+	return host == entry
 }

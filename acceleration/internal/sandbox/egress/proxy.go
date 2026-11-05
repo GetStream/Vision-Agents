@@ -353,7 +353,7 @@ func (p *Proxy) tunnel(conn net.Conn, t tunnel) {
 
 // inner forwards one request in t's tunnel: a GET or a HEAD, or one a grant's reads list (to a
 // GraphQL read, with queries alone; to a SQL read, one SELECT, as the host's dry run of it
-// says). It reads the grants again for each, and after a dry run, so after Delete no request
+// says; to an LFS read, a download). It reads the grants again for each, and after a dry run, so after Delete no request
 // goes out on a tunnel the credential opened.
 func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -386,13 +386,18 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		logger := p.logger.With("session", record.Session, "host", host)
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
-		reads, graphQL, sql := record.reads(host, r.Method, r.URL)
+		reads, graphQL, sql, lfs := record.reads(host, r.Method, r.URL)
 		if name := overrider(r.Header); name != "" {
 			reads, logger = false, logger.With("why", "a method override header: "+name)
 		}
 		if graphQL {
 			// Its error names the check alone, never the body's bytes.
 			if err := onlyQueries(r); err != nil {
+				reads, logger = false, logger.With("why", err.Error())
+			}
+		}
+		if lfs {
+			if err := onlyDownloads(r); err != nil {
 				reads, logger = false, logger.With("why", err.Error())
 			}
 		}
@@ -404,8 +409,8 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 			}
 		}
 		// A body read to its end fills r.Trailer, which ReverseProxy sends on with the rest, so
-		// the trailer is checked after every body read (GraphQL's and a SQL read's), before the
-		// dry run.
+		// the trailer is checked after every body read (GraphQL's, a SQL read's and an LFS
+		// read's), before the dry run.
 		if name := overrider(r.Trailer); name != "" {
 			reads, logger = false, logger.With("why", "a method override trailer: "+name)
 		}
