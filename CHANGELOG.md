@@ -379,6 +379,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The usage service filters its usage list by `api_key_id`
+
+The usage service's `listUsage` (`GET /v1/manage/accounts/{organization_id}/usage`) and its customer view `readAccountUsage` silently ignored `api_key_id`, and answered every key's events. Stream's staff gateway refuses `api_key` in the query, so staff could not filter by key at all. Both operations now take the key as `api_key_id`. `api_key` is still read for one release; given with `api_key_id`, it must name the same key, or the call is a 400 (AI-2797).
+
 ### `router replicate` no longer misses a change that commits late
 
 `GET /v1/data/changes` and an export could hand out a cursor past a change whose transaction was still running, when a transaction that started earlier had committed a higher number, and that change never reached the new deployment. Pruning could also drop a newer change and keep an older one, so a cursor between them carried on past the gap without a 410. Now the cursor stops below every change still in flight, an open transaction that records no change no longer holds the feed back, and pruning drops only the oldest numbers (AI-2741).
