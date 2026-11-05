@@ -412,11 +412,11 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		answered = true
 		b.logger.Info("accepted an inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
 			"customer", thread.CustomerID, "config", config.ID, "channel", thread.ChannelID)
-		var waited func(core.InboundMessage) (store.ChannelInbound, error)
+		var waited func(core.InboundMessage) (store.ChannelInbound, bool, error)
 		if waiting != nil {
-			waited = func(reply core.InboundMessage) (store.ChannelInbound, error) {
-				reply, err := waiting(reply)
-				return inboundRow(thread, config, reply, nil), err
+			waited = func(reply core.InboundMessage) (store.ChannelInbound, bool, error) {
+				reply, read, err := waiting(reply)
+				return inboundRow(thread, config, reply, nil), read, err
 			}
 		}
 		// Off the request, so a provider that hangs up meanwhile leaves the message queued, or
@@ -635,8 +635,9 @@ func (r retryable) Unwrap() error { return r.err }
 // connection's account out of the message's text (MessageRule.WithoutMention). thread is the
 // zero one for a message nobody answers. waiting, for a message that starts its thread, reads
 // a reply that waited for the link (wait) as take reads this message, so its mention is left
-// out too; it is nil for any other message.
-func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message *core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, waiting func(core.InboundMessage) (core.InboundMessage, error), err error) {
+// out too; read is false for a reply the connection's revision does not read, which is
+// dropped. It is nil for any other message.
+func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message *core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, waiting func(core.InboundMessage) (reply core.InboundMessage, read bool, err error), err error) {
 	if app.CustomerID == "" || message.ProviderUnitID == "" {
 		b.logger.Info("dropped an inbound message that names no provider app or no provider unit",
 			"connector", message.ConnectorID)
@@ -736,10 +737,22 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	// whether or not it made the link now and whether or not it was taken before, and each
 	// waiting reply is handed out once (store.AcceptChannelInbound).
 	if startsThread(read) {
-		waiting = func(reply core.InboundMessage) (core.InboundMessage, error) {
+		waiting = func(reply core.InboundMessage) (core.InboundMessage, bool, error) {
 			read, rule, err := b.read(connection, definition, reply)
+			if errors.Is(err, errNotRead) {
+				// As for the message itself: the connection was pinned to a revision that does
+				// not read the reply after it waited. Every retry of the message finds the same
+				// revision, so failing it would leave it unanswered for good (AI-2743).
+				b.logger.Warn("dropped a waiting reply the revision of its connection does not read",
+					"connector", reply.ConnectorID, "customer", app.CustomerID, "connection", connection.ID,
+					"revision", connection.DefinitionRevision, "channel", thread.ChannelID)
+				return reply, false, nil
+			}
+			if err != nil {
+				return reply, false, err
+			}
 			reply.Text, reply.Media = rule.WithoutMention(read.Text, connection.Metadata), read.Media
-			return reply, err
+			return reply, true, nil
 		}
 	}
 	return thread, configs[0], waiting, nil

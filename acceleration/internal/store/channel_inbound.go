@@ -149,8 +149,9 @@ func (m ChannelInbound) Message() core.InboundMessage {
 // With waited not nil, the message starts its external thread, and the transaction also takes
 // the messages that waited on that thread (takeWaitingChannelThreadMessages), whether or not the
 // message is fresh, and claims and queues the row waited makes of each, after the message's: on
-// a failure they wait again, and each waiting message is taken once.
-func (s *Store) AcceptChannelInbound(ctx context.Context, message ChannelInbound, waited func(core.InboundMessage) (ChannelInbound, error)) (fresh bool, err error) {
+// a failure they wait again, and each waiting message is taken once. A message waited answers
+// with queue false is dropped: taken, and neither claimed nor queued.
+func (s *Store) AcceptChannelInbound(ctx context.Context, message ChannelInbound, waited func(core.InboundMessage) (row ChannelInbound, queue bool, err error)) (fresh bool, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		fresh, err = acceptChannelInbound(ctx, tx, message)
 		if err != nil || waited == nil {
@@ -161,9 +162,12 @@ func (s *Store) AcceptChannelInbound(ctx context.Context, message ChannelInbound
 			return err
 		}
 		for _, reply := range taken {
-			row, err := waited(reply)
+			row, queue, err := waited(reply)
 			if err != nil {
 				return err
+			}
+			if !queue {
+				continue
 			}
 			if _, err := acceptChannelInbound(ctx, tx, row); err != nil {
 				return err
