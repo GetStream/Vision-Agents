@@ -48,13 +48,13 @@ var (
 	startupSeconds = promauto.NewHistogramVec(prometheus.HistogramOpts{
 		Namespace: "router",
 		Name:      "agent_startup_seconds",
-		Help:      "How long each stage of a voice session's start-up took, once per session, by stage: create from Manager.Create being called to the agent starting to join the call, join the edge joining it, media from the join to the agent's outgoing connection being up; the stages follow each other, so their sum is the wait until the agent can be heard; by kind, phone for a session on a number, else web. A stage that failed is counted in router_agent_startup_failures_total and not here",
+		Help:      "How long each stage of a voice session's start-up took, once per session, by stage: create from Manager.Create being called to the agent starting to join the call, join the edge joining it, media from the join to the agent's outgoing connection being up; the stages follow each other, so their sum is the wait until the agent can be heard; by kind, phone for a session on a number, else web. Counted for a session on a Stream call the router joins, not for a text session, an audio socket or a simulation. A stage that failed is counted in router_agent_startup_failures_total and not here",
 		Buckets:   startupBuckets,
 	}, []string{"stage", "kind"})
 	startupFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "agent_startup_failures_total",
-		Help:      "Voice sessions whose start-up stopped in a stage, by stage, kind and cause: error for a session Manager.Create gave up on, the one counted as create_failed in router_session_ends_total, timeout for an outgoing connection that never came up",
+		Help:      "Voice sessions whose start-up stopped in a stage, by stage, kind and cause: error for a session Manager.Create gave up on, the one counted as create_failed in router_session_ends_total, timeout for an outgoing connection that never came up. Counted for a session on a Stream call the router joins, not for a text session, an audio socket or a simulation",
 	}, []string{"stage", "kind", "cause"})
 )
 

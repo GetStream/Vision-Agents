@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
 
@@ -82,11 +83,12 @@ func (s *SessionSuite) TestAVoiceSessionsStartUpIsTimedOnceAtEachStage() {
 	// Catches a stage left untimed, timed twice by an edge that reports its connection again,
 	// or timed again when the session's agent is built anew for another call, and a session
 	// counted under another kind.
+	edge := &connectingEdge{attendedEdge: attendedEdge{newQuietEdge()}, connect: make(chan struct{})}
+	s.opens = edge
 	s.manages()
 	before := s.startups()
 
-	edge := &connectingEdge{attendedEdge: attendedEdge{newQuietEdge()}, connect: make(chan struct{})}
-	created := s.joins(Spec{Edge: edge})
+	created := s.joins(Spec{})
 	s.startedUp(before, "web", []string{"create", "join"}, "")
 
 	close(edge.connect)
@@ -101,11 +103,11 @@ func (s *SessionSuite) TestAVoiceSessionsStartUpIsTimedOnceAtEachStage() {
 func (s *SessionSuite) TestAConnectionUpBeforeTheJoinReturnsIsTimedAtNoWait() {
 	// Catches the media stage lost when Stream's edge sees its connection up before the agent
 	// sees the join return, or timed from the wrong end as a negative wait.
+	s.opens = &connectingEdge{attendedEdge: attendedEdge{newQuietEdge()}, early: true}
 	s.manages()
 	before := s.startups()
 
-	edge := &connectingEdge{attendedEdge: attendedEdge{newQuietEdge()}, early: true}
-	s.joins(Spec{Edge: edge})
+	s.joins(Spec{})
 
 	s.startedUp(before, "web", documentedStages, "")
 	s.Equal(before.sums["media/web"], s.startups().sums["media/web"], "the media stage waited")
@@ -114,11 +116,12 @@ func (s *SessionSuite) TestAConnectionUpBeforeTheJoinReturnsIsTimedAtNoWait() {
 func (s *SessionSuite) TestAFailedJoinIsAFailureOfTheJoinAndNoLatency() {
 	// Catches a join that failed timed as though it ended, counted as a failure of the create,
 	// or counted as a start-up failure without the session's create_failed end beside it.
+	s.opens = refusedEdge{newQuietEdge()}
 	s.manages()
 	before, ends := s.startups(), s.allEnds()
 
 	_, err := s.manager.Create(s.ctx, Spec{
-		CallID: "call-1", CustomerID: "acme", Edge: refusedEdge{newQuietEdge()},
+		CallID: "call-1", CustomerID: "acme",
 		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
 	})
 	s.Require().ErrorContains(err, "the call refused the agent")
@@ -169,13 +172,14 @@ func (s *SessionSuite) TestATextSessionHasNoStartUp() {
 func (s *SessionSuite) TestACreateTurnedAwayIsNoStartUpFailure() {
 	// Catches a create a router shutting down turned away counted as a start-up that failed,
 	// which router_session_ends_total does not count either.
-	s.manages()
 	late := newJoiningEdge()
+	s.opens = late
+	s.manages()
 	lost := make(chan error, 1)
 	before := s.startups()
 	go func() {
 		_, err := s.manager.Create(s.ctx, Spec{
-			CallID: "call-3", CustomerID: "acme", Edge: late,
+			CallID: "call-3", CustomerID: "acme",
 			LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
 		})
 		lost <- err
@@ -186,6 +190,53 @@ func (s *SessionSuite) TestACreateTurnedAwayIsNoStartUpFailure() {
 	s.Require().ErrorContains(<-lost, "the manager is shut down")
 
 	s.startedUp(before, "web", []string{"create", "join"}, "")
+}
+
+func (s *SessionSuite) TestASessionOnAnEdgeItsCallerHandsInHasNoStartUp() {
+	// Catches an audio socket's or a simulation's session counted as a web start-up: a create
+	// and join of no call, a media stage that never comes, and a failure after the join as a
+	// failed media stage.
+	s.manages()
+	before := s.startups()
+
+	s.Require().NoError(s.joins(Spec{Edge: attendedEdge{newQuietEdge()}}).Close())
+	ends := s.allEnds()
+	_, err := s.manager.Create(s.ctx, Spec{
+		CallID: "call-2", CustomerID: "acme", Edge: refusedEdge{newQuietEdge()},
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
+	})
+	s.Require().ErrorContains(err, "the call refused the agent")
+
+	s.startedUp(before, "web", nil, "")
+	s.endedOnce(ends, "create_failed")
+}
+
+func (s *SessionSuite) TestTheCreateStageRunsFromCreateBeingCalled() {
+	// Catches the create stage started late in Create, missing the reads before it such as
+	// which Stream app the session acts in.
+	const resolving = 50 * time.Millisecond
+	s.apps = streamapp.NewClients(slowSource{resolving}, streamapp.ClientsOptions{})
+	s.manages()
+	before := s.startups()
+
+	s.joins(Spec{})
+
+	s.startedUp(before, "web", []string{"create", "join"}, "")
+	s.GreaterOrEqual(s.startups().sums["create/web"]-before.sums["create/web"], resolving.Seconds(),
+		"the create stage left out the wait for the Stream app")
+}
+
+// slowSource takes wait to say a customer has no Stream app.
+type slowSource struct{ wait time.Duration }
+
+func (s slowSource) For(context.Context, string) (streamapp.Identity, error) {
+	time.Sleep(s.wait)
+	return streamapp.Identity{}, streamapp.ErrNoIdentity
+}
+
+func (s slowSource) ForApp(context.Context, string, int64) (streamapp.Identity, error) {
+	time.Sleep(s.wait)
+	return streamapp.Identity{}, streamapp.ErrNoIdentity
 }
 
 func (s *SessionSuite) TestEveryStartUpSeriesIsADocumentedStageKindAndCause() {

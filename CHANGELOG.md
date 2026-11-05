@@ -4,7 +4,7 @@
 
 ### Voice start-up latency and failures per stage
 
-`router_agent_startup_seconds{stage, kind}` times each stage of a voice session's start-up once: `create` (from `Manager.Create` to the agent starting to join), `join` (the edge joining the call) and `media` (from the join to the agent's outgoing connection being up). The stages follow each other, so their sum is the wait until the agent can be heard. `kind` is `phone` or `web`. `router_agent_startup_failures_total{stage, kind, cause}` counts the stage a start-up stopped in: `error` where a session is counted as `create_failed`, `timeout` for an outgoing connection not up within 30 s. Text sessions are not counted (AI-2832, #1794).
+`router_agent_startup_seconds{stage, kind}` times each stage of a voice session's start-up once: `create` (from `Manager.Create` to the agent starting to join), `join` (the edge joining the call) and `media` (from the join to the agent's outgoing connection being up). The stages follow each other, so their sum is the wait until the agent can be heard. `kind` is `phone` or `web`. `router_agent_startup_failures_total{stage, kind, cause}` counts the stage a start-up stopped in: `error` where a session is counted as `create_failed`, `timeout` for an outgoing connection not up within 30 s. Only sessions on a Stream call the router joins are counted: not text sessions, audio sockets or simulations (AI-2832, #1794).
 
 ### The router counts how phone calls end
 
