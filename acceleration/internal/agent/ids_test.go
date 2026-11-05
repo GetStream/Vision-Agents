@@ -244,6 +244,16 @@ func TestAnIDPastedInALinkIsPassedOn(t *testing.T) {
 			{Role: llm.User, Content: "yes, read it"},
 		}, channel, true},
 		{"an escaped slash inside a segment", user("https://team.example.com/archives/C0X%2FC0EX4MPL1"), channel, true},
+		{"the ID in a link a tool wrote", []llm.Message{
+			{Role: llm.User, Content: "read the thread I starred"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "search_channels"}}},
+			{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"permalink":"https://team.example.com/archives/C0EX4MPL1"}`},
+		}, channel, true},
+		{"the ID in a link a failed tool call wrote", []llm.Message{
+			{Role: llm.User, Content: "read the thread I starred"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "search_channels"}}},
+			{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"ok":false,"error":"no access to https://team.example.com/archives/C0EX4MPL1"}`},
+		}, channel, true},
 	}
 	for _, c := range cases {
 		_, _, _, unfound := unfoundID(c.history, c.call, tools, "")
@@ -275,6 +285,8 @@ func TestAnIDAJSONResultWritesOutIsPassedOn(t *testing.T) {
 	assert.True(t, unfound, "a channel the list does not hold is still one nothing gave")
 	_, _, _, unfound = unfoundID(history(`[{"lines":["1. #help (C0HELP002) - public_channel"]}]`), read("C0HELP002"), tools, "")
 	assert.False(t, unfound, "text in a list inside a list is read too")
+	_, _, _, unfound = unfoundID(history(`{"note":"channel C0HELP002"}`), read("C0HELP002"), tools, "")
+	assert.False(t, unfound, "two words are written out")
 	_, _, _, unfound = unfoundID(history(`{"user_id":"u-77","channel":"C0HELP002"}`), read("C0HELP002"), tools, "")
 	assert.True(t, unfound, "one word under a key that names no ID is not written out")
 	_, _, _, unfound = unfoundID(history(`{"ok":false,"error":"channel C0HELP002 was not found"}`), read("C0HELP002"), tools, "")
