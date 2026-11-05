@@ -5,6 +5,7 @@ package usage_test
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"testing"
 
@@ -112,6 +113,24 @@ func (s *ClientSuite) TestTheClientReadsAnOrganizationsStanding() {
 	s.Equal(int64(1200), standings[0].SpendWindows.Daily.SpentMicros)
 	s.Equal(usage.BuiltInDefaultTier(), standings[0].Tier)
 	s.True(standings[0].FallbackTier)
+}
+
+// The client sends origin, and api_key, its old name, with the same value, so a usage service
+// of the release before, which reads only api_key, still narrows the read (AI-2811).
+func (s *ClientSuite) TestTheClientReadsUsageByOriginUnderBothNames() {
+	hook := usagetest.Event("o1", func(e *usage.Event) { e.APIKey = "hook:chat" })
+	_, err := s.service.Client.Ship(s.ctx, []usage.Event{hook, usagetest.Event("o1")})
+	s.Require().NoError(err)
+	query := usage.UsageQuery{Origin: "hook:chat"}
+
+	page, err := s.service.Client.Usage(s.ctx, "o1", query)
+
+	s.Require().NoError(err)
+	s.Require().Len(page.Items, 1)
+	s.Equal(hook.UsageID, page.Items[0].UsageID)
+	s.Equal("hook:chat", page.Items[0].Origin)
+	s.Equal("hook:chat", page.Items[0].APIKey)
+	s.Equal(url.Values{"origin": {"hook:chat"}, "api_key": {"hook:chat"}}, query.Values())
 }
 
 func (s *ClientSuite) TestTheClientSplitsEventsTooBigForOneBody() {

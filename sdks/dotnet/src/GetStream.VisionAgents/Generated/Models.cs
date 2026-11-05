@@ -14998,9 +14998,10 @@ namespace GetStream.VisionAgents.Models
         public string? AgentId { get; set; } = default!;
 
         /// <summary>
-        /// The public API key the work was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:&lt;name&gt;.
+        /// The old name of origin, the same value, still answered for one release.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("api_key")]
+        [System.Obsolete]
         public string ApiKey { get; set; } = default!;
 
         /// <summary>
@@ -15056,6 +15057,12 @@ namespace GetStream.VisionAgents.Models
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("occurred_at")]
         public System.DateTimeOffset OccurredAt { get; set; } = default!;
+
+        /// <summary>
+        /// Who started the work: the public API key it was started with, or the origin of work no key started, such as hook:chat, phone:inbound or job:&lt;name&gt;.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("origin")]
+        public string Origin { get; set; } = default!;
 
         /// <summary>
         /// Who did the work, such as openai.

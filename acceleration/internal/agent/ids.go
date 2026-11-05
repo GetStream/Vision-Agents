@@ -51,6 +51,9 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	// call it answers.
 	type line struct{ text, sent string }
 	var lines []line
+	// linked are the parts of the links the tools returned (linkParts), but for the parts the
+	// call each answers was sent: a link that holds them writes back what the model asked for.
+	var linked []string
 	var question string
 	for _, message := range history {
 		switch message.Role {
@@ -76,6 +79,14 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 			if failedResult(message.Content) {
 				// A refusal quotes the value it refused, which does not make it returned.
 				continue
+			}
+			// A link a tool returns names what each of its parts is by where it stands, as the
+			// person's do, and is read the same way: "Permalink: <link to the channel>" gives
+			// the channel.
+			for _, part := range linkParts(html.UnescapeString(asWritten(message.Content))) {
+				if !strings.Contains(alphanumeric(sent[message.ToolCallID]), part) {
+					linked = append(linked, part)
+				}
 			}
 			var result any
 			if json.Unmarshal([]byte(message.Content), &result) != nil {
@@ -109,12 +120,12 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		if wanted == "" {
 			return name, text, collectIDs(results), true
 		}
-		if strings.Contains(heard, wanted) && strings.Contains(strings.ToLower(said.String()), entityOf(name)) ||
-			slices.Contains(pasted, wanted) {
+		if strings.Contains(heard, wanted) && holdsKind(plainWords(said.String()), entityOf(name), strings.Contains) ||
+			slices.Contains(pasted, wanted) || slices.Contains(linked, wanted) {
 			continue
 		}
 		if slices.ContainsFunc(answers, func(given answer) bool {
-			return strings.Contains(given.question, entityOf(name)) && strings.Contains(given.said, wanted)
+			return holdsKind(plainWords(given.question), entityOf(name), strings.Contains) && strings.Contains(given.said, wanted)
 		}) || holdsValue(told, wanted) {
 			continue
 		}
@@ -133,8 +144,17 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		// A line written out gives an ID only beside the word for what it is (besideKind), and
 		// only one the call it answers was not sent: "No bookings found for Ana at 7pm" does
 		// not return the 7pm the model asked about, and "Card KTR583027 on file" returns no case.
+		// An ID is the ID of one thing, so no line reads a label as giving it where another
+		// line labels it as another kind (labelledAs): after "From: Ana Lind (ID: U0…)",
+		// "Channel: Ana Lind (ID: U0…)" names the sender, not a channel. Only a label is
+		// doubted: a line beside the kind still gives it, and a line the call was sent the ID in
+		// labels nothing. "Channel: Group DM (ID: C0…)" still gives one, where no line labels
+		// C0… as anything else.
+		other := slices.ContainsFunc(lines, func(written line) bool {
+			return !strings.Contains(alphanumeric(written.sent), wanted) && slices.ContainsFunc(labelledAs(written.text, wanted), func(label []string) bool { return !labelNames(label, entityOf(name)) })
+		})
 		returned = returned || slices.ContainsFunc(lines, func(written line) bool {
-			return besideKind(written.text, wanted, entityOf(name)) && !strings.Contains(alphanumeric(written.sent), wanted)
+			return besideKind(written.text, wanted, entityOf(name), !other) && !strings.Contains(alphanumeric(written.sent), wanted)
 		})
 		if !returned && !slices.ContainsFunc(texts, func(result string) bool { return holdsValue(result, wanted) }) {
 			return name, text, ids, true
@@ -870,18 +890,17 @@ func idWords(text string) []string {
 // one word, the thing's name, besides the word "ID". Any more ties the ID to another word: in
 // "Channel #x by U0…", U0… is whoever made the channel. A label ends that doubt: in
 // "Channel: Group DM (ID: C0…)" the label "Channel:" opens a field whose value is the name
-// and the ID in brackets, so a name of any length stands between them (labelledName).
-func besideKind(line, wanted, kind string) bool {
-	if labelledName(line, wanted, kind) {
+// and the ID in brackets, so a name of any length stands between them (labelledAs). That
+// reading holds only where labelled is true: no other line labels the ID as another kind.
+//
+// The word for the kind is a word of its own (holdsKind), and not the ID's: "#ops-channel" is
+// a channel's name, not the word "channel", and "public_channel" listed as a channel's type
+// is no channel's ID.
+func besideKind(line, wanted, kind string, labelled bool) bool {
+	if labelled && slices.ContainsFunc(labelledAs(line, wanted), func(label []string) bool { return labelNames(label, kind) }) {
 		return true
 	}
-	var words []string
-	for _, word := range idWords(line) {
-		// A mark alone, the dash in "#help - C0…", is no word.
-		if alphanumeric(word) != "" {
-			words = append(words, strings.ToLower(word))
-		}
-	}
+	words := lineWords(line)
 	// A kind may take more than one word: "phone number" for phone_number_id.
 	size := len(strings.Fields(kind))
 	for at, word := range words {
@@ -889,16 +908,20 @@ func besideKind(line, wanted, kind string) bool {
 			continue
 		}
 		for start := 0; start+size <= len(words); start++ {
-			if !strings.Contains(strings.Join(words[start:start+size], " "), kind) {
+			if start <= at && at < start+size || !holdsKind(words[start:start+size], kind, strings.Contains) {
 				continue
 			}
 			var between []string
+			limit := 1
 			if at < start {
-				between = words[at+1 : start]
+				// An ID before the kind is the one the line lists, "#help (C0…) - public_channel":
+				// nothing stands between them. Any word does, as in "U0… joined channel #help",
+				// where U0… joined the channel.
+				between, limit = words[at+1:start], 0
 			} else if at >= start+size {
 				between = words[start+size : at]
 			}
-			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= 1 {
+			if len(slices.DeleteFunc(slices.Clone(between), func(word string) bool { return alphanumeric(word) == "id" })) <= limit {
 				return true
 			}
 		}
@@ -906,29 +929,74 @@ func besideKind(line, wanted, kind string) bool {
 	return false
 }
 
+// lineWords are the words of a line, lowercase (idWords), but for a mark alone, the dash in
+// "#help - C0…", which is no word.
+func lineWords(line string) []string {
+	var words []string
+	for _, word := range idWords(line) {
+		if alphanumeric(word) != "" {
+			words = append(words, strings.ToLower(word))
+		}
+	}
+	return words
+}
+
+// plainWords are the words of text the person or the model wrote, lowercase, split at every
+// mark: "case#6631", "ticket-4521" and "case-number" each hold the word for the kind.
+func plainWords(text string) []string {
+	return strings.FieldsFunc(strings.ToLower(text), func(r rune) bool {
+		return !unicode.IsLetter(r) && !unicode.IsDigit(r)
+	})
+}
+
+// holdsKind reports whether words hold the word for kind, or its plural: find (strings.Contains
+// or strings.HasSuffix) looks for it in the words joined with a space on each side. A
+// key is split into its words where _ joins them: "public_channel" and "channel_id" each hold
+// "channel". A name marked with #, "#team_channel", is one word, as it is when - joins it,
+// "#ops-channel".
+func holdsKind(words []string, kind string, find func(text, word string) bool) bool {
+	split := make([]string, len(words))
+	for i, word := range words {
+		split[i] = word
+		if !strings.HasPrefix(word, "#") {
+			split[i] = strings.ReplaceAll(word, "_", " ")
+		}
+	}
+	joined := " " + strings.Join(split, " ") + " "
+	return find(joined, " "+kind+" ") || find(joined, " "+kind+"s ")
+}
+
+// labelNames reports whether a field's label names kind: its last words are the word for it,
+// as in "Phone number:" or "1. Channel:". A label is named by its last word, so "Channel
+// owner:" labels an owner.
+func labelNames(label []string, kind string) bool {
+	return holdsKind(label, kind, strings.HasSuffix)
+}
+
 // bracketedID is an ID in brackets, with or without the word "ID": "(C0…)", "(ID: C0…)".
 var bracketedID = regexp.MustCompile(`\((?:(?i:id):\s*)?([\w-]+)\)`)
 
-// labelledName reports whether line has a field "<kind>: <name> (<wanted>)": the label of kind,
-// then the name, then wanted in brackets. The field ends at a " - " or another label or
-// bracket, so "Creator: Ana Lind (<@U0…)" and "Channel #x by U0…" give no channel.
-func labelledName(line, wanted, kind string) bool {
+// labelledAs returns the label of each field "<label>: <name> (<wanted>)" on line, as its words:
+// ["channel"] for "Channel: Group DM (ID: C0…)". The field ends at a " - " or another label
+// or bracket, so "Creator: Ana Lind (<@U0…)" and "Channel #x by U0…" have none.
+func labelledAs(line, wanted string) [][]string {
+	var labels [][]string
 	for _, found := range bracketedID.FindAllStringSubmatchIndex(line, -1) {
 		if alphanumeric(line[found[2]:found[3]]) != wanted {
 			continue
 		}
-		field := strings.ToLower(line[:found[0]])
+		field := line[:found[0]]
 		if cut := strings.LastIndexAny(field, "()"); cut >= 0 {
 			field = field[cut+1:]
 		}
 		if cut := strings.LastIndex(field, " - "); cut >= 0 {
 			field = field[cut+3:]
 		}
-		if at := strings.LastIndex(field, kind+":"); at >= 0 && !strings.Contains(field[at+len(kind)+1:], ":") {
-			return true
+		if colon := strings.LastIndex(field, ":"); colon >= 0 {
+			labels = append(labels, lineWords(field[:colon]))
 		}
 	}
-	return false
+	return labels
 }
 
 // alphanumeric lowercases text and drops everything but letters and digits, so "T-6631"

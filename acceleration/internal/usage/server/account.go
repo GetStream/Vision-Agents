@@ -70,7 +70,7 @@ func (s *Server) readAccountUsage(ctx context.Context, input *listUsageInput) (*
 	page := usage.CustomerUsagePage{Items: make([]usage.CustomerUsageEvent, 0, len(listed.Body.Items)),
 		HasMore: listed.Body.HasMore, NextCursor: listed.Body.NextCursor}
 	for _, event := range listed.Body.Items {
-		page.Items = append(page.Items, usage.CustomerUsageEventOf(event))
+		page.Items = append(page.Items, usage.CustomerUsageEventOf(event.Event))
 	}
 	return &readAccountUsageOutput{Body: page}, nil
 }
