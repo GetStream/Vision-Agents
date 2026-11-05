@@ -453,6 +453,7 @@ func TestAWrittenLineGivesOnlyTheIDBesideTheWordForItsKind(t *testing.T) {
 		{"a creator at the end of a listed channel", `{"results":"1. #help (C0HELP002) - public_channel - created by U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"a channel's name and a person's ID after it", `{"messages":"Channel #help Ana U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
 		{"the word ID and a person's ID after a name", `{"messages":"Channel #help by ID U0ANA001"}`, `{"channel_id":"U0ANA001"}`, true},
+		{"a person before a channel's name and kind", `{"messages":"U0ANA001 wrote in the #help channel"}`, `{"channel_id":"U0ANA001"}`, true},
 	}
 	for _, c := range cases {
 		_, _, _, unfound := unfoundID(answered(c.result), call(c.arguments), tools, "")
@@ -480,6 +481,7 @@ func TestAnArgumentSentEscapedIsStillAnEcho(t *testing.T) {
 	}{
 		{"a query written in unicode escapes", `{"query":"\u0043\u0030FAKE01"}`, "C0FAKE01", true},
 		{"a query that is a number", `{"query":12345678}`, "12345678", true},
+		{"a query in a list", `{"queries":["help","\u0043\u0030FAKE01"]}`, "C0FAKE01", true},
 		{"arguments that are not JSON", `C0FAKE01`, "C0FAKE01", true},
 		{"a query that does not hold the ID", `{"query":"\u0068elp"}`, "C0FAKE01", false},
 	}
