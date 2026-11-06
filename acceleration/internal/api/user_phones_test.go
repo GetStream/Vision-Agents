@@ -145,11 +145,10 @@ func (s *UserPhonesSuite) TestTheSameLinkAgainKeepsTheCardsWrittenSinceTheFirst(
 	s.Equal(omni, s.chatOmniChannel())
 }
 
-// The control: under a config without episode_cards the channel bridge still writes the SMS's
-// row and episode, and the link leaves them as they were: one row under the number, one
-// episode, and no cards read, as the probe of this test at 3b7a53f97 (before this change)
-// answered.
-func (s *UserPhonesSuite) TestAConfigWithoutCardsLinksAsBefore() {
+// Under a config with episode_cards off the channel bridge writes no row and no episode for an
+// SMS (AI-2856; the probe of this test at 3b7a53f97 answered one row and one episode), the link
+// is stored all the same, and the SMS after it is answered with no cards read.
+func (s *UserPhonesSuite) TestAConfigWithoutCardsLinksWithNoEpisodeOfTheNumber() {
 	s.config.EpisodeCards = false
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "hi"), time.Now()))
@@ -159,23 +158,28 @@ func (s *UserPhonesSuite) TestAConfigWithoutCardsLinksAsBefore() {
 	s.Require().Equal(http.StatusOK, s.deliver(s.received(s.line, s.person, "is it still on?"), time.Now()))
 
 	s.NotContains(s.took(2)[1].text, "earlier episodes")
-	s.Equal(1, s.episodes())
+	s.Zero(s.episodes())
 	var rows int
 	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
 		"SELECT count(*) FROM contact_map WHERE customer_id = ?", s.customerID()).Scan(&rows))
-	s.Equal(1, rows)
+	s.Zero(rows)
 	s.Equal([]string{s.person}, s.links())
 }
 
 // Catches a link made while the config had episode_cards off, which set none of the number's
 // SMS aside: once the config turns the cards on, the user's chat would read the SMS the number
-// sent before the link. It reads its own card, and the number's SMS after the link.
+// sent before the link, while the cards were on. It reads its own card, and the number's SMS
+// after the link.
 func (s *UserPhonesSuite) TestCardsTurnedOnAfterTheLinkReadNoneOfTheNumbersSMSFromBeforeIt() {
-	s.config.EpisodeCards = false
-	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.textedBeforeTheLink()
 	s.chatCard()
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.Require().Equal(http.StatusOK, s.put(s.user, `{"phone": "`+s.person+`"}`, nil))
+	var aside int
+	s.Require().NoError(s.store.DB().QueryRowContext(context.Background(),
+		"SELECT count(*) FROM contact_map WHERE customer_id = ? AND address LIKE 'retired:%'", s.customerID()).Scan(&aside))
+	s.Require().Zero(aside, "nothing set aside under off")
 	s.config.EpisodeCards = true
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 
@@ -466,6 +470,40 @@ func (s *LinqSandboxSuite) SetupTest() {
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.person = s.utils.number()
 	s.Require().NoError(s.store.SetSandboxRecipients(context.Background(), s.customerID(), []string{s.person}))
+}
+
+// Catches a one-to-one chat under a config with episode_cards off, which opens no episode, whose
+// replies would reach nobody the sandbox lists: the person a chat's replies reach is its
+// episode's row, and with none it is the person who started the chat
+// (store.ChannelThreadStarter), as the sender admit checked. Its reply and a scheduled delivery
+// go out (AI-2856).
+func (s *LinqSandboxSuite) TestAOneToOneChatUnderAConfigWithTheCardsOffIsAnswered() {
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	chat := s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.received(chat, s.line, s.person, "hi"), time.Now()))
+
+	s.Equal(chat, s.took(1)[0].chat, "the reply")
+	s.Zero(s.rows("SELECT count(*) FROM episodes WHERE customer_id = ?"), "no episode")
+	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
+}
+
+// A group chat under a config with episode_cards off has no episode and no one person, and its
+// replies and scheduled deliveries reach the person who started it (store.ChannelThreadStarter),
+// whom the sandbox lists, as base 518ac7e9f's did through the episode it opened whatever the
+// config said (AI-2856 R1.1). Catches a group chat with no episode whose replies reach nobody,
+// so the sandbox holds them back.
+func (s *LinqSandboxSuite) TestAGroupChatUnderAConfigWithTheCardsOffIsAnswered() {
+	s.config.EpisodeCards = false
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	chat := s.utils.uuid()
+
+	s.Require().Equal(http.StatusOK, s.deliver(s.chatSays(s.received(chat, s.line, s.person, "hi"), true), time.Now()))
+
+	s.Equal(chat, s.took(1)[0].chat, "the reply")
+	s.Zero(s.rows("SELECT count(*) FROM episodes WHERE customer_id = ?"), "no episode")
+	s.NoError(s.reachable(s.threadChannel(chat)), "a scheduled delivery into the chat")
 }
 
 // Catches a link that leaves a chat's replies to its set-aside row's address, retired:<id>,

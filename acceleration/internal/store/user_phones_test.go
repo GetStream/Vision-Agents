@@ -140,6 +140,28 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.Equal(s.omniOf(chat), s.made(next).ConversationID, "the number seen again joins anya")
 }
 
+// Catches a link that takes a config recording the cards as one with them off: record writes
+// the same episodes on does, which a session reads once the config turns on, so the number's
+// row that holds one is set aside as under on (AI-2856), and the user reads none of it.
+func (s *StoreSuite) TestALinkSetsAsideTheRowsOfAConfigThatRecordsTheCards() {
+	s.agentConfigs()
+	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards_record = true WHERE id = 'agent-one'")
+	s.Require().NoError(err)
+	chat := s.made(streamUser("anya", "agent:omni-chat"))
+	sms := s.made(contact("+15550100", "agent:omni-sms"))
+	s.smsEpisode(sms)
+
+	s.Require().NoError(s.link("anya", "+15550100"))
+
+	var aside ContactMapEntry
+	s.Require().NoError(s.store.db.NewSelect().Model(&aside).Where("id = ?", sms.ID).Scan(s.ctx))
+	s.Equal(retiredPrefix+sms.ID+":+15550100", aside.Address)
+	s.Equal("agent:omni-sms", aside.ConversationID, "where its card is")
+	_, err = s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true WHERE id = 'agent-one'")
+	s.Require().NoError(err)
+	s.Empty(s.cardsOf(s.omniOf(chat), CardsQuery{}), "turned on, anya reads none of the number's earlier SMS")
+}
+
 // Catches a set-aside row whose thread and call no longer name the number: a Linq chat's
 // replies would check opt-outs, the sandbox and the limits against retired:<id>
 // (ThreadContact, channelbridge.replyTo), and a call going on at the link would close with no

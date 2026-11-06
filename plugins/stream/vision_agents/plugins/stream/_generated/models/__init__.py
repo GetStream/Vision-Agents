@@ -220,6 +220,7 @@ from .dispatch_setting import DispatchSetting
 from .effective_quota import EffectiveQuota
 from .end_call_settings import EndCallSettings
 from .endpointing import Endpointing
+from .episode_cards_mode import EpisodeCardsMode
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
 from .error_response import ErrorResponse
@@ -806,6 +807,7 @@ __all__ = (
     "EffectiveQuota",
     "EndCallSettings",
     "Endpointing",
+    "EpisodeCardsMode",
     "EqualsType1",
     "ErrorDetail",
     "ErrorResponse",

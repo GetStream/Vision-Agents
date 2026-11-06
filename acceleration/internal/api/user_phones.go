@@ -63,7 +63,7 @@ func (s *Server) registerUserPhones(api huma.API) {
 		Description: "Says that a user of the app and a phone number are one person, so the person's " +
 			"app chat and what they text and call from that number from then on share one omni-channel " +
 			"with each agent of the app. What the number said before the link stays apart: under an " +
-			"agent with episode_cards on when the link is made, the number's earlier conversations, and " +
+			"agent with episode_cards record or on when the link is made, the number's earlier conversations, and " +
 			"one still going on, keep the omni-channel they had, and the user's app chat reads none of " +
 			"their cards. Otherwise, where the person already had one of each, both point at the older " +
 			"one, and the user still reads none of the number's cards from before the link once the agent " +
