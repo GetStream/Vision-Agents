@@ -81,7 +81,17 @@ func TestSafeLogTextQueryAndEncodedCredentials(t *testing.T) {
 func TestSafeLogTextKeepsTheRestOfTheURL(t *testing.T) {
 	secret := rand.Text()
 	backslash := `\`
+	// The characters that end a redacted value: a space, #, ' and " each stop it, in the query
+	// rule, the encoded authorization rule and the encoded bearer rule.
 	for message, want := range map[string]string{
+		`dial wss://live.example/ws?key=` + secret + ` failed: 401`:                  `dial wss://live.example/ws?key=[redacted] failed: 401`,
+		`wss://live.example/ws?key=` + secret + `#top`:                               `wss://live.example/ws?key=[redacted]#top`,
+		`url='wss://live.example/ws?key=` + secret + `' failed`:                      `url='wss://live.example/ws?key=[redacted]' failed`,
+		`h=Authorization%3A%20Basic%20` + secret + ` failed: 401`:                    `h=[redacted] failed: 401`,
+		`"h=Authorization%3A%20Basic%20` + secret + `" failed`:                       `"h=[redacted]" failed`,
+		`h=Authorization%3A%20Basic%20` + secret + `#top`:                            `h=[redacted]#top`,
+		`h=Bearer%20` + secret + ` failed: 401`:                                      `h=[redacted] failed: 401`,
+		`h=Bearer%20` + secret + `#top`:                                              `h=[redacted]#top`,
 		`{"url":"wss://live.example/ws?key=` + secret + backslash + `u0026model=m"}`: `{"url":"wss://live.example/ws?key=[redacted]` + backslash + `u0026model=m"}`,
 		`Get "wss://live.example/ws?alt=sse&key=` + secret + `&model=m": EOF`:        `Get "wss://live.example/ws?alt=sse&key=[redacted]&model=m": EOF`,
 		`h=Authorization%3A%20Basic%20` + secret + `&model=m`:                        `h=[redacted]&model=m`,
