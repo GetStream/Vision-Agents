@@ -349,6 +349,84 @@ func (s *OutcomeSuite) read(callID string) outcome.Call {
 	return call
 }
 
+// carrierSeries is what the telnyx series of the carrier metrics hold now, read off the
+// registry /metrics serves: the refused dials, the calls whose final SIP response was 486, and
+// the post-dial delays' count and sum. No other suite in this package runs while one does.
+func carrierSeries() map[string]float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		panic(err)
+	}
+	held := map[string]float64{}
+	for _, family := range families {
+		for _, metric := range family.GetMetric() {
+			labels := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				labels[pair.GetName()] = pair.GetValue()
+			}
+			if labels["vendor"] != "telnyx" || labels["direction"] != "outbound" {
+				continue
+			}
+			switch {
+			case family.GetName() == "router_phone_call_outcomes_total" && labels["outcome"] == "refused":
+				held["refused"] = metric.GetCounter().GetValue()
+			case family.GetName() == "router_phone_call_sip_responses_total" && labels["code"] == "486":
+				held["sip 486"] = metric.GetCounter().GetValue()
+			case family.GetName() == "router_phone_post_dial_delay_seconds":
+				held["delays"] = float64(metric.GetHistogram().GetSampleCount())
+				held["delay seconds"] = metric.GetHistogram().GetSampleSum()
+			}
+		}
+	}
+	return held
+}
+
+// carrierGrowth is how much each carrier series grew since before.
+func carrierGrowth(before map[string]float64) map[string]float64 {
+	grew := map[string]float64{}
+	for name, now := range carrierSeries() {
+		if now != before[name] {
+			grew[name] = now - before[name]
+		}
+	}
+	return grew
+}
+
+func (s *OutcomeSuite) TestADialTheVendorRefusedIsCountedRefused() {
+	before := carrierSeries()
+	s.vendor.err = errors.New("telnyx is having a day")
+
+	_, err := s.service.Call(s.ctx, CallRequest{Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123"})
+	s.Require().Error(err)
+
+	s.Equal(map[string]float64{"refused": 1}, carrierGrowth(before))
+}
+
+func (s *OutcomeSuite) TestACallCancelledWhileTheVendorWasDialingIsNoRefusal() {
+	before := carrierSeries()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	s.build(&hangingUp{stub: s.vendor, cancel: cancel}, "https://router.example")
+
+	_, err := s.service.Call(ctx, CallRequest{Owner: routing.Owner{CustomerID: s.customer}, From: s.e164, To: "+15125550123"})
+	s.Require().Error(err)
+
+	s.Empty(carrierGrowth(before), "the phone may be ringing")
+}
+
+func (s *OutcomeSuite) TestAVendorsReportOfTheCarrierIsCounted() {
+	before := carrierSeries()
+	_, token := s.placeReported()
+	s.clock.advance(4 * time.Second)
+
+	s.Require().NoError(s.service.ReportStatus(s.ctx, token, "application/x-www-form-urlencoded",
+		[]byte("word=ringing&ringing=1")))
+	s.Require().NoError(s.service.ReportStatus(s.ctx, token, "application/x-www-form-urlencoded",
+		[]byte("result=busy&word=486&sip=486&pdd=2s")))
+
+	s.Equal(map[string]float64{"sip 486": 1, "delays": 2, "delay seconds": 6}, carrierGrowth(before))
+}
+
 func (s *OutcomeSuite) TestAVendorsBusyIsTheCallsOutcome() {
 	placed, token := s.placeReported()
 

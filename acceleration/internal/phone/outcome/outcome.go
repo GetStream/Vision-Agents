@@ -49,6 +49,17 @@ type Leg struct {
 	Refused    bool
 }
 
+// Report is one report a vendor posted on a placed call. Outcome is empty when it is not
+// final, and Word is the vendor's own. The rest is phone.CallStatus's, zero when the vendor
+// says nothing of it.
+type Report struct {
+	Outcome       Outcome
+	Word          string
+	SIPCode       int
+	Ringing       bool
+	PostDialDelay time.Duration
+}
+
 // Call is one placed call and what is known of how it ended.
 type Call struct {
 	Key

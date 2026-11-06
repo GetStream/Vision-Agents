@@ -5,10 +5,17 @@
 ### Voice start-up latency and failures per stage
 
 `router_agent_startup_seconds{stage, kind}` times each stage of a voice session's start-up once: `create` (from `Manager.Create` to the agent starting to join), `join` (the edge joining the call) and `media` (from the join to the agent's outgoing connection being up). The stages follow each other, so their sum is the wait until the agent can be heard. `kind` is `phone` or `web`. `router_agent_startup_failures_total{stage, kind, cause}` counts the stage a start-up stopped in: `error` where a session is counted as `create_failed`, `timeout` for an outgoing connection not up within 30 s. Only sessions on a Stream call the router joins are counted: not text sessions, audio sockets or simulations (AI-2832, #1794).
+### The router counts silent and one-way voice sessions
+
+`/metrics` serves `router_silent_sessions_total{case, kind}`: each voice session somebody besides the agent joined, once at its end under each case it is in. For the caller's side: `no_inbound_audio` (no audio frame came), `silent_inbound_audio` (frames came, none reached about -48 dBFS) or `no_words` (audible audio, but the transcriber wrote no word; not judged on a speech-to-speech model). For the agent's side: `no_audible_outbound` (the reply was queued at the call's track, which took no audible frame of it). `kind` is `phone` or `web`. A web caller whose microphone was off for the whole call counts as `no_inbound_audio` or `silent_inbound_audio`, like a broken media path. Calls are not ended or changed. The definition is in `acceleration/internal/agent/silence.go` (AI-2828, #1792).
 
 ### The router counts how phone calls end
 
 `/metrics` serves `router_phone_call_outcomes_total{vendor, direction, outcome}`: each inbound and placed call once, when its leg first ends, under its stored outcome or as `dropped`, an answered call whose agent left it on the line (stopped, failed, or the router shut down) before the caller hung up. A network or vendor cut is not told apart from the caller hanging up. What a dropped call is, and what is not detected, is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2780, #1783).
+
+### The router counts carrier KPIs per phone vendor
+
+`/metrics` serves `router_phone_call_sip_responses_total{vendor, direction, code}`, each placed call's final SIP response where the vendor reports one (Twilio, Vonage, Bandwidth rejections, a customer's own SIP trunk), `router_phone_post_dial_delay_seconds{vendor, direction}` (Vonage's ringing event and the router's own SIP bridge), and `router_phone_short_calls_total{vendor, direction}`, answered calls under 6 s. A dial the vendor refuses is counted `refused` in `router_phone_call_outcomes_total`. What each vendor reports is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2830, AI-2905, #1793).
 
 ### The router counts its sessions and how they end
 

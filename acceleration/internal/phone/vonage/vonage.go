@@ -326,7 +326,8 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 }
 
 // ReadStatus reads the JSON event Vonage posts to a call's event_url. A status that does not
-// end the call is a report that is not final.
+// end the call is a report that is not final. sip_code is the final SIP response, and ringing
+// is the person's phone ringing (https://developer.vonage.com/en/voice/voice-api/webhook-reference).
 func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus, error) {
 	if media, _, err := mime.ParseMediaType(contentType); err != nil || media != "application/json" {
 		return phone.CallStatus{}, stack.Wrap(fmt.Errorf("vonage: a call status is json, not %q", contentType))
@@ -340,7 +341,21 @@ func (p *Provider) ReadStatus(contentType string, body []byte) (phone.CallStatus
 	if event.Status == "" {
 		return phone.CallStatus{}, stack.Wrap(errors.New("vonage: a call status without a status"))
 	}
-	return phone.CallStatus{Result: finalStatuses[event.Status], Word: event.Status}, nil
+	return phone.CallStatus{
+		Result: finalStatuses[event.Status], Word: event.Status, SIPCode: sipCode(body), Ringing: event.Status == "ringing",
+	}, nil
+}
+
+// sipCode is the sip_code of an event ReadStatus has read, zero when it has none or one that is
+// no number: the status alone is what the call's outcome is decided from, so an odd code must
+// not refuse it. The field is all that can fail to decode, and then stays empty.
+func sipCode(body []byte) int {
+	var event struct {
+		SIPCode json.Number `json:"sip_code"`
+	}
+	_ = json.Unmarshal(body, &event)
+	code, _ := strconv.Atoi(event.SIPCode.String())
+	return code
 }
 
 // finalStatuses are the event statuses that end a call.

@@ -60,6 +60,9 @@ type CallParams struct {
 	// CallID, when set, is sent on the Stream leg's INVITE as CallIDHeader, which is how
 	// Stream tells calls on a shared trunk apart.
 	CallID string
+	// Responded, when set, is told the customer leg's post-dial delay once its INVITE has its
+	// first response that says how the call goes (statusIndicative). It may run on any goroutine.
+	Responded func(postDialDelay time.Duration)
 }
 
 // CallIDHeader carries the call id to Stream. Twilio and Telnyx deliver it from the
