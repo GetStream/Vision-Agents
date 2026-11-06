@@ -393,7 +393,9 @@ func (l *wordLedger) closeLocked(participant string, match func(pendingWords) bo
 		fates = append(fates, wordsFated{Participant: participant, Utterance: p.utterance, Text: p.text,
 			Words: len(wordList(p.text)), Fate: fate, Reason: reason})
 		if p.utterance != 0 && !p.overheard {
+			// The utterance's final is dealt with, and with it any stop ruled in it.
 			l.last[participant] = p
+			delete(l.stops, stopKey{participant, p.utterance})
 		}
 		return true
 	})
