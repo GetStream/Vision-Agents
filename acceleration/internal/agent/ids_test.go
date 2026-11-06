@@ -1055,6 +1055,8 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 		{"a number the agent saved beside a time, read back with the time in another form", [][]llm.Message{posted("Card 5630, booked 10:56"), read("Card 5630, booked 1056")}, "", true},
 		{"a longer number of the tool's that starts with the agent's", [][]llm.Message{posted("Code 5630"), read("Code 56301 for Ana")}, "", false},
 		{"a card number the agent saved, read back", [][]llm.Message{posted("Card 4111-1111-1111-5630 on file"), read("Ana | Card 4111-1111-1111-5630 on file")}, "", true},
+		{"a number the agent saved twice in a line, read back", [][]llm.Message{posted("Card 5630, ref 5630"), read("Ana | Card 5630, ref 5630")}, "", true},
+		{"a record found by a longer number the agent sent alone", [][]llm.Message{called("find_member", `{"phone":"555-010-5630"}`, `{"member":"Ana Lind","phone":"555-010-5630"}`)}, "", false},
 		// AI-2927: a result that writes back only values the agent sent gives none of them.
 		{"a number the agent sent alone, echoed alone", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"last4":"5630"}`)}, "", true},
 		{"a number the agent sent alone, echoed as a JSON number beside a status", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"ok":true,"query":{"last4":5630},"next":"","results":[]}`)}, "", true},
@@ -1166,6 +1168,7 @@ func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
 		{"a number the agent posted, read back with half a number either side of it", [][]llm.Message{posted("Call 5550100199 now"), read("Ref 555Call 5550100199 now0100199")}, "+15550100199", "", true},
 		// AI-2925: a line holds the number only where the guard reads it as one.
 		{"a number of the tool's where the agent's line wrote three numbers apart", [][]llm.Message{posted("Slots 555, 010, 0199"), read("Slots 555 010 0199 (sales)")}, "+15550100199", "", false},
+		{"a number the agent posted twice in a line in two forms, read back", [][]llm.Message{posted("Sales 555-010-0199 or +1 5550100199"), read("Sales 555-010-0199 or +1 5550100199")}, "+15550100199", "", true},
 		// AI-2926: a line read back with the number in another of its forms is still the agent's.
 		{"a number the agent posted without its country code, read back with it", [][]llm.Message{posted("Sales: 5550100199"), read("Sales: +1 5550100199")}, "+15550100199", "", true},
 		{"a number the agent posted with its country code, read back without it", [][]llm.Message{posted("Sales: +1 555 010 0199"), read(`{"messages":[{"text":"Sales: 555-010-0199"}]}`)}, "+15550100199", "", true},
