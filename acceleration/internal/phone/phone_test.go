@@ -607,8 +607,10 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
-	// monthly is what a number bought here costs a month.
-	monthly int64
+	// monthly is what a number bought here costs a month, and vendorID the id it sells one
+	// under.
+	monthly  int64
+	vendorID string
 	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
 	// was told to take back.
 	ordered  int
@@ -643,7 +645,7 @@ func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
 	if s.err != nil {
 		return Number{}, s.err
 	}
-	return Number{E164: order.E164, Vendor: s.vendor, Country: "US", MonthlyCostMicros: s.monthly}, nil
+	return Number{E164: order.E164, Vendor: s.vendor, VendorID: s.vendorID, Country: "US", MonthlyCostMicros: s.monthly}, nil
 }
 
 func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {

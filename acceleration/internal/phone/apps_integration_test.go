@@ -812,6 +812,24 @@ func (s *AppsSuite) purchase() Purchase {
 	return Purchase{Vendor: s.vendor.vendor, E164: aNumber(), Country: "US", Owner: routing.Owner{CustomerID: s.customer}}
 }
 
+// A number bought but not saved says which vendor sold it and under what id, so support can
+// find it there, and names no phone number, since the failure is logged.
+func (s *AppsSuite) TestANumberBoughtButNotSavedNamesTheVendorAndItsIDAndNotTheNumber() {
+	s.vendor.vendorID = "order-" + uuid.NewString()
+	purchase := s.purchase()
+	_, err := s.service.Buy(s.ctx, purchase)
+	s.Require().NoError(err)
+
+	// The vendor sells it again, and the row the first purchase saved holds it.
+	_, err = s.service.Buy(s.ctx, purchase)
+
+	s.Require().ErrorContains(err, "was not recorded")
+	s.ErrorContains(err, s.vendor.vendor)
+	s.ErrorContains(err, s.vendor.vendorID)
+	s.NotContains(err.Error(), purchase.E164)
+	s.NotContains(err.Error(), strings.TrimPrefix(purchase.E164, "+"))
+}
+
 func (s *AppsSuite) TestBuyingANumberPointsTheCallHookOfTheAppItIsBoughtIn() {
 	s.ownApp()
 

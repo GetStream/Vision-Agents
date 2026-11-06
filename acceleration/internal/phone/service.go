@@ -487,7 +487,9 @@ func (s *Service) Buy(ctx context.Context, purchase Purchase) (store.PhoneNumber
 	if err := s.store.RecordNumber(ctx, &held); err != nil {
 		// The number is bought either way, so saying so is more useful than failing and
 		// leaving the caller thinking it was not.
-		return held, stack.Wrap(fmt.Errorf("phone: %s was bought but not recorded: %w", held.E164, err))
+		// Support finds the number at the vendor by its order, and the log holds no number.
+		return held, stack.Wrap(fmt.Errorf("phone: a number bought from %s as %q was not recorded: %w",
+			held.Vendor, held.VendorID, err))
 	}
 	return held, nil
 }
