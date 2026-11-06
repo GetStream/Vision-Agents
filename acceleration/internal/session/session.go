@@ -794,6 +794,13 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
+	if len(images) > 0 {
+		// RespondTo would refuse them only after they were uploaded and shown on the person's
+		// message, as a question nothing answers.
+		if err := s.current().CheckTurn(asked, true); err != nil {
+			return persistent.CommandReceipt{}, "", stack.Wrap(err)
+		}
+	}
 	var photos []persistent.Photo
 	if !handedOn {
 		var err error

@@ -7532,12 +7532,17 @@ components:
           description: The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
           pattern: ^[A-Za-z0-9_.:-]{1,128}$
           type: string
+        images:
+          description: Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images.
+          items:
+            $ref: '#/components/schemas/ImageSource'
+          type: array
         request_id:
-          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
+          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference.
           pattern: ^[A-Za-z0-9_-]{1,128}$
           type: string
         text:
-          description: What to answer, as though it had been said. May be empty when audio carries the question.
+          description: What to answer, as though it had been said. May be empty when photos or audio carry the question.
           type: string
       required:
         - text
@@ -8512,7 +8517,7 @@ components:
             $ref: '#/components/schemas/ImageSource'
           type: array
         request_id:
-          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+          description: Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message.
           pattern: ^[A-Za-z0-9_-]{1,128}$
           type: string
         text:
