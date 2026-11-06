@@ -200,6 +200,32 @@ func (s *StoreSuite) TestALinkThePreviousReleaseMadeAgainIsFromItsTime() {
 	s.Equal([]string{own}, s.readFor(chat))
 }
 
+// Catches the same stale history row on the thread read: after the previous release moves anya's
+// link to another number and back, her number's thread is handed none of what it said before the
+// link made again (ThreadHistorySince), as her cards read none of it.
+func (s *StoreSuite) TestAThreadOfALinkThePreviousReleaseMadeAgainIsCutAtItsTime() {
+	s.agentConfigs()
+	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true")
+	s.Require().NoError(err)
+	thread := "messaging:thread-" + newID()
+	row := s.made(contact("+15550100", "agent:omni-"+newID()))
+	_, err = s.store.OpenEpisode(s.ctx, &Episode{CustomerID: "acme-app", ContactID: row.ID, Source: EpisodeSMS,
+		ThreadChannel: thread, StartedAt: linkedAt.Add(-time.Hour)})
+	s.Require().NoError(err)
+	s.linkDated(&UserPhone{CustomerID: "acme-app", StreamAppPK: 4242, UserID: "anya", Phone: "+15550100"})
+	s.linkWith("+15550100", &PhoneHistory{All: true})
+	_, cut, err := s.store.ThreadHistorySince(s.ctx, "acme-app", thread)
+	s.Require().NoError(err)
+	s.Require().False(cut, "all of it")
+
+	s.previousRelink("+15550199")
+	s.previousRelink("+15550100")
+
+	_, cut, err = s.store.ThreadHistorySince(s.ctx, "acme-app", thread)
+	s.Require().NoError(err)
+	s.True(cut, "cut at the link the previous release made again")
+}
+
 // previousCards is the previous release's EpisodeCards (ba2c5e912 episodes.go:384-412) for anya's
 // agent: the rows at the omni-channel, less what a linked number said before its link's time.
 func (s *StoreSuite) previousCards(omni string) []string {
