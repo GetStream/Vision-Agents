@@ -463,6 +463,11 @@ type SessionSuite struct {
 	// gated answers the conversation model instead of stubLLM, for a test that needs a
 	// reply it can hold open while something else happens to the session.
 	gated *gatedLLM
+	// flowGated answers the flow controller instead of a stubLLM, for a test that decides
+	// when its decision lands in a turn.
+	flowGated *gatedLLM
+	// speculates has agents start a reply before the flow controller rules on its turn.
+	speculates bool
 	// conversations persists text commands, for a test that submits one.
 	conversations *persistent.Service
 	// grace is how long a persistent text session outlives its last watcher. Zero is the
@@ -499,6 +504,8 @@ func (s *SessionSuite) SetupTest() {
 	s.records = nil
 	s.thinks = false
 	s.gated = nil
+	s.flowGated = nil
+	s.speculates = false
 	s.conversations = nil
 	s.apps = nil
 	s.edgeApps = nil
@@ -553,6 +560,9 @@ func (s *SessionSuite) manages() {
 			}
 			return s.model, nil
 		}
+		if s.flowGated != nil && opened.Load() == 2 {
+			return s.flowGated, nil
+		}
 		other := &stubLLM{reply: "Sure.", sees: s.model.sees}
 		s.othersMu.Lock()
 		s.others = append(s.others, other)
@@ -597,17 +607,18 @@ func (s *SessionSuite) manages() {
 	}
 
 	manager, err := NewManager(ManagerOptions{
-		LLM:           reasoner,
-		STT:           transcriber,
-		TTS:           speaker,
-		STS:           conversing,
-		Memory:        remembering,
-		Transcript:    storing,
-		Conversations: s.conversations,
-		Stream:        s.apps,
-		DetachedGrace: s.grace,
-		Directory:     s.directory,
-		Logger:        logger,
+		LLM:                reasoner,
+		STT:                transcriber,
+		TTS:                speaker,
+		STS:                conversing,
+		Memory:             remembering,
+		Transcript:         storing,
+		Conversations:      s.conversations,
+		Stream:             s.apps,
+		DetachedGrace:      s.grace,
+		Directory:          s.directory,
+		Logger:             logger,
+		SpeculativeReplies: s.speculates,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
 			if opened := s.opens; opened != nil {

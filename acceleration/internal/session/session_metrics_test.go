@@ -342,6 +342,47 @@ func (s *SessionSuite) TestASessionWhoseModelRefusedEveryTurnEndsAsAFailedModel(
 	s.endsAs(created, before, EndModelFailed)
 }
 
+func (s *SessionSuite) TestASessionWhoseFlowControllerAnsweredAfterEveryReplyFailedEndsAsAFailedModel() {
+	// Catches the flow controller's request in a turn, answered after the reply's failed,
+	// taken for a second provider answering the reply, so the apology the agent says counts
+	// as an answer and the session as closed.
+	s.flowGated = newGatedLLM()
+	s.speculates = true
+	s.manages()
+	before := s.allEnds()
+	created := s.joins(Spec{})
+	s.model.mu.Lock()
+	s.model.refuses = errors.New("401 Unauthorized: invalid api key")
+	s.model.mu.Unlock()
+	s.eventually(func() bool { return len(s.edges) > 0 }, "the session never joined its call")
+
+	alice := stt.Participant{ID: "alice", Name: "Alice"}
+	pcm := audio.PcmData{Samples: make([]int16, 320), SampleRate: 16_000, Channels: 1}
+	for _, text := range []string{"Hi, is anyone there?", "I want to move my appointment."} {
+		asked := len(s.model.requests())
+		s.edges[len(s.edges)-1].inbound <- agent.InboundAudio{Participant: alice, Audio: pcm}
+		s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Text: text, Language: "en", Confidence: 1})
+		s.eventually(func() bool { return len(s.model.requests()) > asked }, "the reply was never asked")
+		s.eventually(func() bool {
+			select {
+			case <-s.flowGated.entered:
+				return true
+			default:
+				return false
+			}
+		}, "the flow controller was never asked")
+		said := len(s.voice.spoken())
+		s.flowGated.answers(1)
+		s.eventually(func() bool { return len(s.voice.spoken()) > said }, "the lost reply was never said")
+		s.eventually(func() bool { return !created.Busy() }, "the refused turn never settled")
+	}
+
+	closed, err := s.manager.Close(created.ID(), backend("acme"))
+	s.Require().NoError(err)
+	s.Require().True(closed)
+	s.endsAs(created, before, EndModelFailed)
+}
+
 func (s *SessionSuite) TestASessionThatLostOneTurnAfterAnsweringEndsAsClosed() {
 	// Catches a long call counted as failed over one turn its model lost.
 	s.manages()
@@ -607,6 +648,110 @@ func (s *SessionSuite) TestTheEndOfASessionByWhoseFaultItsModelFailed() {
 	s.Equal(EndAgentFailed, ended(true, failed("turn-1", "openai", "create_failed"), failed("turn-1", "openai", ""),
 		agent.ModelCall{CallTiming: llm.CallTiming{Purpose: "reply", TurnID: "turn-1", Success: true}},
 		agent.Responded{TurnID: "turn-1", Text: "Friday at ten."}), "an agent leaving after a failure it answered past")
+}
+
+// turnEnd is the reason a session whose agent reported events, and left the call by itself
+// when left, is counted under.
+func turnEnd(left bool, events ...Event) EndReason {
+	session := &Session{}
+	lost := ""
+	for _, event := range events {
+		session.observeTurn(event, &lost)
+	}
+	session.agentLeft.Store(left)
+	return session.endLabel()
+}
+
+// modelCall is one model request of a turn, made for purpose (the harness's reply, flow or
+// subagent).
+func modelCall(purpose, turn, provider string, success bool, code string) Event {
+	return agent.ModelCall{CallTiming: llm.CallTiming{
+		Purpose: purpose, TurnID: turn, Provider: provider, Success: success, ErrorCode: code,
+	}}
+}
+
+func (s *SessionSuite) TestTheEndOfASessionWhoseTurnsAlsoAskedOtherModels() {
+	// Catches the flow controller's or a subagent's request in a turn taken for a provider
+	// answering the reply that failed, so a session whose every reply was lost on a refused
+	// key counts as closed, and a flow controller's failed request taken for a lost reply, so
+	// an answered turn does not count.
+	refused := agent.Error{Context: "llm", Err: errors.New("401 Unauthorized: Incorrect API key provided")}
+	answer := func(turn string) Event { return agent.Responded{TurnID: turn, Text: "Friday at ten."} }
+	apology := func(turn string) Event {
+		return agent.Responded{TurnID: turn, Text: "Sorry, something went wrong on my side. Could you ask me that again?"}
+	}
+	lostTurn := func(turn string) []Event {
+		return []Event{modelCall("reply", turn, "openai", false, "create_failed"), refused, apology(turn)}
+	}
+
+	s.Equal(EndModelConfigRefused, turnEnd(false,
+		modelCall("reply", "turn-1", routing.CustomProvider, false, "create_failed"),
+		modelCall("flow", "turn-1", "deepseek", true, ""), refused, apology("turn-1"),
+		modelCall("reply", "turn-2", routing.CustomProvider, false, "create_failed"),
+		modelCall("flow", "turn-2", "deepseek", true, ""), refused, apology("turn-2"),
+	), "the customer's own model refused every turn, the flow controller answering after it")
+	s.Equal(EndModelConfigRefused, turnEnd(false,
+		modelCall("reply", "turn-1", "openai", false, routing.ErrorKeyRefused),
+		modelCall("flow", "turn-1", "gemini", true, ""), refused, apology("turn-1"),
+	), "the customer's key refused, the flow controller answering after it")
+	s.Equal(EndModelFailed, turnEnd(false,
+		modelCall("reply", "turn-1", "openai", false, "create_failed"),
+		modelCall("subagent", "turn-1", "openai", true, ""), refused, apology("turn-1"),
+	), "a subagent answering after the reply failed")
+
+	s.Equal(EndClosed, turnEnd(false, append([]Event{
+		modelCall("reply", "turn-1", "openai", true, ""),
+		modelCall("flow", "turn-1", "deepseek", false, "create_failed"), answer("turn-1"),
+	}, lostTurn("turn-2")...)...), "the flow controller failing after the reply was written")
+	s.Equal(EndClosed, turnEnd(false, append([]Event{
+		modelCall("reply", "turn-1", "openai", true, ""),
+		modelCall("subagent", "turn-1", "openai", false, "create_failed"), answer("turn-1"),
+	}, lostTurn("turn-2")...)...), "a subagent failing in an answered turn")
+}
+
+func (s *SessionSuite) TestTheEndOfASessionTheOtherModelsCannotChange() {
+	// Catches a change to the end of a session the flow controller's request never stood in
+	// for a reply in: a reply failover, a lost reply with the flow controller asked before it
+	// or failing, another turn's reply, and an agent leaving after a failure. The reasons are
+	// what the session counted before the reply alone decided a lost turn.
+	refused := agent.Error{Context: "llm", Err: errors.New("401 Unauthorized")}
+	answer := func(turn string) Event { return agent.Responded{TurnID: turn, Text: "Friday at ten."} }
+	apology := func(turn string) Event {
+		return agent.Responded{TurnID: turn, Text: "Sorry, could you ask me that again?"}
+	}
+
+	s.Equal(EndClosed, turnEnd(false,
+		modelCall("flow", "turn-1", "deepseek", true, ""),
+		modelCall("reply", "turn-1", "openai", false, "upstream_error"),
+		modelCall("reply", "turn-1", "anthropic", true, ""), answer("turn-1"),
+	), "a second provider answering the reply the first failed")
+	s.Equal(EndClosed, turnEnd(false,
+		modelCall("flow", "turn-1", "deepseek", false, "upstream_error"),
+		modelCall("reply", "turn-1", "openai", true, ""), answer("turn-1"),
+		modelCall("reply", "turn-2", "openai", false, "create_failed"), refused, apology("turn-2"),
+	), "the flow controller failing before the reply was written")
+	s.Equal(EndClosed, turnEnd(false,
+		modelCall("reply", "turn-1", "openai", false, "upstream_error"),
+		modelCall("reply", "turn-1", "anthropic", true, ""), answer("turn-1"),
+		modelCall("reply", "turn-2", "openai", false, "create_failed"), refused, apology("turn-2"),
+	), "a turn lost after a failover answered one")
+	s.Equal(EndModelConfigRefused, turnEnd(false,
+		modelCall("reply", "turn-1", routing.CustomProvider, false, "create_failed"), refused, apology("turn-1"),
+	), "the customer's own model failing with no flow controller")
+	s.Equal(EndModelConfigRefused, turnEnd(false,
+		modelCall("flow", "turn-1", "deepseek", true, ""),
+		modelCall("reply", "turn-1", routing.CustomProvider, false, "create_failed"), refused, apology("turn-1"),
+	), "the flow controller answering before the customer's own model failed")
+	s.Equal(EndModelConfigRefused, turnEnd(false,
+		modelCall("flow", "turn-1", "deepseek", false, "create_failed"),
+		modelCall("reply", "turn-1", routing.CustomProvider, false, "create_failed"), refused, apology("turn-1"),
+	), "the flow controller failing before the customer's own model failed")
+	s.Equal(EndModelFailed, turnEnd(false,
+		modelCall("reply", "turn-1", "openai", false, "create_failed"),
+		modelCall("reply", "turn-2", "openai", true, ""), refused, apology("turn-1"),
+	), "the next turn's reply answering before the lost one was said")
+	s.Equal(EndModelFailed, turnEnd(true, modelCall("flow", "turn-1", "deepseek", false, "create_failed")),
+		"the agent leaving after the flow controller failed")
 }
 
 func (s *SessionSuite) TestEveryEndReasonDeclaredIsInTheList() {
