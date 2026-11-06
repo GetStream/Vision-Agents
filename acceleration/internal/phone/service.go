@@ -156,8 +156,9 @@ type Apps interface {
 	ForAppRemoving(ctx context.Context, customer string, app int64) (*Stream, error)
 }
 
-// errNoStream is a service with no Stream app to make lines in.
-var errNoStream = errors.New("phone: no stream credentials")
+// ErrNoStream is a service with no Stream app to make lines in: a deployment without Stream
+// credentials.
+var ErrNoStream = errors.New("phone: no stream credentials")
 
 // Suspended returns ErrSuspended for an app Stream staff stopped from using the phone. A
 // suspension that cannot be read refuses too: it is there to stop fraud that costs money.
@@ -198,7 +199,7 @@ func (s *Service) streamFor(ctx context.Context, customer string) (*Stream, int6
 		return s.apps.For(ctx, customer)
 	}
 	if s.stream == nil {
-		return nil, 0, errNoStream
+		return nil, 0, ErrNoStream
 	}
 	return s.stream, 0, nil
 }
@@ -209,7 +210,7 @@ func (s *Service) streamForApp(ctx context.Context, customer string, app int64) 
 		return s.apps.ForApp(ctx, customer, app)
 	}
 	if s.stream == nil {
-		return nil, errNoStream
+		return nil, ErrNoStream
 	}
 	return s.stream, nil
 }
@@ -220,7 +221,7 @@ func (s *Service) streamToRemove(ctx context.Context, customer string, app int64
 		return s.apps.ForAppRemoving(ctx, customer, app)
 	}
 	if s.stream == nil {
-		return nil, errNoStream
+		return nil, ErrNoStream
 	}
 	return s.stream, nil
 }
@@ -722,8 +723,8 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(Invalid(errors.New("phone: inbound calls to a number on the customer's own sip trunk are not supported")))
 	}
 	stream, pin, err := s.streamFor(ctx, attachment.CustomerID)
-	if errors.Is(err, errNoStream) {
-		return Attached{}, stack.Wrap(errors.New("phone: attaching a number needs stream credentials"))
+	if errors.Is(err, ErrNoStream) {
+		return Attached{}, stack.Wrap(marked{errors.New("phone: attaching a number needs stream credentials"), ErrNoStream})
 	}
 	if err != nil {
 		return Attached{}, err
@@ -985,8 +986,8 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		return Placed{}, stack.Wrap(err)
 	}
 	stream, pin, err := s.streamFor(ctx, request.Owner.CustomerID)
-	if errors.Is(err, errNoStream) {
-		return Placed{}, stack.Wrap(errors.New("phone: placing a call needs stream credentials"))
+	if errors.Is(err, ErrNoStream) {
+		return Placed{}, stack.Wrap(marked{errors.New("phone: placing a call needs stream credentials"), ErrNoStream})
 	}
 	if err != nil {
 		return Placed{}, err
@@ -1735,8 +1736,8 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	// The human is routed into the call the agent is on, so the trunk is made in the app
 	// that call is in.
 	stream, err := s.streamForApp(ctx, request.Owner.CustomerID, request.StreamApp)
-	if errors.Is(err, errNoStream) {
-		return Dialed{}, stack.Wrap(errors.New("phone: transferring a call needs stream credentials"))
+	if errors.Is(err, ErrNoStream) {
+		return Dialed{}, stack.Wrap(marked{errors.New("phone: transferring a call needs stream credentials"), ErrNoStream})
 	}
 	if err != nil {
 		return Dialed{}, err

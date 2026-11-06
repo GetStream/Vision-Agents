@@ -306,6 +306,7 @@ func (s *PhoneSuite) TestACallSaysWhatItIsMissing() {
 
 	_, err = service.Call(s.ctx, CallRequest{From: "+15125551234", To: "+15550001111"})
 	s.ErrorContains(err, "stream credentials")
+	s.ErrorIs(err, ErrNoStream)
 }
 
 func (s *PhoneSuite) TestAVendorThatCannotSendAPasswordWillNotDialWithoutAnAllowlist() {
@@ -368,6 +369,7 @@ func (s *PhoneSuite) TestATransferSaysWhatItIsMissing() {
 	_, err = service.Transfer(s.ctx, TransferRequest{From: "+15125551234", To: "+15550001111"})
 	s.ErrorContains(err, "stream credentials",
 		"a transfer routes a leg into a call, which needs Stream")
+	s.ErrorIs(err, ErrNoStream)
 	s.NotErrorIs(err, ErrInvalid, "the deployment's credentials are not the caller's to change")
 }
 

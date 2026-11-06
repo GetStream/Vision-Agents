@@ -80,6 +80,7 @@ func clientPhoneErrors() map[string]error {
 		"a number that is not E.164":        phone.Dialable("911"),
 		"a number stored in another form":   stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, "5125551234")),
 		"sip trunks off on this deployment": stack.Wrap(phone.ErrSIPTrunksDisabled),
+		"no Stream on this deployment":      stack.Wrap(phone.ErrNoStream),
 		"no app for the customer":           stack.Wrap(streamapp.ErrNoIdentity),
 		"an app the customer moved from":    stack.Wrap(streamapp.ErrStreamAppMoved),
 		"a disconnected app":                stack.Wrap(streamapp.ErrStreamAppDisconnected),

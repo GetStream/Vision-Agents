@@ -648,12 +648,12 @@ var (
 		Message: "This app's telephony is suspended. Contact Stream support."}
 )
 
-// clientPhoneFailures are the failures of a phone operation the client can fix, answered in
-// their own words: a request the phone cannot carry out as asked, a number that cannot be
-// dialled or stored, an app the customer cannot act in, and sip trunks this deployment is
-// without.
+// clientPhoneFailures are the failures of a phone operation answered in their own words, as
+// the client asked for something it can change: a request the phone cannot carry out as
+// asked, a number that cannot be dialled or stored, an app the customer cannot act in, and
+// sip trunks or Stream credentials this deployment is without.
 var clientPhoneFailures = []error{
-	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164, phone.ErrSIPTrunksDisabled,
+	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164, phone.ErrSIPTrunksDisabled, phone.ErrNoStream,
 	streamapp.ErrNoIdentity, streamapp.ErrStreamAppMoved, streamapp.ErrStreamAppDisconnected, streamapp.ErrReadOnly,
 }
 

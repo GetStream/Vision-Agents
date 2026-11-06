@@ -73,13 +73,14 @@ var ErrNotDialable = errors.New("phone: not dialable")
 var ErrInvalid = errors.New("phone: invalid request")
 
 // Invalid marks err as ErrInvalid without changing its message.
-func Invalid(err error) error { return invalidRequest{err} }
+func Invalid(err error) error { return marked{err, ErrInvalid} }
 
-type invalidRequest struct{ err error }
+// marked is err that is also kind, with err's own message.
+type marked struct{ err, kind error }
 
-func (e invalidRequest) Error() string        { return e.err.Error() }
-func (e invalidRequest) Unwrap() error        { return e.err }
-func (e invalidRequest) Is(target error) bool { return target == ErrInvalid }
+func (e marked) Error() string        { return e.err.Error() }
+func (e marked) Unwrap() error        { return e.err }
+func (e marked) Is(target error) bool { return target == e.kind }
 
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
 // is how toll fraud turns a stolen account into money.
