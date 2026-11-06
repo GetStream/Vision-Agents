@@ -420,9 +420,11 @@ func (own ownLines) holdingNumber(numbers func(string) []numberAt, wanted ...str
 }
 
 // echoes reports whether content, a tool's result, writes back only the arguments of the call it answers
-// (asked): each value in it (true, false and null aside) is a line of them, read as numbers reads the
-// number, in any of its forms. A lookup that answers {"last4":"5630"} to last4=5630 gives no number; a
-// record that writes it beside data of its own, {"member":"Ana Lind","last4":"5630"}, does.
+// (asked): it has a string or a number, and each one that is not empty is a line of them, read as numbers
+// reads the number, in any of its forms. true, false and null are no data. A lookup that answers
+// {"last4":"5630"} to last4=5630 gives no number; a record that writes it beside data of its own,
+// {"member":"Ana Lind","last4":"5630"}, does. Only the call it answers is read: a record a later call
+// finds may well hold a number the agent sent before.
 func (asked ownLines) echoes(content string, numbers func(string) []numberAt) bool {
 	var value any
 	decoder := json.NewDecoder(strings.NewReader(content))
@@ -647,8 +649,8 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 		numbers := func(source string) []numberAt {
 			var found []numberAt
 			for _, span := range numberGroup.FindAllStringIndex(source, -1) {
-				if digits := digitGroups(source[span[0]:span[1]]); given(digits) {
-					found = append(found, numberAt{span[0], span[1], digits[0]})
+				if group := digitGroups(source[span[0]:span[1]]); given(group) {
+					found = append(found, numberAt{span[0], span[1], group[0]})
 				}
 			}
 			return found
