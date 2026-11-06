@@ -26,10 +26,10 @@ const events = 64
 // close. The backend closes the socket once the session has ended, well inside this.
 const hangupWithin = 5 * time.Second
 
-// resumeFor is how long a dropped text session's socket is reconnected for. It is how long
-// the router keeps a text session nobody watches, after which a reconnect still reopens the
-// conversation but has nothing left to send again.
-const resumeFor = 5 * time.Minute
+// resumeWindow is how long a dropped text session's socket is reconnected for. It is how
+// long the router keeps a text session nobody watches, after which a reconnect still reopens
+// the conversation but has nothing left to send again.
+const resumeWindow = 5 * time.Minute
 
 // ErrNotOnCall is returned by an action on a pipeline that has not joined anything, or has
 // already left.
@@ -228,6 +228,9 @@ type Pipeline struct {
 	awaiting atomic.Value
 	// firstRetry is the first wait before reconnecting a dropped text session.
 	firstRetry time.Duration
+	// resumeFor is how long a dropped text session's socket is reconnected for:
+	// resumeWindow, which tests shorten.
+	resumeFor time.Duration
 }
 
 // Accelerated configures a pipeline to run remotely.
@@ -248,6 +251,7 @@ func Accelerated(config Config) *Pipeline {
 		logger:     logger,
 		functions:  functions,
 		firstRetry: firstRetry,
+		resumeFor:  resumeWindow,
 	}
 }
 
@@ -622,6 +626,13 @@ func (p *Pipeline) command(frame Frame) error {
 func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event, resumable bool) {
 	defer p.watcher.Done()
 	defer close(out)
+	// Closed before the channel is, so a socket the router ended no longer reads as open:
+	// Leave then stops the session over HTTP rather than writing to a closed socket.
+	defer func() {
+		if socket != nil {
+			_ = socket.Close()
+		}
+	}()
 
 	cursor := ""
 	for reconnected := false; ; reconnected = true {
@@ -709,8 +720,8 @@ func dropped(err error) bool {
 }
 
 // reconnect opens the session's socket again after cursor, waiting longer between each
-// attempt, until it opens, the pipeline stops, the router refuses it for good, or resumeFor
-// runs out. It returns nil when it gave up.
+// attempt, until it opens, the pipeline stops, the router refuses it for good, or
+// p.resumeFor runs out. It returns nil when it gave up.
 func (p *Pipeline) reconnect(ctx context.Context, cursor string) *Socket {
 	session := p.Session()
 	if session == nil {
@@ -725,7 +736,7 @@ func (p *Pipeline) reconnect(ctx context.Context, cursor string) *Socket {
 		asked.Set("request_id", id)
 	}
 
-	giveUp := time.Now().Add(resumeFor)
+	giveUp := time.Now().Add(p.resumeFor)
 	for retry := p.firstRetry; ; retry = min(retry*2, lastRetry) {
 		select {
 		case <-ctx.Done():
@@ -751,7 +762,7 @@ func (p *Pipeline) reconnect(ctx context.Context, cursor string) *Socket {
 			return nil
 		}
 		if time.Now().After(giveUp) {
-			p.logger.Warn("could not reconnect the session socket", "error", err, "for", resumeFor)
+			p.logger.Warn("could not reconnect the session socket", "error", err, "for", p.resumeFor)
 			return nil
 		}
 		p.logger.Debug("could not reconnect the session socket", "error", err, "retrying in", retry)
