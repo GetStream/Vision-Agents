@@ -344,71 +344,16 @@ final class AgentTest extends TestCase
     /**
      * @return iterable<string, array{string, string}>
      */
-    public static function endsOfTurn(): iterable
-    {
-        yield 'max_wait_ms' => ["end_of_turn:\n  max_wait_ms: 900\n", '{"max_wait_ms":900}'];
-        yield 'preset' => ["end_of_turn:\n  preset: fast\n", '{"preset":"fast"}'];
-        yield 'bars' => [
-            "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n",
-            '{"bars":[{"bar":0.97,"from_ms":0},{"bar":0.25,"from_ms":900}]}',
-        ];
-        yield 'the server default' => ["end_of_turn: {}\n", '{}'];
-        yield 'a wait of 0, for the router to refuse' => ["end_of_turn:\n  max_wait_ms: 0\n", '{"max_wait_ms":0}'];
-        yield 'an empty preset, for the router to refuse' => ["end_of_turn:\n  preset: \"\"\n", '{"preset":""}'];
-    }
-
-    /**
-     * agent.yaml's end_of_turn goes as written, an empty one as {} rather than [].
-     */
-    #[DataProvider('endsOfTurn')]
-    public function testSyncSendsTheEndOfTurnTheAgentDeclared(string $declared, string $sent): void
-    {
-        $this->folder();
-        file_put_contents($this->dir . '/agent.yaml', "name: jean\n" . $declared);
-        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
-
-        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
-
-        self::assertStringContainsString('"end_of_turn":' . $sent . ',', $this->router->to('POST', '/v1/agents/sync')[0]->body);
-    }
-
-    /**
-     * A file that names no end_of_turn sends none, so the stored choice stays.
-     */
-    #[DataProvider('noEndOfTurn')]
-    public function testSyncSendsNoEndOfTurnWhenAgentYamlNamesNone(string $declared): void
-    {
-        $this->folder();
-        file_put_contents($this->dir . '/agent.yaml', "name: jean\n" . $declared);
-        $this->router->answer('POST', '/v1/agents/sync', 200, ['unchanged' => false, 'config' => Rows::config('cfg_1', 'jean')]);
-
-        (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
-
-        self::assertArrayNotHasKey('end_of_turn', $this->router->to('POST', '/v1/agents/sync')[0]->json());
-    }
-
-    /**
-     * @return iterable<string, array{string}>
-     */
-    public static function noEndOfTurn(): iterable
-    {
-        yield 'left out' => ["llm: openai/gpt-5.6\n"];
-        yield 'no value' => ["end_of_turn:\n"];
-        yield 'null' => ["end_of_turn: ~\n"];
-    }
-
-    /**
-     * @return iterable<string, array{string, string}>
-     */
     public static function floorControls(): iterable
     {
-        yield 'chorus-asr' => ["floor_control: stream/chorus-asr\n", 'stream/chorus-asr'];
-        yield 'empty, the default flow controller again' => ["floor_control: \"\"\n", ''];
-        yield 'a model for the router to refuse' => ["floor_control: other\n", 'other'];
+        yield 'model and wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", '{"max_wait_ms":800,"model":"stream/chorus-asr"}'];
+        yield 'model alone' => ["floor_control: {model: stream/chorus-asr}\n", '{"model":"stream/chorus-asr"}'];
+        yield 'empty, the default flow controller again' => ["floor_control: {}\n", '{}'];
+        yield 'a model for the router to refuse' => ["floor_control:\n  model: other\n", '{"model":"other"}'];
     }
 
     /**
-     * agent.yaml's floor_control goes as written.
+     * agent.yaml's floor_control goes as written, an empty one as {} rather than [].
      */
     #[DataProvider('floorControls')]
     public function testSyncSendsTheFloorControlTheAgentDeclared(string $declared, string $sent): void
@@ -419,7 +364,7 @@ final class AgentTest extends TestCase
 
         (new Agent(folder: $this->dir, client: $this->router->client()))->sync();
 
-        self::assertSame($sent, $this->router->to('POST', '/v1/agents/sync')[0]->json()['floor_control']);
+        self::assertStringContainsString('"floor_control":' . $sent, $this->router->to('POST', '/v1/agents/sync')[0]->body);
     }
 
     /**

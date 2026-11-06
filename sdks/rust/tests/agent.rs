@@ -553,65 +553,24 @@ async fn what_a_directory_leaves_to_dispatch_is_synced_as_written() {
     assert!(body.get("speed").is_none());
 }
 
-/// agent.yaml's end_of_turn goes as written, and a file that names none sends none, so the
-/// stored choice stays.
-#[tokio::test]
-async fn the_end_of_turn_a_directory_declares_is_synced_as_written() {
-    for (declared, want) in [
-        (
-            "end_of_turn:\n  max_wait_ms: 900\n",
-            Some(json!({"max_wait_ms": 900})),
-        ),
-        (
-            "end_of_turn:\n  preset: fast\n",
-            Some(json!({"preset": "fast"})),
-        ),
-        (
-            "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n",
-            Some(json!({"bars": [{"from_ms": 0, "bar": 0.97}, {"from_ms": 900, "bar": 0.25}]})),
-        ),
-        ("end_of_turn: {}\n", Some(json!({}))),
-        (
-            "end_of_turn:\n  max_wait_ms: 0\n",
-            Some(json!({"max_wait_ms": 0})),
-        ),
-        (
-            "end_of_turn:\n  preset: \"\"\n",
-            Some(json!({"preset": ""})),
-        ),
-        ("end_of_turn:\n", None),
-        ("llm: openai/gpt-5.6\n", None),
-    ] {
-        let server = Server::start().await;
-        synced(&server);
-        let root = tempfile::tempdir().unwrap();
-        write(
-            root.path(),
-            "agent.yaml",
-            &format!("name: jean\n{declared}"),
-        );
-        let agent = Agent::from_folder(root.path())
-            .unwrap()
-            .client(server.client());
-
-        agent.sync().await.unwrap();
-
-        let body = server.request(Method::POST, "/v1/agents/sync").body;
-        assert_eq!(body.get("end_of_turn"), want.as_ref(), "{declared:?}");
-    }
-}
-
-/// agent.yaml's floor_control goes as written, "" and a model the router does not know included,
+/// agent.yaml's floor_control goes as written, {} and a model the router does not know included,
 /// and a file that names none sends none, so the stored choice stays.
 #[tokio::test]
 async fn the_floor_control_a_directory_declares_is_synced_as_written() {
     for (declared, want) in [
         (
-            "floor_control: stream/chorus-asr\n",
-            Some(json!("stream/chorus-asr")),
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+            Some(json!({"model": "stream/chorus-asr", "max_wait_ms": 800})),
         ),
-        ("floor_control: \"\"\n", Some(json!(""))),
-        ("floor_control: other\n", Some(json!("other"))),
+        (
+            "floor_control: {model: stream/chorus-asr}\n",
+            Some(json!({"model": "stream/chorus-asr"})),
+        ),
+        ("floor_control: {}\n", Some(json!({}))),
+        (
+            "floor_control:\n  model: other\n",
+            Some(json!({"model": "other"})),
+        ),
         ("floor_control:\n", None),
         ("llm: openai/gpt-5.6\n", None),
     ] {

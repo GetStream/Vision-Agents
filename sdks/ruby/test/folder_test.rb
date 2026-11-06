@@ -234,10 +234,8 @@ class TestFolder < Minitest::Test
      "user_plugins: [linear]\n", "plugin_events: [linear]\n", "progressive_tools: true\n", "greeting: Hello\n",
      "greeting:\n  text: Hello\n  tone: warm\n", "sandbox_options:\n  memory: 4\n",
      "sandbox_options:\n  timeout: 2h\n", "sandbox_options:\n  cpu: two\n",
-     "sandbox_options:\n  network: maybe\n", "end_of_turn:\n  max_wait: 900\n",
-     "end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n", "end_of_turn: fast\n",
-     "end_of_turn:\n  max_wait_ms: soon\n", "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n",
-     "end_of_turn:\n  bars:\n    - {bar: 0.9}\n", "end_of_turn:\n  bars:\n    - {from_ms: 0}\n"].each do |yaml|
+     "sandbox_options:\n  network: maybe\n", "end_of_turn:\n  max_wait_ms: 900\n",
+     "end_of_turn: {}\n"].each do |yaml|
       write("agent.yaml", yaml)
 
       assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
@@ -283,10 +281,15 @@ class TestFolder < Minitest::Test
     end
   end
 
-  # floor_control is read as written, "" included; which models there are is the router's to say.
+  # floor_control is read as written, {} included; which models there are, and whether a wait
+  # names one, is the router's to say.
   def test_the_floor_control_is_read_as_written
-    { "floor_control: stream/chorus-asr\n" => "stream/chorus-asr", "floor_control: \"\"\n" => "",
-      "floor_control: other\n" => "other" }.each do |yaml, want|
+    { "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n" =>
+        { "model" => "stream/chorus-asr", "max_wait_ms" => 800 },
+      "floor_control: {model: stream/chorus-asr}\n" => { "model" => "stream/chorus-asr" },
+      "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n" => { "model" => "stream/chorus-asr" },
+      "floor_control: {max_wait_ms: 800}\n" => { "max_wait_ms" => 800 },
+      "floor_control: {}\n" => {} }.each do |yaml, want|
       write("agent.yaml", "name: jean\n#{yaml}")
 
       assert_equal want, VA::Folder.load(@root).settings["floor_control"], yaml
@@ -298,15 +301,31 @@ class TestFolder < Minitest::Test
     end
   end
 
-  def test_a_floor_control_that_is_not_a_string_is_refused_by_name
-    ["floor_control: {model: chorus-asr, mode: act}\n", "floor_control: [stream/chorus-asr]\n",
-     "floor_control: true\n", "floor_control: off\n", "floor_control: 1\n"].each do |yaml|
+  def test_a_floor_control_that_cannot_be_read_is_refused_naming_why
+    mapping = "floor_control is a mapping of model and, optionally, max_wait_ms"
+    { "floor_control: stream/chorus-asr\n" => mapping, "floor_control: [stream/chorus-asr]\n" => mapping,
+      "floor_control: true\n" => mapping, "floor_control: 1\n" => mapping,
+      "floor_control:\n  model: stream/chorus-asr\n  mode: act\n" =>
+        "mode is not a floor_control setting; model and max_wait_ms are",
+      "floor_control:\n  model: 1\n" => "floor_control.model must be a string",
+      "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n" => "floor_control.max_wait_ms must be an integer",
+      "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n" =>
+        "floor_control.max_wait_ms must be an integer" }.each do |yaml, message|
       write("agent.yaml", "name: jean\n#{yaml}")
 
       error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
 
-      assert_includes error.message, "floor_control must be a string"
+      assert_includes error.message, message
     end
+  end
+
+  # end_of_turn is gone: its one knob is floor_control's max_wait_ms.
+  def test_an_end_of_turn_is_refused_by_name
+    write("agent.yaml", "name: jean\nend_of_turn:\n  max_wait_ms: 900\n")
+
+    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+
+    assert_includes error.message, "end_of_turn is not a setting"
   end
 
   def test_the_fingerprint_hashes_agent_yaml_as_written_connectors_included
