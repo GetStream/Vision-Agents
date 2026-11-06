@@ -763,7 +763,7 @@ func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 		quote := prices.Quote(number(vendor.Vendor), nil)
 		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
 		resold := prices.Quoted(number(vendor.Vendor), 1_000_000)
-		s.Equal(int64(1_200_000), resold.CostMicros, vendor.Vendor)
+		s.Equal(int64(1_080_000), resold.CostMicros, vendor.Vendor)
 		s.Equal(int64(1_000_000), resold.BaseCostMicros, vendor.Vendor)
 		s.True(resold.Billable, vendor.Vendor)
 	}

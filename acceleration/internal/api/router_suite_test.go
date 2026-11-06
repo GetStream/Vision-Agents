@@ -48,7 +48,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
@@ -738,7 +737,6 @@ func (s *RouterSuite) SetupSuite() {
 		// App mode is served only behind a gateway that declares kinds.
 		ProxyDeclaresKind: s.appMode,
 		Phone:             s.telephony(logger),
-		Campaigns:         s.campaigns(sessions, logger),
 		Simulations:       s.simulations(sessions, streams, logger),
 		Channels:          s.inbound,
 		DLC:               s.registrations(listener, logger),
@@ -794,6 +792,9 @@ func (s *RouterSuite) SetupSuite() {
 	if bridge, built := s.bridge.(*channelbridge.Bridge); built {
 		bridge.Start(context.Background(), s.answerQueued)
 	}
+	// No campaign dialer, unlike cmd/router: suites share a database, and one suite's dialer
+	// would ring every other suite's running campaigns. A suite that dials builds its own over
+	// a database of its own (AdmissionSuite.dialer).
 }
 
 // answerQueued is the hand-off cmd/router gives the inbound worker (Server.AnswerQueued). It
@@ -1613,15 +1614,6 @@ func (s *RouterSuite) telephonySealedBy(sealer *auth.Sealer, apps phone.Apps, lo
 	})
 	s.Require().NoError(err)
 	return service
-}
-
-func (s *RouterSuite) campaigns(sessions *session.Manager, logger *slog.Logger) *campaign.Runner {
-	runner, err := campaign.New(campaign.Options{
-		Store: s.store, Phone: s.telephony(logger), Sessions: sessions, Logger: logger,
-	})
-	s.Require().NoError(err)
-	s.T().Cleanup(runner.Close)
-	return runner
 }
 
 func (s *RouterSuite) simulations(sessions *session.Manager, streams *Streams, logger *slog.Logger) *simulation.Runner {

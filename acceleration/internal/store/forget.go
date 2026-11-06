@@ -113,7 +113,9 @@ func (s *Store) CountUserSettings(ctx context.Context, appID, userID string) (Us
 
 // ForgetUserSettings deletes an app's end user's own policy and user-level limits, so they fall
 // back to the app's, replaces their id with replacement on their resets, grants and campaigns,
-// and records entry, with these counts added to its changes, in the same transaction.
+// and records entry, with these counts added to its changes, in the same transaction. A
+// campaign's contacts and their attempts stay: they are the app's data about third parties,
+// not the user's.
 func (s *Store) ForgetUserSettings(ctx context.Context, appID, userID, replacement string, entry *AuditEntry) (UserSettings, error) {
 	var counts UserSettings
 	err := s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {

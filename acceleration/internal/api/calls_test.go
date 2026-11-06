@@ -650,6 +650,19 @@ func (s *CallsSuite) TestAFailedFirstReadOfATranscriptIsReturned() {
 		"/v1/agents/calls/"+call.ID+"/transcript", nil, nil))
 }
 
+func (s *CallsSuite) TestTheCampaignDialerReadsOnlyItsOwnCustomersTranscript() {
+	call := s.started(store.Call{})
+	s.inChannel(call.AgentID, s.customerID(), call.StartedAt.Add(time.Minute), "said on the call")
+
+	said, err := s.router.CallTranscript(context.Background(), s.customerID(), call.ID)
+	s.Require().NoError(err)
+	s.Require().Len(said, 1)
+	s.Equal("said on the call", said[0].Text)
+
+	_, err = s.router.CallTranscript(context.Background(), "customer-"+s.utils.uuid(), call.ID)
+	s.Error(err, "another customer's call is not read")
+}
+
 func (s *CallsSuite) TestReadingACallsTranscriptCreatesNoChannel() {
 	call := s.started(store.Call{})
 

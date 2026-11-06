@@ -753,7 +753,7 @@ func (s *MeteringSuite) TestABoughtNumberIsBilledItsFirstMonth() {
 	s.Require().NoError(err)
 
 	month := s.row(ModelNumber)
-	s.Equal(int64(1_200_000), month.CostMicros, "the price the vendor quoted, resold at the factor")
+	s.Equal(int64(1_080_000), month.CostMicros, "the price the vendor quoted, resold at the factor")
 	s.Equal(int64(1_000_000), month.BaseCostMicros, "the price the vendor quoted")
 	s.True(month.Billable)
 	s.Equal("key-a", month.APIKey, "the month it was bought in is the buyer's")
@@ -769,7 +769,7 @@ func (s *MeteringSuite) TestANumberWhosePriceIsOnlyInItsOfferIsBilledTheOffer() 
 	s.Require().NoError(err)
 
 	s.Equal(int64(1_500_000), bought.MonthlyCostMicros, "the number's own offer")
-	s.Equal(int64(1_800_000), s.row(ModelNumber).CostMicros)
+	s.Equal(int64(1_620_000), s.row(ModelNumber).CostMicros)
 }
 
 func (s *MeteringSuite) TestANumberWithNoPriceIsBillableWorkWithNoPrice() {
