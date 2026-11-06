@@ -768,6 +768,9 @@ func frameOf(event session.Event) (frame, bool) {
 		// one it always was.
 		if typed.ErrorCode != "" {
 			called["error_code"] = typed.ErrorCode
+			if typed.ErrorMessage != "" {
+				called["error_message"] = typed.ErrorMessage
+			}
 		}
 		return called, true
 

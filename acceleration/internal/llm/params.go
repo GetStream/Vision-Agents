@@ -94,6 +94,10 @@ type CallTiming struct {
 	// is still billed, otherwise the provider's or the request's own failure.
 	Success   bool
 	ErrorCode string
+	// ErrorMessage is what the failure said, the provider's error body included, redacted and
+	// capped as the requests table stores it (store.SafeLogText). Empty for a call that
+	// succeeded, and for one that ended with no error of its own to tell.
+	ErrorMessage string
 	// InputTokens, CachedInputTokens and OutputTokens are what the request read and wrote,
 	// and CostMicros what it was priced at, in millionths of a dollar. Zero for a request
 	// that failed before the provider answered.

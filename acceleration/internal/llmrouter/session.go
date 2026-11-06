@@ -240,19 +240,25 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 		if params.OnTiming != nil {
 			params.OnTiming(llm.CallTiming{OperationID: params.ID, Purpose: params.Purpose,
 				TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
-				DurationMs: durationMs, Success: false, ErrorCode: code})
+				DurationMs: durationMs, Success: false, ErrorCode: code, ErrorMessage: store.SafeLogText(message)})
 		}
 		return nil, err
 	}
 	createdAt := time.Now()
 	charged := s.charged(ctx)
 	settled := s.keep(held)
+	// The response settles with its status alone, so what its failure said is kept from the
+	// event that reported it, the last one as the stream's own Err keeps.
+	var failure string
 	return stream.Observe(func(event llm.Event) {
+		if failed, ok := event.(llm.ResponseFailed); ok {
+			failure = failed.Error()
+		}
 		if completed, done := event.(llm.ResponseCompleted); done {
 			settled()
 			passed.observeStream(s.config, createdAt, completed.Response)
 		}
-		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved)
+		s.observe(startedAt, createdAt, params, hedge, event, owner, charged, reserved, failure)
 	}), nil
 }
 
@@ -335,7 +341,7 @@ func (s *Session) Close() error {
 // One response is one unit of billable work, the way one synthesis is for text-to-speech,
 // and it is recorded once: a failure is carried on the response that failed rather than
 // written as a row of its own, so one turn stays one row.
-func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID) {
+func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponseParams, hedge *hedgeAttempt, event llm.Event, owner routing.Owner, charged routing.Caller, reserved uuid.UUID, failure string) {
 	completed, settled := event.(llm.ResponseCompleted)
 	if !settled {
 		return
@@ -397,12 +403,17 @@ func (s *Session) observe(startedAt, createdAt time.Time, params llm.ResponsePar
 	stat.LatencyMs = measuredLatency(response, ttftMs)
 	stat.Success = served(response)
 	stat.ErrorCode = code
+	// Only a response that did not run to its end says why, so a served one's row and timing
+	// are the ones they always were.
+	if code != "" {
+		stat.ErrorMessage = failure
+	}
 	label(&stat, params, hedge)
 	if params.OnTiming != nil {
 		params.OnTiming(llm.CallTiming{OperationID: response.ID, Purpose: params.Purpose,
 			TurnID: params.TurnID, Provider: s.config.Provider, Model: s.config.Model,
 			TTFTMs: ttftMs, DurationMs: durationMs,
-			Success: served(response), ErrorCode: code,
+			Success: served(response), ErrorCode: code, ErrorMessage: store.SafeLogText(stat.ErrorMessage),
 			InputTokens: usage.InputTokens, CachedInputTokens: usage.CachedInputTokens,
 			OutputTokens: usage.OutputTokens, CostMicros: s.recorder.QuoteStat(s.config, stat).CostMicros})
 	}
