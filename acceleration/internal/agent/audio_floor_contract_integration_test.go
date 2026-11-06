@@ -182,7 +182,9 @@ func (k *contract) stopsAndAnswered(t *testing.T, name, keyword string, oneBreat
 
 // gaveWay holds the agent to the contract's line for what the model ruled over it, first, on
 // what was said: stopped, it is quiet within stopWithin of the caller's first word; shortened,
-// within shortenedWithin of the ruling. Both a correction and one more item are answered.
+// it gives way within stopWithin of the first word, as the same checks rule either, and is
+// quiet within shortenedWithin of the ruling. Both a correction and one more item are
+// answered.
 func (c *call) gaveWay(t *testing.T, said *cue) {
 	t.Helper()
 	var ruled stampedEvent[OverlapDecided]
@@ -200,6 +202,7 @@ func (c *call) gaveWay(t *testing.T, said *cue) {
 		return
 	}
 	if ruled.E.Action == "shorten" {
+		assert.LessOrEqual(t, ruled.At.Sub(said.began()), stopWithin, "the agent was shortened %s after the caller's first word", ruled.At.Sub(said.began()).Round(time.Millisecond))
 		assert.LessOrEqual(t, stopped.At.Sub(ruled.At), shortenedWithin+frameSlack, "shortened, the agent stopped %s after the ruling", stopped.At.Sub(ruled.At).Round(time.Millisecond))
 		return
 	}
@@ -232,9 +235,9 @@ func (k *contract) stopThenQuestion(t *testing.T) {
 	k.measured(t, "C3 stop then question", answered)
 }
 
-// C4. One more item over the forecast list: the agent stops speaking within shortenedWithin of
-// the model's shortening, or within stopWithin of the first word if the model stops it, and
-// the item is answered.
+// C4. One more item over the forecast list: the agent gives way within stopWithin of the first
+// word, and stops speaking within shortenedWithin of the model's shortening, or at once if the
+// model stops it, and the item is answered.
 func (k *contract) shortened(t *testing.T, name string) {
 	c := k.overTheList(t, 4*time.Second)
 	over := c.edge.say(name, k.clips[name])
@@ -252,6 +255,7 @@ func (k *contract) shortened(t *testing.T, name string) {
 	// What the caller heard of the agent from its giving way to the item being answered.
 	last := c.edge.heardBetween(gave, answered.decided)
 	t.Logf("the model %s the reply %s after the first word; the agent was last heard %d frames after", how, took.Round(time.Millisecond), len(last))
+	assert.LessOrEqual(t, took, stopWithin, "the agent gave way (%s) %s after the caller's first word", how, took.Round(time.Millisecond))
 	bound := shortenedWithin + frameSlack
 	if how == "stop" {
 		bound = frameSlack
@@ -265,8 +269,8 @@ func (k *contract) shortened(t *testing.T, name string) {
 
 // C4. The agent asks a question, the caller says nothing, and the agent checks in after the
 // silence with a line of its own. The caller talks over it 1.5 s in: the line stops within
-// stopWithin of their first word, whether the model stops or shortens it, and the caller is
-// answered.
+// stopWithin of their first word, whether the model stops or shortens it, as a line of the
+// agent's own answers no request and is stopped at once, and the caller is answered.
 func (k *contract) checkInTalkedOver(t *testing.T) {
 	c := k.start(t, audiofloor.Act, replayInstructions, []string{"en"})
 	c.model.mu.Lock()
@@ -296,7 +300,7 @@ func (k *contract) checkInTalkedOver(t *testing.T) {
 		}
 		last := c.edge.heardBetween(gave, next)
 		if len(last) > 0 {
-			assert.LessOrEqual(t, last[len(last)-1].Sub(over.began()), stopWithin+shortenedWithin,
+			assert.LessOrEqual(t, last[len(last)-1].Sub(over.began()), stopWithin+frameSlack,
 				"the check-in went on %s after the caller's first word", last[len(last)-1].Sub(over.began()).Round(time.Millisecond))
 		}
 	}

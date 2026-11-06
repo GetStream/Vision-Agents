@@ -50,8 +50,9 @@ check fails and the failure is the model's, reported as such, not worked around 
   model rules a request one more item ("and in Lisbon?" over a forecast), it is shortened, as
   below, and answered. [11, S2, S3, S10b, C3]
 - **Shortened.** One more item for the request being answered ("and in Porto?" over a
-  forecast): the agent adds nothing more to the reply, stops speaking within 250 ms of the
-  ruling, and answers the item. The model was trained on `shorten` as "one more item of the
+  forecast): the agent gives way within 800 ms of the first word, as it would to a stop, the
+  model ruling on the same checks: it adds nothing more to the reply, stops speaking within
+  250 ms of the ruling, and answers the item. The model was trained on `shorten` as "one more item of the
   same kind for the request being answered, neither correcting nor replacing it", in a demo
   that let at most 250 ms of the audio playing finish, as its voice had no word timing; the
   router's voices have none either. A line the agent says of its own accord, a greeting, a
