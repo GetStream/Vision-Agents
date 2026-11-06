@@ -453,6 +453,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A provider key in a URL is redacted from stored failures and stream socket errors
+
+The requests table, agent logs and socket error frames now redact a key sent as a `?key=` or `&token=` query parameter (Gemini Live, ipinfo), raw or percent-encoded, and a URL-encoded `Authorization` or `Cookie` header or bearer token. The stt, tts, sts and llm stream sockets now redact their error frames and close reasons the same way, as the session socket already did (AI-2958, AI-2959).
+
 ### A session whose every reply was lost no longer counts as closed when the flow controller answered
 
 A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
