@@ -264,8 +264,8 @@ type Spec struct {
 	// EndOfTurn is when chorus-asr has a caller's turn ended, where FloorControl asks it about
 	// turns: the session request's, else the agent config's. Zero is the server's default.
 	EndOfTurn store.EndOfTurn
-	// FloorControl is whether chorus-asr rules the floor, and in which mode: the session
-	// request's, else the agent config's. Zero never chose, and is off.
+	// FloorControl is the model that controls the floor: the session request's, else the
+	// agent config's. Empty is the default flow controller.
 	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.

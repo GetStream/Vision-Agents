@@ -27,7 +27,7 @@ func main() {
 	defer stop()
 	_ = godotenv.Load("../../../../.env")
 
-	// stt: deepgram/flux-general-en, and floor_control: {model: chorus-asr, mode: act}:
+	// stt: deepgram/flux-general-en, and floor_control: stream/chorus-asr:
 	// chorus-asr decides the turns by the server's default end_of_turn.
 	agent, err := agents.New(agents.Options{Dir: "../agents/clinic-front-desk"})
 	if err != nil {

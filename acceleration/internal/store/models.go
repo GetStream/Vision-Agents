@@ -633,10 +633,10 @@ type AgentConfig struct {
 	// the config chose (20261219090000_end_of_turn.sql). The zero value is the server's
 	// default.
 	EndOfTurn EndOfTurn `bun:"end_of_turn,type:jsonb,notnull"`
-	// FloorControl is whether chorus-asr rules the floor in the config's sessions, as the
-	// config chose (20261220090000_floor_control.sql). The zero value, NULL, never chose, and
-	// is off.
-	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
+	// FloorControl is the model that controls the floor in the config's sessions, as the
+	// config chose (20261220090000_floor_control.sql). Empty, NULL, is the default flow
+	// controller.
+	FloorControl FloorControl `bun:"floor_control,nullzero"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -1813,28 +1813,19 @@ func (e EndOfTurn) IsZero() bool {
 	return e.MaxWaitMs == 0 && e.Preset == "" && e.Bars == nil
 }
 
-// FloorControl is whether an agent's floor, when a caller's turn has ended and what is done
-// about speech over the agent, is ruled by Model, a model that hears the audio, and in which
-// Mode: off, asking it nothing; shadow, asking it beside the flow controller and acting on
-// nothing it says; or act, acting on its rulings. Model is chorus-asr, the one there is. The
-// zero value is an agent that never chose, which is off: an agent opts in for itself.
-type FloorControl struct {
-	Model string `json:"model"`
-	Mode  string `json:"mode"`
-}
+// FloorControl is the model that controls an agent's floor, hearing the audio: when a
+// caller's turn has ended, and what is done about speech over the agent. Empty is the default
+// flow controller, which every agent has until it opts in.
+type FloorControl string
 
-// Floor control models and modes, as stored and as the API names them.
-const (
-	FloorModelChorusASR = "chorus-asr"
-	FloorModeOff        = "off"
-	FloorModeShadow     = "shadow"
-	FloorModeAct        = "act"
-)
+// FloorControlChorusASR has chorus-asr control the floor, the one model there is, named as
+// the stream/chorus-asr transcriber is.
+const FloorControlChorusASR FloorControl = "stream/chorus-asr"
 
-// IsZero reports whether nothing was chosen, which is off. It is also what the nullzero
-// columns read.
+// IsZero reports whether no model was chosen, which is the default flow controller. It is
+// also what the nullzero columns read.
 func (f FloorControl) IsZero() bool {
-	return f == FloorControl{}
+	return f == ""
 }
 
 // ResumeHistory is how much of a conversation a model is handed back when a session opens
@@ -1936,7 +1927,7 @@ type AgentSession struct {
 	EndOfTurn EndOfTurn `bun:"end_of_turn,type:jsonb,nullzero"`
 	// FloorControl is what the session was opened with over its config's, which reopening
 	// it keeps. Zero takes the config's.
-	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
+	FloorControl FloorControl `bun:"floor_control,nullzero"`
 	State        string       `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`

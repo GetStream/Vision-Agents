@@ -7,8 +7,8 @@ it. What each is and what the router needs is in
 
 | Program | Pick it when | Router | What it names |
 | --- | --- | --- | --- |
-| [`decide_and_transcribe`](decide_and_transcribe/main.go) | One model should hear the caller for both the words and the turn | `ROUTER_CHORUS_ASR_URL` | [`agents/ferry-concierge`](agents/ferry-concierge/agent.yaml): `floor_control: {model: chorus-asr, mode: act}`, `stt: stream/chorus-asr`, its own `llm` and `tts`, `end_of_turn: {max_wait_ms: 1100}` |
-| [`decide_only`](decide_only/main.go) | You keep your transcriber, and take the floor control from the audio | `ROUTER_CHORUS_ASR_URL` | [`agents/clinic-front-desk`](agents/clinic-front-desk/agent.yaml): `floor_control: {model: chorus-asr, mode: act}`, `stt: deepgram/flux-general-en`, the server's default `end_of_turn` |
+| [`decide_and_transcribe`](decide_and_transcribe/main.go) | One model should hear the caller for both the words and the turn | `ROUTER_CHORUS_ASR_URL` | [`agents/ferry-concierge`](agents/ferry-concierge/agent.yaml): `floor_control: stream/chorus-asr`, `stt: stream/chorus-asr`, its own `llm` and `tts`, `end_of_turn: {max_wait_ms: 1100}` |
+| [`decide_only`](decide_only/main.go) | You keep your transcriber, and take the floor control from the audio | `ROUTER_CHORUS_ASR_URL` | [`agents/clinic-front-desk`](agents/clinic-front-desk/agent.yaml): `floor_control: stream/chorus-asr`, `stt: deepgram/flux-general-en`, the server's default `end_of_turn` |
 | [`transcribe_only`](transcribe_only/main.go) | You want the words alone, and your own pipeline decides when to answer | `ROUTER_CHORUS_ASR_URL` | [`routers/chorus-asr.yaml`](routers/chorus-asr.yaml): `stream/chorus-asr` as the router config's one STT provider |
 
 ## Run
@@ -21,17 +21,13 @@ ROUTER_CHORUS_ASR_URL=http://floor:8080
 ```
 
 Each agent opts in to chorus-asr's floor control in its own `agent.yaml`, so one router serves
-agents with it on and off at once:
+agents with it and without it at once:
 
 ```yaml
-floor_control:
-  model: chorus-asr
-  mode: act      # shadow asks it beside the flow controller and acts on nothing it says,
-                 # to compare the two on real calls first; off, the default, asks nothing
+floor_control: stream/chorus-asr   # leave it out to keep the default flow controller
 ```
 
-A router without `ROUTER_CHORUS_ASR_URL` refuses the sync of an agent that asks for `act` or
-`shadow`, saying so.
+A router without `ROUTER_CHORUS_ASR_URL` refuses the sync of an agent that names it, saying so.
 
 Then point the SDK at the router and run one:
 
@@ -53,7 +49,7 @@ hears it.
 
 ## Choosing how eager turn-taking is
 
-`end_of_turn` in `agent.yaml` applies to an agent whose `floor_control` is `act` or `shadow`.
+`end_of_turn` in `agent.yaml` applies to an agent whose `floor_control` is `stream/chorus-asr`.
 It takes one of `max_wait_ms` (the measured point with the fewest cut-ins that answers within
 it at p90), `preset` (one of the server's, such as `safe` or `fast`) or `bars` of your own; the
 ferry agent waits at most 1.1 s. A wait under the quickest point's p90 is refused, and one

@@ -93,7 +93,7 @@ The router makes chorus-asr available, and each agent opts in to it.
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |
 
 `cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`); `cmd/agent`'s one
-agent opts in with `-floor-control act` (or `shadow`).
+agent opts in with `-floor-control stream/chorus-asr`.
 
 `ROUTER_CHORUS_ASR_MODE`, which once had every agent on a router shadow or act on chorus-asr,
 is no longer read. A router started with it, as a variable or in its settings file, acts on it
@@ -108,42 +108,43 @@ Three ways to use it, each a short Go program in
 
 | Use | Router | Agent |
 | --- | --- | --- |
-| [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: chorus-asr, mode: act}`, `stt: stream/chorus-asr`, its own `tts` |
-| [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: chorus-asr, mode: act}`, any `stt` |
+| [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL` | `floor_control: stream/chorus-asr`, `stt: stream/chorus-asr`, its own `tts` |
+| [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL` | `floor_control: stream/chorus-asr`, any `stt` |
 | [Transcription only](../../../examples/routers/chorus_asr_example/transcribe_only/main.go): the words, through the router's STT | `ROUTER_CHORUS_ASR_URL` | a router config naming `stream/chorus-asr` |
 
 ## Floor control: `floor_control`
 
-Whether chorus-asr rules an agent's floor, when a caller has finished and what to do about
+Whether chorus-asr controls an agent's floor, when a caller has finished and what to do about
 speech over the agent, is the app's to choose, per agent, beside its `stt`, `llm` and `tts`.
-An agent that never chose is off, as every agent was before there was a choice:
+`floor_control` names the model that controls the floor, as `stt` names the transcriber; an
+agent that names none keeps the default flow controller, as every agent did before there was a
+choice:
 
 ```yaml
 # agent.yaml
-floor_control:
-  model: chorus-asr   # the model that rules the floor; chorus-asr is the one there is
-  mode: act           # off, shadow or act
+floor_control: stream/chorus-asr   # leave it out to keep the default flow controller
 ```
 
-| `mode` | What the agent does |
-| --- | --- |
-| `off` | Asks chorus-asr nothing about turns: the flow controller rules the floor as it does with no such model, and `end_of_turn` does nothing. chorus-asr still transcribes for an agent whose `stt` is `stream/chorus-asr` ([Transcription alone](#transcription-alone)) |
-| `shadow` | Asks chorus-asr about each turn beside the flow controller and acts on nothing it says, to compare the two on real calls ([Fallbacks](#fallbacks)) |
-| `act` | Asks chorus-asr first and acts on its ruling; the flow controller rules a turn it does not answer in time. With `stt: stream/chorus-asr`, this is [the loop's contract](#the-loops-contract) |
+With `stream/chorus-asr` the agent asks chorus-asr first and acts on its ruling, and the flow
+controller rules a turn it does not answer in time. With `stt: stream/chorus-asr` too, this is
+[the loop's contract](#the-loops-contract). With none, the flow controller rules the floor as
+it does with no such model, and `end_of_turn` does nothing; chorus-asr still transcribes for an
+agent whose `stt` is `stream/chorus-asr` ([Transcription alone](#transcription-alone)).
 
 - **Where it is chosen.** A sync (`POST /v1/agents/sync`, as every SDK's folder sync sends
   it), a config's create, replace and patch, and a server-side `createSession`, which chooses
-  for one session over its config's, all take the same field. `model` and `mode` are both
-  required. Sent, it replaces the stored choice; left out, the stored one stays. A device may
-  not choose a session's (403).
-- **What is refused.** `shadow` or `act` sent to a router without `ROUTER_CHORUS_ASR_URL` is
+  for one session over its config's, all take the same field. Sent, it replaces the stored
+  choice, and an empty string is the default flow controller again; left out, or null, the
+  stored one stays. A device may not choose a session's (403).
+- **What is refused.** `stream/chorus-asr` sent to a router without `ROUTER_CHORUS_ASR_URL` is
   refused at write time (400, `not_configured`), before anything is stored, saying what the
-  router needs; `off` needs no server. A choice stored on one router and read on another
-  without a server asks nothing there, and the router logs a warning for the session.
-- **One router, many choices.** Each session runs by its own: on one router, an agent acting
-  on chorus-asr and one with it off take their calls side by side, and share nothing but the
-  server. The Hearer, the transcriber's pause checks and the loop's contract are each
-  session's, and an agent with floor control off behaves exactly as it did before.
+  router needs; so is any other value (400). A choice stored on one router and read on
+  another without a server asks nothing there, and the router logs a warning for the session.
+- **One router, many choices.** Each session runs by its own: on one router, an agent whose
+  floor chorus-asr controls and one with the default flow controller take their calls side by
+  side, and share nothing but the server. The Hearer, the transcriber's pause checks and the
+  loop's contract are each session's, and an agent with none chosen behaves exactly as it did
+  before.
 - **A session row** keeps the floor control it was opened with, which reopening it keeps; one
   opened with none takes its config's.
 
@@ -203,10 +204,9 @@ callers read out numbers or IDs, or spell names, wants a point that passes.
   or when `max_wait_ms` is shorter than every measured point's p90 wait. A device may not
   choose a session's (403). A sync that chooses a point failing the dictation guard is stored,
   and its `warnings` say what the point does to slow counts and dictation pauses. A preset or
-  wait is held to the server where the agent's floor control asks chorus-asr about turns
-  (`shadow` or `act`), and again when a write turns that on. When the agent's floor control is
-  off, or the server can't say what it publishes, the choice is kept and the sync's
-  `warnings` say so.
+  wait is held to the server where the agent's `floor_control` is `stream/chorus-asr`, and
+  again when a write chooses it. With the default flow controller, or when the server can't say
+  what it publishes, the choice is kept and the sync's `warnings` say so.
 - **What it replaces.** A point brings its bars and its checks in a row; bars of your own end a
   turn at the first check that reaches its bar. When a pause is checked, how much more a turn's
   first pause asks, and the cap stay the server's, which are fitted to its model. A run of checks
@@ -229,7 +229,7 @@ Bars of your own were not measured: measure them on your own calls before relyin
 
 ### Turns from the audio
 
-Acting (`floor_control` `mode: act`) with `stream/chorus-asr` as the agent's STT, the
+Acting (`floor_control: stream/chorus-asr`) with `stream/chorus-asr` as the agent's STT, the
 session's point is applied as it was measured, at the server's check times from the voice's
 last frame, and a pause costs one request:
 
@@ -283,7 +283,7 @@ last frame, and a pause costs one request:
 
 With another transcriber a point is applied to the words as they hold still (the first
 check once they have held still for the cadence's 350 ms gap). With `stream/chorus-asr`
-transcribing and no agent acting on the model, in `shadow` or with floor control off, the
+transcribing and no agent acting on the model, with the default flow controller, the
 transcriber checks the pauses all the same, under an agent of its own
 ([Transcription alone](#transcription-alone)), and the flow controller takes the final as
 it takes any transcriber's. A check that fails, or no check ending the pause within 1 s
@@ -648,7 +648,8 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   language model or judge, with the other two thirds. `router_chorus_asr_checks_total`
   counts each check by outcome; acting, every outcome but `answered` and `superseded` is a
   turn the flow controller decided.
-- **Shadow.** One question at a time, none waited for: a slow server costs a call nothing.
+- **Shadow.** No app chooses it any more; the agent's internal shadow mode, which the replay
+  still checks, asks one question at a time, none waited for: a slow server costs a call nothing.
   `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
   and the `end_of_turn` and `dictation_guard` it was read by, and a debug log line carries
   `p_end`, the same two, the bar and the checks in a row, the pause, first check and first
@@ -813,7 +814,8 @@ ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 GOEXPERIMENT=simd \
 Both read `ROUTER_CHORUS_ASR_API_KEY` too, for a server behind a gateway; the replay counts
 its requests by route under the gateway's path. The router needs only the URL: each call's
 agent chooses its own floor control, as agents on one router do, acting unless a check says
-otherwise (transcribing alone with it off, or in `shadow`).
+otherwise (transcribing alone with the default flow controller, or in the agent's internal
+shadow mode).
 
 `TestAudioFloorScenarios`, in `audio_floor_scenarios_integration_test.go`, plays what the
 acceptance checks don't: pauses inside a turn, a correction, a question and a second turn

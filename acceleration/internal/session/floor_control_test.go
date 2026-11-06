@@ -169,54 +169,33 @@ func (s *SessionSuite) callerAsks(call *floorCall, opened chan *pausingEars, wor
 	s.Require().Eventually(func() bool { return !call.session.Busy() }, settleFor, 10*time.Millisecond)
 }
 
-func chorusASRAt(mode string) store.FloorControl {
-	return store.FloorControl{Model: store.FloorModelChorusASR, Mode: mode}
-}
-
-// Two sessions on one router at once, one acting on chorus-asr and one with it off, each run
-// by its own floor control: the acting one's turns are put to the server and its transcriber
-// asks about its caller's pauses, and nothing of the other's reaches the server, as on a
-// router with no chorus-asr, its turns answered by its flow controller all the same.
+// Two sessions on one router at once, one whose floor chorus-asr controls and one with the
+// default flow controller, each run by its own floor control: the first's turns are put to the
+// server and its transcriber asks about its caller's pauses, and nothing of the other's
+// reaches the server, as on a router with no chorus-asr, its turns answered by its flow
+// controller all the same.
 func (s *SessionSuite) TestEachSessionOnARouterRunsByItsOwnFloorControl() {
 	server, client := newChorusASR(s)
 	manager, opened := s.floorManager(client)
 
-	acting := s.floorSession(manager, "You sell ferry tickets.", chorusASRAt(store.FloorModeAct))
-	off := s.floorSession(manager, "You book clinic visits.", chorusASRAt(store.FloorModeOff))
+	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControlChorusASR)
+	unset := s.floorSession(manager, "You book clinic visits.", "")
 
 	s.callerAsks(acting, opened, "Two tickets to Bilbao, please.")
-	s.callerAsks(off, opened, "Can I see a doctor on Friday?")
+	s.callerAsks(unset, opened, "Can I see a doctor on Friday?")
 	s.callerAsks(acting, opened, "And a cabin for the night.")
 
-	s.Equal(2, server.asked("You sell ferry tickets."), "each of the acting session's turns was put to chorus-asr")
-	s.True(acting.ears.asked.Load(), "the acting session's transcriber asks about its caller's pauses")
-	s.False(server.toldAbout("You book clinic visits."), "nothing of the session with it off reached chorus-asr")
-	s.False(off.ears.asked.Load(), "the other's transcriber asks on behalf of no agent")
+	s.Equal(2, server.asked("You sell ferry tickets."), "each of the chorus-asr session's turns was put to chorus-asr")
+	s.True(acting.ears.asked.Load(), "the chorus-asr session's transcriber asks about its caller's pauses")
+	s.False(server.toldAbout("You book clinic visits."), "nothing of the session with none chosen reached chorus-asr")
+	s.False(unset.ears.asked.Load(), "the other's transcriber asks on behalf of no agent")
 }
 
-// A session whose agent chose no floor control asks chorus-asr nothing on a router that has
-// it, as before there was floor control: an agent opts in for itself.
-func (s *SessionSuite) TestASessionThatChoseNoFloorControlIsOff() {
-	server, client := newChorusASR(s)
-	manager, opened := s.floorManager(client)
-
-	unset := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{})
-	shadow := s.floorSession(manager, "You book clinic visits.", chorusASRAt(store.FloorModeShadow))
-	s.callerAsks(unset, opened, "Two tickets to Bilbao, please.")
-	s.callerAsks(shadow, opened, "Can I see a doctor on Friday?")
-
-	s.False(server.toldAbout("You sell ferry tickets."), "none chosen is off")
-	s.False(unset.ears.asked.Load())
-	s.Eventually(func() bool { return server.asked("You book clinic visits.") == 1 }, settleFor, 10*time.Millisecond,
-		"one that opts in to shadow is asked about its turn beside its flow controller")
-	s.False(shadow.ears.asked.Load(), "and acts on nothing: its transcriber asks on behalf of no agent")
-}
-
-// A session that chose to act on chorus-asr on a router with no chorus-asr server, as a config
-// written on another router may have, asks nothing, and is answered by its flow controller.
+// A session that chose chorus-asr on a router with no chorus-asr server, as a config written
+// on another router may have, asks nothing, and is answered by its flow controller.
 func (s *SessionSuite) TestAFloorControlWithNoServerIsTheFlowControllers() {
 	manager, opened := s.floorManager(nil)
-	acting := s.floorSession(manager, "You sell ferry tickets.", chorusASRAt(store.FloorModeAct))
+	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControlChorusASR)
 	s.callerAsks(acting, opened, "Two tickets to Bilbao, please.")
 	s.False(acting.ears.asked.Load())
 }

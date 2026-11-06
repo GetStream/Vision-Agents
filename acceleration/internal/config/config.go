@@ -129,9 +129,8 @@ type Config struct {
 
 // chorusASRModeRetired is what took the place of agent.chorus_asr_mode, which once had every
 // agent on the router shadow or act on chorus-asr: each agent opts in itself.
-const chorusASRModeRetired = "agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is no longer read, and chorus-asr rules " +
-	"no agent's floor of the router's accord: an agent opts in with floor_control: {model: chorus-asr, mode: act}, " +
-	"or mode: shadow, on its config or in its agent.yaml"
+const chorusASRModeRetired = "agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is no longer read, and stream/chorus-asr controls " +
+	"no agent's floor of the router's accord: an agent opts in with floor_control: stream/chorus-asr on its config or in its agent.yaml"
 
 // Knowledge is the knowledge store's settings.
 type Knowledge struct {

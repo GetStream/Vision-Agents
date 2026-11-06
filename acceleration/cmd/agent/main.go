@@ -103,9 +103,8 @@ func main() {
 		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
 	flag.DurationVar(&options.flowHedge, "flow-hedge", config.Defaults().Agent.FlowHedge,
 		"how long a flow decision may say nothing before it is asked of another candidate as well, 0 asks once")
-	flag.StringVar(&options.floorControl, "floor-control", string(audiofloor.Off),
-		"whether chorus-asr rules the agent's floor: off, shadow (asked beside the flow controller, acted on for nothing) "+
-			"or act; shadow and act need ROUTER_CHORUS_ASR_URL")
+	flag.StringVar(&options.floorControl, "floor-control", "",
+		"the model that controls the agent's floor: stream/chorus-asr, which needs ROUTER_CHORUS_ASR_URL, or empty for the default flow controller")
 	verbose := flag.Bool("verbose", false, "log lifecycle events")
 	flag.Parse()
 
@@ -505,19 +504,19 @@ func openAudioFloor(logger *slog.Logger) (*audiofloor.Client, error) {
 	return audiofloor.Open(settings.Agent), nil
 }
 
-// floorControlOf is the agent's floor control as -floor-control names it: off, shadow or act,
-// the last two needing a chorus-asr server to ask.
+// floorControlOf is the agent's floor control as -floor-control names it: stream/chorus-asr,
+// which needs a chorus-asr server to ask, or empty for the default flow controller.
 func floorControlOf(named string, floor *audiofloor.Client) (audiofloor.Mode, error) {
-	switch mode := audiofloor.Mode(named); mode {
-	case audiofloor.Off:
-		return mode, nil
-	case audiofloor.Shadow, audiofloor.Act:
+	switch named {
+	case "":
+		return audiofloor.Off, nil
+	case string(store.FloorControlChorusASR):
 		if floor == nil {
-			return "", fmt.Errorf("-floor-control %s needs a chorus-asr server (ROUTER_CHORUS_ASR_URL)", mode)
+			return "", errors.New("-floor-control stream/chorus-asr needs a chorus-asr server (ROUTER_CHORUS_ASR_URL)")
 		}
-		return mode, nil
+		return audiofloor.Act, nil
 	default:
-		return "", fmt.Errorf("-floor-control is off, shadow or act, got %q", named)
+		return "", fmt.Errorf("-floor-control is stream/chorus-asr, or empty for the default flow controller, got %q", named)
 	}
 }
 

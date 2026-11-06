@@ -27,7 +27,7 @@ func main() {
 	defer stop()
 	_ = godotenv.Load("../../../../.env")
 
-	// floor_control: {model: chorus-asr, mode: act}, stt: stream/chorus-asr and
+	// floor_control: stream/chorus-asr, stt: stream/chorus-asr and
 	// end_of_turn: {max_wait_ms: 1100}, beside its llm and tts.
 	agent, err := agents.New(agents.Options{Dir: "../agents/ferry-concierge"})
 	if err != nil {

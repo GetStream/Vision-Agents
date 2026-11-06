@@ -114,7 +114,7 @@ func (s *Server) endOfTurnComplaint(ctx context.Context, chosen, was floorChoice
 		return "end_of_turn is kept, and does nothing on this router, which has no chorus-asr server", "", true
 	}
 	if !session.FloorModeOf(chosen.control).Asks() {
-		return "end_of_turn is kept, and does nothing while the agent's floor control is off: chorus-asr is asked nothing about its turns", "", true
+		return "end_of_turn is kept, and does nothing unless floor_control is stream/chorus-asr: chorus-asr is asked nothing about the agent's turns", "", true
 	}
 	if reflect.DeepEqual(chosen.endOfTurn, was.endOfTurn) && session.FloorModeOf(was.control).Asks() {
 		return "", "", true

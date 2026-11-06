@@ -6,11 +6,9 @@ stt: stream/chorus-asr
 llm: gemini/gemini-3.8-flash
 tts: cartesia/sonic-preview
 
-# The agent opts in to chorus-asr's floor control, and acts on its rulings: mode: shadow
-# would only compare them with the flow controller's, and off, the default, asks nothing.
-floor_control:
-  model: chorus-asr
-  mode: act
+# The agent opts in to chorus-asr's floor control, and acts on its rulings; left out, the
+# default flow controller rules the floor.
+floor_control: stream/chorus-asr
 
 # A caller who has finished waits at most about 1.1 s for the answer: the measured point
 # with the fewest cut-ins whose p90 wait is within it. preset: and bars: are the other two

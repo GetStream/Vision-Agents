@@ -56,16 +56,13 @@ func (s *SpecSuite) TestAConfigsEndOfTurnIsWhatItsSessionsEndTurnsBy() {
 }
 
 func (s *SpecSuite) TestAConfigsFloorControlIsWhatItsSessionsAreRuledBy() {
-	acting := store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeAct}
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: acting})
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: store.FloorControlChorusASR})
 
-	s.Equal(acting, spec.FloorControl)
+	s.Equal(store.FloorControlChorusASR, spec.FloorControl)
 	s.Equal(audiofloor.Act, FloorModeOf(spec.FloorControl))
-	s.Equal(audiofloor.Shadow, FloorModeOf(store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeShadow}))
-	s.Equal(audiofloor.Off, FloorModeOf(store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeOff}))
 	unset := FromConfig(store.AgentConfig{CustomerID: "acme"}).FloorControl
 	s.True(unset.IsZero())
-	s.Equal(audiofloor.Off, FloorModeOf(unset), "none chosen is off")
+	s.Equal(audiofloor.Off, FloorModeOf(unset), "none chosen is the default flow controller")
 }
 
 func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {

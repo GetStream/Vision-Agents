@@ -46,7 +46,7 @@ type AgentConfigPatch struct {
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
 	EndOfTurn          *EndOfTurn               `json:"end_of_turn,omitempty" doc:"Replaces the choice whole. An empty object is the server's default."`
-	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"Replaces the choice whole."`
+	FloorControl       *string                  `json:"floor_control,omitempty" pattern:"^(stream/chorus-asr)?$" doc:"The model that controls the floor: stream/chorus-asr, or empty for the default flow controller again. stream/chorus-asr on a router without a chorus-asr server is refused (400)."`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
