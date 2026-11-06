@@ -117,13 +117,14 @@ func (s *OutputSuite) TestAnOutputOneByteOverTheBoundIsCut() {
 }
 
 func (s *OutputSuite) TestAnOutputWhoseEscapesOutgrowWhatIsHeldIsCut() {
-	// Twice the bound of six-byte escapes: held stops in the middle of one.
-	s.daytona.Answers(printed(strings.Repeat("<", 2*sandbox.MaxOutputBytes), 1, 0))
+	// Twice the bound of six-byte escapes, \u003c, after five bytes that put the end of what is
+	// held five bytes into one: \u003 is the longest escape cut short.
+	s.daytona.Answers(printed("aaaaa"+strings.Repeat("<", 2*sandbox.MaxOutputBytes), 1, 0))
 
 	result, err := s.box.Run(s.ctx, "print(it)", nil)
 
 	s.Require().NoError(err)
-	s.Equal(strings.Repeat("<", sandbox.MaxOutputBytes-len(sandbox.OutputCut))+sandbox.OutputCut, result.Output)
+	s.Equal("aaaaa"+strings.Repeat("<", sandbox.MaxOutputBytes-len(sandbox.OutputCut)-5)+sandbox.OutputCut, result.Output)
 }
 
 func (s *OutputSuite) TestACutNeverSplitsACharacter() {
@@ -180,6 +181,27 @@ func (s *OutputSuite) TestOnlyTheTopLevelResultIsTheOutput() {
 	s.Require().NoError(json.Unmarshal([]byte(read), &answer))
 	s.Equal(nested, answer.Artifacts.Charts[0].Result, "a result nested in another field is not cut")
 	s.Equal(strings.Repeat("a", sandbox.MaxOutputBytes-len(sandbox.OutputCut))+sandbox.OutputCut, answer.Result)
+}
+
+func (s *OutputSuite) TestAValueThatSaysResultIsNotAKey() {
+	body := `{"kind":"result","note":"` + strings.Repeat("a", 2*sandbox.MaxOutputBytes) + `","exitCode":0}`
+
+	read, err := cutAnswer(body)
+
+	s.Require().NoError(err)
+	s.Equal(body, read)
+}
+
+func (s *OutputSuite) TestARepeatedResultIsReadAsTheSDKReadsIt() {
+	// Go's JSON decode keeps the last of two values of one key, as the base does.
+	s.daytona.Answers(func(w io.Writer) {
+		_, _ = io.WriteString(w, `{"result":"`+strings.Repeat("a", 2*maxHeldBytes)+`","result":"short\n","exitCode":0}`)
+	})
+
+	result, err := s.box.Run(s.ctx, "print(it)", nil)
+
+	s.Require().NoError(err)
+	s.Equal("short\n", result.Output)
 }
 
 func (s *OutputSuite) TestAKeyThatOnlyStartsWithResultIsNotTheOutput() {

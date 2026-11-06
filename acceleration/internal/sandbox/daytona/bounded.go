@@ -86,9 +86,9 @@ type cutOutput struct {
 	err error
 
 	// depth is how deep in objects and arrays the next byte is. inString is a JSON string being
-	// read and escaped a backslash just read in it. key is the start of the last string of the
-	// top-level object, while inKey reads it; value says a colon came since the last comma, so a
-	// string is a key's value.
+	// read and escaped a backslash just read in it. key is the start of the last string, while
+	// inKey reads it; value says a colon came since the last comma, so a string of the top-level
+	// object is the value of the key before that colon.
 	depth    int
 	inString bool
 	escaped  bool
@@ -150,10 +150,7 @@ func (c *cutOutput) step(b byte) error {
 			c.output, c.held = true, c.held[:0]
 			return nil
 		}
-		c.inString = true
-		if c.depth == 1 {
-			c.inKey, c.key = true, c.key[:0]
-		}
+		c.inString, c.inKey, c.key = true, true, c.key[:0]
 	case '{', '[':
 		c.depth++
 	case '}', ']':
@@ -203,9 +200,9 @@ func (c *cutOutput) settle(over bool) error {
 		// decode as it would unbounded.
 		return c.emit(quoted...)
 	}
-	// An escape is at most 12 bytes (a surrogate pair), so the held output decodes once its
-	// last few bytes are dropped.
-	for end := len(c.held); err != nil && end > len(c.held)-12; end-- {
+	// An escape is at most six bytes, \uXXXX, so the held output decodes once at most five of its
+	// last bytes are dropped.
+	for end := len(c.held); err != nil && end > len(c.held)-6; end-- {
 		quoted = append(append(quoted[:1], c.held[:end-1]...), '"')
 		err = json.Unmarshal(quoted, &text)
 	}
@@ -220,7 +217,7 @@ func (c *cutOutput) settle(over bool) error {
 // cutText is text, longer than sandbox.MaxOutputBytes, cut to fit it with sandbox.OutputCut
 // after it, never splitting a UTF-8 sequence. A decoded JSON string is valid UTF-8.
 func cutText(text string) string {
-	kept := text[:min(len(text), sandbox.MaxOutputBytes-len(sandbox.OutputCut))]
+	kept := text[:sandbox.MaxOutputBytes-len(sandbox.OutputCut)]
 	for !utf8.ValidString(kept) {
 		kept = kept[:len(kept)-1]
 	}
