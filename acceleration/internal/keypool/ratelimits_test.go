@@ -182,7 +182,7 @@ func (s *VendorRateLimitSuite) TestA429IsCountedUnderTheKeyItRefusedAndTheNextKe
 
 	s.Equal(http.StatusOK, status)
 	s.Equal(p.keys, s.keysSeen())
-	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 1, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestEveryKeyA429RefusesIsCountedAndTheLastIsHandedBackWhole() {
@@ -211,7 +211,7 @@ func (s *VendorRateLimitSuite) TestAnthropicsSpendCapIsNotARateLimit() {
 	s.Equal(http.StatusTooManyRequests, status)
 	s.Equal(anthropicSpendCapBody, body)
 	s.Equal(p.keys, s.keysSeen())
-	s.Empty(s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAnotherRefusalOrFailureIsNotARateLimit() {
@@ -222,7 +222,7 @@ func (s *VendorRateLimitSuite) TestAnotherRefusalOrFailureIsNotARateLimit() {
 
 		s.post(p.Pool)
 
-		s.Empty(s.limited(p.keyVars[0]), "status %d", status)
+		s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]), "status %d", status)
 	}
 }
 
@@ -258,7 +258,7 @@ func (s *VendorRateLimitSuite) TestKeysPassedInAreCountedUnderTheVariableTheyWer
 
 	s.post(pool)
 
-	s.Equal(map[string]float64{"1": 1}, s.limited(keyVar))
+	s.Equal(map[string]float64{"0": 0, "1": 1}, s.limited(keyVar))
 	s.Equal(0.0, keypooltest.Refused(s.T(), keyVar, "429"), "the refusal counter names it unknown as on the base")
 }
 
@@ -387,7 +387,7 @@ func (s *VendorRateLimitSuite) TestARefusedHandshakeIsCountedAndTheNextKeyDialle
 	s.Require().NoError(s.dial(p.Pool))
 
 	s.Equal(p.keys, s.keysSeen())
-	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 1, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAHandshakeThatGetsNoAnswerFailsAsItDid() {
@@ -403,7 +403,7 @@ func (s *VendorRateLimitSuite) TestAHandshakeThatGetsNoAnswerFailsAsItDid() {
 	s.Error(err)
 	s.Nil(response)
 	s.Equal(p.keys[0], key)
-	s.Empty(s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeKeepsItsHeadroom() {
@@ -412,7 +412,7 @@ func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeKeepsItsHeadroom() {
 
 	s.Require().NoError(s.dial(p.Pool))
 
-	s.Empty(s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]))
 	s.Equal(map[string]float64{"0/concurrent-requests": 4}, s.remaining(p.keyVars[0]))
 }
 
@@ -426,7 +426,7 @@ func (s *VendorRateLimitSuite) TestAHandshakeOnTheSecondKeyIsCountedUnderTheSeco
 	s.Require().NoError(s.dial(p.Pool))
 
 	s.Equal([]string{p.keys[1], p.keys[0]}, s.keysSeen())
-	s.Equal(map[string]float64{"1": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 1}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeOnTheSecondKeyKeepsItsHeadroomUnderTheSecondKey() {
@@ -502,7 +502,7 @@ func (s *VendorRateLimitSuite) TestKeysReadFromTwoVariablesKeepTheFirst() {
 
 	s.post(p.Pool)
 
-	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 1, "1": 0}, s.limited(p.keyVars[0]))
 	s.Empty(s.limited(second))
 }
 

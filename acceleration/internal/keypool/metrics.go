@@ -81,6 +81,24 @@ const (
 // https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap
 var spendCapMarker = []byte("enforced_spend_limit_reached")
 
+// ServeRateLimited serves the vendor rate-limit refusal counter at 0 for each key read from
+// each of names, under the labels a 429 on it is counted with, before any pool over those keys
+// is built: an alert on 429s then reads 0, not no data. It reads each variable as Env does, but
+// names no pool by it, so a pool keeps the name the first provider to read its keys gives it.
+func ServeRateLimited(names ...string) {
+	for _, name := range names {
+		zeroRateLimited(name, len(Parse(numbered(name)...)))
+	}
+}
+
+// zeroRateLimited makes the refusal counter's series of the first n keys read from keyVar,
+// which stays at 0 until a 429 on that key is counted.
+func zeroRateLimited(keyVar string, n int) {
+	for index := range n {
+		rateLimited.WithLabelValues(keyVar, strconv.Itoa(index))
+	}
+}
+
 // observe counts a rate-limit refusal of key and keeps the headroom the response reports, on a
 // pool whose keys were read from a variable.
 func (r *ring) observe(key string, response *http.Response) {
