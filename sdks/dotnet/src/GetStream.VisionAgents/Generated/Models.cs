@@ -391,10 +391,10 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// Absent when the agent never chose, which is off.
+        /// The model that controls the floor in this agent's sessions: stream/chorus-asr. Absent for the default flow controller.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
-        public FloorControl? FloorControl { get; set; } = default!;
+        public string? FloorControl { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public Greeting? Greeting { get; set; } = default!;
@@ -550,10 +550,10 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// Replaces the choice whole.
+        /// The model that controls the floor: stream/chorus-asr, or empty for the default flow controller again. stream/chorus-asr on a router without a chorus-asr server is refused (400).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
-        public FloorControl? FloorControl { get; set; } = default!;
+        public string? FloorControl { get; set; } = default!;
 
         /// <summary>
         /// Replaces the greeting whole. An empty text removes it.
@@ -718,10 +718,10 @@ namespace GetStream.VisionAgents.Models
         public string? EpisodeCards { get; set; } = default!;
 
         /// <summary>
-        /// Whether chorus-asr rules the floor in this agent's sessions, and in which mode: off, shadow or act. A session request's wins over this. Left out on a create, off; left out on an update, the stored choice stays. shadow or act on a router without a chorus-asr server is refused (400).
+        /// The model that controls the floor in this agent's sessions, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr, the one there is, or empty for the default flow controller. A session request's wins over this. Left out on a create, the default flow controller; left out on an update, the stored choice stays. stream/chorus-asr on a router without a chorus-asr server is refused (400).
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
-        public FloorControl? FloorControl { get; set; } = default!;
+        public string? FloorControl { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public Greeting? Greeting { get; set; } = default!;
@@ -5892,10 +5892,10 @@ namespace GetStream.VisionAgents.Models
         public EndOfTurn? EndOfTurn { get; set; } = default!;
 
         /// <summary>
-        /// Whether chorus-asr rules the floor in this session, and in which mode, over the agent config's: off, shadow or act. shadow or act on a router without a chorus-asr server is refused (400). The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+        /// The model that controls the floor in this session, over the agent config's: stream/chorus-asr, or empty for the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400). The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
-        public FloorControl? FloorControl { get; set; } = default!;
+        public string? FloorControl { get; set; } = default!;
 
         /// <summary>
         /// What the agent opens the call with, over what the config says.
@@ -6968,27 +6968,6 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
-
-    }
-
-    /// <summary>
-    /// Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
-    /// </summary>
-    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
-    public partial class FloorControl
-    {
-
-        /// <summary>
-        /// What the agent does with the model's rulings.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("mode")]
-        public string Mode { get; set; } = default!;
-
-        /// <summary>
-        /// The model that hears the caller's audio and rules the floor.
-        /// </summary>
-        [System.Text.Json.Serialization.JsonPropertyName("model")]
-        public string Model { get; set; } = default!;
 
     }
 
@@ -14460,10 +14439,10 @@ namespace GetStream.VisionAgents.Models
         public EndOfTurn? EndOfTurn { get; set; } = default!;
 
         /// <summary>
-        /// agent.yaml's floor_control: whether chorus-asr rules the agent's floor, by model and mode, off, shadow or act. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose is off. shadow or act on a router without a chorus-asr server is refused (400) before anything is written.
+        /// agent.yaml's floor_control: the model that controls the agent's floor, stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400) before anything is written.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("floor_control")]
-        public FloorControl? FloorControl { get; set; } = default!;
+        public string? FloorControl { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("greeting")]
         public Greeting? Greeting { get; set; } = default!;

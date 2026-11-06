@@ -562,7 +562,7 @@ final class CreateSessionRequest {
       },
       floorControl: switch (json['floor_control']) {
         null => null,
-        final Object value => FloorControl.fromJson(value),
+        final Object value => _string(value, 'CreateSessionRequest.floor_control'),
       },
       greeting: switch (json['greeting']) {
         null => null,
@@ -716,7 +716,7 @@ final class CreateSessionRequest {
   final Map<String, Object?>? custom;
   final String? description;
   final EndOfTurn? endOfTurn;
-  final FloorControl? floorControl;
+  final String? floorControl;
   final Greeting? greeting;
   final List<HistoryMessage>? history;
   final String? id;
@@ -762,7 +762,7 @@ final class CreateSessionRequest {
     'custom': ?custom,
     'description': ?description,
     if (endOfTurn case final value?) 'end_of_turn': value.toJson(),
-    if (floorControl case final value?) 'floor_control': value.toJson(),
+    'floor_control': ?floorControl,
     if (greeting case final value?) 'greeting': value.toJson(),
     if (history case final value?) 'history': [for (final item in value) item.toJson()],
     'id': ?id,
@@ -849,24 +849,6 @@ final class EndOfTurnBar {
   final int fromMs;
 
   Map<String, Object?> toJson() => {'bar': bar, 'from_ms': fromMs};
-}
-
-/// Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent.
-final class FloorControl {
-  const FloorControl({required this.mode, required this.model});
-
-  factory FloorControl.fromJson(Object? value) {
-    final json = _object(value, 'FloorControl');
-    return FloorControl(
-      mode: _string(json['mode'], 'FloorControl.mode'),
-      model: _string(json['model'], 'FloorControl.model'),
-    );
-  }
-
-  final String mode;
-  final String model;
-
-  Map<String, Object?> toJson() => {'mode': mode, 'model': model};
 }
 
 /// Continue a conversation as a new one.

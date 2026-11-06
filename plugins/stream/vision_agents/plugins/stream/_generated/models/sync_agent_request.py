@@ -21,7 +21,6 @@ if TYPE_CHECKING:
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
     from ..models.end_of_turn import EndOfTurn
-    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -77,12 +76,10 @@ class SyncAgentRequest:
                 reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn
                 whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server
                 runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-            floor_control (FloorControl | Unset): Whether a model that hears the caller's audio rules the agent's floor:
-                when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one
-                that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a
-                router without one is refused. Off, the flow controller rules the floor as it does with no such model, and
-                end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each
-                session runs by its own, so agents on one router may choose differently.
+            floor_control (str | Unset): agent.yaml's floor_control: the model that controls the agent's floor,
+                stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the
+                stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router
+                without a chorus-asr server is refused (400) before anything is written.
             greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
             guardrail (str | Unset): The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the
                 policy in prose. Empty means every turn is answered.
@@ -160,7 +157,7 @@ class SyncAgentRequest:
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     end_of_turn: EndOfTurn | Unset = UNSET
-    floor_control: FloorControl | Unset = UNSET
+    floor_control: str | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -229,9 +226,7 @@ class SyncAgentRequest:
         if not isinstance(self.end_of_turn, Unset):
             end_of_turn = self.end_of_turn.to_dict()
 
-        floor_control: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.floor_control, Unset):
-            floor_control = self.floor_control.to_dict()
+        floor_control = self.floor_control
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -457,7 +452,6 @@ class SyncAgentRequest:
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
         from ..models.end_of_turn import EndOfTurn
-        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -524,12 +518,7 @@ class SyncAgentRequest:
         else:
             end_of_turn = EndOfTurn.from_dict(_end_of_turn)
 
-        _floor_control = d.pop("floor_control", UNSET)
-        floor_control: FloorControl | Unset
-        if isinstance(_floor_control, Unset):
-            floor_control = UNSET
-        else:
-            floor_control = FloorControl.from_dict(_floor_control)
+        floor_control = d.pop("floor_control", UNSET)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset

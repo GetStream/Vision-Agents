@@ -33,8 +33,8 @@ final readonly class CreateSessionRequest
         public ?string $description = null,
         // When chorus-asr has the caller's turn ended in this session, over the agent config's, where its floor_contr...
         public ?EndOfTurn $endOfTurn = null,
-        // Whether chorus-asr rules the floor in this session, and in which mode, over the agent config's: off, shadow...
-        public ?FloorControl $floorControl = null,
+        // The model that controls the floor in this session, over the agent config's: stream/chorus-asr, or empty for...
+        public ?string $floorControl = null,
         // What the agent opens the call with, over what the config says.
         public ?Greeting $greeting = null,
         // The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlive...
@@ -116,7 +116,7 @@ final readonly class CreateSessionRequest
             custom: array_key_exists('custom', $data) && $data['custom'] !== null ? Json::object($data, 'custom') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             endOfTurn: array_key_exists('end_of_turn', $data) && $data['end_of_turn'] !== null ? EndOfTurn::fromArray(Json::object($data, 'end_of_turn')) : null,
-            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? Json::string($data, 'floor_control') : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             history: array_key_exists('history', $data) && $data['history'] !== null ? array_map(HistoryMessage::fromArray(...), Json::objects($data, 'history')) : null,
             id: array_key_exists('id', $data) && $data['id'] !== null ? Json::string($data, 'id') : null,
@@ -191,7 +191,7 @@ final readonly class CreateSessionRequest
             $out['end_of_turn'] = $this->endOfTurn->toArray();
         }
         if ($this->floorControl !== null) {
-            $out['floor_control'] = $this->floorControl->toArray();
+            $out['floor_control'] = $this->floorControl;
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();

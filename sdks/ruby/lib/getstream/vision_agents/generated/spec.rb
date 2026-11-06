@@ -2367,10 +2367,6 @@ module GetStream
           properties: %w[error].freeze,
           required: %w[error].freeze, open: false
         }.freeze,
-        "FloorControl" => {
-          properties: %w[mode model].freeze,
-          required: %w[model mode].freeze, open: false
-        }.freeze,
         "ForkSessionRequest" => {
           properties: %w[agent config_id custom description incognito messages model_overwrites project_id response_id title].freeze,
           required: [].freeze, open: false

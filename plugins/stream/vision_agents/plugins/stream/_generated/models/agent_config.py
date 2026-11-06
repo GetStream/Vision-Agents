@@ -25,7 +25,6 @@ if TYPE_CHECKING:
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
     from ..models.end_of_turn import EndOfTurn
-    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.left_out_connector import LeftOutConnector
     from ..models.resume_history import ResumeHistory
@@ -69,12 +68,8 @@ class AgentConfig:
             writes none and reads none. record writes each conversation's card and its summary into the person's omni-
             channel, and no session reads them. on writes them as record does, and a session starts with the person's other
             cards. Turning record into on reads what record wrote.
-        floor_control (FloorControl | Unset): Whether a model that hears the caller's audio rules the agent's floor:
-            when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one
-            that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a
-            router without one is refused. Off, the flow controller rules the floor as it does with no such model, and
-            end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each
-            session runs by its own, so agents on one router may choose differently.
+        floor_control (str | Unset): The model that controls the floor in this agent's sessions: stream/chorus-asr.
+            Absent for the default flow controller.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset):
         harness (Harness | Unset): Which harness the agent's sessions run: what hands work to the subagent, loads
@@ -133,7 +128,7 @@ class AgentConfig:
     dispatch: AgentDispatch | Unset = UNSET
     end_of_turn: EndOfTurn | Unset = UNSET
     episode_cards: EpisodeCardsMode | Unset = UNSET
-    floor_control: FloorControl | Unset = UNSET
+    floor_control: str | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -202,9 +197,7 @@ class AgentConfig:
         if not isinstance(self.episode_cards, Unset):
             episode_cards = self.episode_cards.value
 
-        floor_control: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.floor_control, Unset):
-            floor_control = self.floor_control.to_dict()
+        floor_control = self.floor_control
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -383,7 +376,6 @@ class AgentConfig:
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
         from ..models.end_of_turn import EndOfTurn
-        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.left_out_connector import LeftOutConnector
         from ..models.resume_history import ResumeHistory
@@ -447,12 +439,7 @@ class AgentConfig:
         else:
             episode_cards = EpisodeCardsMode(_episode_cards)
 
-        _floor_control = d.pop("floor_control", UNSET)
-        floor_control: FloorControl | Unset
-        if isinstance(_floor_control, Unset):
-            floor_control = UNSET
-        else:
-            floor_control = FloorControl.from_dict(_floor_control)
+        floor_control = d.pop("floor_control", UNSET)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
