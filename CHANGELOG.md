@@ -478,7 +478,7 @@ A tool that reads back a note or a message the agent sent no longer gives a numb
 
 ### A number the agent sent is read as the number guards read one
 
-The guards that refuse a number nobody gave and a transfer to a number no tool gave read each line the agent sent as they read a number. A line holds the number only where it is written as one: `Booked at 10:56, 30 min` holds no 5630, so a tool line with a 5630 of its own where that line stands still gives it. A line read back with the number in another of its forms, `Sales: +1 5550100199` for the agent's `Sales: 5550100199`, is still the agent's and gives no number to put the caller through to. A result that writes back only the arguments of the call it answers, `{"last4":"5630"}` to `last4=5630`, gives no number either; a record or a listing with data of the tool's own beside it still does (AI-2925, AI-2926, AI-2927).
+The guards that refuse a number nobody gave and a transfer to a number no tool gave read each line the agent sent as they read a number. A line holds the number only where it is written as one: `Booked at 10:56, 30 min` holds no 5630, so a tool line with a 5630 of its own where that line stands still gives it. A line read back with the number in another of its forms, `Sales: +1 5550100199` for the agent's `Sales: 5550100199`, is still the agent's and gives no number to put the caller through to. A result that writes back only the arguments of the call it answers, `{"last4":"5630"}` to `last4=5630`, gives no number either; a record or a listing with data of the tool's own beside it still does (AI-2925, AI-2926, AI-2927, #1831).
 
 ### A short video is sampled into the frames it has
 
