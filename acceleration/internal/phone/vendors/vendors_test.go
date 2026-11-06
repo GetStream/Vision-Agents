@@ -1,6 +1,7 @@
 package vendors
 
 import (
+	"context"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -34,6 +35,32 @@ func (s *VendorsSuite) TestOnlyPlivoAndBandwidthFetchTheirCallPlanOnAnswer() {
 		_, fetches := provider.(phone.AnswerRenderer)
 		s.Equal(hosted[provider.Vendor()], fetches,
 			provider.Vendor()+" disagrees about fetching its call plan")
+	}
+}
+
+// A search a vendor cannot run as asked is refused before anything is sent, as a request the
+// caller can change: the router answers it 400 in the vendor's words, not 500.
+func (s *VendorsSuite) TestASearchAVendorCannotRunIsTheCallersToChange() {
+	ctx := context.Background()
+	for _, provider := range s.providers() {
+		_, err := provider.SearchNumbers(ctx, phone.Search{})
+		s.ErrorIs(err, phone.ErrInvalid, provider.Vendor()+": a search without a country")
+	}
+	unsold := phone.Search{Country: "US", Type: phone.NumberType("satellite")}
+	both := phone.Search{Country: "US", Prefix: "512", Contains: "55"}
+	refused := map[string][]phone.Search{
+		"twilio":    {unsold},
+		"sinch":     {unsold, both},
+		"vonage":    {unsold, both},
+		"bird":      {unsold},
+		"plivo":     {unsold},
+		"bandwidth": {{Country: "GB", AreaCode: "20"}, {Country: "US", AreaCode: "512", Type: phone.TollFree}},
+	}
+	for _, provider := range s.providers() {
+		for _, search := range refused[provider.Vendor()] {
+			_, err := provider.SearchNumbers(ctx, search)
+			s.ErrorIs(err, phone.ErrInvalid, "%s: %+v", provider.Vendor(), search)
+		}
 	}
 }
 

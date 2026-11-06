@@ -156,12 +156,14 @@ func (s *BandwidthSuite) TestSearchingNothingInParticularIsRejected() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
 
 	s.ErrorContains(err, "area code, a city or a state")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *BandwidthSuite) TestSearchingACityNeedsTheStateItIsIn() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Locality: "Springfield"})
 
 	s.ErrorContains(err, "needs the state")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *BandwidthSuite) TestOrderingNamesTheSiteTheNumberIsBilledTo() {

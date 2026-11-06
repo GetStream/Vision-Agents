@@ -141,6 +141,7 @@ func (s *DIDWWSuite) TestACountryDidwwDoesNotSellInSaysSo() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "ZZ"})
 
 	s.ErrorContains(err, "does not sell numbers in ZZ")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *DIDWWSuite) TestSearchingWithoutACountryIsRejectedBeforeAnyCall() {
@@ -185,6 +186,7 @@ func (s *DIDWWSuite) TestANumberNotOnOfferCannotBeBought() {
 	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+17195551234"})
 
 	s.ErrorContains(err, "not one of the numbers on offer")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *DIDWWSuite) TestReleasingTerminatesTheDidRatherThanDeletingIt() {

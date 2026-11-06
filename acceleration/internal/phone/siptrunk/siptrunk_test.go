@@ -331,6 +331,7 @@ func (s *SIPTrunkSuite) TestNothingIsBoughtOrPressedHere() {
 		"phone: inbound calls on a customer's own sip trunk are not supported")
 	s.EqualError(s.provider.SendDigits(ctx, "id", "1"),
 		"phone: digits cannot be pressed on a call through a customer's own sip trunk")
+	s.ErrorIs(s.provider.SendDigits(ctx, "id", "1"), phone.ErrInvalid)
 }
 
 func (s *SIPTrunkSuite) TestClosingTheServiceHangsUpThisProvidersCalls() {

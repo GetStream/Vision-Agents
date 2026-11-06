@@ -174,6 +174,7 @@ func (s *PhoneSuite) TestAnUnknownVendorCannotBeOpened() {
 	_, err := registry.Open("carrier-pigeon")
 
 	s.ErrorContains(err, "not a known vendor")
+	s.ErrorIs(err, ErrInvalid)
 }
 
 func (s *PhoneSuite) TestADeclaredButUnimplementedVendorRefusesEveryOperation() {
@@ -205,7 +206,9 @@ func (s *PhoneSuite) TestOnlyWhatAKeypadHasCanBePressed() {
 	s.NoError(ValidateDigits("ABCD"), "no handset has the fourth column but every vendor's api takes it")
 
 	s.ErrorContains(ValidateDigits(""), "digits to press")
+	s.ErrorIs(ValidateDigits(""), ErrInvalid)
 	s.ErrorContains(ValidateDigits("one"), "keypad can press")
+	s.ErrorIs(ValidateDigits("one"), ErrInvalid)
 	s.ErrorContains(ValidateDigits("press 1"), "keypad can press")
 	s.ErrorContains(ValidateDigits("1E2"), "keypad can press", "the fourth column stops at D")
 }
@@ -248,24 +251,29 @@ func (s *PhoneSuite) TestACallThatCannotBePlacedAsDescribedIsRefused() {
 	missing := valid
 	missing.To = ""
 	s.ErrorContains(missing.Validate(), "from and a to")
+	s.ErrorIs(missing.Validate(), ErrInvalid)
 
 	unbridged := valid
 	unbridged.Bridge = Bridge{}
 	s.ErrorContains(unbridged.Validate(), "uri is required")
+	s.NotErrorIs(unbridged.Validate(), ErrInvalid, "the bridge is the router's own, not the caller's")
 
 	backwards := valid
 	backwards.RingTimeout = -time.Second
 	s.ErrorContains(backwards.Validate(), "less than no time")
+	s.ErrorIs(backwards.Validate(), ErrInvalid)
 
 	words := valid
 	words.InitialDigits = "extension four"
 	s.ErrorContains(words.Validate(), "keypad can press")
+	s.ErrorIs(words.Validate(), ErrInvalid)
 
 	// Twilio stops at 32, so more than that is a call that would be placed with the
 	// digits silently truncated at whichever vendor happened to answer.
 	long := valid
 	long.InitialDigits = strings.Repeat("1", maxInitialDigits+1)
 	s.ErrorContains(long.Validate(), "than the 32")
+	s.ErrorIs(long.Validate(), ErrInvalid)
 }
 
 func (s *PhoneSuite) TestOnlyAFullNumberThatIsNotPremiumRateCanBeDialled() {
@@ -360,6 +368,7 @@ func (s *PhoneSuite) TestATransferSaysWhatItIsMissing() {
 	_, err = service.Transfer(s.ctx, TransferRequest{From: "+15125551234", To: "+15550001111"})
 	s.ErrorContains(err, "stream credentials",
 		"a transfer routes a leg into a call, which needs Stream")
+	s.NotErrorIs(err, ErrInvalid, "the deployment's credentials are not the caller's to change")
 }
 
 func (s *PhoneSuite) TestAVendorIsOpenedOnceAndReused() {
@@ -390,6 +399,7 @@ func (s *PhoneSuite) TestAVendorWithoutItsCredentialsSaysWhichAreMissing() {
 	_, err := registry.Open("twilio")
 
 	s.ErrorContains(err, "TWILIO_AUTH_TOKEN")
+	s.ErrorIs(err, ErrInvalid, "another vendor can be named instead")
 }
 
 func (s *PhoneSuite) TestOnlyVendorsThatCanActuallyBeUsedAreAvailable() {
@@ -541,6 +551,7 @@ func (s *PhoneSuite) TestSearchingWithNoUsableVendorSaysSoRatherThanAnsweringEmp
 	_, err = service.SearchAll(s.ctx, Search{Country: "US"})
 
 	s.ErrorContains(err, "no vendor has the credentials")
+	s.ErrorIs(err, ErrInvalid)
 }
 
 // serviceWith returns a service whose registry resolves each stub under its own vendor name.

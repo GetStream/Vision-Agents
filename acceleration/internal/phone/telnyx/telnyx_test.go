@@ -347,6 +347,7 @@ func (s *TelnyxSuite) TestDiallingRefusesTermsItCannotSend() {
 		_, err := s.provider.Dial(s.ctx, outbound)
 
 		s.EqualError(err, refusal)
+		s.ErrorIs(err, phone.ErrInvalid, refusal+" is the caller's to change")
 		s.Empty(s.seen.path, refusal+" is refused before anything is sent")
 	}
 }
