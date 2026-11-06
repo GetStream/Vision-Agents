@@ -164,6 +164,7 @@ func (s *SIPTrunkSuite) TestADialRefusesATrunkWithoutAPassword() {
 
 	_, _, err = s.service.dialVendor(s.ctx, held)
 	s.EqualError(err, "phone: sip trunk "+trunk.ID+" has no password; set one before calling through it")
+	s.ErrorIs(err, ErrInvalid)
 }
 
 func (s *SIPTrunkSuite) TestADialRefusesAPasswordSealedAtNoKey() {

@@ -151,6 +151,7 @@ func (s *TelnyxSuite) TestANumberNoLongerForSaleIsNotOrdered() {
 	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
 
 	s.ErrorContains(err, "not for sale")
+	s.ErrorIs(err, phone.ErrInvalid)
 	s.Equal(http.MethodGet, s.seen.method)
 }
 

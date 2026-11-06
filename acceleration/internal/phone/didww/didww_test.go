@@ -135,6 +135,16 @@ func (s *DIDWWSuite) TestSearchingATypeResolvesThatToAnIdentifierToo() {
 	s.Equal("type-local", s.seen.query.Get("filter[did_group_type.id]"))
 }
 
+func (s *DIDWWSuite) TestAKindOfNumberDidwwDoesNotSellIsTheCallersToChange() {
+	// Satellite is no kind DIDWW has a name for; mobile is one, but not among its group types here.
+	for _, kind := range []phone.NumberType{"satellite", phone.Mobile} {
+		_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Type: kind})
+
+		s.ErrorContains(err, "does not sell "+string(kind)+" numbers")
+		s.ErrorIs(err, phone.ErrInvalid, kind)
+	}
+}
+
 func (s *DIDWWSuite) TestACountryDidwwDoesNotSellInSaysSo() {
 	s.answers["/v3/countries"] = `{"data":[]}`
 

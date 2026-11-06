@@ -68,8 +68,9 @@ var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact
 var ErrNotDialable = errors.New("phone: not dialable")
 
 // ErrInvalid is a request that cannot be carried out as it was asked, such as a search filter
-// a vendor cannot apply or a ring timeout it does not allow. Its message says what to change.
-// A failure of the router's own, a database or a deployment setting, is never one.
+// a vendor cannot apply, a ring timeout it does not allow, or a vendor this deployment holds
+// no credentials for. Its message says what to change. A failure of the router's own, such as
+// a database that failed, is never one.
 var ErrInvalid = errors.New("phone: invalid request")
 
 // Invalid marks err as ErrInvalid without changing its message.
@@ -79,7 +80,6 @@ func Invalid(err error) error { return marked{err, ErrInvalid} }
 type marked struct{ err, kind error }
 
 func (e marked) Error() string        { return e.err.Error() }
-func (e marked) Unwrap() error        { return e.err }
 func (e marked) Is(target error) bool { return target == e.kind }
 
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
