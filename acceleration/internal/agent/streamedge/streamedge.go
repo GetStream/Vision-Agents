@@ -292,18 +292,25 @@ func (e *Edge) leave() error {
 	return errors.Join(failures...)
 }
 
+// iceTimeout is how long the agent's outgoing (publisher) connection is given to come up.
+var iceTimeout = 30 * time.Second
+
 // reportICE observes the two peer connections without replacing the SDK's own ICE
-// callbacks. Sampling adds at most 20 ms to the reported connection time.
+// callbacks. Sampling adds at most 20 ms to the reported connection time. The publisher's is
+// the end of the session's start-up (agent.Startup), the connection the agent is heard on.
 func (e *Edge) reportICE(ctx context.Context, started time.Time) {
+	startup := agent.StartupOf(ctx)
 	ticker := time.NewTicker(20 * time.Millisecond)
 	defer ticker.Stop()
-	timeout := time.NewTimer(30 * time.Second)
+	timeout := time.NewTimer(iceTimeout)
 	defer timeout.Stop()
 	timeoutCh := timeout.C
 	var publisherMs, subscriberMs float64
 	for {
 		if pc := e.call.PublisherPC(); pc != nil && publisherMs == 0 && iceConnected(pc.ICEConnectionState()) {
-			publisherMs = float64(time.Since(started).Microseconds()) / 1000
+			connected := time.Now()
+			startup.Connected(connected)
+			publisherMs = float64(connected.Sub(started).Microseconds()) / 1000
 			e.logger.Info("ice connection timing", "peer", "publisher", "connected_ms", publisherMs)
 			timeout.Stop()
 			timeoutCh = nil
@@ -318,6 +325,7 @@ func (e *Edge) reportICE(ctx context.Context, started time.Time) {
 		select {
 		case <-ticker.C:
 		case <-timeoutCh:
+			startup.TimedOut()
 			e.logger.Warn("publisher ice connection did not complete")
 			return
 		case <-ctx.Done():
