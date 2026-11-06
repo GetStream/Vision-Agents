@@ -470,6 +470,56 @@ func (s *SecretsSuite) TestASandboxDaytonaWouldNotCreateLeavesNoSecret() {
 	s.Empty(s.platform.secretNames())
 }
 
+// cutOnceASecretIsMade cancels the returned context 200 ms after the first secret is made at Daytona.
+func (s *SecretsSuite) cutOnceASecretIsMade() context.Context {
+	ctx, cancel := context.WithCancel(s.ctx)
+	go func() {
+		defer cancel()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if len(s.platform.secretNames()) > 0 {
+				time.Sleep(200 * time.Millisecond)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	return ctx
+}
+
+// TestASessionCutWhileDaytonaMakesTheSandboxLeavesNoSecret: the caller's context is cancelled after
+// the secret was made, while Daytona builds the sandbox. Deleting on that context sent no DELETE,
+// so the live token stayed at Daytona until the session closed.
+func (s *SecretsSuite) TestASessionCutWhileDaytonaMakesTheSandboxLeavesNoSecret() {
+	s.platform.mu.Lock()
+	s.platform.slowCreate = time.Hour
+	s.platform.mu.Unlock()
+
+	_, err := s.box.Run(s.cutOnceASecretIsMade(), "print(1)", nil)
+
+	s.Require().Error(err)
+	s.Empty(s.platform.secretNames(), "the cut session left its secret at Daytona")
+}
+
+// TestASessionCutWhileTheLastSecretsAreDeletedForANewSandboxLeavesNoSecret: a sandbox Daytona deleted
+// is made again, and the caller's context is cancelled while the last secrets are deleted.
+func (s *SecretsSuite) TestASessionCutWhileTheLastSecretsAreDeletedForANewSandboxLeavesNoSecret() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().Len(s.platform.secretNames(), 1)
+	s.box.lost()
+	s.platform.mu.Lock()
+	s.platform.slowSecret = map[string]time.Duration{http.MethodDelete: 500 * time.Millisecond}
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 200*time.Millisecond)
+	defer cancel()
+
+	_, err = s.box.Run(ctx, "print(2)", nil)
+
+	s.Require().Error(err)
+	s.Empty(s.platform.secretNames(), "the cut session left its old secret at Daytona")
+}
+
 // TestASecretDaytonaWouldNotCreateLeavesNoOtherSecret: the grants made before it are deleted.
 func (s *SecretsSuite) TestASecretDaytonaWouldNotCreateLeavesNoOtherSecret() {
 	gitlab := github
