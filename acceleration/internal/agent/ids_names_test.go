@@ -101,6 +101,7 @@ func (s *GivenNamesSuite) TestAStandInNameTheAgentWroteIsNotGroundedByAToolReadi
 		{"a name of the tool's where the agent's line held its letters across words", append([]llm.Message{send("Guest Jo Hndoe")}, read(`{"text":"Guest John Doe"}`)...), false},
 		{"a name of the tool's where the agent's line ran its words together", append([]llm.Message{send("Ask Johndoe today")}, read("Ask John Doe today")...), false},
 		{"a name the agent posted in capitals with a wider gap, read back", append([]llm.Message{send("Guest: JOHN  DOE")}, read("Guest: John Doe")...), true},
+		{"a name of the tool's where the agent's line had its letters in a longer word", append([]llm.Message{send("John Doerr")}, read("Guest John Doe rr")...), false},
 		{"a name of the tool's beside an agent's line with more letters in its last word", append([]llm.Message{send("Ask John Doerr")}, read("Ask John Doerr; guest John Doe")...), false},
 	} {
 		_, refused := placeholderName(c.history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
