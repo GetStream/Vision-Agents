@@ -77,6 +77,45 @@ func (s *MetricsSuite) TestMetricsAreServedAsOpenMetrics() {
 	s.Contains(string(body), "go_goroutines")
 }
 
+// A fresh router serves each table vendor's 429 count at 0 per key, before any request: an
+// alert on it reads an absent series as no data. A vendor with no key gets no series.
+func (s *MetricsSuite) TestATableVendorsRateLimitCountIsServedAtZeroPerKeyBeforeAnyRequest() {
+	s.T().Setenv("CEREBRAS_API_KEY", "metrics-test-key-1,metrics-test-key-2")
+	s.T().Setenv("FIREWORKS_API_KEY", "")
+	stop, _ := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
+	s.T().Cleanup(stop)
+
+	var response *http.Response
+	s.Require().Eventually(func() bool {
+		var err error
+		response, err = s.scrape()
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond, "the metrics listener never answered")
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+
+	served := map[string]string{}
+	for line := range strings.Lines(string(body)) {
+		series, found := strings.CutPrefix(strings.TrimSpace(line), "router_vendor_rate_limited_total{")
+		labels, value, ok := strings.Cut(series, " ")
+		if found && ok {
+			served[labels] = value
+		}
+	}
+	s.Equal("0.0", served[`key="0",key_var="CEREBRAS_API_KEY"}`])
+	s.Equal("0.0", served[`key="1",key_var="CEREBRAS_API_KEY"}`])
+	cerebras := 0
+	for labels := range served {
+		if strings.Contains(labels, `key_var="CEREBRAS_API_KEY"`) {
+			cerebras++
+		}
+		s.NotContains(labels, "FIREWORKS_API_KEY")
+		s.NotContains(labels, "metrics-test-key")
+	}
+	s.Equal(2, cerebras, "one series per key")
+}
+
 func (s *MetricsSuite) TestMetricsStopBeingServedWhenStopped() {
 	stop, _ := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
 	s.Require().Eventually(func() bool {
