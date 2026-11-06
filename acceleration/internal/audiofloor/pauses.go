@@ -366,7 +366,7 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 		return
 	}
 	turn.ParticipantID, turn.Audio, turn.Unfinished = c.participant.ID, c.audio, true
-	ctx, cancel := context.WithTimeout(t.ctx, harness.HearDeadline(turn))
+	ctx, cancel := context.WithTimeout(t.ctx, t.client.HearDeadline(turn))
 	defer cancel()
 	var said <-chan Words
 	checked, err := func() (Check, error) {

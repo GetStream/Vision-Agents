@@ -84,6 +84,12 @@ func (r ruledFirst) Hear(ctx context.Context, turn harness.FlowTurn) (harness.De
 	return r.v.hearer.Hear(ctx, turn)
 }
 
+// HearDeadline is how long the model has to rule on turn, as its client says
+// (audiofloor.Client.HearDeadline).
+func (r ruledFirst) HearDeadline(turn harness.FlowTurn) time.Duration {
+	return r.v.hearer.HearDeadline(turn)
+}
+
 // asksOnPauses says the transcriber is to ask about each pause for the agent: acting, the
 // model decides when the turn ends, from the audio, and writes its words in the same pass.
 func (v *audioFloor) asksOnPauses() bool { return v != nil }

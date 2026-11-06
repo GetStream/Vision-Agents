@@ -14,11 +14,19 @@ import (
 )
 
 // stubHearer rules as a test says, after a test's delay, or not at all until its turn is
-// abandoned.
+// abandoned. overAgent, when set, is how long it has to rule on words over the agent.
 type stubHearer struct {
-	ruling Decided
-	err    error
-	hang   bool
+	ruling    Decided
+	err       error
+	hang      bool
+	overAgent time.Duration
+}
+
+func (h stubHearer) HearDeadline(turn FlowTurn) time.Duration {
+	if h.overAgent > 0 && turn.Unfinished && turn.Speaking {
+		return h.overAgent
+	}
+	return HearDeadline(turn)
 }
 
 func (h stubHearer) Hear(ctx context.Context, _ FlowTurn) (Decided, error) {
@@ -124,5 +132,15 @@ func (s *HearerSuite) TestAHungHearerLeavesTheJudgeTheRestOfTheDeadline() {
 	got := s.ruling(stubHearer{hang: true}, FlowTurn{ID: "t", Text: "wait no", Speaking: true, Unfinished: true})
 	s.Equal(Primary, got.Ruler)
 	s.GreaterOrEqual(time.Since(start), overlapDeadline/3)
+	s.Less(time.Since(start), overlapDeadline)
+}
+
+// A Hearer whose server needs longer over the agent has that long, and the judge what is
+// left of the overlap's deadline.
+func (s *HearerSuite) TestAHearerSaysHowLongItHasOverTheAgent() {
+	start := time.Now()
+	got := s.ruling(stubHearer{hang: true, overAgent: 400 * time.Millisecond}, FlowTurn{ID: "t", Text: "wait no", Speaking: true, Unfinished: true})
+	s.Equal(Primary, got.Ruler)
+	s.GreaterOrEqual(time.Since(start), 400*time.Millisecond)
 	s.Less(time.Since(start), overlapDeadline)
 }

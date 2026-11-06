@@ -272,6 +272,9 @@ type Client struct {
 	apiKey string
 	// interims says its transcribers write the words so far while the caller talks.
 	interims bool
+	// overlapTimeout is how long a ruling on a caller talking over the agent is waited for
+	// (HearDeadline), the flow controller's own share of its deadline when zero.
+	overlapTimeout time.Duration
 	// now is the clock the policy's age is read by: time.Now, but in tests.
 	now func() time.Time
 
@@ -304,6 +307,16 @@ func New(url string, format Format, client *http.Client) *Client {
 func (c *Client) WithAPIKey(key string) *Client {
 	c.apiKey = key
 	return c
+}
+
+// HearDeadline is how long the server has to rule on turn: the deployment's wait while the
+// caller talks over the agent (config.Agent.AudioFloorOverlapTimeout), and otherwise, or with
+// none set, the flow controller's share of its own deadline (harness.HearDeadline).
+func (c *Client) HearDeadline(turn harness.FlowTurn) time.Duration {
+	if turn.Unfinished && turn.Speaking && c.overlapTimeout > 0 {
+		return c.overlapTimeout
+	}
+	return harness.HearDeadline(turn)
 }
 
 // NewStream returns a stream of a participant's audio, as the server is sent it, that keeps
@@ -435,6 +448,11 @@ func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harne
 	if err != nil {
 		return Answer{}, nil, err
 	}
+	// Words still coming are said only over the agent (turnOf).
+	kind := kindPause
+	if turn.Unfinished {
+		kind = kindOverAgent
+	}
 	for attempt := 0; ; attempt++ {
 		id, err := c.register(ctx, key, spec)
 		if err != nil {
@@ -444,6 +462,7 @@ func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harne
 		var answer Answer
 		var said <-chan Words
 		var status int
+		sent := time.Now()
 		if words {
 			answer, said, status, err = c.decideWords(ctx, target+"&transcript=true", body, contentType, wordsTimeout+audio.Duration)
 		} else {
@@ -454,6 +473,10 @@ func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harne
 			req.Header.Set("Content-Type", contentType)
 			status, err = c.do(req, &answer)
 		}
+		if err == nil && answer.Ruling == nil {
+			err = stack.Wrap(errors.New("audiofloor: decide: the answer has no ruling"))
+		}
+		measure(ctx, kind, sent, err)
 		if status == http.StatusNotFound && attempt == 0 {
 			// A restarted server knows no agent, and may serve another model: its policy is
 			// read again, in the background, and the last one read stands until then.
@@ -462,9 +485,6 @@ func (c *Client) decide(ctx context.Context, agent Agent, turn Turn, audio harne
 			c.rereadLocked()
 			c.mu.Unlock()
 			continue
-		}
-		if err == nil && answer.Ruling == nil {
-			err = stack.Wrap(errors.New("audiofloor: decide: the answer has no ruling"))
 		}
 		return answer, said, err
 	}
@@ -560,11 +580,14 @@ func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages 
 		Error      string          `json:"transcript_error"`
 		Ms         float64         `json:"transcript_ms"`
 	}
-	if _, err := c.do(req, &said); err != nil {
-		return Words{}, err
+	sent := time.Now()
+	_, err = c.do(req, &said)
+	if err == nil && said.Transcript == nil {
+		err = stack.Wrap(&TranscriptError{Request: "transcribe", Message: said.Error})
 	}
-	if said.Transcript == nil {
-		return Words{}, stack.Wrap(&TranscriptError{Request: "transcribe", Message: said.Error})
+	measure(ctx, kindTranscribe, sent, err)
+	if err != nil {
+		return Words{}, err
 	}
 	return said.Transcript.words(said.Ms), nil
 }
@@ -769,5 +792,6 @@ func Open(settings config.Agent) *Client {
 	}
 	client := New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil).WithAPIKey(settings.AudioFloorAPIKey)
 	client.interims = settings.AudioFloorInterims != "off"
+	client.overlapTimeout = settings.AudioFloorOverlapTimeout
 	return client
 }

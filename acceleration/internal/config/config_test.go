@@ -892,6 +892,31 @@ func (s *ConfigSuite) TestTheAudioFloorsInterimsAreOnOrOff() {
 	s.Equal("off", settings.Agent.AudioFloorInterims)
 }
 
+// The router waits 250ms for a ruling while the caller talks over the agent unless the
+// deployment says otherwise, from 100ms to 450ms: a longer wait can't keep the agent's stop
+// within 800 ms of the caller's first word, and is refused when the settings load.
+func (s *ConfigSuite) TestTheAudioFloorsWaitOverTheAgentIsFrom100To450ms() {
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Equal(250*time.Millisecond, settings.Agent.AudioFloorOverlapTimeout)
+	for setting, wait := range map[string]time.Duration{"100ms": 100 * time.Millisecond, "400ms": 400 * time.Millisecond, "450ms": 450 * time.Millisecond} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT", setting)
+		settings, _, err = Load("")
+		s.Require().NoError(err, setting)
+		s.Equal(wait, settings.Agent.AudioFloorOverlapTimeout)
+	}
+	for _, setting := range []string{"0", "99ms", "451ms", "1s"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT", setting)
+		_, _, err = Load("")
+		s.Require().Error(err, setting)
+		s.ErrorContains(err, "(ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT) is from 100ms to 450ms", setting)
+		s.ErrorContains(err, "800 ms", setting)
+	}
+	s.T().Setenv("ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT", "400")
+	_, _, err = Load("")
+	s.ErrorContains(err, "chorus_asr_overlap_timeout", "a duration has its unit")
+}
+
 // The server's address is an http or https URL the client appends its paths to, so one with
 // a query or fragment, or of another scheme, is refused when the settings load rather than
 // at the first call.
