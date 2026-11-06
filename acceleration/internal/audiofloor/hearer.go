@@ -24,17 +24,14 @@ type Mode string
 const (
 	// Off asks it nothing about turns, as the empty mode does.
 	Off Mode = "off"
-	// Shadow asks it about each turn beside the flow controller and acts on nothing it says:
-	// the two answers are counted and logged side by side.
-	Shadow Mode = "shadow"
 	// Act asks it first, and its ruling is the flow controller's. The flow controller
 	// decides the turns it doesn't answer in time.
 	Act Mode = "act"
 )
 
-// Asks says whether the model is asked about turns: in shadow, or acting.
+// Asks says whether the model is asked about turns, which acting it is.
 func (m Mode) Asks() bool {
-	return m == Shadow || m == Act
+	return m == Act
 }
 
 var (
@@ -52,8 +49,7 @@ var (
 )
 
 // Hearer rules on the flow controller's turns from the speaker's audio. It is the
-// harness.Hearer of an agent that acts on the model, and what shadow mode asks beside the
-// flow controller. It ends a turn with the floor free by the agent's choice of a point, or
+// harness.Hearer of an agent that acts on the model. It ends a turn with the floor free by the agent's choice of a point, or
 // bars of its own.
 type Hearer struct {
 	client    *Client

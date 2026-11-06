@@ -200,11 +200,8 @@ callers read out numbers or IDs, or spell names, wants a point that passes.
 - **What you see.** Once a session, and again if it changes, the router logs the point its
   turns end by: `end_of_turn`, `checks_in_a_row`, `dictation_guard`, and the point's
   `max_wait_ms`, `cut_ins`, `answer_ms_p90`, `dictation_pauses_cut`, `slow_counts_cut` and
-  `slow_counts`. `router_agent_chorus_asr_compared_total` counts each shadow comparison by its
-  `end_of_turn` label, `preset:NAME`, `max_wait_ms:N` for the point fitted to `N` (whatever
-  wait the agent asked for), and its `dictation_guard` label, `pass`,
-  `fail` or `unmeasured`; the shadow log line carries both, with the bar it was held to and
-  the checks in a row so far.
+  `slow_counts`. `end_of_turn` is `max_wait_ms:N` for the point fitted to `N` (whatever wait
+  the agent asked for), or `preset:NAME` for the server's default.
 
 ### Turns from the audio
 
@@ -283,7 +280,7 @@ shared with other work, so the times are indicative:
 | --- | --- | --- | --- |
 | 1. "Uh-huh" over the reply | reply whole, no new answer | the same | the same |
 | 2. One final after 10 s of silence, room tone, line noise at -50 dBFS | one final, one request for the words | the same | the same |
-| 2. The reply echoed at -20 and -30 dB acting, -20 dB in `shadow` and transcribing alone | the conversation as with no echo; the transcriber still writes the echo, and transcribing alone as a final of its own, the caller's final written within a check or two of their voice | the same | the same |
+| 2. The reply echoed at -20 and -30 dB acting, -20 dB transcribing alone | the conversation as with no echo; the transcriber still writes the echo, and transcribing alone as a final of its own, the caller's final written within a check or two of their voice | the same | the same |
 | 3. A breath or a burst of noise after a turn | no other script | the same | the same |
 | 4. One to ten, a second apart | answered after "ten" | answered "One." 1.8 s in, as the point's 9 of 9 slow counts cut says | answered after "ten" |
 | 5. 19.8 s with pauses under a second | one final with its beginning, one answer | the same | the same |
@@ -553,8 +550,7 @@ end by the server's `default` preset. The pauses are checked as they are acting
 decision and the words of the whole utterance in one request, and the utterance goes out
 as one final when the model says the turn has ended, within a check or two of the voice
 on a server that keeps up. Its ruling goes nowhere: what to do with the words is your
-pipeline's, or the flow controller's, as with any transcriber. The same holds in `shadow`,
-where the agent acts on nothing the model says.
+pipeline's, or the flow controller's, as with any transcriber.
 
 Before this the transcriber ended an utterance at a pause of 2.5 s, the policy's cap, and
 a pipeline that answered quickly had its own reply, heard back on the line, written into
@@ -616,8 +612,8 @@ when the transcriber is chorus-asr too, and otherwise from when the words last c
 | over the agent: `stop`, `shorten` | `wait` while unfinished, else `respond` | as said | |
 | over the agent: `continue`, `ignore` | `ignore` | `continue` | |
 
-The tool the caller wants, and `cannot`, are in the shadow log; nothing acts on them, and a
-tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
+Nothing acts on the tool the caller wants, or on `cannot`, and a tool's approval is
+untouched. Acting, a decision's `Ruler` is `heard`.
 
 ## Fallbacks
 
@@ -627,12 +623,6 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   language model or judge, with the other two thirds. `router_chorus_asr_checks_total`
   counts each check by outcome; acting, every outcome but `answered` and `superseded` is a
   turn the flow controller decided.
-- **Shadow.** No app chooses it any more; the agent's internal shadow mode, which the replay
-  still checks, asks one question at a time, none waited for: a slow server costs a call nothing.
-  `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
-  and the `end_of_turn` and `dictation_guard` it was read by, and a debug log line carries
-  `p_end`, the same two, the bar and the checks in a row, the pause, first check and first
-  pause.
 - **Transcripts.** A pause no check ruled on falls to the words alone, check by check,
   and a server that can't rule at all (no policy, 501) is asked once a session. A server
   that is busy, restarting or slow costs a request, not the
@@ -748,9 +738,7 @@ never ended the utterance; the new one wrote both replacements and the final.
   90 to 140 ms each, each ruled `ignore` and its words dropped as the echo.
   A check's window ends mid-word, where the model's barge-in training clips ended 100 to
   300 ms after the caller's last word, so its ruling there is less sure than at a pause.
-- In `shadow` with the transcriber on, a pause costs two decisions: the transcriber's
-  check, under its own agent, and the shadow's under the agent's. In every mode a pause of
-  speech costs a words-bearing request, the agent's own echoed voice included, and the
+- A pause of speech costs a words-bearing request, the agent's own echoed voice included, and the
   words of a long utterance hold a lane for seconds on a CPU.
 - Interims are best effort: a busy server refuses them, one is out at a time, and on a CPU
   server the words of a long utterance take seconds, so they come late and seldom there. The
@@ -767,7 +755,7 @@ never ended the utterance; the new one wrote both replacements and the final.
   misheard. Two or more words in a row are the caller's wherever they fall, as "and in
   Porto" does inside the reply's echo.
 - With unified replies the reply rules on its own words and no flow controller is asked,
-  so acting has nothing to stand in for; shadow compares the model with the reply's ruling.
+  so acting has nothing to stand in for.
 - Without turns from the audio, a CPU decision over a full window, 373 ms here, does not fit
   the 250 ms an overlap gives it, so words over the agent fall back to the flow controller
   on such a server. Acting with chorus-asr transcribing, a pause over the agent is settled
@@ -793,8 +781,7 @@ ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 GOEXPERIMENT=simd \
 Both read `ROUTER_CHORUS_ASR_API_KEY` too, for a server behind a gateway; the replay counts
 its requests by route under the gateway's path. The router needs only the URL: each call's
 agent chooses its own floor control, as agents on one router do, acting unless a check says
-otherwise (transcribing alone with the default flow controller, or in the agent's internal
-shadow mode).
+otherwise (transcribing alone with the default flow controller).
 
 `TestAudioFloorScenarios`, in `audio_floor_scenarios_integration_test.go`, plays what the
 acceptance checks don't: pauses inside a turn, a correction, a question and a second turn

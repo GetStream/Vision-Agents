@@ -1587,7 +1587,7 @@ func (s *AgentSuite) TestSomebodyLeavingClosesTheirTranscriptionSession() {
 
 // What the chorus-asr model hears of a participant goes with them when they leave.
 func (s *AgentSuite) TestSomebodyLeavingIsNoLongerKeptForTheAudioFloor() {
-	s.floor, s.floorMode = audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Shadow
+	s.floor, s.floorMode = audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Act
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	kept := func() bool {
