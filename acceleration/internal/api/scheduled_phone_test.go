@@ -726,6 +726,24 @@ func (s *ScheduledTasksSuite) placesACall(detect *bool) string {
 	return to
 }
 
+// A call or a transfer that names none of the customer's numbers to dial from is the
+// caller's to fix: a 400 that says so, not the 500 of a failure of the router's own.
+func (s *ScheduledTasksSuite) TestACallOrATransferWithoutANumberToDialFromIsRefused() {
+	s.placingCalls()
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+		From: "", To: s.lineNumber(),
+	})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("phone: a call needs one of your numbers to call from", failure)
+
+	status, failure = s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+		From: "", To: s.lineNumber(), SessionId: s.data.storedSession(),
+	})
+	s.Equal(http.StatusBadRequest, status)
+	s.Equal("phone: a transfer needs one of your numbers to dial from", failure)
+}
+
 func (s *ScheduledTasksSuite) TestACallThatAsksToDetectVoicemailGivesTheVendorWhereToReport() {
 	to := s.placesACall(pointerTo(true))
 

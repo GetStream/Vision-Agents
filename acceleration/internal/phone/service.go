@@ -998,6 +998,9 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	if request.To == "" {
 		return Placed{}, stack.Wrap(Invalid(errors.New("phone: a call needs someone to call")))
 	}
+	if request.From == "" {
+		return Placed{}, stack.Wrap(Invalid(errors.New("phone: a call needs one of your numbers to call from")))
+	}
 
 	held, err := s.store.Number(ctx, request.Owner.CustomerID, request.From)
 	if err != nil {
@@ -1750,6 +1753,9 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 	}
 	if request.To == "" {
 		return Dialed{}, stack.Wrap(Invalid(errors.New("phone: a transfer needs someone to transfer to")))
+	}
+	if request.From == "" {
+		return Dialed{}, stack.Wrap(Invalid(errors.New("phone: a transfer needs one of your numbers to dial from")))
 	}
 
 	held, err := s.store.Number(ctx, request.Owner.CustomerID, request.From)

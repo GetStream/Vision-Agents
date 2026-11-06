@@ -111,6 +111,7 @@ func (s *OutcomeSuite) TestACallTransferOrPressAskedWronglyIsTheCallersToChange(
 		"nobody to call":                        {Owner: owner, From: s.e164},
 		"a ring timeout the vendor cannot send": {Owner: owner, From: s.e164, To: "+15125550123", RingTimeout: time.Minute},
 		"a session id no session can have":      {Owner: owner, From: s.e164, To: "+15125550123", SessionID: "not one!"},
+		"no number to call from":                {Owner: owner, To: "+15125550123"},
 	} {
 		_, err := s.service.Call(s.ctx, request)
 		s.ErrorIs(err, ErrInvalid, name)
@@ -120,6 +121,7 @@ func (s *OutcomeSuite) TestACallTransferOrPressAskedWronglyIsTheCallersToChange(
 	for name, request := range map[string]TransferRequest{
 		"no call to transfer into": {Owner: owner, From: s.e164, To: "+15125550123", StreamApp: app},
 		"nobody to transfer to":    {Owner: owner, From: s.e164, CallID: "call-" + uuid.NewString(), StreamApp: app},
+		"no number to dial from":   {Owner: owner, To: "+15125550123", CallID: "call-" + uuid.NewString(), StreamApp: app},
 	} {
 		_, err := s.service.Transfer(s.ctx, request)
 		s.ErrorIs(err, ErrInvalid, name)
