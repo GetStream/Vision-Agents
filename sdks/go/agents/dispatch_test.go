@@ -779,6 +779,7 @@ func TestWhatAWorkersAnswerCostReachesTheClientItsBackendCameFrom(t *testing.T) 
 		t.Fatal(err)
 	}
 	var logged bytes.Buffer
+	// The default logger is the process's; no test in this module runs in parallel.
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })

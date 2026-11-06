@@ -705,6 +705,36 @@ func TestLeavingASessionWhoseSocketIsGoneStopsItOverHTTP(t *testing.T) {
 	}
 }
 
+func TestLeavingAsTheRouterClosesTheSocketStopsTheSessionOverHTTP(t *testing.T) {
+	// The router's close frame has been read, and answered, before the socket is marked
+	// closed: the window between Leave reading it as open and sending on it.
+	backend := newRouter(t, func(_ *testing.T, connection *websocket.Conn) {
+		_ = connection.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done here"))
+		_, _, _ = connection.ReadMessage()
+	})
+	socket := NewSocket(Backend{URL: backend.URL}.SocketURL("/v1/agents/sessions/session-1/events"), nil, nil, nil)
+	if err := socket.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := socket.Read(); err == nil {
+		t.Fatal("the router's close frame was not read")
+	}
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	pipeline.session = &acceleration.Session{Id: "session-1"}
+	pipeline.socket = socket
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatalf("leaving a session the router was ending failed: %v", err)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if !slices.Equal(backend.stopped, []string{"session-1"}) {
+		t.Errorf("the sessions stopped over HTTP were %v, want session-1", backend.stopped)
+	}
+}
+
 // hold keeps a socket open until the client closes the session or goes away, which is what
 // a call with nothing happening on it looks like.
 func hold(_ *testing.T, connection *websocket.Conn) {
