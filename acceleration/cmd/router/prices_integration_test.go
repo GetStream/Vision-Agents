@@ -135,7 +135,7 @@ func (s *PriceSyncSuite) TestStartupSyncsAndAudits() {
 	for _, row := range active {
 		if row.Modality == vendor.Modality && row.Provider == vendor.Provider && row.Model == vendor.Model && len(row.Attributes) == 0 {
 			s.InDelta(99.0, row.Rates[pricing.InputTokens].USD, 1e-12, "the deployment's own file wins over vendor.json")
-			s.InDelta(118.8, row.Prices[pricing.InputTokens].USD, 1e-12, "priced at the factor, as the seed writes it, the file's markup_bps ignored")
+			s.InDelta(106.92, row.Prices[pricing.InputTokens].USD, 1e-12, "priced at the factor, as the seed writes it, the file's markup_bps ignored")
 		}
 		if row.Model == "own-model" && !row.BYOK {
 			s.Equal("llm-own-own-model-us", row.SKU)

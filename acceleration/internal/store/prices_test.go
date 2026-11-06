@@ -109,11 +109,11 @@ func (s *StoreSuite) TestTheFirstSyncSeedsEverything() {
 	list, active := s.activeList()
 	s.Len(active, 3)
 	s.InDelta(2.0, s.inputRate(list, "b", nil), 1e-12, "the vendor's rate is kept")
-	s.InDelta(2.4, s.inputPrice(list, "b", nil), 1e-12, "priced at the rate times the factor")
+	s.InDelta(2.16, s.inputPrice(list, "b", nil), 1e-12, "priced at the rate times the factor")
 	s.False(list.Billable(pricing.Item{Modality: "phone", Provider: "telnyx", Model: "call", Region: pricing.RegionUS}))
 	quote := list.Quote(llmItem("a", nil), pricing.Quantities{pricing.InputTokens: 1_000_000})
 	s.Equal(change.Name, quote.Version, "every entry names the change that wrote it")
-	s.EqualValues(1_200_000, quote.CostMicros)
+	s.EqualValues(1_080_000, quote.CostMicros)
 	s.EqualValues(1_000_000, quote.BaseCostMicros)
 	s.Equal("llm-openai-a-us", quote.SKU)
 }
@@ -135,9 +135,9 @@ func (s *StoreSuite) TestARegionAndBYOKEntryOfOneModelAreItemsOfTheirOwn() {
 	list, active := s.activeList()
 	s.Len(active, 3)
 	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
-	s.EqualValues(1_200_000, list.Quote(llmItem("a", nil), used).CostMicros)
+	s.EqualValues(1_080_000, list.Quote(llmItem("a", nil), used).CostMicros)
 	euQuote := list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionEU}, used)
-	s.EqualValues(1_320_000, euQuote.CostMicros)
+	s.EqualValues(1_188_000, euQuote.CostMicros)
 	byokQuote := list.Quote(pricing.Item{Modality: "llm", Provider: "openai", Model: "a", Region: pricing.RegionUS, BYOK: true}, used)
 	s.EqualValues(200_000, byokQuote.CostMicros)
 	s.Zero(byokQuote.BaseCostMicros)
@@ -159,7 +159,7 @@ func (s *StoreSuite) TestALaterSyncAddsARegionTheDatabaseLacks() {
 	s.Equal(PriceChangeRelease, change.Kind)
 	s.Equal([]string{"llm/openai/a (eu) llm-openai-a-eu"}, names(added))
 	list, _ := s.activeList()
-	s.InDelta(1.2, s.inputPrice(list, "a", nil), 1e-12)
+	s.InDelta(1.08, s.inputPrice(list, "a", nil), 1e-12)
 }
 
 func (s *StoreSuite) TestAnEntryNamingNoRegionIsRefusedByTheTable() {
@@ -206,9 +206,9 @@ func (s *StoreSuite) TestALaterSyncOnlyAddsNewItems() {
 	s.Equal([]string{"llm/openai/b (us) llm-openai-b-us"}, names(added))
 	list, _ := s.activeList()
 	s.InDelta(1.0, s.inputRate(list, "a", nil), 1e-12, "an item the database has keeps its rate")
-	s.InDelta(1.2, s.inputPrice(list, "a", nil), 1e-12, "and its price")
+	s.InDelta(1.08, s.inputPrice(list, "a", nil), 1e-12, "and its price")
 	s.InDelta(2.0, s.inputRate(list, "b", nil), 1e-12)
-	s.InDelta(2.4, s.inputPrice(list, "b", nil), 1e-12, "an item new in a release is priced at the factor")
+	s.InDelta(2.16, s.inputPrice(list, "b", nil), 1e-12, "an item new in a release is priced at the factor")
 }
 
 func (s *StoreSuite) TestASyncWithNothingNewWritesNothing() {
@@ -541,9 +541,9 @@ func (s *StoreSuite) TestTiersRoundTrip() {
 	written := pricing.Priced(entry)
 	written.SKU = "llm-openai-long-us"
 	s.Equal(written, read)
-	s.Equal(0.0084, read.Prices[pricing.CallSeconds].USD, "0.007 × 1.2, kept to twelve digits")
+	s.Equal(0.00756, read.Prices[pricing.CallSeconds].USD, "0.007 × 1.08, kept to twelve digits")
 	long := list.Quote(llmItem("long", nil), pricing.Quantities{pricing.InputTokens: 300_000})
-	s.EqualValues(1_440_000, long.CostMicros, "a long prompt is charged at its price tier")
+	s.EqualValues(1_296_000, long.CostMicros, "a long prompt is charged at its price tier")
 	s.EqualValues(1_200_000, long.BaseCostMicros, "and costed at its tier of rates")
 }
 
