@@ -434,6 +434,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A session whose every reply was lost no longer counts as closed when the flow controller answered
+
+A voice session whose replies all failed, for example on a refused customer key, ended `closed` with fault `none` when the flow controller's own request for the same turn succeeded after the reply had failed: that request was taken for a second provider answering the reply. Now only the reply's own requests lose or answer a turn, so the session ends `model_config_refused`, `model_no_credit` or `model_failed` by whose fault the reply failed, in `router_session_ends_total` and the session's `end_reason`. A subagent's request no longer stands in for a lost reply either, and a failed flow controller or subagent request no longer makes an answered turn count as lost. A reply another provider answered after the first failed still counts as answered (AI-2939, #1811).
+
 ### A code run that prints a lot no longer fills the router's memory
 
 The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 1 MiB and ends it with a line telling the model the output was cut. The rest is dropped as it is read, so the router holds about 6 MiB of one output, a few times that while cutting, and never more as the answer grows. An output under 1 MiB reaches the model as before. A command's, a download's and an upload's answer from the sandbox are bounded too. (#1804)
