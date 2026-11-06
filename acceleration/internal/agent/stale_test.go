@@ -374,7 +374,8 @@ func (s *AgentSuite) TestAResumedUtteranceRestatingAnsweredWordsPlusNewWordsDrop
 	s.ears.emitter.Send(stt.Transcript{Participant: nash, Mode: stt.ModeReplacement, Text: "two wait no", Language: "en", Utterance: 7})
 
 	s.eventually(func() bool { return s.model.abandoned(two) }, "the reply was not dropped")
-	s.Equal(1.0, testutil.ToFloat64(staleReplies)-dropped)
+	// The drop is counted once the reply is abandoned, not with it.
+	s.oneDropSince(dropped)
 }
 
 func (s *AgentSuite) TestAReplyHeardBeforeTheDropLandsIsNotDropped() {
