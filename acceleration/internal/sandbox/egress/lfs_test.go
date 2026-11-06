@@ -6,13 +6,20 @@ import (
 	"bufio"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 
+	"github.com/redis/rueidis"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // lfsBatch is git lfs's batch target on the test's git host.
@@ -362,4 +369,71 @@ func (s *ProxySuite) TestAGitLFSRequestInATunnelWhoseGrantEndedGetsTheMessage() 
 	s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
 	s.Equal(lfsErrorBody("egress: the sandbox's grant for this host has ended"), body)
 	s.Len(s.granted.requests(), 1)
+}
+
+// TestAGitLFSRequestWhoseConnectionGivesNoTokenGetsTheMessage: git lfs pull on a connection that
+// is gone (401) or cannot give a token just now (502) reads the proxy's message, not git-lfs's
+// «Authorization error», which only an LFS error body avoids.
+func (s *ProxySuite) TestAGitLFSRequestWhoseConnectionGivesNoTokenGetsTheMessage() {
+	s.readLFS()
+	client := s.sandbox(s.credential)
+	for _, failure := range []struct {
+		err    error
+		status int
+	}{{sandbox.ErrNoCredential, http.StatusUnauthorized}, {errors.New("provider down"), http.StatusBadGateway}} {
+		s.fail(failure.err)
+		request := s.request(http.MethodPost, lfsBatch, basic("x-access-token", s.placeholder), lfsDownload)
+		request.Header.Set("Content-Type", "application/vnd.git-lfs+json; charset=utf-8")
+
+		response, body, err := s.send(client, request)
+
+		s.Require().NoError(err)
+		s.Equal(failure.status, response.StatusCode)
+		s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
+		s.Equal(lfsErrorBody("egress: the connection gives no token: github"), body)
+	}
+	s.Empty(s.granted.requests())
+}
+
+// TestAGitLFSRequestForAnotherHostInTheTunnelGetsTheMessage: the 421 of a Host the tunnel was not
+// opened to is an LFS error too, on an LFS path.
+func (s *ProxySuite) TestAGitLFSRequestForAnotherHostInTheTunnelGetsTheMessage() {
+	s.readLFS()
+	request := s.request(http.MethodPost, lfsBatch, basic("x-access-token", s.placeholder), lfsDownload)
+	request.Host = "outside.test"
+
+	response, body, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusMisdirectedRequest, response.StatusCode)
+	s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
+	s.Equal(lfsErrorBody("egress: Host is not the host the tunnel was opened to"), body)
+	s.Empty(s.granted.requests())
+}
+
+// TestAGitLFSRequestWhenTheGrantsCannotBeReadGetsTheMessage: Redis lost after the CONNECT is a 503
+// whose body is an LFS error on an LFS path.
+func (s *ProxySuite) TestAGitLFSRequestWhenTheGrantsCannotBeReadGetsTheMessage() {
+	s.readLFS()
+	lost, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	s.Require().NoError(err)
+	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
+	s.T().Cleanup(s.proxy.Close)
+	client := s.sandbox(s.credential)
+	batch := func() *http.Request {
+		request := s.request(http.MethodPost, lfsBatch, basic("x-access-token", s.placeholder), lfsDownload)
+		request.Header.Set("Content-Type", "application/vnd.git-lfs+json; charset=utf-8")
+		return request
+	}
+	warm, _, err := s.send(client, batch())
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, warm.StatusCode)
+	lost.Close()
+
+	response, body, err := s.send(client, batch())
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusServiceUnavailable, response.StatusCode)
+	s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
+	s.Equal(lfsErrorBody("egress: the sandbox's grants cannot be read just now"), body)
 }

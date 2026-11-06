@@ -550,11 +550,11 @@ func (p *Proxy) selectsOrRefuse(w http.ResponseWriter, r *http.Request, t tunnel
 	record, _, err := p.lookup(r.Context(), t.credential)
 	if err != nil {
 		p.logger.Warn("the sandbox egress proxy could not read a sandbox's grants", "error", err)
-		refuseRequest(w, r, t.label, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
+		refuse(w, t.label, r.Method, decisionError, http.StatusServiceUnavailable, "egress: the sandbox's grants cannot be read just now")
 		return err
 	}
 	if !record.granted(t.host) {
-		refuseRequest(w, r, t.label, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
+		refuse(w, t.label, r.Method, decisionDeniedHost, http.StatusForbidden, "egress: the sandbox's grant for this host has ended")
 		return errGrantEnded
 	}
 	return nil
