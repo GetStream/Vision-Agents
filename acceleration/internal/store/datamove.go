@@ -354,13 +354,15 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 	// Never below where the recording last started again: Changes refuses a cursor from before
 	// it. A transaction holding a number at or below it had written its row before that start,
 	// so the WaitForOpenWrites before this export saw it end and these rows hold its write.
-	since, err := recordedSince(ctx, tx, customerID)
+	// Nor below the last change of theirs pruned: its transaction had ended before the prune read
+	// its mark, so these rows hold it too.
+	since, pruned, err := recordedSince(ctx, tx, customerID)
 	if err != nil {
 		return 0, err
 	}
 	var cursor int64
 	if err := tx.QueryRowContext(ctx,
-		"SELECT GREATEST(COALESCE(MAX(seq), 0), ?) FROM data_changes WHERE seq <= ?", since, mark).Scan(&cursor); err != nil {
+		"SELECT GREATEST(COALESCE(MAX(seq), 0), ?, ?) FROM data_changes WHERE seq <= ?", since, pruned, mark).Scan(&cursor); err != nil {
 		return 0, fmt.Errorf("store: export cursor: %w", err)
 	}
 
@@ -554,15 +556,15 @@ WHERE locktype = 'advisory' AND objsubid = 2
 }
 
 // recordedSince is the number a customer's changes have been recorded from without a gap: 0
-// unless their capture expired and was started again (StartDataCapture).
-func recordedSince(ctx context.Context, tx bun.Tx, customerID string) (int64, error) {
-	var since int64
-	err := tx.QueryRowContext(ctx,
-		"SELECT recorded_since FROM data_change_capture WHERE customer_id = ?", customerID).Scan(&since)
+// unless their capture expired and was started again (StartDataCapture). pruned is the highest
+// number of theirs PruneDataChanges dropped, 0 if none.
+func recordedSince(ctx context.Context, tx bun.Tx, customerID string) (since, pruned int64, err error) {
+	err = tx.QueryRowContext(ctx,
+		"SELECT recorded_since, pruned_through FROM data_change_capture WHERE customer_id = ?", customerID).Scan(&since, &pruned)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("store: recorded since: %w", err)
+		return 0, 0, fmt.Errorf("store: recorded since: %w", err)
 	}
-	return since, nil
+	return since, pruned, nil
 }
 
 func (s *Store) exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
@@ -1390,9 +1392,11 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	// Sequence numbers are shared by every customer and pruning drops the oldest of all of
 	// them, so a gap before this customer's first change is the other customers' changes,
 	// not a pruned one: only a cursor older than the oldest change kept has lost any. A cursor
-	// at recorded_since is a start, as 0 is, and the gap after it is not checked. With none of
-	// theirs kept, a quiet customer and one whose every change aged out look the same, and the
-	// follower that is only waiting is not refused. Pruning drops only numbers at or below the
+	// at recorded_since is a start, as 0 is, and the gap after it is not checked: a number rolled
+	// back after it leaves the same gap. With none of theirs kept, a quiet customer and one whose
+	// every change aged out look the same to this check. The highest number of theirs pruning
+	// dropped (pruned_through) tells them apart: a cursor below it lost a change, at
+	// recorded_since or after it, whatever is kept. Pruning drops only numbers at or below the
 	// mark it read, so the gap right after a cursor at or above this mark is a change still in
 	// flight rather than a pruned one. The mark can go down: the trigger
 	// reads the sequence and takes its lock in two statements, and a mark read between them
@@ -1410,11 +1414,11 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	}
 	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
 
-	since, err := recordedSince(ctx, tx, customerID)
+	since, pruned, err := recordedSince(ctx, tx, customerID)
 	if err != nil {
 		return nil, 0, err
 	}
-	if after < since {
+	if after < since || after < pruned {
 		return nil, 0, ErrChangesExpired
 	}
 	var kept sql.NullInt64
@@ -1560,7 +1564,9 @@ func (s *Store) deleteRow(ctx context.Context, db bun.IDB, customerID string, ch
 
 // PruneDataChanges drops the changes nobody can still use. It returns how many it removed.
 // A capture's row is kept after it expires: it is what tells a start after it from a first one
-// (StartDataCapture), one small row per customer that ever moved.
+// (StartDataCapture), one small row per customer that ever moved. It also notes there the highest
+// number of the customer's it dropped (pruned_through), in the same statement, so a cursor below
+// it is refused (Changes) whatever is kept after it.
 //
 // It drops only the oldest numbers, the ones below the first change still young and at
 // or below the watermark, so what is kept is everything from one number on and a cursor
@@ -1575,16 +1581,28 @@ func (s *Store) PruneDataChanges(ctx context.Context, retention time.Duration) (
 	if err != nil {
 		return 0, err
 	}
-	// LEAST ignores a NULL: with no change still young, the mark is the only bound.
-	result, err := s.db.ExecContext(ctx, `
-DELETE FROM data_changes
-WHERE at < now() - make_interval(secs => ?)
-  AND seq <= LEAST(?, (SELECT MIN(seq) - 1 FROM data_changes WHERE at >= now() - make_interval(secs => ?)))`,
-		retention.Seconds(), mark, retention.Seconds())
+	// LEAST ignores a NULL: with no change still young, the mark is the only bound. Every router
+	// prunes, and of two prunes at once the one that dropped the lower numbers can commit last, so
+	// pruned_through only goes up. A WITH statement that changes rows runs once and to the end
+	// whether or not the query reads it (https://www.postgresql.org/docs/current/queries-with.html).
+	var removed int64
+	err = s.db.QueryRowContext(ctx, `
+WITH pruned AS (
+  DELETE FROM data_changes
+  WHERE at < now() - make_interval(secs => ?)
+    AND seq <= LEAST(?, (SELECT MIN(seq) - 1 FROM data_changes WHERE at >= now() - make_interval(secs => ?)))
+  RETURNING customer_id, seq
+), noted AS (
+  UPDATE data_change_capture AS c SET pruned_through = p.seq
+  FROM (SELECT customer_id, MAX(seq) AS seq FROM pruned GROUP BY customer_id) AS p
+  WHERE c.customer_id = p.customer_id AND c.pruned_through < p.seq
+)
+SELECT count(*) FROM pruned`,
+		retention.Seconds(), mark, retention.Seconds()).Scan(&removed)
 	if err != nil {
 		return 0, fmt.Errorf("store: prune data changes: %w", err)
 	}
-	return result.RowsAffected()
+	return removed, nil
 }
 
 // watchDataChanges attaches the recording trigger to every table an export carries, in one
