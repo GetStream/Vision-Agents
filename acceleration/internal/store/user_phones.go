@@ -74,8 +74,7 @@ const setAsideRead = `SELECT cm.* FROM (
 JOIN contact_map AS cm ON cm.customer_id = up.customer_id AND cm.address LIKE '` + retiredPrefix + `%'
 	AND ` + reachedAt + ` = up.phone
 WHERE COALESCE(` + historyBoundary + ` < up.updated_at, true)
-	AND cm.agent_config_id = ?1 AND cm.kind = ?5 AND COALESCE(NULLIF(cm.stream_app_pk, ?3), 0) = up.stream_app_pk
-	AND cm.conversation_id <> ?2`
+	AND cm.agent_config_id = ?1 AND cm.kind = ?5 AND COALESCE(NULLIF(cm.stream_app_pk, ?3), 0) = up.stream_app_pk`
 
 // userLinkLockSeed is the second argument to hashtextextended for the lock a user's link is
 // changed and joined under (lockLink), as definitionLockSeed is a revision's. 2701 is this
