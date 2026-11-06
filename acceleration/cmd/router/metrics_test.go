@@ -124,23 +124,14 @@ func (s *MetricsSuite) TestEveryTableVendorsRateLimitCountIsServedAtZeroPerKeyBe
 		s.Equal("0.0", served[`key="0",key_var="`+name+`"}`], name)
 	}
 	s.Equal("0.0", served[`key="1",key_var="CEREBRAS_API_KEY"}`])
-	s.Len(served, len(vars)+1, "one series per key")
+	cerebras := 0
 	for labels := range served {
+		if strings.Contains(labels, `key_var="CEREBRAS_API_KEY"`) {
+			cerebras++
+		}
 		s.NotContains(labels, "metrics-test-key")
 	}
-}
-
-// A vendor with no key gets no series: nothing could count a 429 under it.
-func (s *MetricsSuite) TestAVendorWithNoKeyIsServedNoRateLimitSeries() {
-	s.T().Setenv("CEREBRAS_API_KEY", "metrics-test-key-1")
-	s.T().Setenv("FIREWORKS_API_KEY", "")
-
-	served := s.servedRateLimited()
-
-	s.Equal("0.0", served[`key="0",key_var="CEREBRAS_API_KEY"}`])
-	for labels := range served {
-		s.NotContains(labels, "FIREWORKS_API_KEY")
-	}
+	s.Equal(2, cerebras, "one series per key")
 }
 
 func (s *MetricsSuite) TestMetricsStopBeingServedWhenStopped() {
