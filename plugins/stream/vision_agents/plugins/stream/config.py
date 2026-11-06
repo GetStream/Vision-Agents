@@ -31,9 +31,8 @@ from ._generated.models import (
     ChannelLineRequest,
     ConnectionOwnerType,
     DispatchSetting,
-    EndOfTurn,
-    EndOfTurnBar,
     ErrorResponse,
+    FloorControl,
     Greeting,
     GreetingMode,
     Harness,
@@ -411,21 +410,14 @@ async def _declare_settings(
         if settings.scheduling.default_timezone:
             scheduling.default_timezone = settings.scheduling.default_timezone
         body.scheduling = scheduling
-    if settings.end_of_turn is not None:
-        end_of_turn = EndOfTurn()
-        if settings.end_of_turn.max_wait_ms is not None:
-            end_of_turn.max_wait_ms = settings.end_of_turn.max_wait_ms
-        if settings.end_of_turn.preset is not None:
-            end_of_turn.preset = settings.end_of_turn.preset
-        if settings.end_of_turn.bars is not None:
-            end_of_turn.bars = [
-                EndOfTurnBar(from_ms=bar.from_ms, bar=bar.bar)
-                for bar in settings.end_of_turn.bars
-            ]
-        body.end_of_turn = end_of_turn
     if settings.floor_control is not None:
-        # As written, "" included, which is the default flow controller again.
-        body.floor_control = settings.floor_control
+        # As written, each key only when named; empty is the default flow controller again.
+        floor_control = FloorControl()
+        if settings.floor_control.model is not None:
+            floor_control.model = settings.floor_control.model
+        if settings.floor_control.max_wait_ms is not None:
+            floor_control.max_wait_ms = settings.floor_control.max_wait_ms
+        body.floor_control = floor_control
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

@@ -44,21 +44,19 @@ func (s *SpecSuite) TestAConfigsReviewInstructionsAreWhatItsCallsAreReviewedBy()
 	s.Equal("Score the upsell.", spec.ReviewInstructions)
 }
 
-func (s *SpecSuite) TestAConfigsEndOfTurnIsWhatItsSessionsEndTurnsBy() {
-	bars := []store.EndOfTurnBar{{FromMs: 0, Bar: 0.97}, {FromMs: 900, Bar: 0.25}}
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", EndOfTurn: store.EndOfTurn{Bars: bars}})
+func (s *SpecSuite) TestAConfigsMaxWaitIsWhatItsSessionsEndTurnsBy() {
+	chosen := store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 900}
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: chosen})
 
-	s.Equal(store.EndOfTurn{Bars: bars}, spec.EndOfTurn)
-	s.Equal(audiofloor.EndOfTurn{Bars: []audiofloor.PolicyBar{{FromMs: 0, Bar: 0.97}, {FromMs: 900, Bar: 0.25}}}, EndOfTurnOf(spec.EndOfTurn))
-	s.Equal(audiofloor.EndOfTurn{MaxWaitMs: 900}, EndOfTurnOf(store.EndOfTurn{MaxWaitMs: 900}))
-	s.Equal(audiofloor.EndOfTurn{Preset: "fast"}, EndOfTurnOf(store.EndOfTurn{Preset: "fast"}))
-	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(FromConfig(store.AgentConfig{CustomerID: "acme"}).EndOfTurn), "none chosen is the server's default")
+	s.Equal(chosen, spec.FloorControl)
+	s.Equal(audiofloor.EndOfTurn{MaxWaitMs: 900}, EndOfTurnOf(spec.FloorControl))
+	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(store.FloorControl{Model: store.FloorControlChorusASR}), "no wait chosen is the server's default")
 }
 
 func (s *SpecSuite) TestAConfigsFloorControlIsWhatItsSessionsAreRuledBy() {
-	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: store.FloorControlChorusASR})
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: store.FloorControl{Model: store.FloorControlChorusASR}})
 
-	s.Equal(store.FloorControlChorusASR, spec.FloorControl)
+	s.Equal(store.FloorControl{Model: store.FloorControlChorusASR}, spec.FloorControl)
 	s.Equal(audiofloor.Act, FloorModeOf(spec.FloorControl))
 	unset := FromConfig(store.AgentConfig{CustomerID: "acme"}).FloorControl
 	s.True(unset.IsZero())

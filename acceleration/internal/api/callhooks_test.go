@@ -137,6 +137,27 @@ func (s *CallHooksSuite) TestACallToASuspendedAppIsNotAnsweredAndIsEnded() {
 		5*time.Second, 20*time.Millisecond, "ended at Stream, which the suite's phone service has no credentials for")
 }
 
+func (s *CallHooksSuite) TestACallNoWorkerCanTakeIsEnded() {
+	s.hold("default", s.callID)
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	s.True(s.refused(), "a caller nobody answers is left listening to silence")
+	s.Eventually(func() bool { return strings.Contains(s.logged.String(), "could not end a refused arriving call") },
+		5*time.Second, 20*time.Millisecond, "ended at Stream, which the suite's phone service has no credentials for")
+}
+
+func (s *CallHooksSuite) TestACallEveryWorkerIsTooBusyForIsEnded() {
+	s.hold("default", s.callID)
+	worker, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1, Active: 1, Tracking: true})
+	defer release()
+
+	s.Require().Equal(http.StatusOK, s.arrive("default:"+s.callID))
+
+	s.nothingReaches(worker.Calls(), "a full worker was given another call")
+	s.True(s.refused(), "a caller nobody answers is left listening to silence")
+}
+
 // TestAnArrivingCallTheRouterRefusedIsCountedFailedWhenItsLegEnds catches a refused call, which
 // no agent answered, counted completed when Stream's end of it arrives, and checks the refusal
 // still bills the leg as base did: from the caller's arrival to the call's end.
@@ -200,6 +221,11 @@ func (s *CallHooksSuite) TestALaterCallerInTheSameCallIsNotCountedRefused() {
 	}, settleFor, 10*time.Millisecond, "the refusal was never marked")
 	end("session-1", arrived.Add(10*time.Second))
 	s.Require().NoError(s.store.LiftTelephonySuspension(ctx, s.customerID()))
+
+	// A worker takes the second caller: with none, the call is refused (no worker could take it)
+	// and counted failed, which is not what this test is about.
+	_, release := s.dispatch.Register(s.customerID(), dispatch.Registration{Capacity: 1})
+	defer release()
 
 	failed, completed := s.inboundCalls("vonage", "failed"), s.inboundCalls("vonage", "completed")
 	second := arrived.Add(time.Minute)
@@ -623,6 +649,19 @@ func (s *CallHooksSuite) TestAnArrivingCallToANumberWhoseAgentIsGoneIsRefused() 
 	}, settleFor, 10*time.Millisecond)
 	_, live := s.router.sessions.Get(s.callID, session.Owner{CustomerID: s.customerID()})
 	s.False(live)
+}
+
+func (s *CallHooksSuite) TestAnArrivingCallWhoseAgentCannotOpenASessionIsEnded() {
+	// The suite's own call name is no session id, so the agent's session fails to open.
+	s.hold("agent", s.callID)
+	config := s.config("echo/local-model")
+	s.Require().NoError(s.store.SetNumberAgent(context.Background(), s.customerID(), s.e164, config))
+
+	s.Require().Equal(http.StatusOK, s.arriveRingingNumberOn("agent"))
+
+	s.Eventually(func() bool {
+		return strings.Contains(s.logged.String(), "refused an arriving call its agent could not answer")
+	}, settleFor, 10*time.Millisecond, "a caller whose agent never joined is left listening to silence")
 }
 
 func (s *CallHooksSuite) TestAnArrivingCallToADetachedNumberIsNotDispatched() {

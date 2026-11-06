@@ -271,6 +271,8 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "customer", number.CustomerID,
 			"number", number.E164, "error", err)
+		s.refuseArrivingCall(r.Context(), number, callType, callID, event.SessionID, "refused an arriving call no worker could take",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164)
 		return
 	}
 	s.pinHook(origin, number.CustomerID, event.CallCid)

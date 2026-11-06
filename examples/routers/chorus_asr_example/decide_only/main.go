@@ -2,7 +2,7 @@
 // and chorus-asr, hearing their audio, decides when they have finished.
 //
 // Pick this to keep the transcriber you have, for its languages or its words, and take the
-// turn-taking from the audio rather than from the words.
+// floor control from the audio rather than from the words.
 //
 // The router runs with ROUTER_CHORUS_ASR_URL, and the agent opts in with floor_control in its
 // agent.yaml (../README.md).
@@ -27,8 +27,8 @@ func main() {
 	defer stop()
 	_ = godotenv.Load("../../../../.env")
 
-	// stt: deepgram/flux-general-en, and floor_control: stream/chorus-asr:
-	// chorus-asr decides the turns by the server's default end_of_turn.
+	// stt: deepgram/flux-general-en, and floor_control: {model: stream/chorus-asr}:
+	// chorus-asr decides the turns by the server's default point.
 	agent, err := agents.New(agents.Options{Dir: "../agents/clinic-front-desk"})
 	if err != nil {
 		log.Fatal(err)

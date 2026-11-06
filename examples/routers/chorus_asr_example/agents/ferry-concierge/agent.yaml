@@ -7,11 +7,9 @@ llm: gemini/gemini-3.8-flash
 tts: cartesia/sonic-preview
 
 # The agent opts in to chorus-asr's floor control, and acts on its rulings; left out, the
-# default flow controller rules the floor.
-floor_control: stream/chorus-asr
-
-# A caller who has finished waits at most about 1.1 s for the answer: the measured point
-# with the fewest cut-ins whose p90 wait is within it. preset: and bars: are the other two
-# ways to choose; see acceleration/deploy/chorus-asr/README.md.
-end_of_turn:
+# default flow controller rules the floor. A caller who has finished waits at most about 1.1 s
+# for the answer: the measured point with the fewest cut-ins whose p90 wait is within it; see
+# acceleration/deploy/chorus-asr/README.md.
+floor_control:
+  model: stream/chorus-asr
   max_wait_ms: 1100

@@ -277,54 +277,27 @@ final class FolderTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{string, string}>
+     * end_of_turn is gone: its one knob is floor_control's max_wait_ms.
      */
-    public static function refusedEndsOfTurn(): iterable
+    public function testRefusesAnEndOfTurn(): void
     {
-        yield 'unknown key' => ["end_of_turn:\n  max_wait: 900\n", '"end_of_turn.max_wait" is not something agent.yaml declares'];
-        yield 'unknown bar key' => ["end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n", '"end_of_turn.bars[0].from" is not something agent.yaml declares'];
-        yield 'a scalar' => ["end_of_turn: fast\n", 'end_of_turn is a mapping of max_wait_ms, preset or bars'];
-        yield 'a list' => ["end_of_turn: []\n", 'end_of_turn is a mapping of max_wait_ms, preset or bars'];
-        yield 'a wait that is not a number' => ["end_of_turn:\n  max_wait_ms: soon\n", 'end_of_turn.max_wait_ms must be a whole number of milliseconds'];
-        yield 'a fractional wait' => ["end_of_turn:\n  max_wait_ms: 900.5\n", 'end_of_turn.max_wait_ms must be a whole number of milliseconds'];
-        yield 'a preset that is a mapping' => ["end_of_turn:\n  preset: {name: fast}\n", 'end_of_turn.preset is a single value'];
-        yield 'bars as a mapping' => ["end_of_turn:\n  bars: {from_ms: 0, bar: 0.9}\n", 'end_of_turn.bars is a list'];
-        yield 'a bar that is not a mapping' => ["end_of_turn:\n  bars: [0.9]\n", 'end_of_turn.bars[0] is a mapping of from_ms and bar'];
-        yield 'a bar that is not a number' => ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n", 'end_of_turn.bars[0].bar must be a number'];
-        yield 'a start that is not a number' => ["end_of_turn:\n  bars:\n    - {from_ms: soon, bar: 0.9}\n", 'end_of_turn.bars[0].from_ms must be a whole number of milliseconds'];
-        yield 'a bar without from_ms' => ["end_of_turn:\n  bars:\n    - {bar: 0.9}\n", 'end_of_turn.bars[0] names both from_ms and bar'];
-        yield 'a bar without bar' => ["end_of_turn:\n  bars:\n    - {from_ms: 0}\n", 'end_of_turn.bars[0] names both from_ms and bar'];
-        yield 'a later bar without from_ms' => ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.9}\n    - {bar: 0.2}\n", 'end_of_turn.bars[1] names both from_ms and bar'];
-        yield 'a null bar' => ["end_of_turn:\n  bars:\n    - ~\n", 'end_of_turn.bars[0] names both from_ms and bar'];
-    }
-
-    #[DataProvider('refusedEndsOfTurn')]
-    public function testRefusesAnEndOfTurnGoRefuses(string $declaration, string $message): void
-    {
-        $this->write('agent.yaml', $declaration);
+        $this->write('agent.yaml', "end_of_turn:\n  max_wait_ms: 900\n");
 
         $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage($message);
+        $this->expectExceptionMessage('"end_of_turn" is not something agent.yaml declares');
         Folder::load($this->dir);
     }
 
-    public function testReadsEndOfTurnAsWritten(): void
-    {
-        $this->write('agent.yaml', "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 1}\n    - {from_ms: 900, bar: 0.25}\n");
-
-        $endOfTurn = Folder::load($this->dir)->settings->endOfTurn;
-
-        self::assertSame(['bars' => [['bar' => 1.0, 'from_ms' => 0], ['bar' => 0.25, 'from_ms' => 900]]], $endOfTurn?->toArray());
-    }
-
     /**
-     * @return iterable<string, array{string, ?string}>
+     * @return iterable<string, array{string, ?array<string, mixed>}>
      */
     public static function floorControls(): iterable
     {
-        yield 'chorus-asr' => ["floor_control: stream/chorus-asr\n", 'stream/chorus-asr'];
-        yield 'empty' => ["floor_control: \"\"\n", ''];
-        yield 'a model for the router to judge' => ["floor_control: other\n", 'other'];
+        yield 'model and wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", ['max_wait_ms' => 800, 'model' => 'stream/chorus-asr']];
+        yield 'model alone' => ["floor_control: {model: stream/chorus-asr}\n", ['model' => 'stream/chorus-asr']];
+        yield 'a null wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n", ['model' => 'stream/chorus-asr']];
+        yield 'a wait for the router to judge' => ["floor_control: {max_wait_ms: 800}\n", ['max_wait_ms' => 800]];
+        yield 'empty, the default flow controller again' => ["floor_control: {}\n", []];
         yield 'no value' => ["floor_control:\n", null];
         yield 'null' => ["floor_control: ~\n", null];
         yield 'left out' => ["llm: openai/gpt-5.6\n", null];
@@ -332,33 +305,41 @@ final class FolderTest extends TestCase
 
     /**
      * floor_control is read as written; which models there are is the router's to say.
+     *
+     * @param ?array<string, mixed> $chosen
      */
     #[DataProvider('floorControls')]
-    public function testReadsFloorControlAsWritten(string $declaration, ?string $chosen): void
+    public function testReadsFloorControlAsWritten(string $declaration, ?array $chosen): void
     {
         $this->write('agent.yaml', $declaration);
 
-        self::assertSame($chosen, Folder::load($this->dir)->settings->floorControl);
+        self::assertSame($chosen, Folder::load($this->dir)->settings->floorControl?->toArray());
     }
 
     /**
-     * @return iterable<string, array{string}>
+     * @return iterable<string, array{string, string}>
      */
     public static function refusedFloorControls(): iterable
     {
-        yield 'a mapping' => ["floor_control: {model: chorus-asr, mode: act}\n"];
-        yield 'a list' => ["floor_control: [stream/chorus-asr]\n"];
-        yield 'a boolean' => ["floor_control: true\n"];
-        yield 'a number' => ["floor_control: 1\n"];
+        $mapping = 'floor_control is a mapping of model and, optionally, max_wait_ms';
+        yield 'the string it once was' => ["floor_control: stream/chorus-asr\n", $mapping];
+        yield 'a list' => ["floor_control: [stream/chorus-asr]\n", $mapping];
+        yield 'an empty list' => ["floor_control: []\n", $mapping];
+        yield 'a boolean' => ["floor_control: true\n", $mapping];
+        yield 'a number' => ["floor_control: 1\n", $mapping];
+        yield 'an unknown key' => ["floor_control:\n  model: stream/chorus-asr\n  mode: act\n", '"mode" is not a floor_control setting; model and max_wait_ms are'];
+        yield 'a model that is not a string' => ["floor_control:\n  model: 1\n", 'floor_control.model must be a string'];
+        yield 'a wait that is not a number' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n", 'floor_control.max_wait_ms must be an integer'];
+        yield 'a fractional wait' => ["floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n", 'floor_control.max_wait_ms must be an integer'];
     }
 
     #[DataProvider('refusedFloorControls')]
-    public function testRefusesAFloorControlThatIsNotAString(string $declaration): void
+    public function testRefusesAFloorControlThatCannotBeRead(string $declaration, string $message): void
     {
         $this->write('agent.yaml', $declaration);
 
         $this->expectException(ConfigurationException::class);
-        $this->expectExceptionMessage('floor_control must be a string, such as stream/chorus-asr');
+        $this->expectExceptionMessage($message);
         Folder::load($this->dir);
     }
 

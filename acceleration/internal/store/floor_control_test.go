@@ -2,16 +2,17 @@
 
 package store
 
-// A config keeps the floor control it was given, an update writes it, and one that chose none
-// is NULL, the default flow controller, and reads back as none.
+// A config keeps the floor control it was given, its max_wait_ms included, an update writes it
+// whole, and one that chose none is NULL, the default flow controller, and reads back as none.
 func (s *StoreSuite) TestAConfigKeepsItsFloorControl() {
-	config := &AgentConfig{CustomerID: "app", Name: "ruled", Mode: AgentModeVoice, FloorControl: FloorControlChorusASR}
+	waiting := FloorControl{Model: FloorControlChorusASR, MaxWaitMs: 800}
+	config := &AgentConfig{CustomerID: "app", Name: "ruled", Mode: AgentModeVoice, FloorControl: waiting}
 	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, config))
 	stored, err := s.store.AgentConfig(s.ctx, "app", config.ID)
 	s.Require().NoError(err)
-	s.Equal(FloorControlChorusASR, stored.FloorControl)
+	s.Equal(waiting, stored.FloorControl)
 
-	config.FloorControl = ""
+	config.FloorControl = FloorControl{}
 	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, config))
 	stored, err = s.store.AgentConfig(s.ctx, "app", config.ID)
 	s.Require().NoError(err)
@@ -21,11 +22,11 @@ func (s *StoreSuite) TestAConfigKeepsItsFloorControl() {
 		Where("id = ?", config.ID).Scan(s.ctx, &unset))
 	s.True(unset, "the default flow controller is stored as NULL")
 
-	config.FloorControl = FloorControlChorusASR
+	config.FloorControl = FloorControl{Model: FloorControlChorusASR}
 	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, config))
 	stored, err = s.store.AgentConfig(s.ctx, "app", config.ID)
 	s.Require().NoError(err)
-	s.Equal(FloorControlChorusASR, stored.FloorControl)
+	s.Equal(FloorControl{Model: FloorControlChorusASR}, stored.FloorControl)
 
 	unchosen := &AgentConfig{CustomerID: "app", Name: "unruled", Mode: AgentModeVoice}
 	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, unchosen))
@@ -37,12 +38,13 @@ func (s *StoreSuite) TestAConfigKeepsItsFloorControl() {
 // A session keeps the floor control it was opened with, and one opened with none reads back
 // none.
 func (s *StoreSuite) TestASessionKeepsTheFloorControlItWasOpenedWith() {
-	s.opened("chosen", "app", s.base, func(session *AgentSession) { session.FloorControl = FloorControlChorusASR })
+	waiting := FloorControl{Model: FloorControlChorusASR, MaxWaitMs: 1400}
+	s.opened("chosen", "app", s.base, func(session *AgentSession) { session.FloorControl = waiting })
 	s.opened("default", "app", s.base, nil)
 
 	chosen, err := s.store.StoredSession(s.ctx, "app", "chosen")
 	s.Require().NoError(err)
-	s.Equal(FloorControlChorusASR, chosen.FloorControl)
+	s.Equal(waiting, chosen.FloorControl)
 	unchosen, err := s.store.StoredSession(s.ctx, "app", "default")
 	s.Require().NoError(err)
 	s.True(unchosen.FloorControl.IsZero())

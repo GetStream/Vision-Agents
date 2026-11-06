@@ -143,7 +143,7 @@ type Options struct {
 	Judge       *decisionrouter.Router
 	JudgeTarget string
 	// AudioFloor is the chorus-asr model the flow controller asks first when
-	// AudioFloorMode is Act, or beside it when Shadow. Nil or another mode asks it nothing.
+	// AudioFloorMode is Act. Nil or another mode asks it nothing.
 	// AudioFloorMode is this agent's own floor control: agents on one router share the
 	// client and nothing else of it.
 	AudioFloor     *audiofloor.Client
@@ -365,8 +365,8 @@ type Agent struct {
 	// turns measures each exchange end to end and, when a store is configured, records it.
 	turns     *turnTracker
 	turnStore *turnRecorder
-	// audioFloor keeps what the chorus-asr model hears, and asks it beside the flow
-	// controller in shadow mode. Nil unless Options.AudioFloorMode asks it.
+	// audioFloor keeps what the chorus-asr model hears for the flow controller's Hearer. Nil
+	// unless Options.AudioFloorMode asks it.
 	audioFloor *audioFloor
 	// decisionStore keeps what the conversation decided for an hour, so a call can be read
 	// back after the process that held it is gone.
@@ -1502,7 +1502,6 @@ func (a *Agent) close() error {
 		p.running.Wait()
 	}
 	a.running.Wait()
-	a.audioFloor.close()
 	a.mu.Lock()
 	a.forgetUtterancesLocked()
 	a.mu.Unlock()
@@ -2028,7 +2027,6 @@ func (a *Agent) ask(ready candidate) {
 		FirstPause:   a.converse.firstPause(ready),
 	}
 	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, tools)
-	a.audioFloor.ask(turn)
 	if a.speculate(current, ready, speaking, anotherVoice) {
 		return
 	}
@@ -3500,7 +3498,6 @@ func (a *Agent) consumeHarness(current *harness.Harness, drained chan struct{}) 
 			}
 			flowDecisions.WithLabelValues(disposition, ruler).Inc()
 			flowDecisionSeconds.WithLabelValues(ruler).Observe(typed.TookMs / 1000)
-			a.audioFloor.ruled(typed)
 			a.act(a.converse.Ruled(typed, a.floor()))
 			// An answer took the reply started for these words; any other ruling leaves it
 			// unwanted.
@@ -4069,7 +4066,7 @@ func (a *Agent) shorten(participant stt.Participant, turnID string, why interrup
 // actsOnChorusASR says the agent keeps the loop's contract (README, "The loop's contract"): it
 // acts on chorus-asr's rulings, and chorus-asr transcribes its callers and asks about their
 // pauses. A line of its own is then a turn a caller talking over it stops, and a shortened
-// reply stops shortenTail after the ruling. Off, shadowing, or with another transcriber, the
+// reply stops shortenTail after the ruling. Off, or with another transcriber, the
 // agent does as it did before chorus-asr: a transcriber that does not drop the agent's echo
 // has a check-in said over it stopped by its own voice.
 func (a *Agent) actsOnChorusASR() bool { return a.pausesAsked.Load() }

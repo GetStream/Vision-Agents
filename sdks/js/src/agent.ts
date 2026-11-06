@@ -147,15 +147,11 @@ export interface Declaration {
   /** Whether the agent may schedule tasks for its users, and the bounds on that. */
   scheduling?: Schemas["AgentScheduling"];
   /**
-   * How eager chorus-asr's turn-taking is: one of `max_wait_ms`, `preset` and `bars`, as
-   * written. Undefined leaves the stored choice; an empty object is the server's default.
+   * The model that controls the agent's floor, and how long a caller may wait once they stop:
+   * `model` and `max_wait_ms`, as written. Undefined leaves the stored choice; an empty object
+   * is the default flow controller again.
    */
-  endOfTurn?: Schemas["EndOfTurn"];
-  /**
-   * The model that controls the agent's floor, `stream/chorus-asr`, or `""` for the default
-   * flow controller, as written. Undefined leaves the stored choice.
-   */
-  floorControl?: string;
+  floorControl?: Schemas["FloorControl"];
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -770,8 +766,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.greeting ? { greeting: declared.greeting } : {}),
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),
-    ...(declared.endOfTurn ? { end_of_turn: declared.endOfTurn } : {}),
-    ...(declared.floorControl !== undefined ? { floor_control: declared.floorControl } : {}),
+    ...(declared.floorControl ? { floor_control: declared.floorControl } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),

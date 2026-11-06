@@ -404,13 +404,8 @@ fn a_declaration_key_nobody_knows_is_refused() {
         "sandbox_options:\n  timeout: 2h\n",
         "sandbox_options:\n  cpu: two\n",
         "sandbox_options:\n  network: maybe\n",
-        "end_of_turn:\n  max_wait: 900\n",
-        "end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n",
-        "end_of_turn: fast\n",
-        "end_of_turn:\n  max_wait_ms: soon\n",
-        "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n",
-        "end_of_turn:\n  bars:\n    - {bar: 0.9}\n",
-        "end_of_turn:\n  bars:\n    - {from_ms: 0}\n",
+        "end_of_turn:\n  max_wait_ms: 900\n",
+        "end_of_turn: {}\n",
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);
@@ -419,16 +414,34 @@ fn a_declaration_key_nobody_knows_is_refused() {
     }
 }
 
-/// floor_control is read as written, "" included; which models there are is the router's to say.
+/// floor_control is read as written, {} included; which models there are, and whether a wait
+/// names one, is the router's to say.
 #[test]
 fn the_floor_control_is_read_as_written() {
+    let chosen = |model: Option<&str>, max_wait_ms: Option<i64>| {
+        Some(types::FloorControl {
+            model: model.map(str::to_owned),
+            max_wait_ms,
+        })
+    };
     for (declaration, want) in [
         (
-            "floor_control: stream/chorus-asr\n",
-            Some("stream/chorus-asr"),
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n",
+            chosen(Some("stream/chorus-asr"), Some(800)),
         ),
-        ("floor_control: \"\"\n", Some("")),
-        ("floor_control: other\n", Some("other")),
+        (
+            "floor_control: {model: stream/chorus-asr}\n",
+            chosen(Some("stream/chorus-asr"), None),
+        ),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n",
+            chosen(Some("stream/chorus-asr"), None),
+        ),
+        (
+            "floor_control: {max_wait_ms: 800}\n",
+            chosen(None, Some(800)),
+        ),
+        ("floor_control: {}\n", chosen(None, None)),
         ("floor_control:\n", None),
         ("floor_control: ~\n", None),
         ("llm: openai/gpt-5.6\n", None),
@@ -438,21 +451,34 @@ fn the_floor_control_is_read_as_written() {
 
         let folder = Folder::load(&root).unwrap_or_else(|error| panic!("{declaration:?}: {error}"));
 
-        assert_eq!(
-            folder.settings.floor_control.as_deref(),
-            want,
-            "{declaration:?}"
-        );
+        assert_eq!(folder.settings.floor_control, want, "{declaration:?}");
     }
 }
 
 #[test]
-fn a_floor_control_that_is_not_a_string_is_refused_by_name() {
-    for declaration in [
-        "floor_control: {model: chorus-asr, mode: act}\n",
-        "floor_control: [stream/chorus-asr]\n",
-        "floor_control: true\n",
-        "floor_control: 1\n",
+fn a_floor_control_that_cannot_be_read_is_refused_naming_why() {
+    let mapping = "floor_control is a mapping of model and, optionally, max_wait_ms";
+    for (declaration, reason) in [
+        ("floor_control: stream/chorus-asr\n", mapping),
+        ("floor_control: [stream/chorus-asr]\n", mapping),
+        ("floor_control: true\n", mapping),
+        ("floor_control: 1\n", mapping),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  mode: act\n",
+            "\"mode\" is not a floor_control setting; model and max_wait_ms are",
+        ),
+        (
+            "floor_control:\n  model: 1\n",
+            "floor_control.model must be a string",
+        ),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n",
+            "floor_control.max_wait_ms must be an integer",
+        ),
+        (
+            "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n",
+            "floor_control.max_wait_ms must be an integer",
+        ),
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);
@@ -460,10 +486,24 @@ fn a_floor_control_that_is_not_a_string_is_refused_by_name() {
         let error = Folder::load(&root).unwrap_err().to_string();
 
         assert!(
-            error.contains("floor_control must be a string"),
+            error.contains(reason),
             "{declaration:?} was refused as {error:?}"
         );
     }
+}
+
+/// end_of_turn is gone: its one knob is floor_control's max_wait_ms.
+#[test]
+fn an_end_of_turn_is_refused_by_name() {
+    let (_temporary, root) = directory("jean");
+    write(&root, "agent.yaml", "end_of_turn:\n  max_wait_ms: 900\n");
+
+    let error = Folder::load(&root).unwrap_err().to_string();
+
+    assert!(
+        error.contains("\"end_of_turn\" is not a setting agent.yaml knows"),
+        "refused as {error:?}"
+    );
 }
 
 #[test]

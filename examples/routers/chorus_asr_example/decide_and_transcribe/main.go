@@ -2,7 +2,7 @@
 // and decides when they have finished, and the agent's own model and voice answer.
 //
 // Pick this when one model should hear the caller for both the words and the turn: no other
-// transcriber, and turn-taking tuned in agent.yaml's end_of_turn.
+// transcriber, and how long a caller waits tuned in agent.yaml's floor_control.max_wait_ms.
 //
 // The router runs with ROUTER_CHORUS_ASR_URL, and the agent opts in with floor_control in its
 // agent.yaml (../README.md).
@@ -27,8 +27,8 @@ func main() {
 	defer stop()
 	_ = godotenv.Load("../../../../.env")
 
-	// floor_control: stream/chorus-asr, stt: stream/chorus-asr and
-	// end_of_turn: {max_wait_ms: 1100}, beside its llm and tts.
+	// floor_control: {model: stream/chorus-asr, max_wait_ms: 1100} and
+	// stt: stream/chorus-asr, beside its llm and tts.
 	agent, err := agents.New(agents.Options{Dir: "../agents/ferry-concierge"})
 	if err != nil {
 		log.Fatal(err)
