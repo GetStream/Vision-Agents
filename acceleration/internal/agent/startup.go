@@ -54,7 +54,7 @@ var (
 	startupFailures = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "agent_startup_failures_total",
-		Help:      "Voice sessions whose start-up stopped in a stage, by stage, kind and cause: error for a session Manager.Create gave up on, the one counted as create_failed in router_session_ends_total, timeout for an outgoing connection that never came up. Counted for a session on a Stream call the router joins, not for a text session, an audio socket or a simulation",
+		Help:      "Voice sessions whose start-up stopped in a stage, by stage, kind and cause: error for a session Manager.Create gave up on, the one counted under a create_* reason in router_session_ends_total, timeout for an outgoing connection that never came up. Counted for a session on a Stream call the router joins, not for a text session, an audio socket or a simulation",
 	}, []string{"stage", "kind", "cause"})
 )
 
