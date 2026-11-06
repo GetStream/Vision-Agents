@@ -24,7 +24,7 @@
 
 ### Vendor rate limits per key: refusals and headroom
 
-`router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #1781).
+`router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #1781). Each key's 429 count is served at 0 from when its pool is built, and from start-up for OpenAI, Anthropic, ElevenLabs, Cerebras, xAI, Together, Fireworks, Deepgram, Google Gemini, Cartesia and OpenRouter, so an alert on it reads 0 before the first 429, not no data (AI-2930).
 
 ### The router counts each vendor failover
 
