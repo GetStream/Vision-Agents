@@ -3974,6 +3974,45 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
 }
 
+// A stop over the agent is spent on its utterance, which a transcriber numbers from its first.
+// A caller who leaves and comes back is heard by a new transcriber, numbering from one again,
+// and what they say then is no utterance a stop was ruled on: taken for one, "Yes." was set
+// aside as a stop's words.
+func (s *AgentSuite) TestAStopIsNotSpentOnAnUtteranceANewTranscriberHeard() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "tell me a long story")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: "Stop.", Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2}
+	pauseAsker{s.agent}.Overheard(participant, stop)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
+
+	// The caller leaves before the utterance's final, and comes back.
+	listening := func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		_, ok := s.agent.listeners[participant.ID]
+		return ok
+	}
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+	s.eventually(func() bool { return !listening() }, "the caller who left is still listened to")
+	s.ears = newStubSTT()
+	s.edge.attending <- Attendance{Participant: participant, Joined: true}
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 }, "the caller never came back")
+	s.speak(participant)
+	s.eventually(listening, "the caller who came back is not listened to")
+
+	s.model.reply = []string{"Here it is."}
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "Yes.",
+		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what a new transcriber heard was set aside as the stop's words")
+}
+
 // Words the caller says after those a stop over the agent was ruled on, in the same breath,
 // make the utterance a turn, answered on all its words: "No, Porto." stopped on "No." is
 // answered "No, Porto.", as a stop ruled on the start of a request would otherwise cut it. The

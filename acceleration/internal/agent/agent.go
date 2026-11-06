@@ -1653,6 +1653,9 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	if err != nil {
 		return nil, fmt.Errorf("agent: start stt for %s: %w", participant.ID, err)
 	}
+	// A new transcriber numbers the participant's utterances from one again: a stop ruled
+	// in one of the last one's is spent, and is forgotten before this one can rule another.
+	a.converse.forgetStop(participant.ID)
 	// Acting on chorus-asr, which transcribes as well, the transcriber times the caller's
 	// pauses from the audio and asks about each, the decision and its words in one pass.
 	if pauses, ok := session.Serving().(audiofloor.Pauses); ok && a.audioFloor.asksOnPauses() {
@@ -1763,7 +1766,8 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 
 		case stt.Failover:
 			// What the participant said as the vendor refused is lost; what they say next
-			// is heard by the next model.
+			// is heard by the next model, which numbers their utterances afresh.
+			a.converse.forgetStop(participantID)
 			a.logger.Warn("the transcriber refused the session, the next model took it over",
 				"from", typed.From, "provider", typed.Provider, "model", typed.Model, "error", typed.Err)
 			partials = sttPartials.WithLabelValues(typed.Provider)
