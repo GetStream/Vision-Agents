@@ -156,12 +156,14 @@ func (s *BandwidthSuite) TestSearchingNothingInParticularIsRejected() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US"})
 
 	s.ErrorContains(err, "area code, a city or a state")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *BandwidthSuite) TestSearchingACityNeedsTheStateItIsIn() {
 	_, err := s.provider.SearchNumbers(s.ctx, phone.Search{Country: "US", Locality: "Springfield"})
 
 	s.ErrorContains(err, "needs the state")
+	s.ErrorIs(err, phone.ErrInvalid)
 }
 
 func (s *BandwidthSuite) TestOrderingNamesTheSiteTheNumberIsBilledTo() {
@@ -193,6 +195,7 @@ func (s *BandwidthSuite) TestOrderingWithoutASiteSaysWhatIsMissing() {
 	_, err = provider.BuyNumber(s.ctx, phone.Order{E164: "+17195551234"})
 
 	s.ErrorContains(err, "BANDWIDTH_SITE_ID")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 
@@ -258,6 +261,7 @@ func (s *BandwidthSuite) TestDiallingWithoutTheVoiceApplicationSaysWhichCredenti
 	})
 
 	s.ErrorContains(err, applicationIDEnvVar)
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 

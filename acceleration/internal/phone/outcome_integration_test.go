@@ -102,6 +102,33 @@ func (s *OutcomeSuite) build(vendor Provider, publicURL string) {
 	}))
 }
 
+// A call, a transfer or a press the caller asked for wrongly is ErrInvalid, which the router
+// answers 400 in its own words rather than 500.
+func (s *OutcomeSuite) TestACallTransferOrPressAskedWronglyIsTheCallersToChange() {
+	owner := routing.Owner{CustomerID: s.customer}
+	s.vendor.undialable = []CallFeature{FeatureRingTimeout}
+	for name, request := range map[string]CallRequest{
+		"nobody to call":                        {Owner: owner, From: s.e164},
+		"a ring timeout the vendor cannot send": {Owner: owner, From: s.e164, To: "+15125550123", RingTimeout: time.Minute},
+		"a session id no session can have":      {Owner: owner, From: s.e164, To: "+15125550123", SessionID: "not one!"},
+		"no number to call from":                {Owner: owner, To: "+15125550123"},
+	} {
+		_, err := s.service.Call(s.ctx, request)
+		s.ErrorIs(err, ErrInvalid, name)
+	}
+	s.vendor.undialable = nil
+	app := s.place().StreamApp
+	for name, request := range map[string]TransferRequest{
+		"no call to transfer into": {Owner: owner, From: s.e164, To: "+15125550123", StreamApp: app},
+		"nobody to transfer to":    {Owner: owner, From: s.e164, CallID: "call-" + uuid.NewString(), StreamApp: app},
+		"no number to dial from":   {Owner: owner, To: "+15125550123", CallID: "call-" + uuid.NewString(), StreamApp: app},
+	} {
+		_, err := s.service.Transfer(s.ctx, request)
+		s.ErrorIs(err, ErrInvalid, name)
+	}
+	s.ErrorIs(s.service.SendDigits(s.ctx, s.customer, "telnyx", "", "1"), ErrInvalid, "no call to press on")
+}
+
 // place places a call from the suite's number.
 func (s *OutcomeSuite) place() Placed {
 	placed, err := s.service.Call(s.ctx, CallRequest{

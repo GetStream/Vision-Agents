@@ -592,6 +592,7 @@ func (s *TwilioSuite) TestRingingForLongerThanTwilioAllowsIsRefusedBeforeItIsAsk
 	})
 
 	s.ErrorContains(err, "600s twilio will ring for")
+	s.ErrorIs(err, phone.ErrInvalid)
 	s.Empty(s.seen.path, "a call twilio would reject is not sent")
 }
 
