@@ -7,8 +7,11 @@ permissions:
   contents: read
   id-token: write       # REQUIRED for PyPI Trusted Publishing (OIDC)
 
+# Only a release of the Python packages, tagged vX.Y.Z, publishes them. A release made for
+# another tag, such as the Go SDK's sdks/go/vX.Y.Z or sdk-js-vX.Y.Z, runs nothing here.
 jobs:
   integration:
+    if: startsWith(github.event.release.tag_name, 'v')
     uses: ./.github/workflows/run_tests.yml
     with:
       marker: 'integration'
@@ -16,6 +19,7 @@ jobs:
 
   build-core:
     name: Build & Test Core SDK
+    if: startsWith(github.event.release.tag_name, 'v')
     runs-on: ubuntu-latest
     environment: pypi
     outputs:
