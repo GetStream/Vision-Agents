@@ -2143,3 +2143,22 @@ func (s *AgentSuite) TestAGoodbyeCutOffBeforeTheHangUpLooksKeepsTheCall() {
 	s.False(left)
 	s.Zero(s.ender.ends(), "the call ended on a caller who cut the goodbye off")
 }
+
+// The caller can talk over the goodbye before its end_call has begun to run, the call
+// cancelled before the tool's goroutine reaches it: the model is told the call is still
+// open, as it is when they talk over the goodbye while the hang-up waits, not that ending it
+// failed. Under load the test two above was told "That did not work: context canceled".
+func (s *AgentSuite) TestAnEndCallCancelledBeforeItRanTellsTheModelTheCallIsOpen() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	cut, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	parts, left, err := s.agent.callTool(cut, llm.ToolCall{ID: "call-1", Name: toolEndCall, Arguments: `{}`})
+
+	s.Require().NoError(err)
+	s.Equal(endCallCancelled, llm.TextOf(parts), "the model is told the call is still open")
+	s.False(left)
+	s.Zero(s.ender.ends(), "the call ended on a caller who talked over the goodbye")
+}

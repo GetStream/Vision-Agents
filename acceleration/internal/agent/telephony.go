@@ -812,6 +812,11 @@ func (a *Agent) followsTool(requested harness.ToolRequested) bool {
 // the call.
 func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, bool, error) {
 	if err := ctx.Err(); err != nil {
+		// An end_call cancelled before it ran is a goodbye the caller spoke over, as one
+		// cancelled while it waits on the goodbye is (endCall), and the model is told so.
+		if call.Name == toolEndCall && a.options.Ender != nil && !a.options.Text && !a.native() {
+			return llm.TextParts(endCallCancelled), false, nil
+		}
 		return nil, false, err
 	}
 	if a.native() && (call.Name == delegateSkill || call.Name == cancelSkill) {
