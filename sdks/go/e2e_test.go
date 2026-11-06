@@ -11,11 +11,24 @@
 //	go test -tags e2e -v ./...
 //
 // Anything the deployment cannot do is skipped rather than failed: a router with no
-// knowledge provider is a valid router, and so is one with no telephony.
+// knowledge provider is a valid router, and so is one with no telephony. A release check
+// sets E2E_REQUIRED=1, which fails every one of those skips instead, so a run that proved
+// nothing cannot pass:
+//
+//	E2E_REQUIRED=1 go test -tags e2e -count=1 -v -run "$SMOKE" .
+//
+// where the release smoke set is
+//
+//	SMOKE='TestTheRouterIsReachable|TestAConversationInWriting|TestAFunctionRegisteredHere|TestASessionIsRecorded|TestSyncStores|TestTheUsageCallbackSeesEveryResponse'
+//
+// The models are real, so a run costs money. The configs, skills and knowledge a test
+// stores are deleted when it ends.
 package agentscorego
 
 import (
 	"context"
+	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"sync"
@@ -28,18 +41,87 @@ import (
 	"github.com/GetStream/Vision-Agents/sdks/go/stream"
 )
 
+// requiredEnv names the variable that turns every skip into a failure.
+const requiredEnv = "E2E_REQUIRED"
+
+// skip skips the test for the reason given, or fails it when the run is a required one.
+func skip(t *testing.T, format string, args ...any) {
+	t.Helper()
+	reason := fmt.Sprintf(format, args...)
+	if os.Getenv(requiredEnv) == "1" {
+		t.Fatalf("%s=1, and this would have been skipped: %s", requiredEnv, reason)
+	}
+	t.Skip(reason)
+}
+
 // router is where the acceleration backend under test is, or the suite skips.
 func router(t *testing.T) stream.Backend {
 	t.Helper()
 	if os.Getenv(stream.URLEnv) == "" {
-		t.Skipf("%s is not set, so there is no router to test against", stream.URLEnv)
+		skip(t, "%s is not set, so there is no router to test against", stream.URLEnv)
 	}
 
 	backend, err := stream.Backend{}.Resolve()
 	if err != nil {
-		t.Skip(err)
+		skip(t, "the backend does not resolve: %v", err)
 	}
 	return backend
+}
+
+// cannotSearch reports whether err is the router saying it has no search to offer, rather
+// than any other failure of a search.
+func cannotSearch(err error) bool {
+	var refused *stream.RouterError
+	return errors.As(err, &refused) && (refused.Code == "not_configured" || refused.Code == "modality_not_routed")
+}
+
+// forget deletes the agent configs and skills a test stored, by name, and the knowledge
+// namespaces it filled, once the test is over. What is not there is not an error.
+func forget(t *testing.T, backend stream.Backend, configs, skills, namespaces []string) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx := context.WithoutCancel(t.Context())
+		api, err := backend.Client()
+		if err != nil {
+			t.Logf("could not clean up: %v", err)
+			return
+		}
+		for _, name := range configs {
+			listed, err := api.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
+			if err != nil || listed.JSON200 == nil {
+				t.Logf("could not find the config %s to delete: %v", name, err)
+				continue
+			}
+			for _, config := range *listed.JSON200 {
+				if config.Name == name {
+					if _, err := api.DeleteAgentConfigWithResponse(ctx, config.Id); err != nil {
+						t.Logf("could not delete the config %s: %v", name, err)
+					}
+				}
+			}
+		}
+		if len(skills) > 0 {
+			listed, err := api.ListSkillsWithResponse(ctx, nil)
+			if err != nil || listed.JSON200 == nil {
+				t.Logf("could not list the skills to delete: %v", err)
+			} else {
+				for _, stored := range *listed.JSON200 {
+					for _, name := range skills {
+						if stored.Name == name {
+							if _, err := api.DeleteSkillWithResponse(ctx, stored.Id); err != nil {
+								t.Logf("could not delete the skill %s: %v", name, err)
+							}
+						}
+					}
+				}
+			}
+		}
+		for _, namespace := range namespaces {
+			if _, err := api.DeleteKnowledgeWithResponse(ctx, &acceleration.DeleteKnowledgeParams{Namespace: namespace}); err != nil {
+				t.Logf("could not delete the knowledge %s: %v", namespace, err)
+			}
+		}
+	})
 }
 
 // chatting builds an agent that holds its conversation in writing, which needs no Stream
@@ -121,12 +203,15 @@ func TestTheUsageCallbackSeesEveryResponse(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !api.ServerSide() {
-		t.Skip("only a backend is told what its requests cost")
+		skip(t, "only a backend is told what its requests cost")
 	}
 
 	answer, err := stream.Router{Backend: api.Backend()}.Search(t.Context(), "What is the capital of France?", nil)
+	if cannotSearch(err) {
+		skip(t, "this router does not search: %v", err)
+	}
 	if err != nil {
-		t.Skipf("this router does not search: %v", err)
+		t.Fatal(err)
 	}
 	t.Logf("searched with %s/%s", answer.Provider, answer.Model)
 
@@ -169,15 +254,19 @@ func TestTheBalanceWarningFiresOncePerCrossing(t *testing.T) {
 	}
 	searching := stream.Router{Backend: api.Backend()}
 	for range 3 {
-		if _, err := searching.Search(t.Context(), "What is the capital of France?", nil); err != nil {
-			t.Skipf("this router does not search: %v", err)
+		_, err := searching.Search(t.Context(), "What is the capital of France?", nil)
+		if cannotSearch(err) {
+			skip(t, "this router does not search: %v", err)
+		}
+		if err != nil {
+			t.Fatal(err)
 		}
 	}
 
 	mu.Lock()
 	defer mu.Unlock()
 	if balances == 0 {
-		t.Skip("this router bills nobody, so no answer says a balance")
+		skip(t, "this router bills nobody, so no answer says a balance")
 	}
 	if len(warned) > 1 {
 		t.Fatalf("three answers in one state warn once at most: %+v", warned)
@@ -310,6 +399,7 @@ func TestAHardQuestionIsHandedToTheThinkingModel(t *testing.T) {
 			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
 		},
 	})
+	forget(t, router(t), []string{"e2e-delegating"}, nil, nil)
 	if _, err := agent.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -385,6 +475,7 @@ func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
 			}},
 		},
 	})
+	forget(t, router(t), []string{"e2e-sync"}, []string{"e2e-think"}, nil)
 
 	stored, err := agent.Sync(t.Context())
 	if err != nil {
@@ -416,6 +507,7 @@ func TestAStoredConfigIsWhatASessionStartsFrom(t *testing.T) {
 		Name:         "e2e-config",
 		Instructions: "You are Bernard. Whatever you are asked, reply with exactly: BERNARD HERE.",
 	})
+	forget(t, backend, []string{"e2e-config"}, nil, nil)
 	if _, err := configured.Sync(t.Context()); err != nil {
 		t.Fatal(err)
 	}
@@ -462,11 +554,12 @@ func TestADirectoryIsPushedAndLookedUpAgain(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	forget(t, backend, []string{"e2e-knowledge"}, nil, []string{"e2e-knowledge"})
 
 	stored, err := agent.Sync(t.Context())
 	if err != nil {
 		if strings.Contains(err.Error(), "no provider configured") {
-			t.Skip("this deployment has no knowledge provider, so there is nothing to fill")
+			skip(t, "this deployment has no knowledge provider, so there is nothing to fill")
 		}
 		t.Fatal(err)
 	}
