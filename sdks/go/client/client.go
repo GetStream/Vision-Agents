@@ -60,6 +60,12 @@ func New(backend stream.Backend, options ...Option) (*Client, error) {
 	if err != nil {
 		return nil, err
 	}
+	// A backend taken from another client's Backend is already read by that client's
+	// options. Wrapped again with none, every answer would be read twice, and a balance
+	// warning the first client hands to its callback would be logged as well.
+	if heard := heardBy(resolved.HTTPClient); heard != nil && len(options) == 0 {
+		return &Client{backend: resolved, watcher: heard}, nil
+	}
 	watching := &watcher{}
 	for _, apply := range options {
 		apply(watching)

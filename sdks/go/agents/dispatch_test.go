@@ -1,12 +1,14 @@
 package agents
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"slices"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -755,4 +757,52 @@ func (count) Description() string { return "count things" }
 func (c count) Run(context.Context) (any, error) {
 	c.ran.Store(true)
 	return 42, nil
+}
+
+func TestWhatAWorkersAnswerCostReachesTheClientItsBackendCameFrom(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set(client.CostMicrosHeader, "3")
+		w.Header().Set(client.BalanceMicrosHeader, "4000000")
+		w.Header().Set(client.BalanceWarningHeader, client.BalanceLow)
+		reply(w, http.StatusAccepted, acceleration.AgentResponse{
+			Id: "response-1", SessionId: "session-9", Status: "running", CreatedAt: time.Now(),
+		})
+	}))
+	t.Cleanup(server.Close)
+	var mu sync.Mutex
+	var seen []client.Usage
+	var warned []client.BalanceWarning
+	api, err := client.New(stream.Backend{URL: server.URL, CustomerID: "acme"},
+		client.WithUsage(func(usage client.Usage) { mu.Lock(); seen = append(seen, usage); mu.Unlock() }),
+		client.WithBalanceWarning(func(warning client.BalanceWarning) { mu.Lock(); warned = append(warned, warning); mu.Unlock() }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+	dispatch, err := NewDispatch(DispatchOptions{Backend: api.Backend(), Logger: slog.New(slog.DiscardHandler)})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = dispatch.Answer(t.Context(), InboundMessage{
+		AgentID: "support-42", SessionID: "session-9", RequestID: "request-1", Text: "Where is my order?", UserID: "sam",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 || seen[0].CostMicros != 3 || seen[0].Operation != "POST /v1/agents/sessions/session-9/responses" {
+		t.Errorf("the usage callback heard %+v", seen)
+	}
+	if len(warned) != 1 || warned[0].Warning != client.BalanceLow {
+		t.Errorf("the balance warning heard %+v", warned)
+	}
+	if strings.Contains(logged.String(), "level=WARN") {
+		t.Errorf("a warning the callback was handed was logged as well:\n%s", logged.String())
+	}
 }

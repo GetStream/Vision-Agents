@@ -193,3 +193,32 @@ func TestAUserClientKeepsTheCallbacks(t *testing.T) {
 		t.Fatalf("the user's client reads answers as its backend's does: %+v", seen)
 	}
 }
+
+func TestAClientOnAnotherClientsBackendIsHeardOnlyByTheFirst(t *testing.T) {
+	server := moneyRouter(t, money("3", "4000000", BalanceLow))
+	var seen []Usage
+	var warned []BalanceWarning
+	first, err := New(stream.Backend{URL: server.URL, CustomerID: "acme"},
+		WithUsage(func(usage Usage) { seen = append(seen, usage) }),
+		WithBalanceWarning(func(warning BalanceWarning) { warned = append(warned, warning) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
+	second, err := New(first.Backend())
+	if err != nil {
+		t.Fatal(err)
+	}
+	lookUp(t, second, 1)
+
+	if len(seen) != 1 || len(warned) != 1 {
+		t.Fatalf("the first client's callbacks hear the answer once: usage %+v, warned %+v", seen, warned)
+	}
+	if strings.Contains(logged.String(), "level=WARN") {
+		t.Errorf("a warning the callback was handed was logged as well:\n%s", logged.String())
+	}
+}
