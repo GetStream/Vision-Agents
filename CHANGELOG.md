@@ -412,7 +412,7 @@ When a session with sandbox grants was cut partway through opening, because its 
 
 ### A follower whose next changes were pruned is told to copy again
 
-A follower that read nothing after the source's recording started again kept its cursor there, and one whose every change after its cursor had aged out had none of its own kept. Either was answered the later changes, or none, with no refusal once those changes were pruned. Pruning now notes the last change of each app it drops, and a cursor below it is answered 410, so `router replicate` says to run with `--full` (AI-2918).
+A follower that read nothing after the source's recording started again kept its cursor there, and one whose every change after its cursor had aged out had none of its own kept. Either was answered the later changes, or none, with no refusal once those changes were pruned. Pruning now notes the last change of each app it drops, and a cursor below it is answered 410, so `router replicate` says to run with `--full` (AI-2918, #1806).
 
 ### A move whose recording lapsed is told to copy again
 
