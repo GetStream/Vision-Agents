@@ -1035,6 +1035,7 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 		{"a number a tool returned before the agent copied its line into a note", [][]llm.Message{posted("Caller said last four 5630"), read("Card on file ends 5630 for Ana"), posted("Card on file ends 5630 for Ana")}, "", false},
 		{"half a number either side of the agent's line, read back", [][]llm.Message{posted("Note 5630 here"), read("Ref 56Note 5630 here30")}, "", true},
 		{"letters that lowercase to another length, before the agent's line", [][]llm.Message{posted("Note 5630"), read("\u212A\u212A\u212A Note 5630")}, "", true},
+		{"letters that lowercase to a longer form, before the agent's line", [][]llm.Message{posted("Note 5630"), read("\u023A\u023A Note 5630")}, "", true},
 		{"a number the operator gave", [][]llm.Message{posted("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "Test members end in 5630.", false},
 		{"a number the agent sent alone, returned", [][]llm.Message{lookup}, "", false},
 	}
