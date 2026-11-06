@@ -280,8 +280,8 @@ func (h *floorHarness) backchannel(t *testing.T) {
 // writes it, as any transcriber would. In an agent's call the agent drops it (withoutEcho)
 // before the conversation, the model or anyone watching sees it, so what the transcriber wrote
 // of it is logged as an observation, and the contract is what they see: one turn of the
-// caller's, none of the agent's voice. Transcribing alone (mode off), the router does not know
-// the app's voice, and cancelling the echo is the edge's to do; the contract is the
+// caller's, none of the agent's voice. Transcribing alone (floor control off), the router does
+// not know the app's voice, and cancelling the echo is the edge's to do; the contract is the
 // transcriber's: the model ends the caller's turn under the transcriber's own agent, so their
 // words are one final of their own, written within a check or two of their voice rather than
 // at the silence cap, which the agent's reply came back inside of, and the agent's voice is a
@@ -501,7 +501,7 @@ func (h *floorHarness) coughAlone(t *testing.T) {
 	assert.Empty(t, all[Responding](c), "no answer")
 }
 
-// 9. With the mode off, the chorus-asr transcriber writes a turn by itself: the model ends
+// 9. With floor control off, the chorus-asr transcriber writes a turn by itself: the model ends
 // it under the transcriber's own agent, the decision and the words in one request, within a
 // check or two of the voice, and no words are asked for alone once the caller has stopped.
 func (h *floorHarness) transcriptionAlone(t *testing.T) {
@@ -741,8 +741,9 @@ type call struct {
 	logs   *logBook
 }
 
-// start joins an agent to a new call: the chorus-asr model transcribing, and asked as mode
-// says, with the conversation model and the voice stand-ins.
+// start joins an agent to a new call: the chorus-asr model transcribing, and asked as mode,
+// the agent's own floor control, says, with the conversation model and the voice stand-ins.
+// Each call's agent chooses for itself, as on a router where agents opt in one by one.
 func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions string, languages []string) *call {
 	return h.startWith(t, callSetup{mode: mode, instructions: instructions, languages: languages})
 }
@@ -750,6 +751,7 @@ func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions st
 // callSetup is what a call is started with. A nil client is the harness's, and an empty
 // endOfTurn the one every call chooses (CHORUS_ASR_END_OF_TURN).
 type callSetup struct {
+	// mode is the agent's floor control: empty or off, shadow or act.
 	mode         audiofloor.Mode
 	instructions string
 	languages    []string
