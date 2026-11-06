@@ -3494,7 +3494,7 @@ func (s *ScheduledTasksSuite) TestACallThatOutlastsTheWaitIsUserOnCall() {
 	found, live := s.router.sessions.Get(opened.Id, s.ownerOf(user))
 	s.Require().True(live)
 
-	err := waitOutCall(context.Background(), found, 0)
+	err := s.router.waitOutCall(context.Background(), found, 0)
 	s.Equal(scheduling.ReasonOnACall, scheduling.ReasonOf(err), "%v", err)
 }
 

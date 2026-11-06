@@ -38,20 +38,6 @@ const scheduledPeerPath = "/internal/scheduled-tasks/deliver"
 // a window spent is an attempt, not a lost occurrence.
 const scheduledWindow = 10 * time.Minute
 
-// scheduledPoll is how often a delivery waiting on the holding session
-// looks again: a call ending, a peer's directory entry lapsing (a Redis round
-// trip). A reply finishing, or a person's reply a follow-up waits out, is
-// looked for every replyPoll.
-const scheduledPoll = 2 * time.Second
-
-// replyPoll is how often a delivery reading back a follow-up's reply looks at it
-// again. A look reads the conversation held in memory
-// (conversation.Conversation.FollowUpReply, Session.FollowUp: a lock and a map), so it costs
-// next to nothing; at scheduledPoll a reply that finished just after a look
-// waited up to 2 s to leave, and every thread task took 2 s at least. 100 ms
-// is not a delay a person waiting for a text notices.
-const replyPoll = 100 * time.Millisecond
-
 // scheduledReplySettle is how long the agent stays quiet, with nothing left
 // running, before what it said is taken as its answer: a channel's own
 // reading of a turn (channels.settleGap), over the same words.
@@ -370,16 +356,16 @@ func undeliveredFinally(reason string, err error) error {
 func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, found *session.Session, channel string) (string, string, error) {
 	switch channel {
 	case store.ScheduledTaskDeliveredConversation:
-		if err := waitOutCall(ctx, found, scheduledWindow); err != nil {
+		if err := s.waitOutCall(ctx, found, scheduledWindow); err != nil {
 			return "", "", err
 		}
 		delivery.CommandID = replyCommand(found, delivery.CommandID)
-		if err := followUpWithin(ctx, found, delivery); err != nil {
+		if err := s.followUpWithin(ctx, found, delivery); err != nil {
 			return "", "", err
 		}
 		return store.ScheduledTaskDeliveredConversation, found.ID(), nil
 	case "sms", "whatsapp", "imessage":
-		if err := waitOutCall(ctx, found, scheduledWindow); err != nil {
+		if err := s.waitOutCall(ctx, found, scheduledWindow); err != nil {
 			return "", "", err
 		}
 		// A send the channel would refuse is refused before the turn that
@@ -409,7 +395,7 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 // interrupting it, and answers errScheduledNotHere when the session ends
 // meanwhile: a task that comes due mid-call arrives in writing afterwards,
 // never spoken over the user or landed mid-sentence in a speech session.
-func waitOutCall(ctx context.Context, found *session.Session, window time.Duration) error {
+func (s *Server) waitOutCall(ctx context.Context, found *session.Session, window time.Duration) error {
 	deadline := time.Now().Add(window)
 	for found.Voicing() {
 		if found.State() == session.Ended {
@@ -418,7 +404,7 @@ func waitOutCall(ctx context.Context, found *session.Session, window time.Durati
 		if time.Now().After(deadline) {
 			return undelivered(scheduling.ReasonOnACall, errors.New("the user is still on a call"))
 		}
-		if err := waitFor(ctx, scheduledPoll); err != nil {
+		if err := waitFor(ctx, s.scheduledPoll); err != nil {
 			return err
 		}
 	}
@@ -437,12 +423,12 @@ func waitOutCall(ctx context.Context, found *session.Session, window time.Durati
 func (s *Server) captureReply(ctx context.Context, found *session.Session, delivery scheduledDelivery) (string, []sandbox.Attachment, error) {
 	delivery.CommandID = replyCommand(found, delivery.CommandID)
 	if _, _, known := found.FollowUpReply(delivery.CommandID); known {
-		reply, err := readBackReply(ctx, found, delivery.CommandID)
+		reply, err := s.readBackReply(ctx, found, delivery.CommandID)
 		return reply.Text, reply.Files, err
 	}
 	events, detach := found.Watch()
 	defer detach()
-	if err := followUpWithin(ctx, found, delivery); err != nil {
+	if err := s.followUpWithin(ctx, found, delivery); err != nil {
 		return "", nil, err
 	}
 	var said []string
@@ -501,7 +487,7 @@ func replyCommand(found *session.Session, id string) string {
 // readBackReply is the reply a follow-up already has, with its files, once it
 // has finished: the turn ran for a channel tried before this one, or for an
 // earlier attempt at the occurrence.
-func readBackReply(ctx context.Context, found *session.Session, id string) (conversation.FinishedReply, error) {
+func (s *Server) readBackReply(ctx context.Context, found *session.Session, id string) (conversation.FinishedReply, error) {
 	deadline := time.Now().Add(scheduledReplyWindow)
 	for {
 		state, _, _ := found.FollowUpReply(id)
@@ -518,7 +504,7 @@ func readBackReply(ctx context.Context, found *session.Session, id string) (conv
 		if time.Now().After(deadline) {
 			return conversation.FinishedReply{}, undelivered(scheduling.ReasonNoReply, errors.New("the reply to this occurrence is still being written"))
 		}
-		if err := waitFor(ctx, replyPoll); err != nil {
+		if err := waitFor(ctx, s.replyPoll); err != nil {
 			return conversation.FinishedReply{}, err
 		}
 	}
@@ -755,7 +741,7 @@ func (s *Server) handDeliveryToPeer(ctx context.Context, delivery scheduledDeliv
 	}
 	deadline := time.Now().Add(30 * time.Second)
 	for time.Now().Before(deadline) {
-		if err := waitFor(ctx, scheduledPoll); err != nil {
+		if err := waitFor(ctx, s.scheduledPoll); err != nil {
 			return none, false, err
 		}
 		current, err := s.directory.Node(ctx, delivery.SessionID)
@@ -1123,7 +1109,7 @@ func (s *Server) carryOutAnswered(ctx context.Context, created *session.Session,
 	// left its turn in the conversation under the run's, which would be taken
 	// for this one and leave the agent silent on the call.
 	delivery.CommandID += "_call"
-	if err := followUpWithin(ctx, created, delivery); err != nil {
+	if err := s.followUpWithin(ctx, created, delivery); err != nil {
 		return undeliveredFinally(scheduling.ReasonFailed, err)
 	}
 	limit := time.NewTimer(scheduledCallLimit)
@@ -1144,7 +1130,7 @@ func (s *Server) carryOutAnswered(ctx context.Context, created *session.Session,
 
 // followUpWithin puts the follow-up to a session that has just been
 // (re)opened, waiting out a reply that got there first.
-func followUpWithin(ctx context.Context, found *session.Session, delivery scheduledDelivery) error {
+func (s *Server) followUpWithin(ctx context.Context, found *session.Session, delivery scheduledDelivery) error {
 	deadline := time.Now().Add(scheduledWindow)
 	for {
 		err := found.FollowUp(ctx, delivery.CommandID, delivery.Text, nil)
@@ -1154,7 +1140,7 @@ func followUpWithin(ctx context.Context, found *session.Session, delivery schedu
 		if !errors.Is(err, conversation.ErrResponseRunning) || time.Now().After(deadline) {
 			return err
 		}
-		if err := waitFor(ctx, replyPoll); err != nil {
+		if err := waitFor(ctx, s.replyPoll); err != nil {
 			return err
 		}
 	}

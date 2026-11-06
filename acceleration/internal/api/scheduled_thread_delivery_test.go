@@ -185,13 +185,26 @@ func (s *TelnyxChannelSuite) TestATaskMadeInAnSMSThreadIsTextedBackOnTheThread()
 	s.Eventually(func() bool { return !s.threadOpen(channel) }, settleFor, 10*time.Millisecond, "the session was left open")
 }
 
+// sessionLookOutlastsTheTest has the router's deliveries look at a holding session again only
+// after an hour, far past deliveryWait, so a reply that waits for that look is never sent
+// within a test's wait, however loaded the machine is. It checks both looks' defaults first.
+func (s *RouterSuite) sessionLookOutlastsTheTest() {
+	s.Require().Equal(2*time.Second, s.router.scheduledPoll, "the session look's default")
+	s.Require().Equal(100*time.Millisecond, s.router.replyPoll, "the reply look's default")
+	look := s.router.scheduledPoll
+	s.router.scheduledPoll = time.Hour
+	s.T().Cleanup(func() { s.router.scheduledPoll = look })
+}
+
 // A task's reply is texted as soon as its turn ends: the delivery looks at the reply every
 // replyPoll, not at its next look at the session (scheduledPoll), which kept every reply up to
 // 2 s and every thread task 2 s at least. The turn is let go of once it started, about when the
-// delivery first looks, so a delivery that waits for its next look answers about scheduledPoll
-// later; the bound is a third of that (667 ms), over the 319 ms worst measured under -race and load and
-// under replyPoll set to 1 s.
+// delivery first looks, and the session is looked at only hourly here, so a delivery that waits
+// for its next look never answers within deliveryWait. The one that looks every replyPoll has
+// all of deliveryWait for the turn's writes and the send, which a loaded machine stalls: a bound
+// of scheduledPoll / 3 on them failed at load ~23.
 func (s *TelnyxChannelSuite) TestATaskReplyIsTextedAsSoonAsItsTurnEnds() {
+	s.sessionLookOutlastsTheTest()
 	person := "+13125550001"
 	task, _ := s.scheduledInThread(person)
 	sent := len(s.telnyx().sent())
@@ -210,7 +223,7 @@ func (s *TelnyxChannelSuite) TestATaskReplyIsTextedAsSoonAsItsTurnEnds() {
 	select {
 	case err := <-done:
 		s.Require().NoError(err)
-	case <-time.After(scheduledPoll / 3):
+	case <-time.After(deliveryWait):
 		s.FailNow("the reply waited for the delivery's next look at the session")
 	}
 	s.Equal(telnyxMessage{from: s.line, to: person, text: "Done."}, s.took(sent + 1)[sent].withoutAuthorization())
@@ -526,9 +539,7 @@ func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFina
 	defer release()
 	removed := make(chan error, 1)
 	go func() {
-		for deadline := time.Now().Add(deliveryWait); s.scheduledTurns() == 0 && time.Now().Before(deadline); {
-			time.Sleep(10 * time.Millisecond)
-		}
+		s.Eventually(func() bool { return s.scheduledTurns() > 0 }, deliveryWait, 10*time.Millisecond, "the task's turn never started")
 		removed <- s.removeThread(channel)
 		release()
 	}()
