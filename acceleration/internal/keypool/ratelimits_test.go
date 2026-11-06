@@ -182,7 +182,7 @@ func (s *VendorRateLimitSuite) TestA429IsCountedUnderTheKeyItRefusedAndTheNextKe
 
 	s.Equal(http.StatusOK, status)
 	s.Equal(p.keys, s.keysSeen())
-	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 1, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestEveryKeyA429RefusesIsCountedAndTheLastIsHandedBackWhole() {
@@ -211,7 +211,7 @@ func (s *VendorRateLimitSuite) TestAnthropicsSpendCapIsNotARateLimit() {
 	s.Equal(http.StatusTooManyRequests, status)
 	s.Equal(anthropicSpendCapBody, body)
 	s.Equal(p.keys, s.keysSeen())
-	s.Empty(s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAnotherRefusalOrFailureIsNotARateLimit() {
@@ -222,7 +222,7 @@ func (s *VendorRateLimitSuite) TestAnotherRefusalOrFailureIsNotARateLimit() {
 
 		s.post(p.Pool)
 
-		s.Empty(s.limited(p.keyVars[0]), "status %d", status)
+		s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]), "status %d", status)
 	}
 }
 
@@ -258,7 +258,7 @@ func (s *VendorRateLimitSuite) TestKeysPassedInAreCountedUnderTheVariableTheyWer
 
 	s.post(pool)
 
-	s.Equal(map[string]float64{"1": 1}, s.limited(keyVar))
+	s.Equal(map[string]float64{"0": 0, "1": 1}, s.limited(keyVar))
 	s.Equal(0.0, keypooltest.Refused(s.T(), keyVar, "429"), "the refusal counter names it unknown as on the base")
 }
 
@@ -274,6 +274,72 @@ func (s *VendorRateLimitSuite) TestAPoolOfNewIsNotCounted() {
 
 	s.Empty(s.limited(keyVar))
 	s.Empty(s.remaining(keyVar))
+}
+
+// An alert on 429s reads an absent series as no data: each key's series is there at 0 from
+// when the pool is built, before any request.
+func (s *VendorRateLimitSuite) TestAPoolServesEachKeysRateLimitSeriesAtZeroBeforeAnyRequest() {
+	p := s.pool("built")
+
+	s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]))
+	s.Empty(s.keysSeen())
+
+	s.answer(p.keys[1], answer{status: http.StatusTooManyRequests})
+	p.Next()
+	s.post(p.Pool)
+
+	s.Equal(map[string]float64{"0": 0, "1": 1}, s.limited(p.keyVars[0]))
+}
+
+// The router serves a vendor's series from start-up, before a request builds its pool. They
+// are the series a 429 on the pool counts into: a 429 on each key adds 1 to each and makes
+// no other.
+func (s *VendorRateLimitSuite) TestServedSeriesAreTheOnesAPoolBuiltLaterCountsInto() {
+	id := rand.Text()
+	keyVar := fmt.Sprintf("VR_SERVED_%s_API_KEY", id)
+	keys := []string{"vr-served-" + id + "-1", "vr-served-" + id + "-2", "vr-served-" + id + "-3"}
+	s.T().Setenv(keyVar, keys[0]+", ,"+keys[0]+","+keys[1])
+	s.T().Setenv(keyVar+"_1", keys[2])
+
+	ServeRateLimited(keyVar)
+
+	s.Equal(map[string]float64{"0": 0, "1": 0, "2": 0}, s.limited(keyVar))
+
+	for _, key := range keys {
+		s.answer(key, answer{status: http.StatusTooManyRequests})
+	}
+	s.post(FromEnv(Getenv(keyVar)))
+
+	s.Equal(keys, s.keysSeen())
+	s.Equal(map[string]float64{"0": 1, "1": 1, "2": 1}, s.limited(keyVar))
+}
+
+func (s *VendorRateLimitSuite) TestAnUnsetVariableIsServedNoSeries() {
+	keyVar := fmt.Sprintf("VR_UNSET_%s_API_KEY", rand.Text())
+	s.T().Setenv(keyVar, "")
+
+	ServeRateLimited(keyVar)
+
+	s.Empty(s.limited(keyVar))
+}
+
+// Serving a variable's series names no pool: keys another variable also holds keep the name
+// of the variable a provider first read them from.
+func (s *VendorRateLimitSuite) TestServingAVariableDoesNotNameItsPool() {
+	id := rand.Text()
+	served := fmt.Sprintf("VR_SERVEDFIRST_%s_API_KEY", id)
+	read := fmt.Sprintf("VR_READ_%s_API_KEY", id)
+	key := "vr-shared-" + id
+	s.T().Setenv(served, key)
+	s.T().Setenv(read, key)
+
+	ServeRateLimited(served)
+	pool := FromEnv("", read)
+	s.answer(key, answer{status: http.StatusTooManyRequests})
+	s.post(pool)
+
+	s.Equal(map[string]float64{"0": 1}, s.limited(read))
+	s.Equal(map[string]float64{"0": 0}, s.limited(served))
 }
 
 func (s *VendorRateLimitSuite) TestOpenAIsHeadroomIsKeptPerKey() {
@@ -387,7 +453,7 @@ func (s *VendorRateLimitSuite) TestARefusedHandshakeIsCountedAndTheNextKeyDialle
 	s.Require().NoError(s.dial(p.Pool))
 
 	s.Equal(p.keys, s.keysSeen())
-	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 1, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAHandshakeThatGetsNoAnswerFailsAsItDid() {
@@ -403,7 +469,7 @@ func (s *VendorRateLimitSuite) TestAHandshakeThatGetsNoAnswerFailsAsItDid() {
 	s.Error(err)
 	s.Nil(response)
 	s.Equal(p.keys[0], key)
-	s.Empty(s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeKeepsItsHeadroom() {
@@ -412,7 +478,7 @@ func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeKeepsItsHeadroom() {
 
 	s.Require().NoError(s.dial(p.Pool))
 
-	s.Empty(s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 0}, s.limited(p.keyVars[0]))
 	s.Equal(map[string]float64{"0/concurrent-requests": 4}, s.remaining(p.keyVars[0]))
 }
 
@@ -426,7 +492,7 @@ func (s *VendorRateLimitSuite) TestAHandshakeOnTheSecondKeyIsCountedUnderTheSeco
 	s.Require().NoError(s.dial(p.Pool))
 
 	s.Equal([]string{p.keys[1], p.keys[0]}, s.keysSeen())
-	s.Equal(map[string]float64{"1": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 0, "1": 1}, s.limited(p.keyVars[0]))
 }
 
 func (s *VendorRateLimitSuite) TestAnAcceptedHandshakeOnTheSecondKeyKeepsItsHeadroomUnderTheSecondKey() {
@@ -502,7 +568,7 @@ func (s *VendorRateLimitSuite) TestKeysReadFromTwoVariablesKeepTheFirst() {
 
 	s.post(p.Pool)
 
-	s.Equal(map[string]float64{"0": 1}, s.limited(p.keyVars[0]))
+	s.Equal(map[string]float64{"0": 1, "1": 0}, s.limited(p.keyVars[0]))
 	s.Empty(s.limited(second))
 }
 

@@ -129,7 +129,8 @@ var outOfFundsStatus = strconv.Itoa(http.StatusPaymentRequired)
 // FromEnv is the shared pool for explicit when it names any key, or else for the keys Env
 // finds under envVars. The first of envVars names the pool's key variable in its refusal
 // counter; the vendor metrics name it by the variable Env read its keys from, and keep none for
-// keys never read from one.
+// keys never read from one. A pool with such a variable has its rate-limit refusal series
+// served at 0 from when it is built.
 func FromEnv(explicit string, envVars ...string) *Pool {
 	keys := Parse(explicit)
 	if len(keys) == 0 {
@@ -149,6 +150,7 @@ func FromEnv(explicit string, envVars ...string) *Pool {
 	}
 	if source, ok := readFrom[id]; ok {
 		pool.from(source)
+		zeroRateLimited(source, len(keys))
 	}
 	return pool
 }
