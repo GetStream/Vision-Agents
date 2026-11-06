@@ -206,8 +206,9 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 // abandon is release for a Prepare that failed, which may have failed because ctx ran out: on
 // ctx itself every delete would fail too, and the live token of a secret made before would stay
 // at Daytona until the session closed. It runs on ctx's values without its cancellation, bounded
-// by releaseTimeout, which is the bound the sandbox puts on its broker's calls (daytona.go,
-// Sandbox.check) as the gate is held. The caller holds mu.
+// by releaseTimeout, which is defaultTimeout: the most the sandbox's own bound on its broker's
+// calls (daytona.go, Sandbox.check, at most defaultTimeout) allows, as the gate is held. The
+// caller holds mu.
 func (s *Secrets) abandon(ctx context.Context) error {
 	ctx, end := context.WithTimeout(context.WithoutCancel(ctx), s.releaseTimeout)
 	defer end()
