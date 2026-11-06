@@ -2607,7 +2607,7 @@ func (s *AgentSuite) TestAPhotoSentAloneIsRememberedAsItsNote() {
 	s.eventually(func() bool { return len(s.remembers.remembered()) == 1 }, "nothing was remembered")
 	exchange := s.remembers.remembered()[0]
 	s.Require().Len(exchange, 2, "what was asked and what was answered")
-	s.Equal(llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]"}, exchange[0])
+	s.Equal(llm.Message{Role: llm.User, Content: "[sent with a photo, not shown again]", Typed: true}, exchange[0])
 }
 
 func (s *AgentSuite) TestARequestForHelpIsHandedOverRatherThanSpoken() {
@@ -2733,6 +2733,30 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 },
 		"the answer coming back never started a turn")
 	s.Equal([]routing.Caller{user, user}, s.model.sentBy())
+}
+
+// A turn the app typed or handed in ("greet the user") is kept as the caller's, and marked as
+// not said on the call: a model of the call's speech is told only what was. A spoken one is not.
+func (s *AgentSuite) TestATypedTurnIsKeptAsNotSaid() {
+	s.join(true)
+	s.model.reply = []string{"Hello, how can I help you today?", "It will be sunny."}
+	_, err := s.agent.RespondTo(s.ctx, "greet the user in one short sentence", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the greeting was never written")
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon tomorrow")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the caller was never answered")
+
+	var users []llm.Message
+	for _, message := range s.agent.History() {
+		if message.Role == llm.User {
+			users = append(users, message)
+		}
+	}
+	s.Require().Len(users, 2)
+	s.True(users[0].Typed, "the app's instruction is no caller's speech")
+	s.False(users[1].Typed, "what the caller said")
 }
 
 func (s *AgentSuite) TestATurnAScheduledTaskFiredIsAskedOfTheModelAsScheduled() {
@@ -2863,7 +2887,8 @@ func (s *AgentSuite) TestATurnsPhotosAreKeptAsANoteOnceTheyHaveBeenSeen() {
 			s.Require().NoError(err)
 			s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the next turn was never asked")
 
-			kept := llm.Message{Role: llm.User, Content: c.kept}
+			// Typed in, the turn is kept as not said on the call.
+			kept := llm.Message{Role: llm.User, Content: c.kept, Typed: true}
 			s.Equal(kept, harness.WithoutNotes(s.agent.History())[0])
 			s.Zero(photoNotes(s.model.requests()[0].Input), "the turn's reply is sent its images without the note")
 			next := harness.WithoutNotes(s.model.requests()[1].Input)
@@ -2968,7 +2993,8 @@ func (s *AgentSuite) TestAPhotoTheVisionSkillLooksAtIsKeptAsANote() {
 			s.Require().NoError(err)
 			s.eventually(func() bool { return len(s.model.requests()) >= 1 }, "the turn was never asked")
 
-			kept := llm.Message{Role: llm.User, Content: c.kept}
+			// Typed in, the turn is kept as not said on the call.
+			kept := llm.Message{Role: llm.User, Content: c.kept, Typed: true}
 			s.Equal(kept, harness.WithoutNotes(s.agent.History())[0])
 			s.Contains(harness.WithoutNotes(s.model.requests()[0].Input), kept)
 		})
@@ -3142,7 +3168,7 @@ func (s *AgentSuite) TestAWrittenAsidesPhotoIsNotShownAgain() {
 
 	input := harness.WithoutNotes(s.model.requests()[1].Input)
 	s.False(llm.HasImage(input), "a photo is seen with the question it came with alone")
-	s.Contains(input, llm.Message{Role: llm.User, Content: "is this fan broken?\n\n[sent with a photo, not shown again]"})
+	s.Contains(input, llm.Message{Role: llm.User, Content: "is this fan broken?\n\n[sent with a photo, not shown again]", Typed: true})
 	s.False(llm.HasImage(s.agent.History()))
 }
 
@@ -3173,7 +3199,8 @@ func (s *AgentSuite) TestAWrittenAsideIsKeptWithANoteOfItsPhotos() {
 			_, err = s.agent.Ask(s.ctx, "and now?")
 			s.Require().NoError(err)
 
-			kept := llm.Message{Role: llm.User, Content: c.kept}
+			// Written on the side, the question is kept as not said on the call.
+			kept := llm.Message{Role: llm.User, Content: c.kept, Typed: true}
 			s.Equal([]llm.Message{kept, {Role: llm.Assistant, Content: "Hello there. How are you?"}},
 				harness.WithoutNotes(s.agent.History())[:2])
 			next := harness.WithoutNotes(s.model.requests()[1].Input)

@@ -178,21 +178,38 @@ func outcome(err error) string {
 	return "error"
 }
 
-// turnOf says a flow controller's turn in the model's terms. With the floor free the audio
-// says whether the words are finished, and the agent is saying nothing.
+// turnOf says a flow controller's turn in the model's terms, as its rows were written (floor's
+// testdata): the conversation is what was said on the call, the caller's words and the agent's,
+// not a turn typed or handed in by the app nor a tool's result; and over the agent, what it
+// "has so far said" is the reply as far as the caller has heard it, which is no line of the
+// conversation before it. With the floor free the audio says whether the words are finished,
+// and the agent is saying nothing.
 func turnOf(turn harness.FlowTurn) Turn {
 	out := Turn{Speaker: caller, Speaking: turn.Speaking}
 	if turn.AnotherVoice {
 		out.Speaker = anotherVoice
 	}
+	history := turn.History
 	if turn.Speaking {
 		out.Said, out.Unfinished = turn.Reply, turn.Unfinished
+		if turn.Measured {
+			out.Said = turn.Heard
+		}
+		if n := len(history); n > 0 && history[n-1].Role == llm.Assistant && sameText(history[n-1].Content, turn.Reply) {
+			history = history[:n-1]
+		}
 	}
-	for _, message := range turn.History {
-		if message.Role == llm.System || strings.TrimSpace(message.Content) == "" {
+	for _, message := range history {
+		said := message.Role == llm.Assistant || message.Role == llm.User && !message.Typed
+		if !said || strings.TrimSpace(message.Content) == "" {
 			continue
 		}
 		out.Conversation = append(out.Conversation, Line{Agent: message.Role == llm.Assistant, Text: message.Content})
 	}
 	return out
+}
+
+// sameText reports whether two texts are the same words, spaced alike or not.
+func sameText(a, b string) bool {
+	return strings.Join(strings.Fields(a), " ") == strings.Join(strings.Fields(b), " ")
 }

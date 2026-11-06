@@ -79,6 +79,10 @@ type Message struct {
 	// several people may write in. No provider reads it: the agent counts each author as it
 	// counts a speaker, and names them in Speaker once two have written.
 	Author string
+	// Typed says a User turn's words were typed, or handed to the agent by its app ("greet
+	// the user"), rather than said on the call. No provider reads it: a model of the call's
+	// speech is told only what was said.
+	Typed bool
 }
 
 // Tool is something the model may do instead of, or alongside, saying something.

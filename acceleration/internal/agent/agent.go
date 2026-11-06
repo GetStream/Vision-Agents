@@ -594,6 +594,10 @@ type Agent struct {
 	// history: a request for help was written to the harness, not said, so remembering
 	// it would have the model reading its own instructions back on the next turn.
 	spoken strings.Builder
+	// voicedChars and voicedMs are the characters and the audio of the syntheses the voice
+	// finished whole on the call: its speaking rate, by which how long the caller has heard
+	// an utterance says how much of it they have heard (replyHeardLocked).
+	voicedChars, voicedMs float64
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
 	replying string
@@ -1145,7 +1149,7 @@ func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (
 		a.mu.Unlock()
 		return "", stack.Wrap(ErrCannotSeeImages)
 	}
-	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images))})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images)), Typed: true})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
@@ -1962,6 +1966,7 @@ func (a *Agent) ask(ready candidate) {
 	if reply == "" {
 		reply = lastAssistantSaid(history)
 	}
+	heard, measured := a.replyHeardLocked(reply, time.Now())
 	anotherVoice := a.anotherVoiceLocked(ready)
 	participant := ready.Participant.Name
 	if participant == "" {
@@ -1982,6 +1987,8 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
+		Heard:        heard,
+		Measured:     measured,
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
@@ -2294,7 +2301,7 @@ func WithAuthor(ctx context.Context, userID string) context.Context {
 // userTurnLocked is a participant's words as a turn of the conversation. It names who
 // said them once somebody else in the call has had a turn answered too.
 func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Message {
-	turn := llm.Message{Role: llm.User, Content: harness.Defang(text)}
+	turn := llm.Message{Role: llm.User, Content: harness.Defang(text), Typed: participant.ID == typedCaller}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
 		turn.Speaker = a.speakerLocked(participant).label
@@ -3347,6 +3354,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 
 		case tts.SynthesisComplete:
 			done := a.takeUtterance(typed.SynthesisID)
+			if !typed.Interrupted && typed.Characters > 0 && typed.AudioDurationMs > 0 {
+				// Cut short, a synthesis was billed all of its text and made only part of its
+				// audio, so only whole ones say how fast the voice speaks.
+				a.mu.Lock()
+				a.voicedChars += float64(typed.Characters)
+				a.voicedMs += typed.AudioDurationMs
+				a.mu.Unlock()
+			}
 			if heardID == typed.SynthesisID {
 				heard, heardID = nil, ""
 			}

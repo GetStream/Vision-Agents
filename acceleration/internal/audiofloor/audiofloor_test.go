@@ -598,6 +598,35 @@ func (s *HearerSuite) TestATurnIsSaidInTheModelsTerms() {
 	s.Equal(Turn{Speaker: anotherVoice, Conversation: []Line{{Text: "hi"}, {Agent: true, Text: "hello"}}}, s.server.turns[0])
 }
 
+// Over the agent the model is told what it was trained on (the rows of floor's testdata):
+// the conversation before the reply being spoken, which is not a line of it but what the agent
+// "has so far said", and that as far as the caller has heard it. The conversation is what was
+// said on the call: a turn typed or handed in by the app ("greet the user"), and a tool's
+// result, are no caller's words.
+func (s *HearerSuite) TestOverTheAgentTheModelIsToldWhatWasSaidAndHeard() {
+	s.server.decision = `{"answer":"continue","answer_probability":0.8,"options":[],"decide_ms":1,"ruling":{"disposition":"ignore","floor":"continue"}}`
+	reply := "Tomorrow in Lisbon it will be sunny and warm, with a high of twenty four degrees."
+	history := []llm.Message{
+		{Role: llm.User, Content: "greet the user in one short sentence", Typed: true},
+		{Role: llm.Assistant, Content: "Hello, how can I help you today?"},
+		{Role: llm.User, Content: "What's the weather like in Lisbon tomorrow?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_weather"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"forecast":"sunny","high":24}`},
+		{Role: llm.Assistant, Content: reply + " "},
+	}
+	_, err := s.hearer.Hear(context.Background(), harness.FlowTurn{Audio: some, Speaking: true, Unfinished: true, History: history,
+		Reply: reply, Heard: "Tomorrow in Lisbon it will be", Measured: true})
+	s.Require().NoError(err)
+	s.Equal(Turn{Speaker: caller, Speaking: true, Unfinished: true, Said: "Tomorrow in Lisbon it will be", Conversation: []Line{
+		{Agent: true, Text: "Hello, how can I help you today?"},
+		{Text: "What's the weather like in Lisbon tomorrow?"},
+	}}, s.server.turns[0])
+
+	_, err = s.hearer.Hear(context.Background(), harness.FlowTurn{Audio: some, Speaking: true, Unfinished: true, History: history, Reply: reply})
+	s.Require().NoError(err)
+	s.Equal(reply, s.server.turns[1].Said, "what the caller heard unknown, the reply stands for it")
+}
+
 // TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet, asking
 // about no pauses: the words alone, which is how a session ends up once the server has said
 // it can't rule on them, and what any pause falls to when a check of it fails.
