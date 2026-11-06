@@ -9,10 +9,12 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 )
@@ -83,6 +85,11 @@ func (s *OutputSuite) TestAnOutputFarOverTheBoundComesBackCutWithItsExitCode() {
 	s.Less(after.TotalAlloc-before.TotalAlloc, uint64(32<<20), "the router held the answer whole")
 }
 
+func (s *OutputSuite) TestTheBoundIsTheToolResultCapAndTheMarkerSaysIt() {
+	s.Equal(core.MaxResultBytes, sandbox.MaxOutputBytes, "a run's output is cut where every other tool result is")
+	s.Contains(sandbox.OutputCut, fmt.Sprintf("more than %d KiB", sandbox.MaxOutputBytes>>10))
+}
+
 func (s *OutputSuite) TestAnOutputUnderTheBoundComesBackAsPrinted() {
 	// JSON escapes each of these; the expectation is the output as printed, as the base reads it.
 	unit := "<b>a & b</b> \"q\" \\ \t\x00 é 😀  \n"
@@ -114,6 +121,20 @@ func (s *OutputSuite) TestAnOutputOneByteOverTheBoundIsCut() {
 
 	s.Require().NoError(err)
 	s.Equal(strings.Repeat("a", sandbox.MaxOutputBytes-len(sandbox.OutputCut))+sandbox.OutputCut, result.Output)
+}
+
+func (s *OutputSuite) TestAnOutputOverTheBoundWithEscapedQuotesIsCut() {
+	// A reader taking \" for the end of the output would pass the rest of it uncut.
+	line := `say "hi" \ ` + "\n"
+	s.daytona.Answers(printed(line, 2*sandbox.MaxOutputBytes/len(line), 0))
+
+	result, err := s.box.Run(s.ctx, "print(it)", nil)
+
+	s.Require().NoError(err)
+	s.LessOrEqual(len(result.Output), sandbox.MaxOutputBytes)
+	s.True(strings.HasSuffix(result.Output, sandbox.OutputCut), "a cut output ends with the marker")
+	kept := strings.TrimSuffix(result.Output, sandbox.OutputCut)
+	s.True(strings.HasPrefix(strings.Repeat(line, sandbox.MaxOutputBytes/len(line)+1), kept), "what is kept is the output's start")
 }
 
 func (s *OutputSuite) TestAnOutputWhoseEscapesOutgrowWhatIsHeldIsCut() {
@@ -149,17 +170,30 @@ func (s *OutputSuite) TestACutNeverSplitsAnEscapedSurrogatePair() {
 }
 
 func (s *OutputSuite) TestAnAnswerFarOverItsBoundBesidesTheOutputFailsTheRun() {
+	// The answer never ends: it is written until the router hangs up.
+	ended := make(chan struct{})
 	s.daytona.Answers(func(w io.Writer) {
+		defer close(ended)
 		_, _ = io.WriteString(w, `{"result":"ok\n","exitCode":0,"padding":"`)
-		for range 3 * maxAnswerBytes / (64 << 10) {
-			_, _ = w.Write([]byte(strings.Repeat("x", 64<<10)))
+		block := []byte(strings.Repeat("x", 64<<10))
+		for {
+			if _, err := w.Write(block); err != nil {
+				return
+			}
 		}
-		_, _ = io.WriteString(w, `"}`)
 	})
 
 	_, err := s.box.Run(s.ctx, "print(it)", nil)
 
 	s.ErrorContains(err, "too large to read")
+	s.Eventually(func() bool {
+		select {
+		case <-ended:
+			return true
+		default:
+			return false
+		}
+	}, 10*time.Second, 10*time.Millisecond, "the router left the answer it stopped reading open")
 }
 
 func (s *OutputSuite) TestOnlyTheTopLevelResultIsTheOutput() {
@@ -213,16 +247,17 @@ func (s *OutputSuite) TestAKeyThatOnlyStartsWithResultIsNotTheOutput() {
 	s.Equal(body, read)
 }
 
-func (s *OutputSuite) TestAnEscapedBackslashEndsItsString() {
-	// A reader taking \" for the end of "\\" would never see the output's key.
-	body := `{"note":"\\","result":"` + strings.Repeat("a", 2*sandbox.MaxOutputBytes) + `"}`
+func (s *OutputSuite) TestAnEscapedQuoteOrBackslashDoesNotEndItsString() {
+	// One escaped quote, then an escaped backslash: a reader taking \" for the end of the string,
+	// or the quote after \\ for part of it, would read the output's key as a value.
+	body := `{"note":"say \"hi \\","result":"` + strings.Repeat("a", 2*sandbox.MaxOutputBytes) + `"}`
 
 	read, err := cutAnswer(body)
 
 	s.Require().NoError(err)
 	var answer struct{ Note, Result string }
 	s.Require().NoError(json.Unmarshal([]byte(read), &answer))
-	s.Equal(`\`, answer.Note)
+	s.Equal(`say "hi \`, answer.Note)
 	s.Equal(strings.Repeat("a", sandbox.MaxOutputBytes-len(sandbox.OutputCut))+sandbox.OutputCut, answer.Result)
 }
 

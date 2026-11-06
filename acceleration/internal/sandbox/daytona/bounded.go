@@ -202,7 +202,7 @@ func (c *cutOutput) settle(over bool) error {
 	}
 	// An escape is at most six bytes, \uXXXX, so the held output decodes once at most five of its
 	// last bytes are dropped.
-	for end := len(c.held); err != nil && end > len(c.held)-6; end-- {
+	for end := len(c.held); err != nil && end > len(c.held)-5; end-- {
 		quoted = append(append(quoted[:1], c.held[:end-1]...), '"')
 		err = json.Unmarshal(quoted, &text)
 	}
