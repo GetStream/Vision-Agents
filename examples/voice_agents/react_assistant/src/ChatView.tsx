@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type FormEvent } from "react";
-import type { LocalMessage, StateStore } from "stream-chat";
+import type { LocalMessage } from "stream-chat";
 import {
   AIClientIdentity,
   AIConversation,
@@ -11,7 +11,6 @@ import {
   useAIMessageComposerContext,
   useAttachments,
   type AIChatOption,
-  type AIMessageComposerStore,
   type AIToolApprover,
   AIUIHost,
   aiUIActionJSON,
@@ -72,7 +71,7 @@ export function ChatView({ screen }: { screen: ChatScreen }) {
   const [barHeight, setBarHeight] = useState(0);
   const bar = useRef<HTMLDivElement>(null);
   const [thinkHarder, setThinkHarder] = useState(false);
-  const composer = useRef<StateStore<AIMessageComposerStore> | null>(null);
+  const composer = useRef<ComposerDraft | null>(null);
   const { ui, unsent } = useGeneratedUI(screen);
 
   useEffect(() => {
@@ -215,8 +214,11 @@ function PickedPhotos() {
   );
 }
 
+/** The composer's draft, as stream-chat-react hands it out: its store, typed by the hook that gives it. */
+type ComposerDraft = ReturnType<typeof useAIMessageComposerContext>;
+
 /** Hands the composer's draft out, so sending reads its text and photos. */
-function ComposerStore({ into }: { into: { current: StateStore<AIMessageComposerStore> | null } }) {
+function ComposerStore({ into }: { into: { current: ComposerDraft | null } }) {
   into.current = useAIMessageComposerContext();
   return null;
 }

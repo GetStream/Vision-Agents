@@ -23,5 +23,5 @@ export default defineConfig({
       },
     },
   },
-  build: { rollupOptions: { input: { main: "index.html", connected: "connected.html" } } },
+  build: { rolldownOptions: { input: { main: "index.html", connected: "connected.html" } } },
 });
