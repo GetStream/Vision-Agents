@@ -71,16 +71,16 @@ func (r recordedConversation) Rounds(ctx context.Context, cid string, turns []st
 	return rounds
 }
 
-func (r recordedConversation) Opening(ctx context.Context, cid string) string {
+func (r recordedConversation) Opening(ctx context.Context, cid string) (string, time.Time) {
 	opening, err := r.store.Opening(ctx, r.customerID, cid)
 	if err != nil {
 		r.logger.Warn("resuming a conversation without its first message", "conversation", cid, "error", err)
-		return ""
+		return "", time.Time{}
 	}
 	if opening.Refused {
-		return agent.WithheldInput
+		return agent.WithheldInput, opening.At
 	}
-	return opening.Said
+	return opening.Said, opening.At
 }
 
 // withheldResults is a refused response's items with the tool results the prompt injection

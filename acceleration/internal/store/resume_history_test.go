@@ -82,6 +82,7 @@ func (s *StoreSuite) TestTheOpeningIsTheFirstThingSaidAcrossTheConversationsSess
 
 	s.Require().NoError(err)
 	s.Equal("the task", opening.Said)
+	s.True(s.base.Equal(opening.At), "when it was said, which a link's boundary is held against: %v", opening.At)
 }
 
 func (s *StoreSuite) TestAConfigKeepsItsResumeHistory() {

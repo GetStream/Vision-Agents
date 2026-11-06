@@ -13,11 +13,12 @@ import (
 )
 
 // recorded is a conversation's records as a test sets them: rounds by turn id and the
-// first thing said.
+// first thing said and when.
 type recorded struct {
-	rounds  map[string][]llm.Message
-	opening string
-	asked   []string
+	rounds   map[string][]llm.Message
+	opening  string
+	openedAt time.Time
+	asked    []string
 }
 
 func (r *recorded) Rounds(_ context.Context, _ string, turns []string) map[string][]llm.Message {
@@ -25,7 +26,9 @@ func (r *recorded) Rounds(_ context.Context, _ string, turns []string) map[strin
 	return r.rounds
 }
 
-func (r *recorded) Opening(context.Context, string) string { return r.opening }
+func (r *recorded) Opening(context.Context, string) (string, time.Time) {
+	return r.opening, r.openedAt
+}
 
 func round(callID, tool, arguments, result string) []llm.Message {
 	return []llm.Message{
@@ -153,13 +156,27 @@ func TestARecordedOpeningIsNotPinnedPastALinksBoundary(t *testing.T) {
 	newer := turn("user", "what do you know about me?", "")
 	newer.StartedAt = boundary.Add(24 * time.Hour)
 	p := Page{Truncated: true, Messages: []Message{newer, old}}
-	ctx := WithRestore(t.Context(), Restore{Since: boundary, Recorded: &recorded{opening: "allergic to penicillin"}})
+	ctx := WithRestore(t.Context(), Restore{Since: boundary, Recorded: &recorded{opening: "allergic to penicillin", openedAt: old.StartedAt}})
 
 	h, _ := restored(ctx, "messaging:thread", p)
 
 	require.Equal(t, []llm.Message{{Role: llm.User, Content: "what do you know about me?"}}, h)
 	h, _ = restored(WithRestore(t.Context(), Restore{Recorded: &recorded{opening: "the task"}}), "messaging:thread", p)
 	require.Equal(t, llm.Message{Role: llm.User, Content: "the task"}, h[0], "with no boundary the opening is pinned, as before")
+}
+
+// Catches a boundary that unpins every opening: each link has one (its time), so a long thread
+// of a linked number that started after it would lose its task, which the opening pins.
+func TestARecordedOpeningSaidAfterALinksBoundaryIsPinned(t *testing.T) {
+	boundary := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	newer := turn("user", "what do you know about me?", "")
+	newer.StartedAt = boundary.Add(48 * time.Hour)
+	p := Page{Truncated: true, Messages: []Message{newer}}
+	ctx := WithRestore(t.Context(), Restore{Since: boundary, Recorded: &recorded{opening: "book me in for Friday", openedAt: boundary.Add(24 * time.Hour)}})
+
+	h, _ := restored(ctx, "messaging:thread", p)
+
+	require.Equal(t, []llm.Message{{Role: llm.User, Content: "book me in for Friday"}, {Role: llm.User, Content: "what do you know about me?"}}, h)
 }
 
 func TestCapsAloneChangeOnlyHowMuchTextIsHandedBack(t *testing.T) {
