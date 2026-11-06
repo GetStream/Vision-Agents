@@ -905,7 +905,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	}
 
 	run := created.track(built)
-	if spec.Greeting != "" && run != nil {
+	if spec.greets() && run != nil {
 		run.holdGreeting(created.sayGreeting(ctx, built, spec))
 	}
 	// The fan-out starts before joining so nothing said between joining and the first
@@ -923,7 +923,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 
 	// If the call does not report its participants, or if the session is text only, the
 	// agent says the greeting immediately after it joins.
-	if spec.Greeting != "" && run == nil {
+	if spec.greets() && run == nil {
 		if err := built.Greet(ctx, spec.Greeting, spec.VaryGreeting); err != nil {
 			fail()
 			return nil, stack.Wrap(fmt.Errorf("session: greet: %w", err))

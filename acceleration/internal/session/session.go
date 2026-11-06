@@ -1419,7 +1419,7 @@ func (s *Session) swap(ctx context.Context, voice bool, call Call) error {
 		transcript = s.transcribe(ctx, next)
 	}
 	run := s.track(fresh)
-	shouldGreet := voice && next.Greeting != "" && len(old.History()) == 0
+	shouldGreet := voice && next.greets() && len(old.History()) == 0
 	if shouldGreet && run != nil {
 		run.holdGreeting(s.sayGreeting(ctx, fresh, next))
 	}

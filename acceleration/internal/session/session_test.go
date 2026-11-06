@@ -1417,6 +1417,21 @@ func (s *SessionSuite) TestSomebodyAlreadyInTheCallIsGreetedOnJoining() {
 	s.Equal("Hi, I'm listening.", s.voice.spoken()[0].Text)
 }
 
+func (s *SessionSuite) TestANavigatingAgentDoesNotGreetWhateverAnswers() {
+	s.manages()
+
+	s.rings(Spec{Greeting: "Hi, I'm listening.", Navigating: true}, caller)
+
+	never(s.T(), func() bool {
+		for _, said := range s.voice.spoken() {
+			if said.Text == "Hi, I'm listening." {
+				return true
+			}
+		}
+		return false
+	}, 4*testTimeout, 5*time.Millisecond, "a voicemail or phone menu was greeted")
+}
+
 func (s *SessionSuite) TestTheGreetingIsSaidOnceWhoeverJoinsAfter() {
 	s.manages()
 	created := s.joins(Spec{Greeting: "Hi, I'm listening."})

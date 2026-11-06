@@ -798,6 +798,12 @@ func (s Spec) LLMOverwrites() options.LLM {
 	}
 }
 
+// greets says whether the agent says Greeting on joining. A call placed with Navigating on
+// may be answered by a voicemail or a phone menu, which is not greeted.
+func (s Spec) greets() bool {
+	return s.Greeting != "" && !s.Navigating
+}
+
 // prompt is what the agent is told to be. An agent that placed the call is told how to get
 // through whatever answers, ahead of whatever it was told to do once it has. The agent adds
 // the clock line to every turn itself.
