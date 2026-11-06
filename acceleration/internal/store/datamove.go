@@ -215,6 +215,11 @@ func DataTables() []string {
 // it holds that row (record_data_change), so a start waits for it, and gives up with
 // ErrWritesOpen past within. Pushing out a capture still on is no start, so following the
 // changes waits for nobody.
+//
+// A start of a capture that expired also takes a change number of its own, above every one handed
+// out before, into recorded_since: what was written while it was off was never recorded and has
+// no number, so Changes refuses a cursor below it. The row outlives its capture for that
+// (PruneDataChanges).
 func (s *Store) StartDataCapture(ctx context.Context, customerID string, retention, within time.Duration) error {
 	if customerID == "" {
 		return errors.New("store: a customer id is required")
@@ -234,7 +239,9 @@ WHERE NOT EXISTS (SELECT 1 FROM data_change_capture WHERE customer_id = ? AND ex
 		_, err := tx.ExecContext(ctx, `
 INSERT INTO data_change_capture (customer_id, expires_at)
 VALUES (?, now() + make_interval(secs => ?))
-ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at`,
+ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at,
+  recorded_since = CASE WHEN data_change_capture.expires_at > now() THEN data_change_capture.recorded_since
+    ELSE nextval('data_changes_seq_seq') END`,
 			customerID, retention.Seconds())
 		return err
 	})
@@ -337,9 +344,16 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 	}
 	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
 
+	// Never below where the recording last started again: Changes refuses a cursor from before
+	// it. A transaction holding a number at or below it had written its row before that start,
+	// so the WaitForOpenWrites before this export saw it end and these rows hold its write.
+	since, err := recordedSince(ctx, tx, customerID)
+	if err != nil {
+		return 0, err
+	}
 	var cursor int64
 	if err := tx.QueryRowContext(ctx,
-		"SELECT COALESCE(MAX(seq), 0) FROM data_changes WHERE seq <= ?", mark).Scan(&cursor); err != nil {
+		"SELECT GREATEST(COALESCE(MAX(seq), 0), ?) FROM data_changes WHERE seq <= ?", since, mark).Scan(&cursor); err != nil {
 		return 0, fmt.Errorf("store: export cursor: %w", err)
 	}
 
@@ -530,6 +544,18 @@ WHERE locktype = 'advisory' AND objsubid = 2
 		return held.Int64, nil
 	}
 	return handedOut, nil
+}
+
+// recordedSince is the number a customer's changes have been recorded from without a gap: 0
+// unless their capture expired and was started again (StartDataCapture).
+func recordedSince(ctx context.Context, tx bun.Tx, customerID string) (int64, error) {
+	var since int64
+	err := tx.QueryRowContext(ctx,
+		"SELECT recorded_since FROM data_change_capture WHERE customer_id = ?", customerID).Scan(&since)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return 0, fmt.Errorf("store: recorded since: %w", err)
+	}
+	return since, nil
 }
 
 func (s *Store) exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
@@ -1336,9 +1362,10 @@ func (t dataTable) isKey(s shape, column string) bool {
 // Changes returns what has happened to a customer's rows since a cursor, oldest first,
 // and the cursor to ask from next time.
 //
-// A cursor older than what is still kept is ErrChangesExpired rather than a shorter
-// answer: the caller would otherwise carry on from a gap it could not see, and a missing
-// change is a row that is wrong on the other side forever.
+// A cursor older than what is still kept, or than where the recording last started again after
+// it expired, is ErrChangesExpired rather than a shorter answer: the caller would otherwise
+// carry on from a gap it could not see, and a missing change is a row that is wrong on the
+// other side forever.
 func (s *Store) Changes(ctx context.Context, customerID string, after int64, limit int) ([]DataChange, int64, error) {
 	if customerID == "" {
 		return nil, 0, errors.New("store: a customer id is required")
@@ -1355,11 +1382,12 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 
 	// Sequence numbers are shared by every customer and pruning drops the oldest of all of
 	// them, so a gap before this customer's first change is the other customers' changes,
-	// not a pruned one: only a cursor older than the oldest change kept has lost any. With
-	// none of theirs kept, a quiet customer and one whose every change aged out look the
-	// same, and the follower that is only waiting is not refused. Pruning drops only numbers
-	// at or below the mark it read, so the gap right after a cursor at or above this mark is
-	// a change still in flight rather than a pruned one. The mark can go down: the trigger
+	// not a pruned one: only a cursor older than the oldest change kept has lost any. A cursor
+	// at recorded_since is a start, as 0 is, and the gap after it is not checked. With none of
+	// theirs kept, a quiet customer and one whose every change aged out look the same, and the
+	// follower that is only waiting is not refused. Pruning drops only numbers at or below the
+	// mark it read, so the gap right after a cursor at or above this mark is a change still in
+	// flight rather than a pruned one. The mark can go down: the trigger
 	// reads the sequence and takes its lock in two statements, and a mark read between them
 	// is above that lock. A prune in that window can drop an aged-out change before this
 	// check sees it, so the follower is refused (ErrChangesExpired) on a later read, not
@@ -1375,6 +1403,13 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	}
 	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
 
+	since, err := recordedSince(ctx, tx, customerID)
+	if err != nil {
+		return nil, 0, err
+	}
+	if after < since {
+		return nil, 0, ErrChangesExpired
+	}
 	var kept sql.NullInt64
 	var theirs bool
 	if err := tx.QueryRowContext(ctx,
@@ -1382,7 +1417,7 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		customerID).Scan(&kept, &theirs); err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
-	if after > 0 && after < mark && theirs && kept.Int64 > after+1 {
+	if after > since && after < mark && theirs && kept.Int64 > after+1 {
 		return nil, 0, ErrChangesExpired
 	}
 
@@ -1516,8 +1551,9 @@ func (s *Store) deleteRow(ctx context.Context, db bun.IDB, customerID string, ch
 	return nil
 }
 
-// PruneDataChanges drops the changes and the capture rows nobody can still use. It
-// returns how many changes it removed.
+// PruneDataChanges drops the changes nobody can still use. It returns how many it removed.
+// A capture's row is kept after it expires: it is what tells a start after it from a first one
+// (StartDataCapture), one small row per customer that ever moved.
 //
 // It drops only the oldest numbers, the ones below the first change still young and at
 // or below the watermark, so what is kept is everything from one number on and a cursor
@@ -1540,9 +1576,6 @@ WHERE at < now() - make_interval(secs => ?)
 		retention.Seconds(), mark, retention.Seconds())
 	if err != nil {
 		return 0, fmt.Errorf("store: prune data changes: %w", err)
-	}
-	if _, err := s.db.ExecContext(ctx, "DELETE FROM data_change_capture WHERE expires_at < now()"); err != nil {
-		return 0, fmt.Errorf("store: prune data capture: %w", err)
 	}
 	return result.RowsAffected()
 }
