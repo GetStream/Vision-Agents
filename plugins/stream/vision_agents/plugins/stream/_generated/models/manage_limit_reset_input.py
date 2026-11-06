@@ -103,7 +103,7 @@ class ManageLimitResetInput:
 
         reason = d.pop("reason")
 
-        subject = LimitSubject(d.pop("subject"))
+        subject = LimitSubject._decode(d.pop("subject"))
 
         api_key = d.pop("api_key", UNSET)
 
@@ -122,7 +122,9 @@ class ManageLimitResetInput:
                 intervals_type_0 = []
                 _intervals_type_0 = data
                 for intervals_type_0_item_data in _intervals_type_0:
-                    intervals_type_0_item = LimitInterval(intervals_type_0_item_data)
+                    intervals_type_0_item = LimitInterval._decode(
+                        intervals_type_0_item_data
+                    )
 
                     intervals_type_0.append(intervals_type_0_item)
 

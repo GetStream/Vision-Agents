@@ -149,7 +149,7 @@ class SimulationRun:
 
         started_at = datetime.datetime.fromisoformat(d.pop("started_at"))
 
-        state = SimulationRunState(d.pop("state"))
+        state = SimulationRunState._decode(d.pop("state"))
 
         assertion = d.pop("assertion", UNSET)
 
@@ -180,7 +180,7 @@ class SimulationRun:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = SimulationRunMode(_mode)
+            mode = SimulationRunMode._decode(_mode)
 
         scenario = d.pop("scenario", UNSET)
 

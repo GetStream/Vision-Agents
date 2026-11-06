@@ -585,14 +585,15 @@ fn connector(item: &Yaml) -> std::result::Result<ConnectorSettings, String> {
 }
 
 /// A string enum as the spec spells it, or `None` for an empty value.
-fn named<T: serde::de::DeserializeOwned>(
-    value: &str,
-    key: &str,
-) -> std::result::Result<Option<T>, String> {
+///
+/// Read with `FromStr`, which refuses a value the spec does not list: decoding would keep one
+/// as `Unlisted`, which is for an answer from a newer router, not for a typo in a file.
+fn named<T: std::str::FromStr>(value: &str, key: &str) -> std::result::Result<Option<T>, String> {
     if value.is_empty() {
         return Ok(None);
     }
-    serde_json::from_value(json!(value))
+    value
+        .parse()
         .map(Some)
         .map_err(|_| format!("{value:?} is not a {key}"))
 }

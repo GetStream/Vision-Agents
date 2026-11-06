@@ -391,6 +391,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### Rust: the string enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm
+
+Each of the Rust SDK's 133 string enums has a new `Unlisted(String)` variant that holds a value the SDK does not list, so none of them is `Copy` any more. Clone one where you copied it, and add an `Unlisted(_)` arm to a `match` on one that has no wildcard. The Python client has no such break (AI-2951).
+
 ### `episode_cards` is `off`, `record` or `on`
 
 An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #1791).
@@ -448,6 +452,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A session whose every reply was lost no longer counts as closed when the flow controller answered
 
 A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
+### The Python and Rust clients read an enum value they do not list
+
+A session that a newer router ended for a reason this client was not built with, such as `closed`, made `sessions.get` and `query` raise in Python (`ValueError`) and fail in Rust (`Error::Decode`). This was true of every enum in an answer. The value now reads as it was sent and is written back the same way: in Python as a member of the enum that carries it (`str(session.end_reason) == "closed"`), in Rust as the new `Unlisted(String)` variant. A listed value reads as before, and a value a caller builds or parses is still checked. In Rust these enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm (AI-2951).
 
 ### A call that began before its number's link stays before it
 

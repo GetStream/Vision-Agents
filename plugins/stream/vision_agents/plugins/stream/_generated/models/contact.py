@@ -150,7 +150,7 @@ class Contact:
 
         id = d.pop("id")
 
-        stage = ContactStage(d.pop("stage"))
+        stage = ContactStage._decode(d.pop("stage"))
 
         to_number = d.pop("to_number")
 

@@ -348,9 +348,9 @@ class Session:
 
         id = d.pop("id")
 
-        modality = SessionModality(d.pop("modality"))
+        modality = SessionModality._decode(d.pop("modality"))
 
-        state = SessionState(d.pop("state"))
+        state = SessionState._decode(d.pop("state"))
 
         user_id = d.pop("user_id")
 
@@ -390,21 +390,21 @@ class Session:
         if isinstance(_end_fault, Unset):
             end_fault = UNSET
         else:
-            end_fault = SessionEndFault(_end_fault)
+            end_fault = SessionEndFault._decode(_end_fault)
 
         _end_reason = d.pop("end_reason", UNSET)
         end_reason: SessionEndReason | Unset
         if isinstance(_end_reason, Unset):
             end_reason = UNSET
         else:
-            end_reason = SessionEndReason(_end_reason)
+            end_reason = SessionEndReason._decode(_end_reason)
 
         _end_stage = d.pop("end_stage", UNSET)
         end_stage: SessionEndStage | Unset
         if isinstance(_end_stage, Unset):
             end_stage = UNSET
         else:
-            end_stage = SessionEndStage(_end_stage)
+            end_stage = SessionEndStage._decode(_end_stage)
 
         forked_from = d.pop("forked_from", UNSET)
 
@@ -426,7 +426,7 @@ class Session:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = SessionMode(_mode)
+            mode = SessionMode._decode(_mode)
 
         _model_overwrites = d.pop("model_overwrites", UNSET)
         model_overwrites: ModelOverwrites | Unset

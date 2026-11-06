@@ -444,14 +444,21 @@ func (c *converse) Glimpsed(transcript stt.Transcript) {
 //
 // A stop ruled so is no turn, its disposition wait: the words it was ruled on, which are
 // utterance's so far, are spent on it, and only what the caller says after them is answered
-// (Settled).
-func (c *converse) Overheard(ruling harness.Decided, participant stt.Participant, words string, utterance int64, state floor) []Action {
+// (Settled). Only a stop that stopped a reply spends them: the checks that go on while the
+// caller talks after it find no reply speaking and act on nothing (overlapRuled), so the
+// words they were ruled on, the correction the stop began, are the caller's turn. And only
+// one ruled on words said to stop it: heard says the caller had heard some of what the agent
+// was saying when they began them. A caller who began before any of it went out was going
+// on with their own turn, which the agent talked over ("the name for the booking is
+// Alvarez", said as the reply to the request before it began), and what they said is
+// answered as any turn is.
+func (c *converse) Overheard(ruling harness.Decided, participant stt.Participant, words string, utterance int64, heard bool, state floor) []Action {
 	// The ruling was asked for by the transcriber, not through the flow controller: it is
 	// named here as a provisional ask would be, for the log and for Valid.
 	ruling.CandidateID = cmp.Or(ruling.CandidateID, overlapPrefix+turnStamp())
 	ruling.Ruler = cmp.Or(ruling.Ruler, harness.Heard)
 	actions := c.overlapRuled(ruling, overlapState{turnID: state.Speaking, participant: participant, text: words}, state)
-	if utterance != 0 && slices.ContainsFunc(actions, func(action Action) bool { return action.Kind == ActInterrupt }) {
+	if heard && utterance != 0 && slices.ContainsFunc(actions, func(action Action) bool { return action.Kind == ActInterrupt }) {
 		c.mu.Lock()
 		c.stops[participant.ID] = stoppedOn{utterance: utterance, words: words}
 		c.mu.Unlock()
@@ -988,14 +995,16 @@ func floorOutcome(actions []Action) string {
 // go through Settled and Ruled with a quiet floor and yield the ordinary answer. It is checked
 // against the reply it was asked about, because revisions arrive faster than a controller
 // round trip and the reply may have ended by itself. A ruling about words that have since
-// changed never gets this far: Observe forgets the ask when it supersedes it.
+// changed never gets this far: Observe forgets the ask when it supersedes it. With no reply
+// speaking there is nothing to stop or shorten, whatever is still going out of the voice:
+// the reply was stopped already, or has ended.
 func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state floor) []Action {
 	if ruling.Err != nil || !ruling.Valid() {
 		c.logger.Debug("dropping a provisional ruling that could not be read",
 			"candidate", ruling.CandidateID, "error", ruling.Error())
 		return nil
 	}
-	if state.Quiet || state.Speaking != seen.turnID {
+	if state.Quiet || state.Speaking == "" || state.Speaking != seen.turnID {
 		c.logger.Debug("not acting on a provisional ruling, the moment has passed",
 			"candidate", ruling.CandidateID, "quiet", state.Quiet,
 			"speaking", state.Speaking, "asked", seen.turnID)

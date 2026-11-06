@@ -41,7 +41,7 @@ class DuplicateCampaignRequest:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        contacts = DuplicateCampaignRequestContacts(d.pop("contacts"))
+        contacts = DuplicateCampaignRequestContacts._decode(d.pop("contacts"))
 
         duplicate_campaign_request = cls(
             contacts=contacts,

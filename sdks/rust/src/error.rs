@@ -167,8 +167,9 @@ impl Error {
 /// The message, type, code and doc_url of the router's error envelope, or `None` for a body
 /// that is not one.
 ///
-/// The spec's `ErrorType` refuses a type it does not list, so an envelope carrying a newer one
-/// is read field by field rather than taken for some other body.
+/// An envelope that leaves out a field the spec requires is read field by field rather than
+/// taken for some other body. One of a type the spec does not list reads as the generated
+/// `ErrorResponse`, its type `Unlisted`.
 fn envelope(body: &[u8]) -> Option<(String, String, String, String)> {
     if let Ok(types::ErrorResponse { error }) = serde_json::from_slice(body) {
         return Some((

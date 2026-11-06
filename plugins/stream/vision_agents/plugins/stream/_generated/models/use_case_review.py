@@ -108,15 +108,15 @@ class UseCaseReview:
         from ..models.use_case_review_vendor_payload import UseCaseReviewVendorPayload
 
         d = dict(src_dict)
-        actor = ReviewActor(d.pop("actor"))
+        actor = ReviewActor._decode(d.pop("actor"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
-        from_status = UseCaseStatus(d.pop("from_status"))
+        from_status = UseCaseStatus._decode(d.pop("from_status"))
 
         id = d.pop("id")
 
-        to_status = UseCaseStatus(d.pop("to_status"))
+        to_status = UseCaseStatus._decode(d.pop("to_status"))
 
         actor_name = d.pop("actor_name", UNSET)
 

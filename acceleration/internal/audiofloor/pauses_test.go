@@ -175,6 +175,8 @@ func (s *PausesSuite) TestACallerTalkingOverTheAgentIsAskedAboutWithoutAPause() 
 	s.Equal(harness.Stop, ruled.Ruling.Floor)
 	s.Equal("No, no, stop.", ruled.Words)
 	s.InDelta(float64(300+1100), ruled.AudioMs, 40, "the utterance so far")
+	s.InDelta(ruled.AudioMs-float64(preroll.Milliseconds()), float64(time.Since(ruled.Began).Milliseconds()), 100,
+		"the caller began at the utterance's first voiced frame, as long before the check as the utterance so far less its preroll")
 	shown := next[stt.Transcript](&s.transcribing)
 	s.True(shown.Interim)
 	s.Equal("No, no, stop.", shown.Text)

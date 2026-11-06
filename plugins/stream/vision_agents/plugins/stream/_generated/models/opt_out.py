@@ -62,7 +62,7 @@ class OptOut:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        channel = OptOutChannel(d.pop("channel"))
+        channel = OptOutChannel._decode(d.pop("channel"))
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 

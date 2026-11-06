@@ -80,7 +80,7 @@ class AgentChannels:
         if isinstance(_identity, Unset):
             identity = UNSET
         else:
-            identity = ChannelIdentity(_identity)
+            identity = ChannelIdentity._decode(_identity)
 
         _imessage = d.pop("imessage", UNSET)
         imessage: ChannelLineRequest | Unset

@@ -127,11 +127,11 @@ class Account:
         d = dict(src_dict)
         balance_micros = d.pop("balance_micros")
 
-        balance_state = AccountBalanceState(d.pop("balance_state"))
+        balance_state = AccountBalanceState._decode(d.pop("balance_state"))
 
         balance_warning_micros = d.pop("balance_warning_micros")
 
-        balance_warning_source = AccountBalanceWarningSource(
+        balance_warning_source = AccountBalanceWarningSource._decode(
             d.pop("balance_warning_source")
         )
 
@@ -143,7 +143,7 @@ class Account:
 
         spent_micros = d.pop("spent_micros")
 
-        status = AccountStatus(d.pop("status"))
+        status = AccountStatus._decode(d.pop("status"))
 
         tier = d.pop("tier")
 

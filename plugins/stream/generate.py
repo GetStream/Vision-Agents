@@ -32,6 +32,9 @@ SPEC = PLUGIN.parents[1] / "acceleration" / "api" / "openapi.yaml"
 PACKAGE = PLUGIN / "vision_agents" / "plugins" / "stream"
 GENERATED = PACKAGE / "_generated"
 STAFF_TAG = "Staff"
+# Templates that replace the generator's own: an enum read from an answer keeps a value this
+# client does not list yet, rather than raising, so a router that adds one breaks no reader.
+TEMPLATES = PLUGIN / "templates"
 
 CONFIG = """
 project_name_override: _generated
@@ -81,6 +84,8 @@ def main() -> int:
             str(http_spec),
             "--config",
             str(config),
+            "--custom-template-path",
+            str(TEMPLATES),
             "--output-path",
             str(work / "out"),
             "--overwrite",

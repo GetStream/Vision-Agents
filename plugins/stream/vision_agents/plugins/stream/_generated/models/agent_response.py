@@ -83,7 +83,7 @@ class AgentResponse:
 
         session_id = d.pop("session_id")
 
-        status = AgentResponseStatus(d.pop("status"))
+        status = AgentResponseStatus._decode(d.pop("status"))
 
         error = d.pop("error", UNSET)
 

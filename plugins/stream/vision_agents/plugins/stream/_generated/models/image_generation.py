@@ -108,7 +108,7 @@ class ImageGeneration:
 
             images.append(images_item)
 
-        status = ImageGenerationStatus(d.pop("status"))
+        status = ImageGenerationStatus._decode(d.pop("status"))
 
         error = d.pop("error", UNSET)
 
@@ -117,7 +117,7 @@ class ImageGeneration:
         if isinstance(_error_code, Unset):
             error_code = UNSET
         else:
-            error_code = ImageErrorCode(_error_code)
+            error_code = ImageErrorCode._decode(_error_code)
 
         model = d.pop("model", UNSET)
 
