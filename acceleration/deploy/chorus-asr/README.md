@@ -41,8 +41,8 @@ check fails and the failure is the model's, reported as such, not worked around 
   answered afterwards. [1, S7, C1]
 - **Stopped, then quiet.** "Stop", "wait", "hold on": the agent stops within 800 ms of the
   caller's first word, none of what it was saying is heard after, and it says nothing more.
-  A stop ruled while the caller is still talking is not a turn (its disposition is `wait`):
-  the words it was ruled on are spent on it. [C2]
+  A stop ruled over the agent, while the caller is still talking (its disposition is `wait`)
+  or at their pause, is not a turn: the words it was ruled on are spent on it. [C2]
 - **Stopped, all of it.** A stop silences everything the agent is saying or about to say. The
   agent takes a turn of its own, to say what a tool came back with, while the reply that called
   the tool is still playing: a stop over either stops both, the reply where the caller is in it
@@ -104,10 +104,13 @@ begun before any of it went out spends nothing, and is answered as the model rul
 continuation begun once some of the answer was heard, with a stop ruled on all of it, is spent.
 An utterance begins where the speech gate opens, so a bare stop in a room loud enough to hold
 the gate open from before the reply went out is taken as begun then, and answered. A stop first
-ruled at a pause, on words the caller has finished ("has just said"), means `respond`: the
-model's options there have no stop that leaves nothing to answer, so such a stop is answered.
-That is a "stop" short enough to end at a pause before the first check over the agent (under
-350 ms voiced), or one whose first words that check rightly let pass ("okay, stop").
+ruled at a pause over the agent, on words the caller has finished ("has just said"), is acted
+on as one ruled while they talk, and spent on its words alike: a "stop" short enough to end at
+a pause before the first check over the agent (under 350 ms voiced), or one whose first words
+that check rightly let pass ("okay, stop"). Words the model rules `continue` at a pause over
+the agent, as it ruled "I hope that's all right." (0.51, where with the floor free it rules
+`respond` 1.00), end at the cap as `ignore` if the agent talks on through it, and are not
+answered.
 
 ## Configure
 
@@ -253,11 +256,20 @@ last frame, and a pause costs one request:
   go out as the utterance's one final, which the conversation takes at once: the policy has
   had its wait, and the words never change after it. The flow controller's Hearer rules on
   those words as the check did, with no request of its own, and the reply is asked for at
-  once. Over the agent a pause check has no bar: the model's ruling ends the turn, `stop`,
-  `shorten`, `continue` or `ignore`, and words heard over a reply reach the flow controller
-  as settled words; that ruling stands if the agent has gone quiet before the turn is put. A
-  turn a check ended is over whatever comes next: speech before its words are written, the
-  caller going on or somebody else in the room, is the next utterance's.
+  once. Over the agent a pause check says what to do about the floor and not whether the
+  caller has finished: the model's answer there has no p_eot. It ends the turn only at the
+  policy's `cap_ms`, where the turn has ended whatever the model says, on its ruling, `stop`,
+  `shorten`, `continue` or `ignore`; a `stop` or `shorten` before that is acted on at once,
+  with the pause's words, as over the agent without a pause (below), and the utterance goes
+  on. Once the agent is quiet the checks have the floor free, and the point's bars end the
+  turn, its checks in a row counted from the pause's first with the floor free. Ended at the
+  first check over the agent, a 200 ms pause at the comma of "Last four 9821, 14 Cedar Lane"
+  ended the utterance on its first half. A turn a check ended is over whatever comes next:
+  speech before its words are written, the caller going on or somebody else in the room, is
+  the next utterance's. Its words are the first check of its last pause's; where those come
+  back empty and a check over the agent wrote some of the utterance, they are that check's,
+  as far as it heard, and an utterance with no words at all is logged as such and sends
+  nothing.
 - **Over the agent, without a pause.** While the agent speaks, a caller who has been voiced
   for 350 ms in the utterance is asked about without waiting for a pause, the decision and
   the words of the utterance so far (up to 16 s) in one request, then every `interval_ms`

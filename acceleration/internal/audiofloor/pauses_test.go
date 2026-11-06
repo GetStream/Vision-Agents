@@ -3,6 +3,7 @@ package audiofloor
 import (
 	"fmt"
 	"log/slog"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -257,12 +258,19 @@ func (s *PausesSuite) TestAnUtteranceThatStoppedTheAgentEndsByThePolicy() {
 func (s *PausesSuite) TestACheckOverTheAgentAnsweredAfterItsUtteranceEndedIsNotActedOn() {
 	s.agent.speaks(true)
 	s.server.mu.Lock()
-	s.server.decision = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"wait","floor":"stop"}}`
+	s.server.unfinishedDecision = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"wait","floor":"stop"}}`
 	s.server.words = "Don't stop."
 	// Late, and inside the 250 ms a check over the agent has.
 	s.server.unfinishedAfter = 200 * time.Millisecond
 	s.server.mu.Unlock()
 	s.say(400, true)
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return s.transcriber.over.inFlight
+	}, 5*time.Second, time.Millisecond, "the caller was never asked about over the agent")
+	// The agent is quiet by the pause, which ends the utterance by its bars.
+	s.agent.speaks(false)
 	s.say(220, false)
 	end := next[stt.Transcript](&s.transcribing)
 	s.Equal(stt.ModeFinal, end.Mode)
@@ -439,21 +447,159 @@ func (s *PausesSuite) TestTheNextUtteranceBeginsAfterTheOneACheckEnded() {
 	s.InDelta(float64(100+40+600+200), again.AudioDurationMs, 60, "from where the last ended")
 }
 
-// Over the agent the model's ruling is the turn's end, at the first check.
-func (s *PausesSuite) TestOverTheAgentTheFirstCheckRules() {
-	s.agent.mu.Lock()
-	s.agent.speaking = true
-	s.agent.mu.Unlock()
+// The answers of the server's frames over the agent: at a pause it says what to do about the
+// floor, with no p_eot.
+const (
+	stopping   = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"respond","floor":"stop"}}`
+	continuing = `{"answer":"continue","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"ignore","floor":"continue"}}`
+)
+
+// final is the next final, past the words shown meanwhile.
+func (s *PausesSuite) final() stt.Transcript {
+	s.T().Helper()
+	for {
+		if said := next[stt.Transcript](&s.transcribing); said.Mode == stt.ModeFinal {
+			return said
+		}
+	}
+}
+
+// pausing has the caller quiet for ms, a check at a time: frames come faster than the server
+// answers, and a check is asked only once the one before has.
+func (s *PausesSuite) pausing(ms int) {
+	for ; ms > 0; ms -= 100 {
+		s.say(100, false)
+		s.answered()
+	}
+}
+
+// Over the agent the model's answer at a pause says what to do about the floor, and not whether
+// the caller has finished: it has no p_eot. A pause the agent talks through ends at the
+// policy's cap, on the ruling of the check that reached it, and no earlier.
+func (s *PausesSuite) TestOverTheAgentAPauseEndsAtTheCap() {
 	s.server.mu.Lock()
-	s.server.decision = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"respond","floor":"stop"}}`
+	s.server.speakingDecision = continuing
+	s.server.words = "Uh-huh."
 	s.server.mu.Unlock()
-	s.say(1000, true)
-	s.say(220, false)
-	s.Equal(stt.ModeFinal, next[stt.Transcript](&s.transcribing).Mode)
+	s.agent.speaks(true)
+	s.say(280, true)
+	s.pausing(2300)
+	s.none()
+	s.Empty(s.agent.rulings(), "a check over the agent ended the turn before the cap")
+	s.pausing(500)
+	s.Equal("Uh-huh.", s.final().Text)
 	ruled := s.agent.rulings()[0]
 	s.True(ruled.Speaking)
-	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Stop}, ruled.Ruling)
+	s.Equal(harness.Decided{Disposition: harness.Ignore, Floor: harness.Continue}, ruled.Ruling)
+	s.GreaterOrEqual(ruled.Paused, 2500*time.Millisecond, "the cap ended the turn")
 	s.True(s.server.turns[0].Speaking)
+}
+
+// Over the agent a check at a pause ends nothing before the cap. On a call the caller
+// dictated "Last four 9821, 14 Cedar Lane" while a reply was in flight, and the check 200 ms
+// into the pause at the comma ended the utterance on its first half, its words written as
+// nothing: they were never heard. The utterance goes on through the pause, and ends by the bars
+// once the agent is quiet, all its words in one final.
+func (s *PausesSuite) TestAPauseOverTheAgentDoesNotEndTheUtterance() {
+	nothing := ""
+	s.server.mu.Lock()
+	s.server.speakingDecision, s.server.speakingWords = continuing, &nothing
+	s.server.unfinishedDecision = continuing
+	s.server.words = "Last four 9821, 14 Cedar Lane."
+	s.server.mu.Unlock()
+	s.agent.speaks(true)
+	s.say(800, true)
+	s.pausing(200)
+	s.say(800, true)
+	s.agent.speaks(false)
+	s.pausing(200)
+	end := s.final()
+	s.Equal(int64(1), end.Utterance, "one utterance, through the pause at the comma")
+	s.Equal("Last four 9821, 14 Cedar Lane.", end.Text)
+	s.Len(s.agent.rulings(), 1)
+}
+
+// A stop ruled at a pause over the agent is acted on at once, with the pause's words, as one
+// ruled while the caller talks on is (Overheard): a "stop" too short for a check over the agent
+// without a pause, voiced for less than overAfter, is ruled on at its pause alone. The turn
+// ends by the bars once the agent is quiet.
+func (s *PausesSuite) TestAStopAtAPauseOverTheAgentIsActedOnAtOnce() {
+	s.server.mu.Lock()
+	s.server.speakingDecision = stopping
+	s.server.words = "Stop."
+	s.server.mu.Unlock()
+	s.agent.speaks(true)
+	s.say(280, true)
+	s.pausing(200)
+	s.Eventually(func() bool { return len(s.agent.overheardSoFar()) == 1 }, 5*time.Second, time.Millisecond, "the stop was not acted on")
+	ruled := s.agent.overheardSoFar()[0]
+	s.Equal(harness.Stop, ruled.Ruling.Floor)
+	s.Equal("Stop.", ruled.Words)
+	s.True(ruled.Overheard)
+	s.Equal(int64(1), ruled.Utterance)
+	s.False(ruled.Began.IsZero(), "when the caller began the stop")
+	s.Empty(s.agent.rulings(), "a stop is no end of the turn")
+	s.none()
+
+	s.agent.speaks(false)
+	s.pausing(300)
+	end := s.final()
+	s.Equal("Stop.", end.Text)
+	s.Equal(int64(1), end.Utterance)
+	s.False(s.agent.rulings()[0].Speaking, "the turn was ended by a check with the floor free")
+}
+
+// The checks in a row a point asks for are counted from a pause's first check with the floor
+// free: one asked over the agent has no p_eot to count. Counted as the pause's first, it left
+// the run of an earlier pause going into this one, and a point of two checks in a row ended
+// the turn on one.
+func (s *PausesSuite) TestChecksInARowAreCountedFromThePausesFirstWithTheFloorFree() {
+	s.agent.hearer = NewHearer(s.client, EndOfTurn{MaxWaitMs: 1400}, slog.New(slog.DiscardHandler))
+	s.server.mu.Lock()
+	s.server.speakingDecision = continuing
+	s.server.mu.Unlock()
+	s.say(800, true)
+	s.pausing(200)
+	s.say(400, true)
+	s.none()
+	s.agent.speaks(true)
+	s.pausing(200)
+	s.agent.speaks(false)
+	s.pausing(300)
+	s.none()
+	s.Empty(s.agent.rulings(), "the turn ended on one check with the floor free")
+	s.pausing(300)
+	s.Equal(stt.ModeFinal, s.final().Mode)
+	s.Equal(800*time.Millisecond, s.agent.rulings()[0].Paused, "the second check in a row with the floor free ended it")
+}
+
+// An utterance is never let go of in silence: the words of the pause that ended it may come
+// back empty where a check over the agent wrote some of it, as the server wrote nothing of
+// "Last four: ninety-eight twenty-one." at its end on a call, and the final is those words.
+func (s *PausesSuite) TestAFinalWithNoWordsKeepsWhatACheckOverTheAgentWrote() {
+	over := "Last four: ninety-eight twenty-one."
+	s.server.mu.Lock()
+	s.server.unfinishedDecision, s.server.unfinishedWords = continuing, &over
+	s.server.words = ""
+	s.server.mu.Unlock()
+	s.agent.speaks(true)
+	s.say(800, true)
+	s.Eventually(func() bool {
+		s.server.mu.Lock()
+		defer s.server.mu.Unlock()
+		return slices.ContainsFunc(s.server.turns, func(turn Turn) bool { return turn.Unfinished })
+	}, 5*time.Second, time.Millisecond, "the caller was never asked about over the agent")
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return !s.transcriber.over.inFlight
+	}, 5*time.Second, time.Millisecond, "the check over the agent never answered")
+	s.agent.speaks(false)
+	s.pausing(200)
+	end := s.final()
+	s.Equal(over, end.Text)
+	s.Equal(int64(1), end.Utterance)
+	s.Len(s.agent.rulings(), 1)
 }
 
 // A noise the model hears no words in ends nothing it sends: no final, no ruling.
