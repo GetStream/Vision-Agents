@@ -44,8 +44,9 @@ No `replace` directive, ever: a consumer gets the module alone, from the proxy.
 ## The generated client
 
 `go generate ./...` in `sdks/go` runs oapi-codegen on `../../acceleration/api/openapi.yaml` with
-`api/oapi-codegen.yaml`, which leaves out the `Staff` operations and the four sockets
-(`stream/socket.go` holds those by hand). The output is committed; CI's `go` job regenerates
+`api/oapi-codegen.yaml`, which leaves out the `Staff` operations and the four socket
+operations: `stream` holds the three it uses by hand on `stream/socket.go`, and
+`openSocketSession` has no Go client yet. The output is committed; CI's `go` job regenerates
 it and fails on a diff. The spec is only on `accelerate`, so generation runs there.
 
 Models public, operations not:
@@ -123,18 +124,22 @@ Every identifier in a code block exists; the quickstart is the example file verb
    git fetch origin
    git switch -c ai-xxxx-go-sdk-vX.Y.Z origin/main
    SRC=$(git rev-parse origin/accelerate)
+   git rm -rq sdks/go                  # so a file deleted on accelerate goes too
    git checkout "$SRC" -- sdks/go
    git diff --stat "$SRC" -- sdks/go   # prints nothing
    ```
 
    Commit, and open a PR to `main` titled `[AI-xxxx] Go SDK vX.Y.Z`, with the source SHA and the
-   smoke run in the body. `main`'s `go` CI job checks the copy on Go 1.25 alone.
-4. Once it is merged, tag the merge commit. Never create a GitHub Release for it: `release.yml`
-   publishes the Python packages on any published release.
+   smoke run in the body. `main`'s `Go SDK` workflow (`.github/workflows/sdk-go.yml`) checks the
+   copy on Go 1.25 alone. `main` and `accelerate` share no history under `sdks/go`, so a merge
+   of `accelerate` into `main` conflicts there: take `accelerate`'s tree.
+4. Once it is merged, tag the merge commit by its SHA, not whatever `main` is by then. Never
+   create a GitHub Release for it: `release.yml` publishes the Python packages on a release.
 
    ```bash
    git fetch origin
-   git tag sdks/go/vX.Y.Z origin/main
+   MERGED=$(gh pr view <n> --json mergeCommit -q .mergeCommit.oid)
+   git tag sdks/go/vX.Y.Z "$MERGED"
    git push origin sdks/go/vX.Y.Z
    ```
 

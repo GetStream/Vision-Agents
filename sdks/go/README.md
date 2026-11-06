@@ -222,8 +222,8 @@ type BookFlight struct {
 ```
 
 The tags are `enum`, `minimum`, `maximum`, `exclusiveMinimum`, `exclusiveMaximum`,
-`multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `default`
-and `example`. A struct already written for another Go JSON Schema library can keep its
+`multipleOf`, `minLength`, `maxLength`, `minItems`, `maxItems`, `pattern`, `format`, `title`,
+`default` and `example`. A struct already written for another Go JSON Schema library can keep its
 `jsonschema:"description=Full name,minLength=1,enum=a,enum=b"` tag, with `\,` for a comma in a
 value. A type that describes itself implements `JSONSchema() map[string]any`.
 
@@ -275,7 +275,9 @@ answer, _ := session.Responses.Create(ctx, "Is Stream better than Sendbird?")
 
 items := answer.Items.Unwind(ctx, 0)
 for item := range items.Items() {
-    fmt.Println(item.Kind, item.Text)
+    if item.Text != nil {
+        fmt.Println(item.Kind, *item.Text)
+    }
 }
 if err := items.Err(); err != nil {
     return err
@@ -325,6 +327,7 @@ searched or forked afterwards, which is the point of it.
 of a different agent, with the parent left untouched and each writing its own transcript:
 
 ```go
+// pointer is a helper of your own: func pointer[T any](v T) *T { return &v }
 harder, _ := session.Fork(ctx, client.ForkOptions{
     Title:           "Again, with reasoning",
     ModelOverwrites: &acceleration.ModelOverwrites{Llm: pointer("openai/gpt-5")},
@@ -531,7 +534,9 @@ yes := true
 transcript, _ := router.STT().Recording(ctx,
     stream.Recorded{URL: "https://example.com/interview.mp4"},
     &acceleration.SttOptions{Diarize: &yes})
-fmt.Println(transcript.Text, transcript.Speakers)
+if transcript.Text != nil && transcript.Speakers != nil {
+    fmt.Println(*transcript.Text, *transcript.Speakers)
+}
 
 voice, _ := router.TTS().Realtime(ctx, &acceleration.TtsOptions{Voice: &id})
 defer voice.Close()
@@ -655,6 +660,8 @@ retracted in `go.mod` and followed by the next patch, never replaced.
 `Session`, `AgentConfig`, `SttOptions` and the rest appear in signatures, and you build and read
 them like any struct. Its operation methods (`CreateSessionWithResponse` and the rest) are not
 the SDK's API. They are regenerated as the router changes and carry no compatibility promise.
+The types follow the spec: a field the router adds is added in the next version, and one it
+renames or removes is a breaking change the changelog names.
 `stream.Backend.Client()` and `agents.Agent.Client()` hand out the generated client for an
 operation this SDK has no method for yet; prefer a method of `client`, `agents` or `stream`
 wherever one exists.
@@ -671,8 +678,10 @@ needs no code generation. Generating it needs the spec beside it, so it runs in 
 go generate ./...
 ```
 
-The two sockets are excluded: OpenAPI stops at the upgrade, so `stream/socket.go` is written
-by hand, the way the server side of them is.
+The four socket operations are excluded: OpenAPI stops at the upgrade, so the three this SDK
+uses (a session's events, a router modality, a dispatch worker) are written by hand on
+`stream/socket.go`, the way the server side of them is. `openSocketSession` has no Go client
+yet.
 
 ## Tests
 
