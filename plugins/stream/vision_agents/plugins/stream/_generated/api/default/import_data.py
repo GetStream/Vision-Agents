@@ -112,7 +112,8 @@ def sync_detailed(
     before any of its rows is written, for an app that already has a row here in a table of the shared
     database: it would undo what was done here since. `full=true` writes it over them anyway, and
     importing the same export twice that way leaves what importing it once would. Changes are applied
-    whatever the app holds.
+    whatever the app holds. An import that stopped partway is run again with `full=true`, since the app
+    then holds its first rows.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:
@@ -155,7 +156,8 @@ def sync(
     before any of its rows is written, for an app that already has a row here in a table of the shared
     database: it would undo what was done here since. `full=true` writes it over them anyway, and
     importing the same export twice that way leaves what importing it once would. Changes are applied
-    whatever the app holds.
+    whatever the app holds. An import that stopped partway is run again with `full=true`, since the app
+    then holds its first rows.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:
@@ -193,7 +195,8 @@ async def asyncio_detailed(
     before any of its rows is written, for an app that already has a row here in a table of the shared
     database: it would undo what was done here since. `full=true` writes it over them anyway, and
     importing the same export twice that way leaves what importing it once would. Changes are applied
-    whatever the app holds.
+    whatever the app holds. An import that stopped partway is run again with `full=true`, since the app
+    then holds its first rows.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:
@@ -234,7 +237,8 @@ async def asyncio(
     before any of its rows is written, for an app that already has a row here in a table of the shared
     database: it would undo what was done here since. `full=true` writes it over them anyway, and
     importing the same export twice that way leaves what importing it once would. Changes are applied
-    whatever the app holds.
+    whatever the app holds. An import that stopped partway is run again with `full=true`, since the app
+    then holds its first rows.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:

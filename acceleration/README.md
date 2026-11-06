@@ -2425,7 +2425,7 @@ Writes since may be missing. `--full` copies the whole export again, writing the
 and then saves the cursor.
 
 `POST /v1/data/import` refuses an export the same way: an app this deployment already holds gets a 409 before
-any of the export's rows is written, unless the request asks `?full=true`; a batch of changes is always applied.
+any of the export's rows is written, unless the request asks `?full=true`; a batch of changes is always applied. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
 
 The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
 `--source-auth server` is for a source router reached directly.
