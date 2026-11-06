@@ -1,0 +1,779 @@
+package stream
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"reflect"
+	"slices"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
+	"github.com/gorilla/websocket"
+)
+
+// router is a stand-in for the acceleration backend: the one endpoint that creates a
+// session, and the socket it is then watched on. It is a real HTTP server with a real
+// WebSocket upgrader, so what is under test is the whole exchange rather than a description
+// of it.
+type router struct {
+	*httptest.Server
+
+	mu       sync.Mutex
+	requests []acceleration.CreateSessionRequest
+
+	// configs are the stored agent configs, for the caller that reads one back. A session
+	// is created by name now, so nothing here is asked for on the way into a call.
+	configs []acceleration.AgentConfig
+	// asked counts how many times the configs were listed, which a session must not need.
+	asked int
+	// conversation is the conversation a created session reports it is kept in. Empty is a
+	// session nothing is kept for.
+	conversation string
+	// watchedWith is the query the socket was opened with.
+	watchedWith url.Values
+	// stopped are the sessions asked to stop over HTTP rather than over their socket.
+	stopped []string
+
+	// serve is what the socket does once a client is on it.
+	serve func(t *testing.T, connection *websocket.Conn)
+}
+
+func newRouter(t *testing.T, serve func(*testing.T, *websocket.Conn)) *router {
+	t.Helper()
+
+	backend := &router{serve: serve}
+	mux := http.NewServeMux()
+
+	mux.HandleFunc("POST /v1/agents/sessions", func(w http.ResponseWriter, r *http.Request) {
+		var request acceleration.CreateSessionRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+
+		backend.mu.Lock()
+		backend.requests = append(backend.requests, request)
+		conversation := backend.conversation
+		backend.mu.Unlock()
+
+		created := acceleration.Session{
+			Id: "session-1", AgentId: "agent-1", CallId: "call-1",
+			CallType: "default", UserId: "jean", State: "running",
+			CreatedAt: time.Now(),
+		}
+		if conversation != "" {
+			created.ConversationId = &conversation
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusCreated)
+		_ = json.NewEncoder(w).Encode(created)
+	})
+
+	mux.HandleFunc("POST /v1/agents/sessions/{id}/stop", func(w http.ResponseWriter, r *http.Request) {
+		backend.mu.Lock()
+		backend.stopped = append(backend.stopped, r.PathValue("id"))
+		backend.mu.Unlock()
+		w.WriteHeader(http.StatusNoContent)
+	})
+
+	mux.HandleFunc("GET /v1/agents/configs", func(w http.ResponseWriter, _ *http.Request) {
+		backend.mu.Lock()
+		backend.asked++
+		stored := backend.configs
+		backend.mu.Unlock()
+
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusOK)
+		if stored == nil {
+			stored = []acceleration.AgentConfig{}
+		}
+		_ = json.NewEncoder(w).Encode(stored)
+	})
+
+	mux.HandleFunc("GET /v1/agents/sessions/{id}/events", func(w http.ResponseWriter, r *http.Request) {
+		backend.mu.Lock()
+		backend.watchedWith = r.URL.Query()
+		backend.mu.Unlock()
+		connection, err := (&websocket.Upgrader{}).Upgrade(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer connection.Close()
+		if backend.serve != nil {
+			backend.serve(t, connection)
+		}
+	})
+
+	backend.Server = httptest.NewServer(mux)
+	t.Cleanup(backend.Close)
+	return backend
+}
+
+// lookups is how many times the stored configs were listed.
+func (r *router) lookups() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.asked
+}
+
+// created is the session request the router was sent.
+func (r *router) created(t *testing.T) acceleration.CreateSessionRequest {
+	t.Helper()
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(r.requests) == 0 {
+		t.Fatal("no session was created")
+	}
+	return r.requests[0]
+}
+
+func TestJoiningRendersTheAgentAsASessionToCreate(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{
+		LLM:     "gemma4",
+		STT:     "parakeet",
+		TTS:     "sonic",
+		Agent:   "jean",
+		Backend: Backend{URL: backend.URL, CustomerID: "acme"},
+	})
+
+	session, err := pipeline.Join(t.Context(), Call{
+		Voice: true, UserID: "jean",
+		Tags: map[string]string{"customer_id": "123"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if session.Id != "session-1" {
+		t.Errorf("the session is %q", session.Id)
+	}
+
+	request := backend.created(t)
+	if !*request.StartVoice || *request.Llm != "gemma4" || *request.Agent != "jean" {
+		t.Errorf("the router was asked for %+v", request)
+	}
+	if (*request.Tags)["customer_id"] != "123" {
+		t.Errorf("the cost labels did not travel: %v", request.Tags)
+	}
+}
+
+func TestAStoredConfigIsNamedRatherThanLookedUpFirst(t *testing.T) {
+	backend := newRouter(t, hold)
+	backend.configs = []acceleration.AgentConfig{{Id: "config-7", Name: "jean"}}
+
+	pipeline := Accelerated(Config{
+		Agent:   "jean",
+		Backend: Backend{URL: backend.URL, CustomerID: "acme"},
+	})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	// The name travels as the name. Resolving it here used to cost a round trip per
+	// pipeline to turn "jean" into "config-7", which the router does for itself.
+	request := backend.created(t)
+	if *request.Agent != "jean" || request.ConfigId != nil {
+		t.Errorf("the session was created against %+v", request)
+	}
+	if backend.lookups() != 0 {
+		t.Errorf("the name was looked up %d times before the session was created", backend.lookups())
+	}
+}
+
+func TestAConfigHandedOverAsAnIDIsNamedAsOne(t *testing.T) {
+	backend := newRouter(t, hold)
+
+	pipeline := Accelerated(Config{
+		ConfigID: "config-7",
+		Backend:  Backend{URL: backend.URL, CustomerID: "acme"},
+	})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	// A dispatched message carries the id of the config it was routed to, which is not a
+	// name and must not be sent as one: the router refuses a name it does not hold.
+	request := backend.created(t)
+	if *request.ConfigId != "config-7" || request.Agent != nil {
+		t.Errorf("the session was created against %+v", request)
+	}
+}
+
+func TestJoiningANamedCallAsksTheRouterToJoinIt(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true, CallType: "default", CallID: "practice-1"}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	request := backend.created(t)
+	if request.Call == nil || *request.Call != (acceleration.SessionCall{Type: "default", Id: "practice-1"}) {
+		t.Errorf("the router was asked to join %+v", request.Call)
+	}
+}
+
+// The control: a call naming no Stream call leaves the router to join agent:<session id>.
+func TestJoiningWithNoNamedCallNamesNone(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if request := backend.created(t); request.Call != nil {
+		t.Errorf("a call was named: %+v", request.Call)
+	}
+}
+
+func TestACallWithoutVoiceIsHeldInWriting(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{UserID: "jean"}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if request := backend.created(t); request.StartVoice != nil {
+		t.Errorf("no voice was asked for, but the router was sent start_voice=%v", *request.StartVoice)
+	}
+}
+
+func TestAConversationCarriesTheLabelsAPersonFindsItBy(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{
+		Title:           "Is Stream better?",
+		Description:     "The comparison question, again",
+		ProjectID:       "docs",
+		Custom:          map[string]any{"ticket": "4721"},
+		ModelOverwrites: &acceleration.ModelOverwrites{Llm: pointerTo("openai/gpt-5")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	request := backend.created(t)
+	if request.Title == nil || *request.Title != "Is Stream better?" {
+		t.Errorf("the title went over as %v", request.Title)
+	}
+	if request.ProjectId == nil || *request.ProjectId != "docs" {
+		t.Errorf("the project went over as %v", request.ProjectId)
+	}
+	if request.Custom == nil || (*request.Custom)["ticket"] != "4721" {
+		t.Errorf("the labels went over as %v", request.Custom)
+	}
+	if request.ModelOverwrites == nil || *request.ModelOverwrites.Llm != "openai/gpt-5" {
+		t.Errorf("the model overwrites went over as %v", request.ModelOverwrites)
+	}
+}
+
+func TestAnIncognitoConversationAsksToKeepNothing(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	if _, err := pipeline.Join(t.Context(), Call{Incognito: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	request := backend.created(t)
+	if request.Incognito == nil || !*request.Incognito {
+		t.Error("incognito was not asked for")
+	}
+}
+
+func TestWatchingAttachesToASessionSomethingElseCreated(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	// What a fork does: the session is created by a different request and watched here.
+	if err := pipeline.Watch(t.Context(), &acceleration.Session{
+		Id: "session-9", State: "running", CreatedAt: time.Now(),
+	}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if len(backend.requests) != 0 {
+		t.Errorf("watching created %d sessions of its own", len(backend.requests))
+	}
+	if held := pipeline.Session(); held == nil || held.Id != "session-9" {
+		t.Errorf("the pipeline is holding %v", held)
+	}
+	if err := pipeline.Say("hello", false); err != nil {
+		t.Errorf("a watched session is not on its socket: %v", err)
+	}
+}
+
+func TestTheModelIsOfferedEveryRegisteredFunction(t *testing.T) {
+	backend := newRouter(t, hold)
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+
+	err := tools.Register(pipeline.Functions(), "get_weather", "Get current weather for a location",
+		func(_ context.Context, in struct {
+			Location string `json:"location" schema:"the city and state"`
+		}) (any, error) {
+			return "sunny in " + in.Location, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	request := backend.created(t)
+	if request.Tools == nil || len(*request.Tools) != 1 {
+		t.Fatalf("the model was offered %v", request.Tools)
+	}
+	offered := (*request.Tools)[0]
+	if offered.Name != "get_weather" || offered.Parameters == nil {
+		t.Fatalf("the tool went over as %+v", offered)
+	}
+	properties := (*offered.Parameters)["properties"].(map[string]any)
+	if _, ok := properties["location"]; !ok {
+		t.Errorf("the model was not told what to fill in: %v", properties)
+	}
+}
+
+func TestAToolCallIsRunHereAndAnsweredOverTheSocket(t *testing.T) {
+	answered := make(chan map[string]any, 1)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		if err := connection.WriteJSON(map[string]any{
+			"type": "tool_call", "id": "call-42", "name": "get_weather",
+			"arguments": `{"location":"Boulder, CO"}`,
+		}); err != nil {
+			return
+		}
+		var frame map[string]any
+		if err := connection.ReadJSON(&frame); err != nil {
+			return
+		}
+		answered <- frame
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	err := tools.Register(pipeline.Functions(), "get_weather", "Get current weather for a location",
+		func(_ context.Context, in struct {
+			Location string `json:"location"`
+		}) (any, error) {
+			return "sunny in " + in.Location, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	select {
+	case frame := <-answered:
+		if frame["type"] != "tool_result" || frame["tool_call_id"] != "call-42" {
+			t.Fatalf("the model was sent %v", frame)
+		}
+		if frame["output"] != "sunny in Boulder, CO" {
+			t.Errorf("the model was told %v", frame["output"])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the model is still waiting on the tool")
+	}
+}
+
+func TestAToolsPicturesGoOverTheSocketBesideItsWords(t *testing.T) {
+	answered := make(chan map[string]any, 1)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		if err := connection.WriteJSON(map[string]any{
+			"type": "tool_call", "id": "call-7", "name": "photograph_room", "arguments": "{}",
+		}); err != nil {
+			return
+		}
+		var frame map[string]any
+		if err := connection.ReadJSON(&frame); err != nil {
+			return
+		}
+		answered <- frame
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	err := tools.Register(pipeline.Functions(), "photograph_room", "Photograph the room",
+		func(_ context.Context, _ struct{}) (any, error) {
+			return tools.Output{Text: "the kitchen", Images: []tools.Image{{URL: "data:image/png;base64,iVBORw0KGgo="}}}, nil
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	select {
+	case frame := <-answered:
+		parts, _ := frame["output"].([]any)
+		if len(parts) != 2 {
+			t.Fatalf("the model was sent %v, want the words and the picture as parts", frame["output"])
+		}
+		picture, _ := parts[1].(map[string]any)
+		url, _ := picture["image_url"].(map[string]any)
+		if picture["type"] != "image_url" || url["url"] != "data:image/png;base64,iVBORw0KGgo=" {
+			t.Errorf("the picture went over as %v", parts[1])
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the model is still waiting on the tool")
+	}
+}
+
+func TestAToolThatFailsSaysSoRatherThanLeavingTheModelWaiting(t *testing.T) {
+	answered := make(chan map[string]any, 1)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		if err := connection.WriteJSON(map[string]any{
+			"type": "tool_call", "id": "call-42", "name": "lookup_order", "arguments": "{}",
+		}); err != nil {
+			return
+		}
+		var frame map[string]any
+		if err := connection.ReadJSON(&frame); err != nil {
+			return
+		}
+		answered <- frame
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	err := tools.Register(pipeline.Functions(), "lookup_order", "Look up an order",
+		func(context.Context, struct{}) (any, error) {
+			return nil, errors.New("the orders database is down")
+		})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	select {
+	case frame := <-answered:
+		if frame["error"] != "the orders database is down" {
+			t.Fatalf("the model was sent %v, and would wait forever for a result", frame)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the model is still waiting on the tool")
+	}
+}
+
+func TestWhatTheBackendDidArrivesAsEvents(t *testing.T) {
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		_ = connection.WriteJSON(map[string]any{
+			"type": "heard", "text": "what is the weather",
+			"participant": map[string]any{"id": "p1", "user_id": "caller", "name": "Ada"},
+		})
+		_ = connection.WriteJSON(map[string]any{"type": "responded", "text": "It is sunny."})
+		hold(t, connection)
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	heard := next(t, pipeline.Events())
+	if heard.Kind != "heard" || heard.Text != "what is the weather" {
+		t.Fatalf("the first event is %+v", heard)
+	}
+	if heard.Participant.Name != "Ada" {
+		t.Errorf("who spoke did not travel: %+v", heard.Participant)
+	}
+
+	answered := next(t, pipeline.Events())
+	if answered.Kind != "responded" || answered.Text != "It is sunny." {
+		t.Errorf("the second event is %+v", answered)
+	}
+}
+
+func TestSayingSomethingSendsItDownTheSocket(t *testing.T) {
+	sent := make(chan map[string]any, 4)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		for {
+			var frame map[string]any
+			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
+				return
+			}
+			sent <- frame
+		}
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if err := pipeline.Say("we are closing in five minutes", false); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Interrupt(); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []string{"say", "interrupt"}
+	for _, kind := range want {
+		select {
+		case frame := <-sent:
+			if frame["type"] != kind {
+				t.Fatalf("the router was sent %v, want %s", frame, kind)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the router never got %s", kind)
+		}
+	}
+}
+
+// An answer to a held call names the step and the command, and a declined one says why.
+func TestAnApprovalAnswerIsSentDownTheSocket(t *testing.T) {
+	sent := make(chan map[string]any, 4)
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		for {
+			var frame map[string]any
+			if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
+				return
+			}
+			sent <- frame
+		}
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	if err := pipeline.AnswerApproval("call-1", "request-1", true, ""); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.AnswerApproval("call-2", "request-1", false, "Not now"); err != nil {
+		t.Fatal(err)
+	}
+
+	want := []map[string]any{
+		{"type": "tool_approval", "tool_call_id": "call-1", "request_id": "request-1", "allowed": true},
+		{"type": "tool_approval", "tool_call_id": "call-2", "request_id": "request-1", "allowed": false, "summary": "Not now"},
+	}
+	for _, frame := range want {
+		select {
+		case got := <-sent:
+			if !reflect.DeepEqual(got, frame) {
+				t.Fatalf("the router was sent %v, want %v", got, frame)
+			}
+		case <-time.After(5 * time.Second):
+			t.Fatalf("the router never got %v", frame)
+		}
+	}
+}
+
+func TestActingOnACallNobodyIsOnIsRefused(t *testing.T) {
+	pipeline := Accelerated(Config{Backend: Backend{URL: "http://localhost:1", CustomerID: "acme"}})
+
+	if err := pipeline.Say("hello", false); err == nil {
+		t.Fatal("there is nowhere for that to be said")
+	}
+}
+
+func TestTheEventsChannelClosesWhenTheConversationEnds(t *testing.T) {
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		_ = connection.WriteJSON(map[string]any{"type": "left"})
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	defer pipeline.Leave(context.Background())
+
+	events := pipeline.Events()
+	if left := next(t, events); left.Kind != "left" {
+		t.Fatalf("the last event is %+v", left)
+	}
+	select {
+	case _, open := <-events:
+		if open {
+			t.Fatal("something arrived after the call ended")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the channel is still open with nothing on the other end")
+	}
+}
+
+func TestLeavingWaitsForTheRouterToEndTheSession(t *testing.T) {
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		hold(t, connection)
+		time.Sleep(200 * time.Millisecond)
+		_ = connection.WriteJSON(map[string]any{"type": "left"})
+	})
+
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	events := pipeline.Events()
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	var kinds []string
+	for event := range events {
+		kinds = append(kinds, event.Kind)
+	}
+	if !slices.Contains(kinds, "left") {
+		t.Fatalf("the client hung up before the router ended the session: got %v", kinds)
+	}
+}
+
+func TestLeavingTwiceClosesTheSessionOnce(t *testing.T) {
+	var closes atomic.Int64
+	backend := newRouter(t, func(t *testing.T, connection *websocket.Conn) {
+		hold(t, connection)
+		closes.Add(1)
+		_ = connection.WriteJSON(map[string]any{"type": "left"})
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Errorf("leaving a session already left failed: %v", err)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if closes.Load() != 1 || len(backend.stopped) != 0 {
+		t.Errorf("the session was closed %d times over its socket and %v over HTTP, want once",
+			closes.Load(), backend.stopped)
+	}
+	if pipeline.Session() != nil {
+		t.Error("a pipeline that left still holds its session")
+	}
+}
+
+func TestLeavingASessionWhoseSocketIsGoneStopsItOverHTTP(t *testing.T) {
+	backend := newRouter(t, func(_ *testing.T, connection *websocket.Conn) {
+		_ = connection.WriteJSON(map[string]any{"type": "joined"})
+		_ = connection.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done here"))
+	})
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	if _, err := pipeline.Join(t.Context(), Call{Voice: true}); err != nil {
+		t.Fatal(err)
+	}
+	for range pipeline.Events() {
+	}
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if !slices.Equal(backend.stopped, []string{"session-1"}) {
+		t.Errorf("the sessions stopped over HTTP were %v, want session-1", backend.stopped)
+	}
+}
+
+func TestLeavingAsTheRouterClosesTheSocketStopsTheSessionOverHTTP(t *testing.T) {
+	// The router's close frame has been read, and answered, before the socket is marked
+	// closed: the window between Leave reading it as open and sending on it.
+	backend := newRouter(t, func(_ *testing.T, connection *websocket.Conn) {
+		_ = connection.WriteMessage(websocket.CloseMessage,
+			websocket.FormatCloseMessage(websocket.CloseNormalClosure, "done here"))
+		_, _, _ = connection.ReadMessage()
+	})
+	socket := NewSocket(Backend{URL: backend.URL}.SocketURL("/v1/agents/sessions/session-1/events"), nil, nil, nil)
+	if err := socket.Open(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err := socket.Read(); err == nil {
+		t.Fatal("the router's close frame was not read")
+	}
+	pipeline := Accelerated(Config{Backend: Backend{URL: backend.URL, CustomerID: "acme"}})
+	pipeline.session = &acceleration.Session{Id: "session-1"}
+	pipeline.socket = socket
+
+	if err := pipeline.Leave(t.Context()); err != nil {
+		t.Fatalf("leaving a session the router was ending failed: %v", err)
+	}
+
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if !slices.Equal(backend.stopped, []string{"session-1"}) {
+		t.Errorf("the sessions stopped over HTTP were %v, want session-1", backend.stopped)
+	}
+}
+
+// hold keeps a socket open until the client closes the session or goes away, which is what
+// a call with nothing happening on it looks like.
+func hold(_ *testing.T, connection *websocket.Conn) {
+	for {
+		var frame map[string]any
+		if err := connection.ReadJSON(&frame); err != nil || frame["type"] == "close" {
+			return
+		}
+	}
+}
+
+// next reads one event, failing rather than hanging when none arrives.
+func next(t *testing.T, events <-chan Event) Event {
+	t.Helper()
+	select {
+	case event := <-events:
+		return event
+	case <-time.After(5 * time.Second):
+		t.Fatal("nothing arrived on the events channel")
+		return Event{}
+	}
+}
+
+// pointerTo is an optional field a test wants set, for the generated types that take one.
+func pointerTo[T any](value T) *T { return &value }
+
+func TestASettledTaskCarriesTheFilesItsCodeMade(t *testing.T) {
+	event := eventOf(Frame{"type": "task_settled", "text": "A teapot.", "files": []any{
+		map[string]any{"name": "teapot.png", "mime_type": "image/png", "url": "https://cdn.example/teapot.png", "size": float64(3)},
+	}})
+
+	want := []Attachment{{Name: "teapot.png", MIMEType: "image/png", URL: "https://cdn.example/teapot.png", Size: 3}}
+	if len(event.Files) != 1 || event.Files[0] != want[0] {
+		t.Errorf("the files read as %+v", event.Files)
+	}
+}
+
+func TestAnEventWithoutFilesHasNone(t *testing.T) {
+	if files := eventOf(Frame{"type": "task_settled", "files": []any{}}).Files; files != nil {
+		t.Errorf("an empty list read as %+v", files)
+	}
+}

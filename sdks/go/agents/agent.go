@@ -1,0 +1,399 @@
+// Package agents is the Go SDK for agents that run in the acceleration backend.
+//
+// An agent here is configuration and function calling. The conversation itself — joining
+// the call, hearing the caller, answering and speaking — happens in the backend, and what
+// arrives here are the events saying so.
+package agents
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"maps"
+	"os"
+	"path/filepath"
+	"strings"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
+	"github.com/GetStream/Vision-Agents/sdks/go/edge"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
+)
+
+// UserKey is the memory filter key naming who the memories are about. Everything else in
+// the filter narrows recall; this one is what recall is keyed by.
+const UserKey = "user_id"
+
+// Options is everything an agent is.
+type Options struct {
+	// Name is what the agent is called. It names the stored config the folder syncs to and
+	// is who the agent appears as in a call.
+	Name string
+	// Dir is an agent directory holding agent.yaml, instructions.md, skills/ and knowledge/.
+	// What it says fills in whatever is left empty here. Empty reads agents/<Name> when
+	// there is one, which is where `agents create` puts it.
+	Dir string
+	// Tools are the functions the model is offered and this process runs.
+	Tools []tools.Tool
+	// Instructions is the system prompt. It reaches the backend with Sync: a session runs
+	// on the stored config's.
+	Instructions string
+	// Guardrail is a guardrail.md: frontmatter saying how a turn is screened, then the
+	// policy in prose. Empty means every turn is answered. It is enforced in the backend,
+	// not here, so a turn the policy refuses never reaches the model.
+	Guardrail string
+	// LLM is the pipeline running in the backend. Nil runs the stored config named Name.
+	//
+	// The pipeline's Config.Backend is also where the agent's sessions make their requests.
+	// Built on a client's Backend, what those requests cost reaches that client's WithUsage
+	// and WithBalanceWarning:
+	//
+	//	api, err := client.New(stream.Backend{}, client.WithUsage(record))
+	//	agent, err := agents.New(agents.Options{Name: "jean",
+	//		LLM: stream.Accelerated(stream.Config{Agent: "jean", Backend: api.Backend()})})
+	LLM *stream.Pipeline
+	// Harness is what stands between what a caller said and the model that answers them.
+	Harness *Harness
+	// CostTracking labels every request the session makes, so spend can be attributed to
+	// whatever the labels mean to you rather than only to a model.
+	CostTracking map[string]string
+	// MemoryFilter is who the memories are about, under "user_id", and what narrows recall.
+	MemoryFilter map[string]string
+	// Timezone is the IANA zone, such as Europe/Lisbon, that the agent's sessions and calls
+	// are in unless one names its own. It is sent as the session's zone, so it sets the zone
+	// the agent reads dates in and, for a named user, is remembered as theirs. Empty sends
+	// none, which leaves the user's stored zone, then the stored config's default, to decide.
+	Timezone string
+	// Edge creates the Stream calls the backend joins. Nil builds one from the environment
+	// the first time a call is needed.
+	Edge *edge.Edge
+	// UserID is who the agent joins a call as. Empty is derived from the name.
+	UserID string
+	// Logger is where the agent reports what it could not do. Nil uses the default.
+	Logger *slog.Logger
+}
+
+// Agent is a configured agent, before and between the calls it holds.
+type Agent struct {
+	// Sessions opens the agent's conversations.
+	Sessions *Sessions
+
+	options Options
+	folder  *Folder
+	logger  *slog.Logger
+}
+
+// New validates an agent's configuration and reads its directory, if it has one.
+func New(options Options) (*Agent, error) {
+	logger := options.Logger
+	if logger == nil {
+		logger = slog.Default()
+	}
+
+	agent := &Agent{options: options, logger: logger}
+	agent.Sessions = &Sessions{agent: agent}
+	dir := options.Dir
+	if dir == "" && options.Name != "" {
+		if _, err := os.Stat(filepath.Join("agents", options.Name, AgentFile)); err == nil {
+			dir = filepath.Join("agents", options.Name)
+		}
+	}
+	if dir != "" {
+		folder, err := Load(dir)
+		if err != nil {
+			return nil, err
+		}
+		agent.folder = folder
+		folder.fill(&agent.options)
+	}
+
+	if agent.options.Name == "" {
+		return nil, errors.New("agents: an agent needs a name")
+	}
+	if agent.options.LLM == nil {
+		agent.options.LLM = stream.Accelerated(stream.Config{Agent: agent.options.Name})
+	}
+	for _, tool := range agent.options.Tools {
+		if err := agent.options.LLM.Functions().Add(tool); err != nil {
+			return nil, err
+		}
+	}
+	// Validated after the directory has been read, since what it holds is part of what is
+	// being validated.
+	if err := agent.options.Harness.Validate(); err != nil {
+		return nil, err
+	}
+	if agent.options.UserID == "" {
+		agent.options.UserID = userIDOf(agent.options.Name)
+	}
+	return agent, nil
+}
+
+// Name is what the agent is called.
+func (a *Agent) Name() string { return a.options.Name }
+
+// Instructions is the system prompt the agent joins with.
+func (a *Agent) Instructions() string { return a.options.Instructions }
+
+// LLM is the pipeline running in the backend.
+func (a *Agent) LLM() *stream.Pipeline { return a.options.LLM }
+
+// Tools are the agent's own functions, which the model is offered and this process runs.
+//
+// They are declared to the backend when a session is created, so a tool added to a session
+// already running is offered from the next one.
+//
+//	agent.Tools().Add(LookupOrder{orders: orders})
+func (a *Agent) Tools() *tools.Registry { return a.options.LLM.Functions() }
+
+// Folder is the agent directory the agent was read from, or nil if it has none.
+func (a *Agent) Folder() *Folder { return a.folder }
+
+// Sessions opens an agent's conversations.
+type Sessions struct {
+	agent *Agent
+}
+
+// SessionOptions is what one conversation changes about the agent holding it. The zero
+// value holds the conversation in writing, as the agent is configured.
+type SessionOptions struct {
+	// Voice has the agent join the session's own call, agent:<session id>, as soon as it
+	// opens. False holds the conversation in writing: nothing is transcribed and nothing is
+	// spoken until Session.Voice starts it.
+	Voice bool
+
+	// AgentID is the conversation being answered, and what the backend finds a running
+	// session by when somebody writes to it again. A text session opened with the agent id
+	// of a message the router handed this worker (InboundMessage.AgentID) answers in that
+	// message's channel, and writes only its replies there: the message is already in it.
+	// Any other session's replies are written into a channel of its own, agent:<session id>.
+	//
+	// A worker answering several conversations has to set it. Left empty they all join
+	// under the agent's user id, and a message arriving for one of them reaches whichever
+	// started last.
+	AgentID string
+
+	// CostTracking labels are added to the agent's, and win where both name a key.
+	CostTracking map[string]string
+	// MemoryFilter replaces the agent's, for a conversation about somebody else.
+	MemoryFilter map[string]string
+
+	// Title and Description are what a person finds this conversation by afterwards. Both
+	// are searched, so the opening question makes a reasonable title.
+	Title       string
+	Description string
+	// ProjectID groups conversations, and is carried as a cost label too.
+	ProjectID string
+	// Custom is anything of the caller's own worth remembering about the conversation, which
+	// a later query can match on.
+	Custom map[string]any
+	// Incognito holds the conversation and keeps nothing: no session row, no turns and no
+	// transcript. It cannot be found afterwards, which is the point.
+	Incognito bool
+	// ModelOverwrites changes the models for this conversation alone, over whatever the
+	// agent's own configuration decided.
+	ModelOverwrites *acceleration.ModelOverwrites
+	// Timezone is the end user's IANA timezone, such as Europe/Amsterdam. It sets the
+	// zone the agent reads dates in for this conversation and, for a named user, is
+	// remembered as theirs for the scheduled tasks and sessions that follow. It wins over
+	// the agent's Options.Timezone, and empty takes the agent's.
+	Timezone string
+}
+
+// Create opens a conversation. It returns once the backend is holding it, so an agent on a
+// call is already listening.
+func (s *Sessions) Create(ctx context.Context, options SessionOptions) (*Session, error) {
+	return s.agent.join(ctx, stream.Call{Voice: options.Voice}, options)
+}
+
+// Resume carries on a conversation held in writing, by the id of the session it was held
+// in. One that ended is reopened with what was said in it.
+func (s *Sessions) Resume(ctx context.Context, id string) (*Session, error) {
+	a := s.agent
+	backend, err := a.options.LLM.Backend()
+	if err != nil {
+		return nil, err
+	}
+	resources, err := client.New(backend)
+	if err != nil {
+		return nil, err
+	}
+	got, err := resources.Agent(a.options.Name).Sessions.Get(ctx, id)
+	if err != nil {
+		return nil, err
+	}
+	if err := a.options.LLM.Watch(ctx, got); err != nil {
+		return nil, err
+	}
+	held, err := resources.Hold(a.options.Name, a.options.LLM)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{Session: held, agent: a}, nil
+}
+
+// Join holds a conversation on the session's own call, agent:<session id>.
+func (a *Agent) Join(ctx context.Context, options ...SessionOptions) (*Session, error) {
+	var chosen SessionOptions
+	if len(options) > 0 {
+		chosen = options[0]
+	}
+	chosen.Voice = true
+	return a.Sessions.Create(ctx, chosen)
+}
+
+// Chat holds the conversation in writing rather than on a call.
+func (a *Agent) Chat(ctx context.Context, options ...SessionOptions) (*Session, error) {
+	var chosen SessionOptions
+	if len(options) > 0 {
+		chosen = options[0]
+	}
+	chosen.Voice = false
+	return a.Sessions.Create(ctx, chosen)
+}
+
+// join renders the agent's configuration into the session remote asks for and opens it.
+func (a *Agent) join(ctx context.Context, remote stream.Call, options ...SessionOptions) (*Session, error) {
+	remote.UserID = a.options.UserID
+	remote.UserName = a.options.Name
+	remote.AgentID = a.options.UserID
+	remote.Tags = a.options.CostTracking
+	remote.Memory = memoryOf(a.options.MemoryFilter)
+	remote.Timezone = a.options.Timezone
+	if len(options) > 0 {
+		chosen := options[0]
+		remote.Title = chosen.Title
+		remote.Description = chosen.Description
+		remote.ProjectID = chosen.ProjectID
+		remote.Custom = chosen.Custom
+		remote.Incognito = chosen.Incognito
+		remote.ModelOverwrites = chosen.ModelOverwrites
+		if chosen.Timezone != "" {
+			remote.Timezone = chosen.Timezone
+		}
+		if chosen.AgentID != "" {
+			remote.AgentID = chosen.AgentID
+		}
+		if len(chosen.CostTracking) > 0 {
+			tags := maps.Clone(a.options.CostTracking)
+			if tags == nil {
+				tags = map[string]string{}
+			}
+			maps.Copy(tags, chosen.CostTracking)
+			remote.Tags = tags
+		}
+		if chosen.MemoryFilter != nil {
+			remote.Memory = memoryOf(chosen.MemoryFilter)
+		}
+	}
+	backend, err := a.options.LLM.Backend()
+	if err != nil {
+		return nil, err
+	}
+	resources, err := client.New(backend)
+	if err != nil {
+		return nil, err
+	}
+	if _, err := a.options.LLM.Join(ctx, remote); err != nil {
+		return nil, err
+	}
+	held, err := resources.Hold(a.options.Name, a.options.LLM)
+	if err != nil {
+		return nil, err
+	}
+	return &Session{Session: held, agent: a}, nil
+}
+
+// Client is the generated client for the router this agent talks to, for the operations
+// this SDK has no method for yet. Like stream.Backend.Client, its operation methods carry no
+// compatibility promise.
+func (a *Agent) Client() (*acceleration.ClientWithResponses, error) {
+	backend, err := a.options.LLM.Backend()
+	if err != nil {
+		return nil, err
+	}
+	return backend.Client()
+}
+
+// edge builds the transport lazily, so an agent that only ever chats needs no Stream
+// credentials.
+func (a *Agent) edge() (*edge.Edge, error) {
+	if a.options.Edge != nil {
+		return a.options.Edge, nil
+	}
+	transport, err := edge.New(edge.Options{})
+	if err != nil {
+		return nil, err
+	}
+	a.options.Edge = transport
+	return transport, nil
+}
+
+// Session is one conversation the agent is holding.
+//
+// It is a client.Session, so it reads the same as one opened by name: session.Responses,
+// Fork, Say and Events are all there. What it adds is the call it is on.
+type Session struct {
+	*client.Session
+
+	agent *Agent
+}
+
+// Call is the Stream call the conversation is on while voice is started, named after the
+// session.
+func (s *Session) Call() edge.Call { return edge.Call{ID: s.ID(), Type: edge.DefaultCallType} }
+
+// MonitorURL is a link a person can open to join this call from a browser and hear the
+// agent.
+func (s *Session) MonitorURL() (string, error) {
+	if !s.Voice.Started() {
+		return "", errors.New("agents: a conversation held in writing has no call to watch")
+	}
+	transport, err := s.agent.edge()
+	if err != nil {
+		return "", err
+	}
+	return transport.MonitorURL(s.Call(), edge.User{ID: "monitor-" + s.ID(), Name: "Monitor"})
+}
+
+// memoryOf splits the filter into who the memories are about and what narrows them.
+func memoryOf(filter map[string]string) *acceleration.SessionMemory {
+	if len(filter) == 0 {
+		return nil
+	}
+
+	memory := &acceleration.SessionMemory{}
+	narrowing := map[string]string{}
+	for key, value := range filter {
+		if key == UserKey {
+			user := value
+			memory.UserId = &user
+			continue
+		}
+		narrowing[key] = value
+	}
+	if len(narrowing) > 0 {
+		memory.Filter = &narrowing
+	}
+	return memory
+}
+
+// userIDOf turns a name into something a call can be joined under.
+func userIDOf(name string) string {
+	id := strings.Map(func(r rune) rune {
+		switch {
+		case r >= 'a' && r <= 'z', r >= '0' && r <= '9', r == '-', r == '_':
+			return r
+		case r >= 'A' && r <= 'Z':
+			return r + ('a' - 'A')
+		default:
+			return '-'
+		}
+	}, name)
+	id = strings.Trim(id, "-")
+	if id == "" {
+		return "vision-agent"
+	}
+	return id
+}
