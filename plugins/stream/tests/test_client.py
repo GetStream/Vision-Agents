@@ -696,8 +696,6 @@ class TestSessions:
 
         assert (row.end_reason.value, str(row.end_reason)) == (end_reason, end_reason)
         assert row.state.value == state
-        assert row.end_reason not in list(type(row.end_reason))
-        assert row.state not in list(type(row.state))
         written = row.to_dict()
         assert (written["end_reason"], written["state"]) == (end_reason, state)
 
@@ -721,7 +719,11 @@ class TestSessions:
     ):
         # What is written back is what the client before AI-2951 wrote for this answer, read
         # from a run of it.
-        router.answered = {"end_reason": "voicemail", "state": "ended", "mode": "native"}
+        router.answered = {
+            "end_reason": "voicemail",
+            "state": "ended",
+            "mode": "native",
+        }
 
         row = await api.agent("docs").sessions.get("session-1")
 

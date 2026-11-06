@@ -407,6 +407,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The Python and Rust clients read an enum value they do not list
+
+A session that a newer router ended for a reason this client was not built with, such as `closed`, made `sessions.get` and `query` raise in Python (`ValueError`) and fail in Rust (`Error::Decode`). This was true of every enum in an answer. The value now reads as it was sent and is written back the same way: in Python as a member of the enum that carries it (`str(session.end_reason) == "closed"`), in Rust as the new `Unlisted(String)` variant. A listed value reads as before, and a value a caller builds or parses is still checked. In Rust these enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm (AI-2951).
+
 ### A call that began before its number's link stays before it
 
 A call episode was dated by the router's clock while a number's link is dated by Postgres's, so with the router's clock ahead, a call that began just before the link counted as after it and the linked user's sessions read it. A call episode is now dated by Postgres's clock, from when its session began, also when its card is written later because the caller joined late (#1824).

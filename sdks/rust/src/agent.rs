@@ -508,7 +508,11 @@ impl Agent {
     ) {
         match &self.harness {
             None => (None, None, None),
-            Some(harness) => (harness.name.clone(), text(harness.subagent()), harness.vm.clone()),
+            Some(harness) => (
+                harness.name.clone(),
+                text(harness.subagent()),
+                harness.vm.clone(),
+            ),
         }
     }
 
