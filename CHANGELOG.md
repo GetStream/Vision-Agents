@@ -402,6 +402,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A code run that prints a lot no longer fills the router's memory
 
 The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 32 KiB, the cap every other tool result has, and ends it with a line telling the model the output was cut. The rest is dropped as it is read. A command's, a download's and an upload's answer from the sandbox are bounded too. (#1804)
+### git lfs push in a sandbox says why it is refused
+
+Under the proxy broker, `git lfs push` in a sandbox is refused at its first request, `locks/verify`, and git-lfs showed «Authentication error … Check that you have proper access to the repository». The proxy now answers every refused request under a Git LFS API (`/info/lfs/`) with an LFS error, so git-lfs prints the proxy's hint: code in the sandbox only reads through a connector, and writes with the connector's tools. Uploads stay refused, and the log says why (AI-2876, #1801).
 ### A sandbox session cut while it opens leaves no Daytona secret
 
 When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
