@@ -16,8 +16,9 @@ import (
 // rateLimitedKeyVars are the key variables of the vendors whose rate limits the vendor metrics
 // were checked against in their docs: OpenAI (and its Realtime API), Anthropic, ElevenLabs,
 // Cerebras, xAI, Together, Fireworks, Deepgram, Google Gemini, Cartesia and OpenRouter. Their
-// 429 counts are served at 0 from start-up, while their pools are built only by a first request
-// or session. Any other vendor's are served from when its pool is built.
+// 429 counts are served at 0 from start-up, one under key "none" for a variable the deployment
+// leaves unset, while their pools are built only by a first request or session. Any other
+// vendor's are served from when its pool is built.
 var rateLimitedKeyVars = []string{
 	"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "CEREBRAS_API_KEY", "XAI_API_KEY",
 	"TOGETHER_API_KEY", "FIREWORKS_API_KEY", "DEEPGRAM_API_KEY", "GOOGLE_API_KEY", "CARTESIA_API_KEY",

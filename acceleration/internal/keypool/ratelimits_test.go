@@ -314,13 +314,52 @@ func (s *VendorRateLimitSuite) TestServedSeriesAreTheOnesAPoolBuiltLaterCountsIn
 	s.Equal(map[string]float64{"0": 1, "1": 1, "2": 1}, s.limited(keyVar))
 }
 
-func (s *VendorRateLimitSuite) TestAnUnsetVariableIsServedNoSeries() {
-	keyVar := fmt.Sprintf("VR_UNSET_%s_API_KEY", rand.Text())
-	s.T().Setenv(keyVar, "")
+// A served variable that holds no key still has a series, so an alert on 429s reads 0 for that
+// vendor too: exactly one, key "none". A variable with a key, even only under NAME_1, has none.
+func (s *VendorRateLimitSuite) TestAVariableWithNoKeyIsServedOneNoneSeriesAtZero() {
+	for _, tc := range []struct {
+		name     string
+		value    *string
+		numbered string
+		want     map[string]float64
+	}{
+		{name: "unset", want: map[string]float64{"none": 0}},
+		{name: "empty", value: new(""), want: map[string]float64{"none": 0}},
+		{name: "blanks and commas", value: new(" , ,"), want: map[string]float64{"none": 0}},
+		{name: "blank with a blank NAME_1", value: new(" "), numbered: " ", want: map[string]float64{"none": 0}},
+		{name: "a key only under NAME_1", value: new(""), numbered: "vr-numbered-key", want: map[string]float64{"0": 0}},
+	} {
+		s.Run(tc.name, func() {
+			keyVar := fmt.Sprintf("VR_NOKEY_%s_API_KEY", rand.Text())
+			if tc.value != nil {
+				s.T().Setenv(keyVar, *tc.value)
+			}
+			if tc.numbered != "" {
+				s.T().Setenv(keyVar+"_1", tc.numbered)
+			}
 
+			ServeRateLimited(keyVar)
+			ServeRateLimited(keyVar)
+
+			s.Equal(tc.want, s.limited(keyVar))
+			s.Empty(s.remaining(keyVar), "serving a variable keeps no headroom")
+		})
+	}
+}
+
+// The series of a variable with no key counts no 429: a customer's own key, passed with that
+// variable named, is never the router's.
+func (s *VendorRateLimitSuite) TestA429OnACustomersKeyIsNotCountedUnderAVariableWithNoKey() {
+	id := rand.Text()
+	keyVar := fmt.Sprintf("VR_NOKEYCUSTOMER_%s_API_KEY", id)
+	customer := "vr-customer-" + id
 	ServeRateLimited(keyVar)
 
-	s.Empty(s.limited(keyVar))
+	s.answer(customer, answer{status: http.StatusTooManyRequests})
+	status, _ := s.post(FromEnv(customer, keyVar))
+
+	s.Equal(http.StatusTooManyRequests, status)
+	s.Equal(map[string]float64{"none": 0}, s.limited(keyVar))
 }
 
 // Serving a variable's series names no pool: keys another variable also holds keep the name
