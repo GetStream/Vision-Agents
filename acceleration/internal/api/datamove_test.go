@@ -199,6 +199,22 @@ func (s *DataMoveSuite) TestAnExportIsNotWrittenOverAnAppThatHoldsDataWhenFullIs
 	s.Equal("edited here", s.instructionsOf(agent.Id))
 }
 
+// A lookup that fails is not an answer that the app holds nothing: the export is not written.
+func (s *DataMoveSuite) TestAnExportIsNotWrittenWhenWhatTheAppHoldsCannotBeRead() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+	closed, err := store.Open(s.sharedDSN())
+	s.Require().NoError(err)
+	other, _, _ := s.otherNodeServingFrom(closed, nil, s.sealer, slog.New(slog.DiscardHandler))
+	s.Require().NoError(closed.Close())
+
+	status, _ := s.serverClient.on(other).failure(http.MethodPost, "/v1/data/import", ndjson(exported))
+
+	s.Equal(http.StatusInternalServerError, status)
+	s.Equal("edited here", s.instructionsOf(agent.Id), "the edit made here since the export is kept")
+}
+
 func (s *DataMoveSuite) TestFullWritesAnExportOverAnAppThatHoldsData() {
 	agent := s.data.createAgentConfig()
 	exported := s.export()
