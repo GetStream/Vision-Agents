@@ -409,12 +409,65 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 		"sandbox_options:\n  timeout: soon\n",
 		"sandbox_options:\n  memory: 4\n",
 		"keyterms: Vision Agents\n",
+		"end_of_turn:\n  max_wait: 900\n",
+		"end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n",
+		"end_of_turn: fast\n",
+		"end_of_turn:\n  bars:\n    - {bar: 0.9}\n",
+		"end_of_turn:\n  bars:\n    - {from_ms: 0}\n",
+		"end_of_turn:\n  max_wait_ms: soon\n",
 	} {
 		root := filepath.Join(t.TempDir(), "jean")
 		write(t, root, "agent.yaml", declaration)
 
 		if _, err := Load(root); err == nil {
 			t.Errorf("accepted %q", declaration)
+		}
+	}
+}
+
+// floor_control is read as written, "" included; which models there are is the router's to say.
+func TestTheFloorControlIsReadAsWritten(t *testing.T) {
+	setting := func(written string) *FloorControlSetting { return (*FloorControlSetting)(&written) }
+	for _, c := range []struct {
+		declared string
+		want     *FloorControlSetting
+	}{
+		{"floor_control: stream/chorus-asr\n", setting("stream/chorus-asr")},
+		{"floor_control: \"stream/chorus-asr\"\n", setting("stream/chorus-asr")},
+		{"floor_control: \"\"\n", setting("")},
+		{"floor_control: other\n", setting("other")},
+		{"floor_control:\n", nil},
+		{"floor_control: ~\n", nil},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", c.declared)
+
+		folder, err := Load(root)
+		if err != nil {
+			t.Errorf("%q: %v", c.declared, err)
+			continue
+		}
+		if !reflect.DeepEqual(folder.Settings.FloorControl, c.want) {
+			t.Errorf("%q: floor_control read as %v, not %v", c.declared, folder.Settings.FloorControl, c.want)
+		}
+	}
+}
+
+func TestAFloorControlThatIsNotAStringIsRefused(t *testing.T) {
+	for _, declared := range []string{
+		"floor_control: {model: chorus-asr, mode: act}\n",
+		"floor_control:\n  model: chorus-asr\n",
+		"floor_control: [stream/chorus-asr]\n",
+		"floor_control: true\n",
+		"floor_control: 1\n",
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", declared)
+
+		_, err := Load(root)
+		if err == nil || !strings.Contains(err.Error(), "floor_control must be a string") {
+			t.Errorf("%q: refused with %v", declared, err)
 		}
 	}
 }

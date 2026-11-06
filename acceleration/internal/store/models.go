@@ -629,6 +629,14 @@ type AgentConfig struct {
 	// ResumeHistory is how the config's sessions are handed back a conversation they
 	// carry on. The zero value is the router's default.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
+	// EndOfTurn is when chorus-asr has a caller's turn ended in the config's sessions, as
+	// the config chose (20261219090000_end_of_turn.sql). The zero value is the server's
+	// default.
+	EndOfTurn EndOfTurn `bun:"end_of_turn,type:jsonb,notnull"`
+	// FloorControl is the model that controls the floor in the config's sessions, as the
+	// config chose (20261220090000_floor_control.sql). Empty, NULL, is the default flow
+	// controller.
+	FloorControl FloorControl `bun:"floor_control,nullzero"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -1781,6 +1789,45 @@ func (m ModelOverwrites) Empty() bool {
 	return m == ModelOverwrites{}
 }
 
+// EndOfTurn is an agent's choice of how eager chorus-asr's turn-taking is: at most one of
+// MaxWaitMs, the most a caller who has finished may wait for the answer; Preset, one of the
+// server's by name; or Bars of its own. The zero value is the server's default. What each
+// means is the server's policy's to say, which the agent's sessions read when they check a
+// pause (audiofloor.Policy.Resolve).
+type EndOfTurn struct {
+	MaxWaitMs int            `json:"max_wait_ms,omitempty"`
+	Preset    string         `json:"preset,omitempty"`
+	Bars      []EndOfTurnBar `json:"bars,omitempty"`
+}
+
+// EndOfTurnBar is what chorus-asr's p_eot must reach for a turn to have ended at a check
+// from FromMs into the pause on.
+type EndOfTurnBar struct {
+	FromMs int     `json:"from_ms"`
+	Bar    float64 `json:"bar"`
+}
+
+// IsZero reports whether nothing was chosen, which is the server's default. It is also what
+// a session row's nullzero column reads.
+func (e EndOfTurn) IsZero() bool {
+	return e.MaxWaitMs == 0 && e.Preset == "" && e.Bars == nil
+}
+
+// FloorControl is the model that controls an agent's floor, hearing the audio: when a
+// caller's turn has ended, and what is done about speech over the agent. Empty is the default
+// flow controller, which every agent has until it opts in.
+type FloorControl string
+
+// FloorControlChorusASR has chorus-asr control the floor, the one model there is, named as
+// the stream/chorus-asr transcriber is.
+const FloorControlChorusASR FloorControl = "stream/chorus-asr"
+
+// IsZero reports whether no model was chosen, which is the default flow controller. It is
+// also what the nullzero columns read.
+func (f FloorControl) IsZero() bool {
+	return f == ""
+}
+
 // ResumeHistory is how much of a conversation a model is handed back when a session opens
 // on it: reopened, resumed by id, joined by voice or forked. A field left unset is no
 // opinion, and the zero value is the router's default: replies as text, the newest 100 turns
@@ -1875,7 +1922,13 @@ type AgentSession struct {
 	// ResumeHistory is what the session was opened with, which reopening it keeps. Zero
 	// takes the config's.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
-	State         string        `bun:"state,notnull"`
+	// EndOfTurn is what the session was opened with over its config's, which reopening it
+	// keeps. Zero takes the config's.
+	EndOfTurn EndOfTurn `bun:"end_of_turn,type:jsonb,nullzero"`
+	// FloorControl is what the session was opened with over its config's, which reopening
+	// it keeps. Zero takes the config's.
+	FloorControl FloorControl `bun:"floor_control,nullzero"`
+	State        string       `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`

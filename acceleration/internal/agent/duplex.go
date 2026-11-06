@@ -17,6 +17,9 @@ const (
 	backchannelPrefix = "back-"
 	handoffPrefix     = "hand-"
 	toolPrefix        = "tool-"
+	// ownPrefix is a line the agent says of its own accord: a check-in, an update or a hold.
+	// It is a turn the agent took, not a murmur, so a caller who takes the floor stops it.
+	ownPrefix = "own-"
 	// writtenPrefix is an answer nobody hears, so it names a request rather than a turn:
 	// no audio is gated on it because none is produced.
 	writtenPrefix = "text-"

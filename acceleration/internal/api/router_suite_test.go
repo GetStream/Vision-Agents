@@ -45,6 +45,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/blob"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channelbridge"
@@ -353,6 +354,9 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
+	// audioFloor is the router's chorus-asr server, for a suite about floor control or
+	// end_of_turn to set before it starts the harness. Nil is none.
+	audioFloor *audiofloor.Client
 	// connectorsOff gives the router no connector keyring, transports or limiter, as a deployment with
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
@@ -759,6 +763,7 @@ func (s *RouterSuite) SetupSuite() {
 		TelnyxPublicKey:    s.telnyxPublicKey,
 		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
+		AudioFloor:         s.audioFloor,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,

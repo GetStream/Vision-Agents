@@ -37,7 +37,8 @@ const (
 	ActHold ActionKind = "hold"
 	// ActInterrupt abandons the reply being spoken.
 	ActInterrupt ActionKind = "interrupt"
-	// ActShorten stops the model adding more while letting the audio already sent finish.
+	// ActShorten stops the model adding more, and, acting on chorus-asr, the reply being said
+	// shortenTail later (Agent.shorten).
 	ActShorten ActionKind = "shorten"
 	// ActBackchannel makes a short listening noise.
 	ActBackchannel ActionKind = "backchannel"
@@ -117,7 +118,8 @@ type Action struct {
 	LatencyMs float64
 	// Unheard says none of the interrupted reply has gone out, and it is only abandoned so.
 	Unheard bool
-	// Interruption is why an interrupt abandons the reply, for the agent to report.
+	// Interruption is why an interrupt or a shortening abandons the reply, for the agent to
+	// report.
 	Interruption interruption
 	// LineID is the caller's line a turn queued, held or answered was heard as, so a
 	// watcher can say of that line that it waits for the agent to finish.
@@ -154,7 +156,8 @@ type floor struct {
 	Composing bool
 	// LastSpokeAt is when the agent last published audio.
 	LastSpokeAt time.Time
-	// LastHeardAt is when anyone on the call was last transcribed.
+	// LastHeardAt is when anyone on the call was last transcribed, or heard in an utterance
+	// the transcriber has not ended (pauseAsker.Hearing).
 	LastHeardAt time.Time
 	// LastParticipant is who the agent was last talking to.
 	LastParticipant stt.Participant
@@ -245,6 +248,16 @@ type converse struct {
 	// open line. Words that follow in a run of speech of their own go after it rather
 	// than over it: the turn is still owed, and its words are still the line's.
 	queuedSaid map[string]string
+	// stops is, for each participant, the utterance a check over the agent stopped it on
+	// while they talked on, and the words it was ruled on (Overheard): spent on the stop.
+	stops map[string]stoppedOn
+}
+
+// stoppedOn is an utterance a stop over the agent was ruled on, and the words so far it was
+// ruled on.
+type stoppedOn struct {
+	utterance int64
+	words     string
 }
 
 // overlapState is what has been asked about a participant's in-progress utterance.
@@ -285,6 +298,8 @@ type queuedCandidate struct {
 type unfinished struct {
 	text  string
 	since time.Time
+	// resumed says the speaker went on after an earlier pause of the same turn was waited out.
+	resumed bool
 }
 
 // judged is what a judgement was about: who was speaking and what they said.
@@ -337,6 +352,7 @@ func newConverse(
 		lastHeard:    map[string]string{},
 		queuedSaid:   map[string]string{},
 		repeated:     map[string]string{},
+		stops:        map[string]stoppedOn{},
 	}
 }
 
@@ -397,6 +413,111 @@ func (c *converse) Observe(transcript stt.Transcript, state floor) []Action {
 	}
 
 	return actions
+}
+
+// Glimpsed shows a participant's words as they talk, from a transcriber that ends their turn
+// itself (stt.Transcript.Interim): the line their turn is going into gets them (Hearing), as
+// a revision's words do, and nothing else moves. No turn is put to the flow controller, no
+// overlap is asked about and no backchannel is offered, as the words say nothing about a
+// pause: the transcriber will say when the turn has ended, with its final, which is observed
+// as any final is, under the same line.
+func (c *converse) Glimpsed(transcript stt.Transcript) {
+	c.mu.Lock()
+	line := c.lineLocked(transcript.Participant.ID)
+	shown := c.lineTextLocked(transcript.Participant.ID, strings.TrimSpace(transcript.Text))
+	c.mu.Unlock()
+	if shown == "" {
+		return
+	}
+	c.emitter.Send(Hearing{
+		Participant: transcript.Participant,
+		Text:        shown,
+		Language:    transcript.Language,
+		LineID:      line,
+	})
+}
+
+// Overheard turns a ruling the chorus-asr model made over the agent, asked by the transcriber
+// while participant talked on and no pause came, into what the agent should do about the
+// floor, as a provisional ruling about a revision's words is (overlapRuled): it stops or
+// shortens the reply going now, and never answers, as the words have not settled.
+//
+// A stop ruled so is no turn, its disposition wait: the words it was ruled on, which are
+// utterance's so far, are spent on it, and only what the caller says after them is answered
+// (Settled).
+func (c *converse) Overheard(ruling harness.Decided, participant stt.Participant, words string, utterance int64, state floor) []Action {
+	// The ruling was asked for by the transcriber, not through the flow controller: it is
+	// named here as a provisional ask would be, for the log and for Valid.
+	ruling.CandidateID = cmp.Or(ruling.CandidateID, overlapPrefix+turnStamp())
+	ruling.Ruler = cmp.Or(ruling.Ruler, harness.Heard)
+	actions := c.overlapRuled(ruling, overlapState{turnID: state.Speaking, participant: participant, text: words}, state)
+	if utterance != 0 && slices.ContainsFunc(actions, func(action Action) bool { return action.Kind == ActInterrupt }) {
+		c.mu.Lock()
+		c.stops[participant.ID] = stoppedOn{utterance: utterance, words: words}
+		c.mu.Unlock()
+	}
+	return actions
+}
+
+// saysMore reports whether text, all of an utterance's words, says more than stop, the words
+// so far a stop was ruled on in it. Text opens with them, the last of them perhaps cut off by
+// the check's window mid-word ("wh" for "what"), when that word is the caller's next. Text that
+// does not open with them is another reading of the same audio: it says more if it has more
+// words, as which of them are new can't be told.
+func saysMore(text, stop string) bool {
+	said, stopped := wordList(text), wordList(stop)
+	last := len(stopped) - 1
+	switch {
+	case len(stopped) == 0:
+		return len(said) > 0
+	case len(said) >= len(stopped) && slices.Equal(said[:len(stopped)], stopped):
+		return len(said) > len(stopped)
+	case len(said) >= len(stopped) && slices.Equal(said[:last], stopped[:last]) && strings.HasPrefix(said[last], stopped[last]):
+		return true
+	}
+	return len(said) > len(stopped)
+}
+
+// forgetStop forgets the stop over the agent a participant's utterance was ruled on, if one was:
+// a new transcriber hears them, numbering their utterances from one again, so none of its is
+// the one the stop was ruled on.
+func (c *converse) forgetStop(participantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.stops, participantID)
+}
+
+// stopSpent is a settled turn of the utterance a stop over the agent was ruled on in, if it
+// is one with nothing more than the stop's words: it is heard and set aside, as the agent has
+// done what they asked. One that says more is the caller's turn, and is answered on all its
+// words: a stop is often ruled on the start of the request it makes ("hi, what's the weather"
+// over a greeting), which the words after it alone would cut ("like in Lisbon tomorrow?").
+func (c *converse) stopSpent(ready candidate) (Action, bool) {
+	c.mu.Lock()
+	stop, ok := c.stops[ready.Participant.ID]
+	// A later utterance of the same transcriber means the stop's is over, its final never
+	// settled (an echo alone, or nothing written): no turn can be spent on it any more.
+	if ok && stop.utterance <= ready.Utterance {
+		delete(c.stops, ready.Participant.ID)
+	}
+	c.mu.Unlock()
+	if !ok || stop.utterance != ready.Utterance || ready.Utterance == 0 {
+		return Action{}, false
+	}
+	if saysMore(ready.Text, stop.words) {
+		return Action{}, false
+	}
+	c.cadence.Resolve(ready.ID, false)
+	shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
+	sendHeard(c.emitter, c.onHeard, Heard{Participant: ready.Participant, Text: shown, Language: ready.Language, LineID: line})
+	return c.decide(Action{
+		Kind:        ActIgnore,
+		Reason:      "the words a stop over the agent was ruled on as they were said, which it has acted on: there is nothing more in them to answer",
+		Candidate:   ready,
+		Participant: ready.Participant,
+		Text:        shown,
+		LineID:      line,
+	}), true
 }
 
 // overlap asks the controller whether the agent should give up the floor to a caller who
@@ -534,6 +655,9 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
 func (c *converse) Settled(ready candidate, state floor) Action {
+	if spent, ok := c.stopSpent(ready); ok {
+		return spent
+	}
 	c.mu.Lock()
 	if !state.Quiet {
 		if seen, ok := c.overlapping[ready.Participant.ID]; ok && seen.inflight != "" {
@@ -668,7 +792,7 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 
 	if ruling.Disposition == harness.Wait {
 		if c.patient(ready) {
-			c.cadence.Resolve(ruling.CandidateID, true)
+			c.cadence.Retry(ruling.CandidateID, ruling.Again)
 			return []Action{c.decide(Action{
 				Kind:        ActWait,
 				Reason:      "the caller has not finished the thought",
@@ -820,6 +944,8 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 				Participant: ready.Participant,
 				TurnID:      state.Speaking,
 				LatencyMs:   ruling.TookMs,
+				Interruption: interruption{cause: causeShortened, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+					words: ready.Text},
 			}),
 		}
 
@@ -899,6 +1025,8 @@ func (c *converse) overlapRuled(ruling harness.Decided, seen overlapState, state
 			Participant: seen.participant,
 			TurnID:      seen.turnID,
 			LatencyMs:   ruling.TookMs,
+			Interruption: interruption{cause: causeShortened, ruler: ruling.Ruler, tookMs: ruling.TookMs,
+				words: seen.text},
 		})}
 	}
 
@@ -1209,10 +1337,19 @@ func (c *converse) patient(ready candidate) bool {
 
 	waiting, known := c.waiting[ready.Participant.ID]
 	if !known || !sameWords(waiting.text, ready.Text) {
-		c.waiting[ready.Participant.ID] = unfinished{text: ready.Text, since: time.Now()}
+		c.waiting[ready.Participant.ID] = unfinished{text: ready.Text, since: time.Now(), resumed: known}
 		return true
 	}
 	return time.Since(waiting.since) < c.patience
+}
+
+// firstPause says no earlier pause in the speaker's turn was waited out: these words were
+// never waited on, or are still being waited on in the turn's first pause.
+func (c *converse) firstPause(ready candidate) bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	waiting, known := c.waiting[ready.Participant.ID]
+	return !known || (sameWords(waiting.text, ready.Text) && !waiting.resumed)
 }
 
 // forgetQueuedRevisedByLocked drops the turn queued behind a reply when the words being dealt

@@ -818,6 +818,51 @@ describe("Agent", () => {
         assert.notEqual(one["hash"], other["hash"]);
       });
 
+      it("sends end_of_turn as written, and none when agent.yaml names none, so the stored choice stays", async () => {
+        const bars = { bars: [{ from_ms: 0, bar: 0.97 }, { from_ms: 900, bar: 0.25 }] };
+        for (const [declared, chosen] of [
+          ["end_of_turn:\n  max_wait_ms: 900\n", { max_wait_ms: 900 }],
+          ["end_of_turn:\n  preset: fast\n", { preset: "fast" }],
+          ["end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n", bars],
+          ["end_of_turn:\n  bars:\n    - from_ms: 0\n      bar: 0.97\n    - from_ms: 900\n      bar: 0.25\n", bars],
+          ["end_of_turn: {bars: [{from_ms: 0, bar: 0.97}, {from_ms: 900, bar: 0.25}]}\n", bars],
+          ["end_of_turn: {max_wait_ms: 900}\n", { max_wait_ms: 900 }],
+          ["end_of_turn: {}\n", {}],
+          // Sent rather than dropped, which would be the server's default: the router refuses them.
+          ["end_of_turn:\n  max_wait_ms: 0\n", { max_wait_ms: 0 }],
+          ['end_of_turn:\n  preset: ""\n', { preset: "" }],
+          ["llm: llm-fast\n", undefined],
+          ["end_of_turn:\n", undefined],
+          ["end_of_turn: null\n", undefined],
+        ] as const) {
+          const body = await synced(`name: jean\n${declared}`);
+
+          assert.deepEqual(body["end_of_turn"], chosen, declared);
+          assert.equal("end_of_turn" in body, chosen !== undefined, declared);
+        }
+
+        const one = await synced("name: jean\nend_of_turn:\n  max_wait_ms: 900\n");
+        const other = await synced("name: jean\nend_of_turn:\n  max_wait_ms: 1200\n");
+        assert.notEqual(one["hash"], other["hash"], "a changed end_of_turn would not sync");
+      });
+
+      it("sends floor_control as written, and none when agent.yaml names none, so the stored choice stays", async () => {
+        for (const [declared, chosen] of [
+          ["floor_control: stream/chorus-asr\n", "stream/chorus-asr"],
+          ['floor_control: ""\n', ""],
+          // The router refuses what it does not know, naming why.
+          ["floor_control: other\n", "other"],
+          ["llm: llm-fast\n", undefined],
+          ["floor_control:\n", undefined],
+          ["floor_control: null\n", undefined],
+        ] as const) {
+          const body = await synced(`name: jean\n${declared}`);
+
+          assert.equal(body["floor_control"], chosen, declared);
+          assert.equal("floor_control" in body, chosen !== undefined, declared);
+        }
+      });
+
       it("sends how the sandbox is built and what it may reach", async () => {
         const body = await synced(
           [

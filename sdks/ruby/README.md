@@ -216,7 +216,11 @@ agent.join { ... }
 ```
 
 `sync` stores the directory as a config named after it, in one request. A key `agent.yaml`
-does not know is refused. `.agent_sync` records the fingerprint, which is the one the Go,
+does not know is refused. `end_of_turn` is how eager chorus-asr's turn-taking is
+(`{max_wait_ms: 900}`, `{preset: fast}` or `{bars: [{from_ms, bar}, ...]}`, `{}` for the
+server's default; left out, the stored choice stays). `floor_control` is the model that controls
+the agent's floor (`stream/chorus-asr`, or `""` for the default flow controller; left out, the
+stored choice stays). `.agent_sync` records the fingerprint, which is the one the Go,
 Python and JavaScript SDKs take, so syncing on every start only reads the config back when
 nothing changed. What the code sets wins over what the directory says.
 

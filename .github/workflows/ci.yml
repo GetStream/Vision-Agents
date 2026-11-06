@@ -93,15 +93,25 @@ jobs:
       - name: Install ffmpeg
         run: sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg
 
+      # The backend is built with Go's SIMD experiment, as acceleration/Dockerfile builds it.
       - name: Vet the backend
         run: go vet ./...
         working-directory: acceleration
+        env:
+          GOEXPERIMENT: simd
 
       - name: Test the backend
         run: go test ./...
         working-directory: acceleration
         env:
+          GOEXPERIMENT: simd
           ROUTER_REDIS_ADDR: localhost:${{ job.services.redis.ports['6379'] }}
+
+      # Without the experiment the Opus codec runs its scalar code, which must still build
+      # and pass.
+      - name: Test the audio without SIMD
+        run: go build ./... && go test ./internal/audio/... ./internal/audiofloor/... ./internal/agent/streamedge/...
+        working-directory: acceleration
 
       - name: Vet phonecheck
         run: go vet ./...
@@ -114,6 +124,8 @@ jobs:
       - name: Compile STS integration tests
         run: go test -tags integration -run '^$' -exec=true ./internal/sts/...
         working-directory: acceleration
+        env:
+          GOEXPERIMENT: simd
 
       - name: Vet the SDK
         run: go vet ./...

@@ -2488,3 +2488,56 @@ func TestWordsGoneBackOverAreJoinedOnce(t *testing.T) {
 		}
 	}
 }
+
+// A Hearer that waits says when to put the same words again, and the cadence's own retry is
+// for everyone else. The wait is timed from before the ruling: Ruled starts it, and what it
+// does after, on a busy machine, is part of the wait, not before it.
+func (s *ConverseSuite) TestAHearersWaitPutsTheWordsAgainAfterItsInterval() {
+	ready := s.settle("could you", s.quiet())
+	ruled := time.Now()
+	s.converse.Ruled(harness.Decided{
+		CandidateID: ready.ID, Disposition: harness.Wait, Floor: harness.Continue, Again: 10 * testRetry,
+	}, s.quiet())
+	again := s.held()
+	s.Equal(ready.Text, again.Text)
+	s.GreaterOrEqual(time.Since(ruled), 10*testRetry)
+}
+
+// A turn's first pause is the one before any wait, however often it is put; words that go on
+// after a wait are a later pause.
+func (s *ConverseSuite) TestOnlyTheFirstPauseOfATurnIsItsFirst() {
+	s.start(DuplexOptions{}, time.Minute)
+	ready := s.settle("my number is", s.quiet())
+	s.True(s.converse.firstPause(ready))
+	s.converse.Ruled(harness.Decided{CandidateID: ready.ID, Disposition: harness.Wait, Floor: harness.Continue}, s.quiet())
+	again := s.held()
+	s.True(s.converse.firstPause(again))
+
+	s.converse.Settled(again, s.quiet())
+	s.converse.Ruled(harness.Decided{CandidateID: again.ID, Disposition: harness.Wait, Floor: harness.Continue}, s.quiet())
+	more := s.settle("my number is four one", s.quiet())
+	s.False(s.converse.firstPause(more))
+}
+
+// An utterance a stop over the agent was ruled on says more than the stop's words when it has
+// words after them, the last stop word perhaps cut off mid-word by the check's window, or, read
+// otherwise, more words than they are.
+func TestWhatSaysMoreThanAStop(t *testing.T) {
+	for _, c := range []struct {
+		text, stop string
+		more       bool
+	}{
+		{"Stop.", "Stop.", false},
+		{"stop", "Stop.", false},
+		{"Don't stop.", "Let's stop.", false},
+		{"No, Porto.", "No.", true},
+		{"Stop. What about Porto?", "Stop, wh", true},
+		{"Stop, wh", "Stop, wh", false},
+		{"Hi. What's the weather like in Lisbon tomorrow?", "Hi, what's the weather", true},
+		{"Disculpa, ilga.", "Desculpa.", true},
+	} {
+		if got := saysMore(c.text, c.stop); got != c.more {
+			t.Errorf("saysMore(%q, %q) = %v, want %v", c.text, c.stop, got, c.more)
+		}
+	}
+}

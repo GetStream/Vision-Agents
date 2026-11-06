@@ -45,6 +45,8 @@ type AgentConfigPatch struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	EndOfTurn          *EndOfTurn               `json:"end_of_turn,omitempty" doc:"Replaces the choice whole. An empty object is the server's default."`
+	FloorControl       *string                  `json:"floor_control,omitempty" pattern:"^(stream/chorus-asr)?$" doc:"The model that controls the floor: stream/chorus-asr, or empty for the default flow controller again. stream/chorus-asr on a router without a chorus-asr server is refused (400)."`
 	Tags               *map[string]string       `json:"tags,omitempty"`
 	Video              *SessionVideo            `json:"video,omitempty"`
 }
@@ -219,7 +221,15 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)
 	config.Calls = callsOr(config.Calls, patch.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, patch.ResumeHistory)
+	config.EndOfTurn = endOfTurnOr(config.EndOfTurn, patch.EndOfTurn)
+	config.FloorControl = floorControlOr(config.FloorControl, patch.FloorControl)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.floorControlRefusal(patch.FloorControl); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.endOfTurnComplaint(ctx, floorChoiceOf(config), floorChoiceOf(original)); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {

@@ -155,6 +155,12 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if failure, refused := s.floorControlRefusal(request.Body.FloorControl); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.endOfTurnComplaint(ctx, floorChoiceOf(config), floorChoice{}); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := callsComplaint(config.Calls); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -279,7 +285,15 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
 	config.Calls = callsOr(existing.Calls, request.Body.Calls)
 	config.ResumeHistory = resumeHistoryOr(existing.ResumeHistory, request.Body.ResumeHistory)
+	config.EndOfTurn = endOfTurnOr(existing.EndOfTurn, request.Body.EndOfTurn)
+	config.FloorControl = floorControlOr(existing.FloorControl, request.Body.FloorControl)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.floorControlRefusal(request.Body.FloorControl); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.endOfTurnComplaint(ctx, floorChoiceOf(config), floorChoiceOf(existing)); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
@@ -1536,6 +1550,8 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config.Scheduling = schedulingOf(request.Scheduling)
 	config.Calls = callsOf(request.Calls)
 	config.ResumeHistory = resumeHistoryOr(store.ResumeHistory{}, request.ResumeHistory)
+	config.EndOfTurn = endOfTurnOr(store.EndOfTurn{}, request.EndOfTurn)
+	config.FloorControl = floorControlOr("", request.FloorControl)
 	config.ReviewInstructions = reviewOf("", request.Review)
 	return config
 }
@@ -1626,6 +1642,8 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	rendered.Scheduling = renderedScheduling(config.Scheduling)
 	rendered.Calls = renderedCalls(config.Calls)
 	rendered.ResumeHistory = renderedResumeHistory(config.ResumeHistory)
+	rendered.EndOfTurn = renderedEndOfTurn(config.EndOfTurn)
+	rendered.FloorControl = renderedFloorControl(config.FloorControl)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -1894,6 +1912,8 @@ type AgentConfigRequest struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
+	EndOfTurn          *EndOfTurn               `json:"end_of_turn,omitempty" doc:"When chorus-asr has a caller's turn ended in this agent's sessions, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars. A session request's wins over this. Left out on a create, the server's default; left out on an update, the stored choice stays, and an empty object is the server's default again. A preset or wait the server does not publish is refused (400) when the floor control asks it."`
+	FloorControl       *string                  `json:"floor_control,omitempty" pattern:"^(stream/chorus-asr)?$" doc:"The model that controls the floor in this agent's sessions, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr, the one there is, or empty for the default flow controller. A session request's wins over this. Left out on a create, the default flow controller; left out on an update, the stored choice stays. stream/chorus-asr on a router without a chorus-asr server is refused (400)."`
 	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
@@ -1935,6 +1955,8 @@ type AgentConfig struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	EndOfTurn          *EndOfTurn               `json:"end_of_turn,omitempty" doc:"Absent when chorus-asr ends the agent's turns by the server's default."`
+	FloorControl       *string                  `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions: stream/chorus-asr. Absent for the default flow controller."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
