@@ -23,7 +23,8 @@ class OptOut:
             created_at (datetime.datetime):
             id (str):
             recipient (str): The number, in E.164.
-            source (str): keyword when they texted STOP, otherwise api or dashboard.
+            source (str): keyword when they texted STOP, campaign when they asked a campaign call not to call again,
+                otherwise api or dashboard.
     """
 
     channel: OptOutChannel

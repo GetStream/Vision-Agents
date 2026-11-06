@@ -90,6 +90,8 @@ func (s *PhoneSuite) TestSearchingEveryVendorSaysNoneCanBeAsked() {
 }
 
 func (s *PhoneSuite) TestAnAppThatHasBoughtNothingHoldsNoNumbers() {
+	// Not the standard fixture: the campaign suites record numbers on it.
+	s.useApp(s.data.createApp())
 	var numbers []PhoneNumber
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/phone/numbers", nil, &numbers))
