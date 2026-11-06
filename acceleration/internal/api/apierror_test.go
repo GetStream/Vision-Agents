@@ -158,13 +158,15 @@ func TestEveryScheduleCodeIsNamedInTheErrorCodeList(t *testing.T) {
 
 // A run refused for money records the refusal's own code (deliveryReason), so the run's error
 // doc has to name each code a refusal of money has that a run can carry: user_limit_reached
-// is the one a limit on the end user a task is for gives.
+// is the one a limit on the end user a task is for gives, and spend_check_unavailable the one
+// a run is tried again under.
 func TestEveryMoneyCodeAScheduledRunCanCarryIsNamedInItsErrorDoc(t *testing.T) {
 	field, ok := reflect.TypeFor[ScheduledTaskRun]().FieldByName("Error")
 	require.True(t, ok)
 	listed := field.Tag.Get("doc")
 	for _, refusal := range []error{
 		policy.ErrSuspended, policy.ErrNoCredits, policy.ErrSystemLimit, policy.ErrBudgetSpent, policy.ErrUserLimit,
+		policy.ErrSpendCheckUnavailable,
 	} {
 		require.Contains(t, listed, policy.Code(refusal))
 	}
