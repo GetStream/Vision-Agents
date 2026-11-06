@@ -598,6 +598,9 @@ type Agent struct {
 	// finished whole on the call: its speaking rate, by which how long the caller has heard
 	// an utterance says how much of it they have heard (replyHeardLocked).
 	voicedChars, voicedMs float64
+	// pausesAsked says chorus-asr transcribes a caller of this agent and asks the model about
+	// their pauses for it (actsOnChorusASR).
+	pausesAsked atomic.Bool
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
 	replying string
@@ -1652,6 +1655,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	// pauses from the audio and asks about each, the decision and its words in one pass.
 	if pauses, ok := session.Serving().(audiofloor.Pauses); ok && a.audioFloor.asksOnPauses() {
 		pauses.AskOnPauses(pauseAsker{a})
+		a.pausesAsked.Store(true)
 	}
 
 	a.mu.Lock()
@@ -2537,9 +2541,9 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 	}
 
 	// Acting on chorus-asr, the line is a turn of the agent's own, which a caller talking
-	// over it stops (audioFloor.acts); otherwise it goes out as it always has, as a murmur.
+	// over it stops (actsOnChorusASR); otherwise it goes out as it always has, as a murmur.
 	prefix := backchannelPrefix
-	if a.audioFloor.acts() {
+	if a.actsOnChorusASR() {
 		prefix = ownPrefix
 	}
 	turnID := prefix + turnStamp()
@@ -3973,7 +3977,7 @@ const shortenTail = 250 * time.Millisecond
 // answered (respondQueued). A line the agent said of its own accord answers no request, so it
 // is stopped at once. Otherwise the reply is shortened as it always was (closeReply).
 func (a *Agent) shorten(participant stt.Participant, turnID string, why interruption) {
-	if !a.audioFloor.acts() {
+	if !a.actsOnChorusASR() {
 		a.closeReply()
 		return
 	}
@@ -4013,6 +4017,14 @@ func (a *Agent) shorten(participant stt.Participant, turnID string, why interrup
 		}
 	}()
 }
+
+// actsOnChorusASR says the agent keeps the loop's contract (README, "The loop's contract"): it
+// acts on chorus-asr's rulings, and chorus-asr transcribes its callers and asks about their
+// pauses. A line of its own is then a turn a caller talking over it stops, and a shortened
+// reply stops shortenTail after the ruling. Off, shadowing, or with another transcriber, the
+// agent does as it did before chorus-asr: a transcriber that does not drop the agent's echo
+// has a check-in said over it stopped by its own voice.
+func (a *Agent) actsOnChorusASR() bool { return a.pausesAsked.Load() }
 
 // closeReply stops the model from adding more to the reply being said while allowing speech
 // already sent to the voice to finish: a shortening, but for an agent acting on chorus-asr.

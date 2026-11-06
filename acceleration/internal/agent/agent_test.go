@@ -920,6 +920,9 @@ type AgentSuite struct {
 	// floor is a chorus-asr server the agent asks about turns in floorMode, or nil.
 	floor     *audiofloor.Client
 	floorMode audiofloor.Mode
+	// earsPause has the stub transcriber stand in for chorus-asr's, which an acting agent
+	// has ask about its callers' pauses (pausingSTT).
+	earsPause bool
 
 	agent  *Agent
 	events *collector
@@ -961,7 +964,7 @@ func (s *AgentSuite) SetupTest() {
 	s.duplex = DuplexOptions{}
 	s.speculates = false
 	s.unified = false
-	s.floor, s.floorMode = nil, ""
+	s.floor, s.floorMode, s.earsPause = nil, "", false
 	s.performing = ""
 	s.voiceName = ""
 	s.logs = nil
@@ -1112,6 +1115,9 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 		s.opened.Add(1)
 		if s.holdOpen != nil {
 			<-s.holdOpen
+		}
+		if s.earsPause {
+			return pausingSTT{s.ears}, nil
 		}
 		return s.ears, nil
 	}, routing.OverrideRegion)
@@ -1319,10 +1325,24 @@ func (s *AgentSuite) replyWentOut() {
 }
 
 // actsOnChorusASR has the agent joined next act on the chorus-asr model, at a server that
-// never answers, so the flow controller rules every turn the model is asked about.
+// never answers, so the flow controller rules every turn the model is asked about, with the
+// stub transcriber standing in for chorus-asr's (pausingSTT).
 func (s *AgentSuite) actsOnChorusASR() {
+	s.actsWithAnotherTranscriber()
+	s.earsPause = true
+}
+
+// actsWithAnotherTranscriber has the agent joined next act on the chorus-asr model, at a server
+// that never answers, while another transcriber hears its callers.
+func (s *AgentSuite) actsWithAnotherTranscriber() {
 	s.floor, s.floorMode = audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Act
 }
+
+// pausingSTT is the stub transcriber standing in for chorus-asr's, which an acting agent has
+// ask about its callers' pauses (audiofloor.Pauses). It asks about none.
+type pausingSTT struct{ *stubSTT }
+
+func (pausingSTT) AskOnPauses(audiofloor.Asker) {}
 
 func (s *AgentSuite) says(participant stt.Participant, text string) {
 	s.saysAfter(participant, text, 0)
@@ -3991,6 +4011,7 @@ func (s *AgentSuite) TestACheckInTheCallerTalksOverIsStopped() {
 	s.model.composes = []string{"Are you still with me, or should I hold on?"}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
+	s.eventually(s.agent.actsOnChorusASR, "chorus-asr never heard the caller")
 	s.agent.checkIn(participant, idlePurpose)
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
 	turnID := s.agent.floor().Speaking
@@ -4068,10 +4089,35 @@ func (s *AgentSuite) TestAReplyThatEndsWithinItsShortenedTailIsNotCut() {
 	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never ended")
 	turnID := s.agent.floor().Speaking
 	s.Require().NotEmpty(turnID, "the reply is the turn the agent was last on")
+	s.Require().True(s.agent.actsOnChorusASR(), "the tail is that of an agent acting on chorus-asr")
 
 	s.agent.shorten(participant, turnID, interruption{cause: causeShortened, words: "and in Porto"})
 	time.Sleep(shortenTail + 500*time.Millisecond)
 	s.Zero(countOf[Interrupted](s.reported()), "a reply heard whole was reported cut")
+	s.Zero(s.voice.interrupted(), "the voice was stopped")
+}
+
+// Acting on chorus-asr while another transcriber hears the callers, the loop's contract, which
+// is that of chorus-asr transcribing, isn't kept: a shortened reply plays on what the voice was
+// sent, as with every transcriber but chorus-asr.
+func (s *AgentSuite) TestAShortenedReplyPlaysOnActingWithAnotherTranscriber() {
+	s.actsWithAnotherTranscriber()
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon this week")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	s.edge.holdSpeech(true)
+	turnID := s.agent.floor().Speaking
+	s.Require().NotEmpty(turnID)
+
+	s.agent.perform(Action{Kind: ActShorten, Participant: participant, TurnID: turnID,
+		Interruption: interruption{cause: causeShortened, words: "and in Porto"}})
+	time.Sleep(shortenTail + 500*time.Millisecond)
+	s.Zero(countOf[Interrupted](s.reported()), "the shortened reply was cut")
 	s.Zero(s.voice.interrupted(), "the voice was stopped")
 }
 
@@ -4082,6 +4128,7 @@ func (s *AgentSuite) TestAShortenedCheckInStopsAtOnce() {
 	s.model.composes = []string{"Are you still with me, or should I hold on?"}
 	participant := stt.Participant{ID: "alice"}
 	s.speak(participant)
+	s.eventually(s.agent.actsOnChorusASR, "chorus-asr never heard the caller")
 	s.agent.checkIn(participant, idlePurpose)
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
 	shorten := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Shorten}},
