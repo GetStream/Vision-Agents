@@ -1222,7 +1222,7 @@ func (s *socket) failed(err error) {
 		s.frame(frame{"type": "error", "error": answer.Message, "code": answer.Code, "error_type": answer.Type})
 		return
 	}
-	s.frame(frame{"type": "error", "error": err.Error()})
+	s.frame(frame{"type": "error", "error": store.RedactLogText(err.Error())})
 }
 
 // end sends the close frame after the last frame: 1000, or a failure code with the failure,

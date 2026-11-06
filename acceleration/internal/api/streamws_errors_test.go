@@ -130,3 +130,16 @@ func TestAStreamSocketThatFailsWithNoCredentialSaysWhatItAlwaysSaid(t *testing.T
 	require.Equal(t, websocket.CloseInternalServerErr, closed.Code)
 	require.Equal(t, "503 Service Unavailable", closed.Text)
 }
+
+// A failure frame on a stream socket is not cut, so a refusal naming what the caller sent
+// stays whole, but it never carries the key a provider echoed.
+func TestAStreamSocketFailureFrameKeepsALongRefusalWholeWithoutItsKey(t *testing.T) {
+	key, long := rand.Text(), strings.Repeat("x", 200<<10)
+	sent := sentOver(t, func(out *socket) error {
+		out.failed(errors.New(`routing: unknown target "` + long + `" from wss://live.example/ws?key=` + key))
+		return nil
+	})
+
+	require.NotContains(t, sent, key)
+	require.Contains(t, sent, long)
+}

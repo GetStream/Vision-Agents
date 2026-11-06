@@ -116,6 +116,27 @@ func TestSafeLogTextKeepsTheRestOfTheURL(t *testing.T) {
 	}
 }
 
+// The size cap is SafeLogText's, not the redaction's: 8192 bytes are kept whole, 8193 are cut to
+// 2048 runes and a marker, and RedactLogText never cuts.
+func TestSafeLogTextCapsWhatItKeeps(t *testing.T) {
+	secret := rand.Text()
+	atCap, overCap := strings.Repeat("x", 8192), strings.Repeat("x", 8193)
+	long := overCap + "?key=" + secret
+	for name, got := range map[string][2]string{
+		"8192 bytes are kept":      {SafeLogText(atCap), atCap},
+		"8193 bytes are cut":       {SafeLogText(overCap), strings.Repeat("x", 2048) + "… [truncated]"},
+		"runes are cut, not bytes": {SafeLogText(strings.Repeat("é", 5000)), strings.Repeat("é", 2048) + "… [truncated]"},
+		"redact never cuts":        {RedactLogText(long), overCap + "?key=[redacted]"},
+	} {
+		if got[0] != got[1] {
+			t.Errorf("%s: got %d bytes, want %d", name, len(got[0]), len(got[1]))
+		}
+	}
+	if strings.Contains(SafeLogText(long), secret) {
+		t.Error("the cap path kept the credential")
+	}
+}
+
 func TestSafeLogDetailsKeepsTheSFUKeys(t *testing.T) {
 	details := safeLogDetails(map[string]any{
 		"sfu_edge": "sfu-a1",

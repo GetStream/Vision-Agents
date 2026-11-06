@@ -90,7 +90,20 @@ var encodedAuthorization = regexp.MustCompile(`(?i)(?:authorization|cookie)(?:%(
 // encodes it (url.QueryEscape), with no word boundary for the same reason.
 var encodedBearer = regexp.MustCompile(`(?i)bearer(?:%(?:25)*20|\+)+[^\s"\x27&#\\]+`)
 
+// SafeLogText is RedactLogText cut to what the requests table keeps: past 8192 bytes, the first
+// 2048 runes and a marker.
 func SafeLogText(text string) string {
+	text = RedactLogText(text)
+	if len(text) > 8192 {
+		text = string([]rune(text)[:min(len([]rune(text)), 2048)]) + "… [truncated]"
+	}
+	return text
+}
+
+// RedactLogText is text with every credential shape taken out, at whatever length. A caller
+// that must send the whole text, such as a refusal naming what the caller sent, uses this;
+// everything stored or logged uses SafeLogText.
+func RedactLogText(text string) string {
 	text = bearerCredential.ReplaceAllString(text, "[redacted]")
 	text = authorizationHeader.ReplaceAllString(text, "[redacted]")
 	text = credentialText.ReplaceAllString(text, "[redacted]")
@@ -99,9 +112,6 @@ func SafeLogText(text string) string {
 	text = encodedAuthorization.ReplaceAllString(text, "[redacted]")
 	text = encodedBearer.ReplaceAllString(text, "[redacted]")
 	text = providerCredential.ReplaceAllString(text, "[redacted]")
-	if len(text) > 8192 {
-		text = string([]rune(text)[:min(len([]rune(text)), 2048)]) + "… [truncated]"
-	}
 	return text
 }
 func safeLogDetails(details map[string]any) map[string]any {
