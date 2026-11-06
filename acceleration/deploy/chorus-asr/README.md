@@ -441,8 +441,9 @@ turn: {"conversation":[{"agent":true,"text":"Weather line, how can I help?"}]}
 {"answer":"get_weather","answer_probability":0.9988813,"p_eot":0.9999969,"options":[{"name":"respond","p":0.00015754762},{"name":"wait","p":0.0000031085704},{"name":"clarify","p":0.00080397225},{"name":"ignore","p":0.0000036620925},{"name":"cannot","p":0.00015045748},{"name":"get_weather","p":0.9988813}],"sample_rate":16000,"samples":35364,"window_samples":35364,"decide_ms":102.45,"ruling":{"disposition":"respond","floor":"continue","tool":"get_weather"}}
 ```
 
-`POST /v1/transcribe?languages=en`: the audio as the body, as a decision's audio part, and
-the languages the callers speak, the session's language hints. The answer is what was
+`POST /v1/transcribe?languages=en`: a `multipart/form-data` body of one `audio` part, as a
+decision's, and the languages the callers speak, the session's language hints. A server that
+takes only a raw body here answers 415 ([Behind a gateway](#behind-a-gateway)). The answer is what was
 said, of all of the audio, with no agent, decision or policy:
 
 ```
@@ -456,6 +457,48 @@ lines of the last six turns, and each line's last 40 words. The turn goes in the
 because the longest, 800 characters of reply and six lines of 40 words, escapes to 10,285
 bytes in Hindi and 12,035 in Russian as JSON in a header, past the 8 KiB a proxy allows one
 header line.
+
+### Behind a gateway
+
+A server behind a gateway, such as a custom server on Baseten, is at the gateway's path, and
+every route goes under it: `ROUTER_CHORUS_ASR_URL=https://model-<id>.api.baseten.co/environments/production/sync`
+asks `…/sync/v1/decide`. `ROUTER_CHORUS_ASR_API_KEY` goes with every request as
+`Authorization: Bearer <key>`. Baseten answers 401 without a key or with a wrong one, which
+the router takes as misconfigured, not as a server down.
+
+Measured on 2026-11-05 against one Baseten L4 (`L4:4x16`), through its sync path, from a
+client in Europe about 120 ms from the gateway, with this router's client and Opus:
+
+| | p50 | p99 | the server's own |
+| --- | ---: | ---: | ---: |
+| Decision, a 16 s window (28 KB) | 224 ms | 240 ms | 97 / 106 ms |
+| Words with the decision, 16 s / 21.5 s / 43 s (15 each) | 1.11 / 1.63 / 1.87 s | 1.12 / 1.65 / 1.90 s | 0.88 / 1.29 / 1.52 s |
+| `GET /v1/info` | 134 ms | 410 ms | |
+
+- **The decision comes first.** The gateway passes each line as the server writes it: on a
+  43 s turn the decision's line arrived at 373 ms (median of 10, HTTP/2) and the words at
+  1.89 s, 1.51 s later, which is the server's `transcript_ms`. Over HTTP/1.1, and asking for
+  no compression, the same.
+- A decision line on a 65 KB turn came 120 ms, one round trip, after one on a 46 KB turn,
+  as an HTTP/2 window of 64 KiB, which Baseten documents, would make it.
+- The gateway takes up to 100 MiB of body, above the server's own bound, and its headers end
+  between 8 and 16 KiB, past which it closes the connection (`GOAWAY`, `ENHANCE_YOUR_CALM`).
+- Callers, each with an interim a second while talking and checks at 200, 500, 800 and
+  1,100 ms of each pause, the first with the words: at 1, decisions at 132 ms p99 at the
+  server and interims at 1.16 s; at 2, 135 ms and 1.18 s, 3% of interims turned away; at 3,
+  184 ms. No count holds interims within 1 s, as on a cluster's L4. The interims here asked
+  for a decision too, since `/v1/transcribe` didn't pass then, which costs the GPU more.
+- A model scaled to zero starts on the first request, which waits for it at the gateway: 131 s
+  to the first answer, most of it loading the model. The router's checks can't wait that long,
+  so a router that acts on the model wants a replica kept up.
+- **Every route sends its audio in a multipart body.** Behind Baseten, every raw body with an
+  `audio/*` type, over HTTP/2 and HTTP/1.1, reached the server as a type it doesn't take, and
+  it answered 415; multipart and JSON bodies passed. So `POST /v1/transcribe` sends its audio
+  as a decision does, in a part named `audio` with its own type. That needs a chorus-asr
+  server whose `/v1/transcribe` takes a multipart body: an older one answers it 415, behind a
+  gateway or not, so its interims are not written, a transcriber whose words come from
+  `/v1/transcribe` alone stops with a fatal error, and the acceptance replay stops in its
+  warm-up. Its decisions, and the words a check asks for with `transcript=true`, still work.
 
 ## Transcription alone
 
@@ -714,6 +757,9 @@ output and its debug log in `CHORUS_ASR_REPLAY_LOGS`:
 ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 GOEXPERIMENT=simd \
   go test -tags integration -count=1 -timeout 30m -run TestAudioFloorReplay -v ./internal/agent/
 ```
+
+Both read `ROUTER_CHORUS_ASR_API_KEY` too, for a server behind a gateway; the replay counts
+its requests by route under the gateway's path.
 
 `TestAudioFloorScenarios`, in `audio_floor_scenarios_integration_test.go`, plays what the
 acceptance checks don't: pauses inside a turn, a correction, a question and a second turn

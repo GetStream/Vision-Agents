@@ -16,6 +16,7 @@ import (
 	"mime"
 	"mime/multipart"
 	"net/http"
+	neturl "net/url"
 	"os"
 	"path/filepath"
 	"slices"
@@ -150,8 +151,12 @@ type floorHarness struct {
 }
 
 func newFloorHarness(t *testing.T, url string) *floorHarness {
-	faults := &faults{base: http.DefaultTransport}
-	requests := &exchanges{base: faults}
+	// A server behind a gateway is at a path of its own, which the routes are under.
+	server, err := neturl.Parse(url)
+	require.NoError(t, err)
+	prefix := strings.TrimRight(server.Path, "/")
+	faults := &faults{base: http.DefaultTransport, prefix: prefix}
+	requests := &exchanges{base: faults, prefix: prefix}
 	h := &floorHarness{
 		url:      url,
 		faults:   faults,
@@ -1626,8 +1631,10 @@ func all[E Event](c *call) []stampedEvent[E] {
 // answer ended, and the answer.
 type exchanges struct {
 	base http.RoundTripper
-	mu   sync.Mutex
-	kept []*exchange
+	// prefix is the server's own path, which path leaves out.
+	prefix string
+	mu     sync.Mutex
+	kept   []*exchange
 }
 
 type exchange struct {
@@ -1643,7 +1650,8 @@ type exchange struct {
 }
 
 func (x *exchanges) RoundTrip(req *http.Request) (*http.Response, error) {
-	kept := &exchange{method: req.Method, path: req.URL.Path, query: req.URL.RawQuery, start: time.Now(), turn: turnPart(req)}
+	path := strings.TrimPrefix(req.URL.Path, x.prefix)
+	kept := &exchange{method: req.Method, path: path, query: req.URL.RawQuery, start: time.Now(), turn: turnPart(req, path)}
 	x.mu.Lock()
 	x.kept = append(x.kept, kept)
 	x.mu.Unlock()
@@ -1662,9 +1670,9 @@ func (x *exchanges) RoundTrip(req *http.Request) (*http.Response, error) {
 }
 
 // turnPart is the turn a decision's multipart body tells the model, empty for any other
-// request. The body is read and put back.
-func turnPart(req *http.Request) string {
-	if req.URL.Path != "/v1/decide" || req.Body == nil {
+// request, by its path under the server's address. The body is read and put back.
+func turnPart(req *http.Request, path string) string {
+	if path != "/v1/decide" || req.Body == nil {
 		return ""
 	}
 	raw, err := io.ReadAll(req.Body)

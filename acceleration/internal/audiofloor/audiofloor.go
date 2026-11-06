@@ -17,8 +17,9 @@
 //	                          has ended. With &transcript=true it is two JSON lines: the
 //	                          decision, about the audio's last 16 s, as soon as it is made,
 //	                          then the words of all of it
-//	POST /v1/transcribe       audio, and ?languages= the callers speak: what was said,
-//	                          empty when nothing was or the server heard noise
+//	POST /v1/transcribe       a multipart body of one "audio" part, as a decision's, and
+//	                          ?languages= the callers speak: what was said, empty when
+//	                          nothing was or the server heard noise
 //
 // The server writes the model's prompt, because the model knows only the words it was
 // trained on. The server says what to do with the words; whether a turn with the floor free
@@ -544,11 +545,16 @@ func (c *Client) Transcribe(ctx context.Context, audio harness.Audio, languages 
 	if len(languages) > 0 {
 		target += "?languages=" + url.QueryEscape(strings.Join(languages, ","))
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(audio.Data))
+	// The audio goes in a part, as a decision's does: a gateway may change a raw body's type.
+	body, contentType, err := formBody(formPart{"audio", audio.Type, audio.Data})
+	if err != nil {
+		return Words{}, err
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, target, bytes.NewReader(body))
 	if err != nil {
 		return Words{}, stack.Wrap(err)
 	}
-	req.Header.Set("Content-Type", audio.Type)
+	req.Header.Set("Content-Type", contentType)
 	var said struct {
 		Transcript *transcriptJSON `json:"transcript"`
 		Error      string          `json:"transcript_error"`
@@ -692,20 +698,31 @@ func decisionBody(turn Turn, audio harness.Audio) ([]byte, string, error) {
 		}
 		turn.Conversation = turn.Conversation[1:]
 	}
+	return formBody(formPart{"turn", "application/json", moment}, formPart{"audio", audio.Type, audio.Data})
+}
+
+// formPart is a part of a multipart/form-data body: its name, type and bytes.
+type formPart struct {
+	name, contentType string
+	raw               []byte
+}
+
+// formBody is a multipart/form-data body of parts, in their order, and its Content-Type. Every
+// route that sends audio sends it so, in a part with its own type, since a gateway may change
+// the type of a raw body.
+func formBody(parts ...formPart) ([]byte, string, error) {
+	size := 512 * len(parts)
+	for _, part := range parts {
+		size += len(part.raw)
+	}
 	var body bytes.Buffer
-	body.Grow(len(moment) + len(audio.Data) + 512)
-	parts := multipart.NewWriter(&body)
-	for _, part := range []struct {
-		name, contentType string
-		raw               []byte
-	}{
-		{"turn", "application/json", moment},
-		{"audio", audio.Type, audio.Data},
-	} {
+	body.Grow(size)
+	writer := multipart.NewWriter(&body)
+	for _, part := range parts {
 		header := textproto.MIMEHeader{}
 		header.Set("Content-Disposition", `form-data; name="`+part.name+`"`)
 		header.Set("Content-Type", part.contentType)
-		w, err := parts.CreatePart(header)
+		w, err := writer.CreatePart(header)
 		if err != nil {
 			return nil, "", stack.Wrap(err)
 		}
@@ -713,10 +730,10 @@ func decisionBody(turn Turn, audio harness.Audio) ([]byte, string, error) {
 			return nil, "", stack.Wrap(err)
 		}
 	}
-	if err := parts.Close(); err != nil {
+	if err := writer.Close(); err != nil {
 		return nil, "", stack.Wrap(err)
 	}
-	return body.Bytes(), parts.FormDataContentType(), nil
+	return body.Bytes(), writer.FormDataContentType(), nil
 }
 
 // lastTurns is the lines of the last n turns, a turn being one side's run of lines: the
