@@ -3948,7 +3948,7 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "tell me a long story")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	asker := pauseAsker{s.agent}
@@ -4024,7 +4024,7 @@ func (s *AgentSuite) TestWhatIsSaidAfterTheStopMakesATurnOfItAll() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon tomorrow")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	asker := pauseAsker{s.agent}
@@ -4077,7 +4077,7 @@ func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTail() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon this week")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	// Still playing at the edge when its tail is up.
@@ -4101,7 +4101,7 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnUnlessActingOnChorusASR() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon this week")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	turnID := s.agent.floor().Speaking
@@ -4146,7 +4146,7 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnActingWithAnotherTranscriber() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon this week")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	s.edge.holdSpeech(true)
@@ -6584,7 +6584,7 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon tomorrow")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	s.agent.mu.Lock()
