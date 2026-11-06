@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/suite"
@@ -80,6 +81,11 @@ func (s *GivenNamesSuite) TestAStandInNameTheAgentWroteIsNotGroundedByAToolReadi
 			{Role: llm.ToolResult, ToolCallID: "r1", Content: result},
 		}
 	}
+	send := func(text string) llm.Message {
+		arguments, err := json.Marshal(map[string]string{"text": text})
+		s.Require().NoError(err)
+		return llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: "send_message", Arguments: string(arguments)}}}
+	}
 	given := llm.Message{Role: llm.ToolResult, Content: `{"guest":"John Doe","room":"204"}`}
 	for _, c := range []struct {
 		name    string
@@ -91,6 +97,12 @@ func (s *GivenNamesSuite) TestAStandInNameTheAgentWroteIsNotGroundedByAToolReadi
 		{"said, read back on another line than a tool's", append([]llm.Message{said}, read(`{"notes":"Agent: I will book it for John Doe.\nFront desk: John Doe checked in"}`)...), false},
 		{"given by a tool before the agent posted a copy of its line", append(append([]llm.Message{}, read(`{"note":"Guest John Doe is in room 5"}`)...), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s2", Name: "send_message", Arguments: `{"text":"Guest John Doe"}`}}}), false},
 		{"given by a tool before the agent said it", append([]llm.Message{given, said}, read(`{"notes":"Agent: I will book it for John Doe."}`)...), false},
+		{"a name of the tool's where the agent's line split it inside words", append([]llm.Message{send("Room for Joh N. Doe")}, read("Room for John Doe")...), false},
+		{"a name of the tool's where the agent's line held its letters across words", append([]llm.Message{send("Guest Jo Hndoe")}, read(`{"text":"Guest John Doe"}`)...), false},
+		{"a name of the tool's where the agent's line ran its words together", append([]llm.Message{send("Ask Johndoe today")}, read("Ask John Doe today")...), false},
+		{"a name the agent posted in capitals with a wider gap, read back", append([]llm.Message{send("Guest: JOHN  DOE")}, read("Guest: John Doe")...), true},
+		{"a name of the tool's where the agent's line had its letters in a longer word", append([]llm.Message{send("John Doerr")}, read("Guest John Doe rr")...), false},
+		{"a name of the tool's beside an agent's line with more letters in its last word", append([]llm.Message{send("Ask John Doerr")}, read("Ask John Doerr; guest John Doe")...), false},
 	} {
 		_, refused := placeholderName(c.history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
 		s.Equal(c.refused, refused, c.name)

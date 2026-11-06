@@ -90,6 +90,11 @@ func (h *Hearer) Hear(ctx context.Context, turn harness.FlowTurn) (harness.Decid
 	return check.Ruling, err
 }
 
+// HearDeadline is how long the server has to rule on turn (Client.HearDeadline).
+func (h *Hearer) HearDeadline(turn harness.FlowTurn) time.Duration {
+	return h.client.HearDeadline(turn)
+}
+
 // Check asks the model about turn and reads its answer: with the floor free, the turn has
 // ended when p_eot has reached the bar at as many checks in a row as the agent's point asks,
 // or the pause the cap, and otherwise the ruling is to wait for the policy's interval.

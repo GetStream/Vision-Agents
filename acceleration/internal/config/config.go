@@ -132,6 +132,12 @@ type Config struct {
 const chorusASRModeRetired = "agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is no longer read, and stream/chorus-asr controls " +
 	"no agent's floor of the router's accord: an agent opts in with floor_control: {model: stream/chorus-asr} on its config or in its agent.yaml"
 
+// minOverlapTimeout and maxOverlapTimeout bound agent.chorus_asr_overlap_timeout.
+const (
+	minOverlapTimeout = 100 * time.Millisecond
+	maxOverlapTimeout = 450 * time.Millisecond
+)
+
 // Knowledge is the knowledge store's settings.
 type Knowledge struct {
 	// StreamCost is what the knowledge provider charges the operator, by meter: bytes_queried
@@ -403,6 +409,13 @@ type Agent struct {
 	AudioFloorAPIKey   string `koanf:"chorus_asr_api_key"`
 	AudioFloorAudio    string `koanf:"chorus_asr_audio"`
 	AudioFloorInterims string `koanf:"chorus_asr_interims"`
+	// AudioFloorOverlapTimeout is how long the router waits for the server to rule on a
+	// caller talking over the agent, before the flow controller rules instead: 250ms by
+	// default, from 100ms to 450ms, as the agent stops within 800 ms of the caller's first
+	// word and the first such check is asked 350 ms into it. A server that needs longer needs
+	// to be faster. The checks of a pause keep the flow controller's own share of its deadline
+	// (harness.HearDeadline).
+	AudioFloorOverlapTimeout time.Duration `koanf:"chorus_asr_overlap_timeout"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -589,6 +602,7 @@ var variables = map[string]string{
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
+	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
 	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
 	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
 
@@ -651,7 +665,8 @@ func Defaults() Config {
 		// can come to millions of tokens.
 		RateLimit: RateLimit{MessagesPerDay: 200, TokensPerDay: 5_000_000},
 		DataMove:  DataMove{Retention: 7 * 24 * time.Hour},
-		Agent:     Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond},
+		Agent: Agent{ReplyHedge: 1200 * time.Millisecond, FlowHedge: 400 * time.Millisecond,
+			AudioFloorOverlapTimeout: 250 * time.Millisecond},
 		// One hour is Kanat's decision of 2026-10-07 (D4, wave 3b), not a measurement:
 		// unverified against any traffic. The only external bound is maxEpisodeIdle.
 		Episodes:    Episodes{IdleAfter: time.Hour},
@@ -826,6 +841,15 @@ func (c Config) validate() error {
 	case "", "on", "off":
 	default:
 		return fmt.Errorf("config: agent.chorus_asr_interims (ROUTER_CHORUS_ASR_INTERIMS) is on or off, got %q", c.Agent.AudioFloorInterims)
+	}
+	// The agent stops within 800 ms of a caller's first word over it, and the first check is
+	// asked 350 ms into it: a longer wait than 450 ms can't keep that line whatever the server
+	// says, and one under 100 ms gives up on an in-cluster TPU with four calls at once.
+	if wait := c.Agent.AudioFloorOverlapTimeout; wait < minOverlapTimeout || wait > maxOverlapTimeout {
+		return fmt.Errorf("config: agent.chorus_asr_overlap_timeout (ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT) is from %s to %s, got %s: "+
+			"the agent stops within 800 ms of the caller's first word over it and the first check is asked 350 ms in, "+
+			"so a longer wait can't keep that line, and a server that needs one needs to be faster",
+			minOverlapTimeout, maxOverlapTimeout, wait)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:

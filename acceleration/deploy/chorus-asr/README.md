@@ -119,6 +119,7 @@ The router makes chorus-asr available, and each agent opts in to it.
 | `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as `Authorization: Bearer <key>` on every request, for a server behind a gateway that asks for a key. Never logged, and taken out of what a gateway says back. Send it over `https` |
 | `ROUTER_CHORUS_ASR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |
+| `ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT` | How long the router waits for a ruling while the caller talks over the agent, as a duration: `250ms` (default) up to `450ms`, and at least `100ms`. The router refuses to start outside that. A ruling that comes later is not acted on, and the flow controller rules instead ([Fallbacks](#fallbacks)). The checks of a pause keep their 1 s whatever it says. Set it from the server's round trip ([The wait over the agent](#the-wait-over-the-agent)) |
 
 `cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`); `cmd/agent`'s one
 agent opts in with `-floor-control stream/chorus-asr`.
@@ -139,6 +140,34 @@ Three ways to use it, each a short Go program in
 | [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: stream/chorus-asr}`, `stt: stream/chorus-asr`, its own `tts` |
 | [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: stream/chorus-asr}`, any `stt` |
 | [Transcription only](../../../examples/routers/chorus_asr_example/transcribe_only/main.go): the words, through the router's STT | `ROUTER_CHORUS_ASR_URL` | a router config naming `stream/chorus-asr` |
+
+### The wait over the agent
+
+The agent stops within 800 ms of the caller's first word over it ([The loop's
+contract](#the-loops-contract)). The first check over it is asked once the caller has been
+voiced for 350 ms, so the router can wait about 400 ms for that check's ruling and still keep
+that line. It waits `ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT` for every decision over the agent,
+whether the transcriber asks for it or the flow controller does. The round trips measured for
+one decision, p50 / p90:
+
+| Server | Timed | One call | Four calls at once |
+| --- | --- | --- | --- |
+| TPU v6e, in the cluster | the server's decision | 11 / 14 ms | 44 / 100 ms |
+| L4, in the cluster (staging) | the round trip | 109 / 118 ms | 376 / 495 ms |
+| RTX PRO 6000 behind Baseten's gateway | end to end (the server's decision) | 237 / 255 ms (41 / 54 ms) | not measured |
+
+- `250ms`, the default, for a TPU in the cluster.
+- `400ms` for an L4, or for a server behind a gateway such as Baseten.
+- A server slower than that needs to be made faster, not waited for: past about 400 ms the
+  agent misses the 800 ms stop line anyway. An L4 with four calls at once is one: at
+  `400ms` it still misses at least one ruling in ten.
+
+`router_chorus_asr_round_trip_seconds` times every request for a decision or for words, by
+`kind` (`over_agent`, `pause` or `transcribe`) and `outcome` (`ok`, `deadline`, `canceled`
+for newer words or the call's end, or `error`), and is what to set the wait from.
+`router_chorus_asr_deadline_misses_total` counts the requests the router stopped waiting
+for, by `kind`, and each is logged at debug level with its `kind`, `deadline_ms` and
+`took_ms`.
 
 ## Floor control: `floor_control`
 
@@ -646,10 +675,12 @@ untouched. Acting, a decision's `Ruler` is `heard`.
 
 ## Fallbacks
 
-- **Acting.** The model has a third of the flow controller's deadline: 1 s for a pause,
-  250 ms for words over the agent. A timeout, an error, a refused agent (more than 21
-  customer tools), or a server without a policy leaves the turn to the flow controller,
-  language model or judge, with the other two thirds. `router_chorus_asr_checks_total`
+- **Acting.** The model has a third of the flow controller's deadline for a pause, 1 s, and
+  `ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT` for words over the agent, 250 ms by default, a third of
+  its 750 ms ([The wait over the agent](#the-wait-over-the-agent)). A timeout, an error, a
+  refused agent (more than 21 customer tools), or a server without a policy leaves the turn
+  to the flow controller, language model or judge, with the rest of its deadline. A timeout
+  is counted in `router_chorus_asr_deadline_misses_total`. `router_chorus_asr_checks_total`
   counts each check by outcome; acting, every outcome but `answered` and `superseded` is a
   turn the flow controller decided.
 - **Transcripts.** A pause no check ruled on falls to the words alone, check by check,
@@ -671,12 +702,17 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   caller's line, and the model writes it as the caller's words, or around theirs when they
   speak over it. The agent drops from a chorus-asr transcript every run of three or more of
   its own words, near enough (a quarter of them may be heard wrong, one at a time), when
-  the audio overlapped its speech or came within 1.5 s of it: what is left, before, between
-  and after the runs, is the caller's, and an echo alone is nothing heard
-  (`router_agent_chorus_asr_echoes_total`). It does so in every mode, interims included, and
-  a pause check's ruling is kept on the words so dropped, which are the words the turn is
-  matched by; the transcriber itself still writes what it heard. Other transcribers are left
-  as they are.
+  the audio the words are of came while the agent's voice was going out, or began within
+  800 ms of its last audible sample going out: what is left, before, between and after the
+  runs, is the caller's, and an echo alone is nothing heard
+  (`router_agent_chorus_asr_echoes_total`). When the voice goes out is the edge's pace:
+  each chunk from when it was queued, after what was queued ahead of it, for as long as it
+  plays, and its silences, the padding after the last word included, carry no words;
+  speech the edge throws away on an interruption never goes out. 800 ms is the way out to
+  the caller and back, each at most ITU-T G.114's 400 ms one-way planning limit. It does so
+  in every mode, interims included, and a pause check's ruling is kept on the words so
+  dropped, which are the words the turn is matched by; the transcriber itself still writes
+  what it heard. Other transcribers are left as they are.
 - **Noise.** The transcriber drops nothing itself. The server returns empty text for audio
   with no speech in it and for words in a language the callers don't speak, and cuts a
   fragment in a script they don't write from either end of the words. Empty text is nothing
@@ -779,16 +815,19 @@ never ended the utterance; the new one wrote both replacements and the final.
   `max_wait_ms: 1400` so.
 - Echo is dropped by its words, not its sound: an echo the model writes too far from what
   the agent said, or of fewer than three words, is still the caller's; a caller who repeats
-  three or more of the agent's words in a row while it speaks, or within 1.5 s, loses them;
+  three or more of the agent's words in a row while it speaks, or in an utterance that began
+  (300 ms before their voice) within 800 ms of the agent's last audible sample going out,
+  loses them, as the model writes no word's time and only the utterance's start can be
+  weighed;
   and one word of the caller's between two runs of the echo reads as a word of the agent's
   misheard. Two or more words in a row are the caller's wherever they fall, as "and in
   Porto" does inside the reply's echo.
 - With unified replies the reply rules on its own words and no flow controller is asked,
   so acting has nothing to stand in for.
 - Without turns from the audio, a CPU decision over a full window, 373 ms here, does not fit
-  the 250 ms an overlap gives it, so words over the agent fall back to the flow controller
-  on such a server. Acting with chorus-asr transcribing, a pause over the agent is settled
-  words, with 1 s.
+  the 250 ms an overlap gives it by default, so words over the agent fall back to the flow
+  controller on such a server. Acting with chorus-asr transcribing, a pause over the agent is
+  settled words, with 1 s.
 
 ## Test it
 
