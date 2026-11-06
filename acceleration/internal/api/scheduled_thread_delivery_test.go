@@ -538,10 +538,23 @@ func (s *TelnyxChannelSuite) TestATaskWhoseThreadIsRemovedDuringItsTurnFailsFina
 	release := s.schedulingScript.holdScheduled()
 	defer release()
 	removed := make(chan error, 1)
+	// The wait runs here without the test's T: a failure raised on this goroutine could land on
+	// a finished test. The test goroutine asserts on what it sends.
 	go func() {
-		s.Eventually(func() bool { return s.scheduledTurns() > 0 }, deliveryWait, 10*time.Millisecond, "the task's turn never started")
+		defer release()
+		tick := time.NewTicker(10 * time.Millisecond)
+		defer tick.Stop()
+		deadline := time.NewTimer(deliveryWait)
+		defer deadline.Stop()
+		for s.scheduledTurns() == 0 {
+			select {
+			case <-deadline.C:
+				removed <- errors.New("the task's turn never started")
+				return
+			case <-tick.C:
+			}
+		}
 		removed <- s.removeThread(channel)
-		release()
 	}()
 
 	run := s.deliveredByTheWorker(task)
