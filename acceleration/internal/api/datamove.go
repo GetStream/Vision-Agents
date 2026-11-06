@@ -126,6 +126,20 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// An export carries each row as the source had it when it was read, so writing one over an
+	// app this deployment already holds would undo whatever was done to that row here since.
+	full := false
+	if raw := r.URL.Query().Get("full"); raw != "" {
+		var err error
+		if full, err = strconv.ParseBool(raw); err != nil {
+			writeError(w, invalidRequest("full is true or false"))
+			return
+		}
+	}
+	// Asked at the first row rather than up front, so a batch of changes costs no lookup; once
+	// that row is written the app holds it, so the rows after it are not asked about.
+	checked := full
+
 	var cursor *int64
 	rows := int64(0)
 	tables := map[string]int64{}
@@ -150,6 +164,20 @@ func (s *Server) importData(w http.ResponseWriter, r *http.Request) {
 			rows++
 			tables[line.Change.Table]++
 		case line.Table != "":
+			if !checked {
+				table, err := s.store.HoldingTable(r.Context(), customerID)
+				if err != nil {
+					writeFailure(w, r, err)
+					return
+				}
+				if table != "" {
+					writeError(w, conflict("this app already has data here (a row in "+table+"), and an export's rows "+
+						"would be written over what was done to them here since: import the changes since its cursor, "+
+						"or pass full=true to copy everything again over what was done here"))
+					return
+				}
+				checked = true
+			}
 			if err := s.store.ImportRow(r.Context(), customerID, line.Table, line.Row); err != nil {
 				writeError(w, invalidRequest(err.Error()))
 				return

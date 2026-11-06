@@ -778,7 +778,7 @@ module GetStream
         }.freeze,
         "importData" => {
           method: :post, path: "/v1/data/import",
-          path_params: [].freeze, query: [].freeze,
+          path_params: [].freeze, query: %w[full].freeze,
           body: nil, body_required: true,
           socket: false, client_accessible: false
         }.freeze,
