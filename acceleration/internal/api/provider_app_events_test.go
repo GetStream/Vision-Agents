@@ -186,6 +186,8 @@ func (s *SlackChannelSuite) TestARetriedDeliveryIsWrittenOnce() {
 // A thread is one episode: its first message opens one card in the omni-channel of whoever
 // started it, and the messages after it, the starter's or anybody's, open none (T41).
 func (s *SlackChannelSuite) TestAThreadIsOneEpisodeCardInTheOmniChannelOfWhoeverStartedIt() {
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	delivered := time.Now()
 	s.deliver(s.message("U0000ALICE", "<@U0000BOT> is the build green?", "1759740000.000100", ""), 0)
 	s.deliver(s.message("U0000ALICE", "the release one", "1759740000.000200", "1759740000.000100"), 0)
@@ -209,6 +211,8 @@ func (s *SlackChannelSuite) TestAThreadIsOneEpisodeCardInTheOmniChannelOfWhoever
 // One person's threads are episodes of one omni-channel: Monday's thread is a card beside
 // Tuesday's, which is how the agent on Tuesday learns of Monday (T56).
 func (s *SlackChannelSuite) TestTheSamePersonsNextThreadIsAnotherCardInTheSameOmniChannel() {
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.deliver(s.message("U0000ALICE", "first", "1759740000.000100", ""), 0)
 	s.deliver(s.message("U0000ALICE", "second", "1759740000.000500", ""), 0)
 
@@ -226,6 +230,8 @@ func (s *SlackChannelSuite) TestTheSamePersonsNextThreadIsAnotherCardInTheSameOm
 // omni-channel names its agent config, and a message there without a source would be handed
 // to a worker.
 func (s *SlackChannelSuite) TestAnEpisodeCardStartsNoSession() {
+	s.config.EpisodeCards = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.deliver(s.message("U0000ALICE", "Can you check the build?", "1759740000.000100", ""), 0)
 	omni := s.omniChannel("U0000ALICE")
 	s.written(omni, 1)

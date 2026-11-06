@@ -366,7 +366,7 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppThreadSchedulesForThePersonWhoWrote(
 
 // chatSays is a message.received body whose data.chat.is_group is isGroup, or which has none
 // when isGroup is nil.
-func (s *LinqChannelSuite) chatSays(body []byte, isGroup any) []byte {
+func (s *linqLine) chatSays(body []byte, isGroup any) []byte {
 	var event map[string]any
 	s.Require().NoError(json.Unmarshal(body, &event))
 	chat := event["data"].(map[string]any)["chat"].(map[string]any)

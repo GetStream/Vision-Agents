@@ -119,6 +119,22 @@ func (s *ChatEpisodesSuite) TestAChatMessageTheWebhookBringsWritesACard() {
 	s.Equal(store.EpisodeChat, custom["source"])
 }
 
+// record writes the chat's card as on does (AI-2856). The worker is handed the message, so the
+// spec is the config's (chatEpisodeUnopened, session.FromConfig). Catches record taken as off
+// there, or left out of the spec a config makes.
+func (s *ChatEpisodesSuite) TestAChatMessageUnderRecordWritesACard() {
+	worker := s.worker()
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "chat-" + s.utils.uuid(), Mode: store.AgentModeText,
+		LLM: "llm-flow", DispatchText: true, EpisodeCardsRecord: true}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.True(s.reachesWorker(worker), "the message is answered")
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+}
+
 // Catches a card written from a channel that is not the person's alone, whose lines would
 // reach her other sessions though a session reads cards only in such a channel
 // (omnichannel.Between), and a channel taken as hers when what Stream sent says nothing of its
