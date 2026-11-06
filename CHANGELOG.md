@@ -395,6 +395,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A code run that prints a lot no longer fills the router's memory
+
+The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 32 KiB, the cap every other tool result has, and ends it with a line telling the model the output was cut. The rest is dropped as it is read. A command's, a download's and an upload's answer from the sandbox are bounded too. (#PRNUM)
+
 ### A move whose recording lapsed is told to copy again
 
 A move nobody followed for longer than the source's retention stopped recording the app's changes, and a follower back after that was answered the changes recorded since as if they were all: the writes made while nothing was recorded never reached the target. The source now answers 410 for a cursor from before its recording started again, so `router replicate` says to run with `--full`; the export it copies then carries on (AI-2815).
