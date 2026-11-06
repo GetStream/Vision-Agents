@@ -22,7 +22,7 @@ type ResponseParams struct {
 	// ID correlates every event belonging to one response. Providers generate one when
 	// it is empty. It is not sent upstream.
 	ID string
-	// Purpose names the model's role in a call: PurposeReply, flow or subagent.
+	// Purpose names the model's role in a call: reply (PurposeReply), flow or subagent.
 	Purpose string
 	// TurnID is the caller exchange behind this request, including delegated work.
 	TurnID string
