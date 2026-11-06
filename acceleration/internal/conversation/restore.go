@@ -23,7 +23,8 @@ type Restore struct {
 	// is left out, and the conversation's first message is kept.
 	Recorded Recorded
 	// Since, when set, leaves out every message started before it: what a thread's number said
-	// before its link's boundary is not the linked user's.
+	// before its link's boundary is not the linked user's. Nor is the conversation's first
+	// message pinned (Recorded): it may be from before Since.
 	Since time.Time
 }
 
@@ -68,8 +69,9 @@ func restored(ctx context.Context, cid string, p Page) ([]llm.Message, bool) {
 		rounds = r.Recorded.Rounds(ctx, cid, turns)
 	}
 	opening := ""
-	// A page that reached the start of the conversation holds its first message already.
-	if p.Truncated {
+	// A page that reached the start of the conversation holds its first message already. With a
+	// boundary none is pinned: the first message may be from before it.
+	if p.Truncated && r.Since.IsZero() {
 		opening = r.Recorded.Opening(ctx, cid)
 	}
 	return r.history(p, rounds, opening)

@@ -143,6 +143,25 @@ func TestAConversationLongerThanWhatWasReadKeepsItsRecordedOpening(t *testing.T)
 	}, h)
 }
 
+// Defect: a thread restored with tool calls and a link's boundary, on a page that does not reach
+// the thread's start, pins the thread's first message, which the number said before the boundary.
+// With no boundary the opening is still pinned.
+func TestARecordedOpeningIsNotPinnedPastALinksBoundary(t *testing.T) {
+	boundary := time.Date(2026, 11, 3, 0, 0, 0, 0, time.UTC)
+	old := turn("user", "allergic to penicillin", "")
+	old.StartedAt = boundary.Add(-48 * time.Hour)
+	newer := turn("user", "what do you know about me?", "")
+	newer.StartedAt = boundary.Add(24 * time.Hour)
+	p := Page{Truncated: true, Messages: []Message{newer, old}}
+	ctx := WithRestore(t.Context(), Restore{Since: boundary, Recorded: &recorded{opening: "allergic to penicillin"}})
+
+	h, _ := restored(ctx, "messaging:thread", p)
+
+	require.Equal(t, []llm.Message{{Role: llm.User, Content: "what do you know about me?"}}, h)
+	h, _ = restored(WithRestore(t.Context(), Restore{Recorded: &recorded{opening: "the task"}}), "messaging:thread", p)
+	require.Equal(t, llm.Message{Role: llm.User, Content: "the task"}, h[0], "with no boundary the opening is pinned, as before")
+}
+
 func TestCapsAloneChangeOnlyHowMuchTextIsHandedBack(t *testing.T) {
 	p := Page{Messages: []Message{turn("user", "the task", ""), turn("assistant", "one", "turn-1"), turn("user", "two", "")}}
 
