@@ -300,6 +300,7 @@ func (s *ProxySuite) TestGitLFSPushIsRefusedAtLocksVerifyWithTheHint() {
 		"https://github.test/o/r.git/info/lfs/locks/1/unlock", "https://github.test/o/r/info/lfs/locks/verify"} {
 		s.granted.forget()
 		asked := s.asked
+		counted := s.requestCount("github.test", "POST", "denied_method", "4xx")
 		request := s.request(http.MethodPost, target, basic("x-access-token", s.placeholder), `{"ref":{"name":"refs/heads/main"}}`)
 		request.Header.Set("Content-Type", "application/vnd.git-lfs+json; charset=utf-8")
 
@@ -308,6 +309,8 @@ func (s *ProxySuite) TestGitLFSPushIsRefusedAtLocksVerifyWithTheHint() {
 		s.Require().NoError(err, target)
 		s.Equal(http.StatusForbidden, response.StatusCode, target)
 		s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"), target)
+		s.Equal("nosniff", response.Header.Get("X-Content-Type-Options"), target)
+		s.Equal(counted+1, s.requestCount("github.test", "POST", "denied_method", "4xx"), target)
 		s.Equal(lfsErrorBody("egress: POST github.test"+request.URL.Path+" refused: code in the sandbox only reads through a connector; "+
 			"write with the connector's tools"), body, target)
 		s.Empty(s.granted.requests(), target)
