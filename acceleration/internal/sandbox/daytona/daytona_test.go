@@ -47,6 +47,8 @@ type platform struct {
 	served map[string]int64
 	// cut are the files whose download breaks off halfway, as a dropped connection does.
 	cut map[string]bool
+	// failing are the files whose download answers a part named error of that many bytes of x.
+	failing map[string]int
 	// refuseUpload answers every file written into the sandbox with a 400.
 	refuseUpload bool
 	// commands are every shell command run in the sandbox, with how many runs came before,
@@ -109,7 +111,7 @@ type heldSecret struct {
 
 func newPlatform() *platform {
 	stub := &platform{runStatus: http.StatusOK, runBody: `{"result":"12.63\n","exitCode":0}`, files: map[string][]byte{},
-		sized: map[string]int{}, served: map[string]int64{}, cut: map[string]bool{}, secrets: map[string]*heldSecret{}}
+		sized: map[string]int{}, served: map[string]int64{}, cut: map[string]bool{}, failing: map[string]int{}, secrets: map[string]*heldSecret{}}
 	stub.server = httptest.NewServer(http.HandlerFunc(stub.serve))
 	return stub
 }
@@ -294,6 +296,7 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 			content = io.MultiReader(io.LimitReader(filler{}, int64(size/2)), breaker{})
 		}
 	}
+	failing, fails := p.failing[name]
 	p.mu.Unlock()
 	wire := &counted{Writer: w}
 	defer func() {
@@ -317,6 +320,10 @@ func (p *platform) download(w http.ResponseWriter, r *http.Request) {
 		if content == nil {
 			disposition = `form-data; name="error"`
 			content = strings.NewReader(`{"message":"no such file","statusCode":404}`)
+		}
+		if fails {
+			disposition = `form-data; name="error"`
+			content = io.LimitReader(filler{}, int64(failing))
 		}
 		part, _ := parts.CreatePart(textproto.MIMEHeader{"Content-Disposition": {disposition}})
 		if _, copied = io.Copy(part, content); copied == nil {
@@ -836,6 +843,34 @@ func (s *DaytonaSuite) TestAFileFarTooLargeIsRefusedWithoutBeingReadWhole() {
 	// What passed the limit is only what the connection's buffers took before the router
 	// stopped reading: a few MiB at most, well short of another MaxFileBytes.
 	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestADownloadsErrorFarTooLargeIsNotReadWhole() {
+	s.platform.failing["/tmp/dump.bin"] = 10 * sandbox.MaxFileBytes
+
+	result, err := s.box.Run(s.ctx, "dump()", []string{"/tmp/dump.bin"})
+
+	s.Require().NoError(err)
+	s.Equal([]string{"/tmp/dump.bin"}, result.Missing)
+	var sent int64
+	s.Eventually(func() bool {
+		var ended bool
+		sent, ended = s.platform.sent("/tmp/dump.bin")
+		return ended
+	}, 10*time.Second, 10*time.Millisecond)
+	// The SDK reads an error part whole; past its bound the router stops reading it.
+	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestACommandsOutputFarOverTheBoundIsCutInItsError() {
+	s.platform.commandExit = 1
+	s.platform.commandOutput = strings.Repeat("x", 1<<20)
+
+	err := s.box.Write(s.ctx, "skills/pdf/merge.py", []byte("print(1)"))
+
+	s.Require().Error(err)
+	s.Contains(err.Error(), sandbox.OutputCut)
+	s.Less(len(err.Error()), 2*sandbox.MaxOutputBytes)
 }
 
 func (s *DaytonaSuite) TestARefusedDownloadHasEndedBeforeTheNextFileIsAskedFor() {

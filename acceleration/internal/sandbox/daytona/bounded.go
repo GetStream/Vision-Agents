@@ -16,8 +16,8 @@ import (
 // smaller.
 const maxAnswerBytes = sandbox.MaxFileBytes
 
-// downloadSlack is what a download's answer may hold past the one byte over sandbox.MaxFileBytes
-// that download reads of its file: the multipart framing and an error part, which the SDK reads
+// downloadSlack is what a download's answer may hold past sandbox.MaxFileBytes: the one byte more
+// that download reads of its file, the multipart framing, and an error part, which the SDK reads
 // whole (sdk-go v0.211.2 pkg/daytona/file_transfer.go:92, :139).
 const downloadSlack = 1 << 20
 
@@ -27,8 +27,12 @@ const downloadSlack = 1 << 20
 // two at the end.
 const maxHeldBytes = 6*sandbox.MaxOutputBytes + 16
 
-// errAnswerTooLarge is a toolbox answer past what the router reads of it.
-var errAnswerTooLarge = errors.New("daytona: the sandbox's answer is too large to read")
+// errAnswerTooLarge is a toolbox answer past what the router reads of it, and errBadOutput one
+// whose output, cut, is not a JSON string.
+var (
+	errAnswerTooLarge = errors.New("daytona: the sandbox's answer is too large to read")
+	errBadOutput      = errors.New("daytona: the sandbox's answer holds an output that is not a JSON string")
+)
 
 // bounded bounds what the router reads of the toolbox's answers that the SDK reads whole: a code
 // run's and a command's (toolbox-api-client-go v0.211.2 api_process.go, io.ReadAll before the
@@ -46,13 +50,8 @@ func (b bounded) RoundTrip(r *http.Request) (*http.Response, error) {
 	case strings.HasSuffix(r.URL.Path, "/process/code-run"), strings.HasSuffix(r.URL.Path, "/process/execute"):
 		answer.Body = &cutOutput{body: answer.Body, left: maxAnswerBytes}
 	case strings.HasSuffix(r.URL.Path, "/files/bulk-download"):
-		answer.Body = &capped{body: answer.Body, left: sandbox.MaxFileBytes + 1 + downloadSlack}
-	default:
-		return answer, nil
+		answer.Body = &capped{body: answer.Body, left: sandbox.MaxFileBytes + downloadSlack}
 	}
-	// What the body gives is no longer what the header counted.
-	answer.ContentLength = -1
-	answer.Header.Del("Content-Length")
 	return answer, nil
 }
 
@@ -87,8 +86,9 @@ type cutOutput struct {
 	err error
 
 	// depth is how deep in objects and arrays the next byte is. inString is a JSON string being
-	// read and escaped a backslash just read in it. key is the start of the last key of the
-	// top-level object, while inKey reads it; value says its value is next.
+	// read and escaped a backslash just read in it. key is the start of the last string of the
+	// top-level object, while inKey reads it; value says a colon came since the last comma, so a
+	// string is a key's value.
 	depth    int
 	inString bool
 	escaped  bool
@@ -151,7 +151,7 @@ func (c *cutOutput) step(b byte) error {
 			return nil
 		}
 		c.inString = true
-		if c.depth == 1 && !c.value {
+		if c.depth == 1 {
 			c.inKey, c.key = true, c.key[:0]
 		}
 	case '{', '[':
@@ -159,9 +159,9 @@ func (c *cutOutput) step(b byte) error {
 	case '}', ']':
 		c.depth--
 	case ':':
-		c.value = c.value || c.depth == 1
+		c.value = true
 	case ',':
-		c.value = c.value && c.depth != 1
+		c.value = false
 	}
 	return c.emit(b)
 }
@@ -198,8 +198,9 @@ func (c *cutOutput) settle(over bool) error {
 	var text string
 	quoted := append(append([]byte{'"'}, c.held...), '"')
 	err := json.Unmarshal(quoted, &text)
-	if !over && (err != nil || len(text) <= sandbox.MaxOutputBytes) {
-		// What does not decode fails the SDK's own decode, as it would unbounded.
+	if !over && len(text) <= sandbox.MaxOutputBytes {
+		// An output that does not decode leaves text empty and passes, to fail the SDK's own
+		// decode as it would unbounded.
 		return c.emit(quoted...)
 	}
 	// An escape is at most 12 bytes (a surrogate pair), so the held output decodes once its
@@ -209,12 +210,10 @@ func (c *cutOutput) settle(over bool) error {
 		err = json.Unmarshal(quoted, &text)
 	}
 	if err != nil {
-		return errAnswerTooLarge
+		return errBadOutput
 	}
-	cut, err := json.Marshal(cutText(text))
-	if err != nil {
-		return err
-	}
+	// A string always encodes.
+	cut, _ := json.Marshal(cutText(text))
 	return c.emit(cut...)
 }
 
