@@ -191,7 +191,7 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `timed_out` | The occurrence used its 20 min (`occurrenceBudget`) | no |
 | `schedule_unreadable` | The stored schedule no longer parses; the task is paused | no |
 | `user_on_call` | The user stayed on a call through the 10 min window | yes |
-| `channel_unreachable` | SMS, WhatsApp or iMessage would refuse: never wrote on it, opted out, outside WhatsApp's 24 h window, no line. On a thread task: opted out (before the turn or by the time the reply is sent), or the sandbox gate holds it back | yes; not for a thread task's opted-out person |
+| `channel_unreachable` | SMS, WhatsApp or iMessage would refuse: never wrote on it, opted out, outside WhatsApp's 24 h window, no line. On a thread task: opted out (before the turn or by the time the reply is sent), or the sandbox gate holds it back (a thread task's text refused for money is not this: it has the money codes below) | yes; not for a thread task's opted-out person |
 | `outside_window` | A WhatsApp thread task whose person last wrote over 24 h ago, with no template to send after the window | no |
 | `thread_gone` | A thread task's thread no longer exists, or is not its user's thread of its customer | no |
 | `connection_removed` | A thread task's line (its connection) was removed | no |
@@ -201,6 +201,8 @@ Run `error` codes (`internal/scheduling/scheduler.go:105`):
 | `no_agent_number` | The config has no SMS line to ring from | yes |
 | `not_answered` | Nobody picked up within the 90 s ring | no |
 | `already_called` | A call was placed for this occurrence already, and its end is not recorded; no channel after `phone` is tried. That call may have carried the task out, so the run leaves the failure streak as it is and the task moves on as after a run that did not fail (a one-shot is `completed`) | no |
+| `account_suspended`, `insufficient_credits`, `system_limit_reached`, `spend_limit_reached`, `user_limit_reached` | An SMS, WhatsApp or iMessage text, or a thread task's reply, was refused for money (`dlc.ErrUnpaid`: suspended, no credit left, or a spent limit). The run records the refusal's own code (`deliveryReason`, `scheduled_delivery.go:328`), never `channel_unreachable`, and the router warns, naming the task | no, for a text (`unpaid`, `scheduled_delivery.go:347`) |
+| `spend_check_unavailable` | The router could not check what the organization has spent, so it refused the text for now (`policy.Transient`) | yes (`unpaid` leaves it retryable) |
 | `task_paused` | On a `missed` run: a one-shot whose time came while it was paused, or an occurrence the cut-over of a move skipped whose run the source had started | — |
 
 A failure is retried after 30 s, 2 min and 10 min (`DeliveryRetries`) only when the failure
