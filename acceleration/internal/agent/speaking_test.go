@@ -8,8 +8,11 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 	"unicode/utf8"
+
+	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
@@ -552,4 +555,38 @@ func (s *AgentSuite) TestALineSaidAsWrittenIsAllOfItsMessage() {
 	whole := &MessageSpan{End: 20}
 	s.Equal(whole, speaking.Message)
 	s.Equal(whole, spoke.Message)
+}
+
+// What the caller has heard of a reply is told from how long they have been hearing it, at the
+// voice's speaking rate on the call, cut back to a whole word: what the model is told the agent
+// "has so far said", as its rows were. With no rate measured yet the agent can't tell; with
+// none of the reply out nothing was heard; and with every utterance of it finished, all of it.
+func TestWhatTheCallerHasHeardOfTheReply(t *testing.T) {
+	reply := "Tomorrow in Lisbon it will be sunny and warm, with a high of twenty four degrees."
+	a := &Agent{heard: map[string]*utterance{}, speakingTurn: "turn-1", voiced: "turn-1"}
+	u := &utterance{agent: a, turnID: "turn-1", synthesisID: "turn-1", text: reply, message: MessageSpan{End: utf8.RuneCountInString(reply)}}
+	u.published.Store(true)
+	u.publishedUs.Store(10_000_000)
+	pulled := time.Now()
+	u.pulledAt.Store(pulled.UnixNano())
+	a.heard[u.synthesisID] = u
+	now := pulled.Add(2 * time.Second)
+
+	_, measured := a.replyHeardLocked(reply, now)
+	require.False(t, measured, "no syntheses finished on the call: no rate to tell by")
+
+	a.voicedChars, a.voicedMs = 150, 10_000 // 15 characters a second
+	heard, measured := a.replyHeardLocked(reply, now)
+	require.True(t, measured)
+	require.Equal(t, "Tomorrow in Lisbon it will be", heard, "2 s at 15 a second, to a whole word")
+
+	a.voiced = ""
+	heard, measured = a.replyHeardLocked(reply, now)
+	require.True(t, measured)
+	require.Empty(t, heard, "none of the reply has gone out")
+
+	a.voiced = "turn-1"
+	delete(a.heard, u.synthesisID)
+	heard, _ = a.replyHeardLocked(reply, now)
+	require.Equal(t, reply, heard, "every utterance of it finished")
 }

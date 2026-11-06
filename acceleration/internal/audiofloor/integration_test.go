@@ -55,7 +55,7 @@ func TestARealServerRulesAndTranscribes(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	client := New(url, Opus, nil)
+	client := New(url, Opus, nil).WithAPIKey(os.Getenv("ROUTER_CHORUS_ASR_API_KEY"))
 	hearer := NewHearer(client, EndOfTurn{}, slog.New(slog.DiscardHandler))
 	for _, format := range []Format{PCM, Opus} {
 		turn := harness.FlowTurn{
@@ -100,7 +100,7 @@ func TestARealServerRulesAndTranscribes(t *testing.T) {
 // The transcriber writes the caller's question at its pauses and ends it at the cap.
 func TestARealServerTranscribesAnUtterance(t *testing.T) {
 	url, pcm := recording(t)
-	transcriber := NewTranscriber(New(url, Opus, nil), "", []string{"en"}, slog.New(slog.DiscardHandler))
+	transcriber := NewTranscriber(New(url, Opus, nil).WithAPIKey(os.Getenv("ROUTER_CHORUS_ASR_API_KEY")), "", []string{"en"}, slog.New(slog.DiscardHandler))
 	require.NoError(t, transcriber.Start(context.Background()))
 	defer transcriber.Close()
 	pcm = append(append(make([]int16, SampleRate), pcm...), make([]int16, 3*SampleRate)...)

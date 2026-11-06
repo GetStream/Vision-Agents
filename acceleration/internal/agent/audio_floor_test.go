@@ -59,7 +59,7 @@ func TestAudioFloorIsOffUnlessAModeAsksIt(t *testing.T) {
 	require.Nil(t, v)
 	v.heard(InboundAudio{Audio: audio.PcmData{Samples: []int16{1}, SampleRate: 16000, Channels: 1}})
 	turn := harness.FlowTurn{ID: "t"}
-	v.listen(&turn, "p", nil)
+	v.listen(&turn, "p", turn.Text, nil)
 	require.Empty(t, turn.Audio.Data)
 	v.ask(turn)
 	v.ruled(harness.Decided{CandidateID: "t", Disposition: harness.Respond, Floor: harness.Continue})
@@ -108,7 +108,7 @@ func TestATurnHearsItsParticipant(t *testing.T) {
 	other.Participant.ID = "q"
 	v.heard(other)
 	turn := harness.FlowTurn{ID: "t", Participant: "Alex"}
-	v.listen(&turn, "p", []harness.Tool{{Name: "book_crossing"}, {Name: toolEndCall}})
+	v.listen(&turn, "p", turn.Text, []harness.Tool{{Name: "book_crossing"}, {Name: toolEndCall}})
 	require.Equal(t, 40*time.Millisecond, turn.Audio.Duration)
 	require.Equal(t, append(frame(1).Audio.Bytes(), frame(2).Audio.Bytes()...), turn.Audio.Data)
 	require.Len(t, turn.Tools, 1)
@@ -249,10 +249,10 @@ func TestAPauseChecksRulingIsTheFlowControllers(t *testing.T) {
 	v.heard(InboundAudio{Participant: stt.Participant{ID: "p"}, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
 
 	other := harness.FlowTurn{ID: "c0", Text: "Uh huh.", Speaking: true}
-	v.listen(&other, "p", nil)
+	v.listen(&other, "p", other.Text, nil)
 	turn := harness.FlowTurn{ID: "c1", Text: "uh huh"}
-	v.listen(&turn, "q", nil)
-	v.listen(&turn, "p", nil)
+	v.listen(&turn, "q", turn.Text, nil)
+	v.listen(&turn, "p", turn.Text, nil)
 	got, err := v.acting().Hear(context.Background(), turn)
 	require.NoError(t, err)
 	require.Equal(t, ruling, got, "the check's, on the same words, however written")
@@ -268,6 +268,60 @@ func TestAPauseChecksRulingIsTheFlowControllers(t *testing.T) {
 	require.False(t, shadow.asksOnPauses(), "in shadow the transcriber writes the words alone")
 	require.False(t, (*audioFloor)(nil).asksOnPauses())
 
+}
+
+// A caller the transcriber says is in an utterance is heard, words or none, so the silence a
+// check-in fills is the line's alone: a caller counting slowly, whose words come at the end,
+// was checked in on mid-count.
+func TestACallerInAnUtteranceIsHeard(t *testing.T) {
+	a := &Agent{}
+	before := time.Now()
+	pauseAsker{a}.Hearing(stt.Participant{ID: "p"})
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	require.False(t, a.lastHeardAt.Before(before), "the caller was not heard")
+}
+
+// A pause check over the agent ends the caller's turn at its pause with no bar, the floor not
+// being free: its ruling stands if the agent has gone quiet before the turn is put. Asked again
+// with the floor free, the model's end-of-turn bars started over on words it had ended, and
+// the caller waited for them a second time: 1.3 s, a retry each interval, on a live call. A
+// ruling made with the floor free is no ruling on the agent's speech, which it never heard, so
+// the agent talking since has the model asked.
+func TestARulingOverTheAgentStandsOnceItIsQuiet(t *testing.T) {
+	asked := atomic.Int64{}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/v1/info":
+			_, _ = w.Write([]byte(floorInfo))
+		case "/v1/agents":
+			_, _ = w.Write([]byte(`{"agent":"a"}`))
+		default:
+			asked.Add(1)
+			_, _ = w.Write([]byte(`{"answer":"wait","p_eot":0.1,"options":[],"ruling":{"disposition":"respond","floor":"continue"}}`))
+		}
+	}))
+	t.Cleanup(srv.Close)
+	v := newAudioFloor(audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
+	defer v.close()
+	v.heard(InboundAudio{Participant: stt.Participant{ID: "p"}, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
+	over := harness.Decided{Disposition: harness.Respond, Floor: harness.Stop}
+	v.keep("p", audiofloor.Ruled{Check: audiofloor.Check{Ruling: over, Ended: true}, Words: "No, Porto.", Speaking: true})
+
+	quiet := harness.FlowTurn{ID: "c1", Text: "No, Porto."}
+	v.listen(&quiet, "p", quiet.Text, nil)
+	got, err := v.acting().Hear(context.Background(), quiet)
+	require.NoError(t, err)
+	require.Equal(t, over, got, "the ruling over the agent, which has since gone quiet")
+	require.Zero(t, asked.Load(), "the model was not asked again")
+
+	free := harness.Decided{Disposition: harness.Respond, Floor: harness.Continue}
+	v.keep("p", audiofloor.Ruled{Check: audiofloor.Check{Ruling: free, Ended: true}, Words: "And Porto?"})
+	talking := harness.FlowTurn{ID: "c2", Text: "And Porto?", Speaking: true}
+	v.listen(&talking, "p", talking.Text, nil)
+	_, err = v.acting().Hear(context.Background(), talking)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), asked.Load(), "the agent talking since, the model is asked about its speech")
 }
 
 // A pause check's ruling is kept on the words as the conversation will see them: with the
@@ -304,7 +358,7 @@ func TestAPauseChecksRulingIsKeptWithoutTheAgentsEcho(t *testing.T) {
 	require.Equal(t, "Uh huh.", left, "what the conversation sees of the final")
 	v.heard(InboundAudio{Participant: participant, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
 	turn := harness.FlowTurn{ID: "c1", Text: left, Speaking: true}
-	v.listen(&turn, "p", nil)
+	v.listen(&turn, "p", turn.Text, nil)
 	got, err := v.acting().Hear(context.Background(), turn)
 	require.NoError(t, err)
 	require.Equal(t, ruling, got, "the check's ruling, on the words the conversation saw")

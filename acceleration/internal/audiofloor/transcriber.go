@@ -151,6 +151,9 @@ type Transcriber struct {
 	// sent is the last words of the utterance to have gone out, which every transcript is
 	// held to (send): none after the final, and none that go back on words already out.
 	sent sentWords
+	// toldAt is when the asker was last told the caller is in an utterance (Hearing), in
+	// frames.
+	toldAt int64
 
 	// The checks of the pause going on, asked for asker, the agent's (AskOnPauses) or the
 	// transcriber's own, each run on a goroutine of its own, and how many of the utterance's
@@ -277,6 +280,28 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	if speech && !t.checksOver(participant, heard) {
 		t.interim(participant, heard)
 	}
+	t.hearing(participant, heard)
+}
+
+// hearing tells the asker the caller is in an utterance, every interval of the policy while
+// it lasts: the words come at its pauses or its end, and none at all with interims off, so
+// without it an agent waiting on a caller who has not finished hears a silent line.
+func (t *Transcriber) hearing(participant stt.Participant, heard int64) {
+	if !t.voiced {
+		return
+	}
+	_, every, _ := t.checkTimes()
+	if t.toldAt > 0 && time.Duration(heard-t.toldAt)*frame < every {
+		return
+	}
+	t.mu.Lock()
+	asker := t.asker
+	t.mu.Unlock()
+	if asker == nil {
+		return
+	}
+	t.toldAt = heard
+	asker.Hearing(participant)
 }
 
 func (t *Transcriber) ask(r request) {

@@ -594,6 +594,10 @@ type Agent struct {
 	// history: a request for help was written to the harness, not said, so remembering
 	// it would have the model reading its own instructions back on the next turn.
 	spoken strings.Builder
+	// voicedChars and voicedMs are the characters and the audio of the syntheses the voice
+	// finished whole on the call: its speaking rate, by which how long the caller has heard
+	// an utterance says how much of it they have heard (replyHeardLocked).
+	voicedChars, voicedMs float64
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
 	replying string
@@ -742,6 +746,11 @@ func New(options Options) (*Agent, error) {
 	if options.Live != nil && options.CallID != "" && !options.Incognito {
 		agent.decisionStore = newDecisionRecorder(options.Live, owner, logger)
 		record = agent.decisionStore.Record
+	}
+	if agent.audioFloor.asksOnPauses() {
+		// Acting on chorus-asr, its transcriber's final is the end the agent's end-of-turn
+		// point ruled, which is answered at once.
+		settling.endedBy = audiofloor.ProviderName
 	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
 	agent.converse.onHeard = options.OnHeard
@@ -1140,7 +1149,7 @@ func (a *Agent) Ask(ctx context.Context, text string, images ...llm.ImagePart) (
 		a.mu.Unlock()
 		return "", stack.Wrap(ErrCannotSeeImages)
 	}
-	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images))})
+	a.history = append(toolPicturesSeen(a.history), llm.Message{Role: llm.User, Content: PhotoNote(harness.Defang(text), len(images)), Typed: true})
 	history := make([]llm.Message, len(a.history))
 	for i, message := range a.history {
 		history[i] = named(message)
@@ -1910,7 +1919,7 @@ func (a *Agent) perform(action Action) {
 		a.interrupt(action.Participant, action.Interruption)
 
 	case ActShorten:
-		a.shorten()
+		a.shorten(action.Participant, action.TurnID, action.Interruption)
 
 	case ActAnswer:
 		a.mu.Lock()
@@ -1957,6 +1966,7 @@ func (a *Agent) ask(ready candidate) {
 	if reply == "" {
 		reply = lastAssistantSaid(history)
 	}
+	heard, measured := a.replyHeardLocked(reply, time.Now())
 	anotherVoice := a.anotherVoiceLocked(ready)
 	participant := ready.Participant.Name
 	if participant == "" {
@@ -1977,6 +1987,8 @@ func (a *Agent) ask(ready candidate) {
 		Text:         ready.Said(),
 		Speaking:     speaking,
 		Reply:        reply,
+		Heard:        heard,
+		Measured:     measured,
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
@@ -1985,7 +1997,7 @@ func (a *Agent) ask(ready candidate) {
 		Paused:       time.Since(ready.RevisedAt),
 		FirstPause:   a.converse.firstPause(ready),
 	}
-	a.audioFloor.listen(&turn, ready.Participant.ID, tools)
+	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, tools)
 	a.audioFloor.ask(turn)
 	if a.speculate(current, ready, speaking, anotherVoice) {
 		return
@@ -2217,7 +2229,7 @@ func (a *Agent) respondTurn(
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
 		a.writers = true
 	}
-	a.keepTurnLocked(said, text, listened.photos, images)
+	a.keepTurnLocked(said, text, listened.photos, images, listened.typed)
 	history := a.turnReplayLocked()
 	// This turn is answered, however it was asked, so what is speculated on next is a turn
 	// of its own.
@@ -2297,13 +2309,15 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 	return turn
 }
 
-// keepTurnLocked adds a turn being answered to the conversation and counts who said it.
+// keepTurnLocked adds a turn being answered to the conversation and counts who said it, typed
+// saying it was written or handed in rather than said on the call (llm.Message.Typed).
 // What tools showed the model before it stand as a note from here on (toolPicturesSeen),
 // and only this turn's images go with its replies. The turn is kept with a note of its
 // photos (PhotoNote), as an aside and a thread's history are; turnReplayLocked sends its
 // words alone while its images go with it.
-func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos int, images []llm.ImagePart) {
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos int, images []llm.ImagePart, typed bool) {
 	turn := a.userTurnLocked(participant, text)
+	turn.Typed = typed
 	a.turnSaid = turn.Content
 	turn.Content = PhotoNote(turn.Content, photos)
 	a.turnKept = turn.Content
@@ -2522,7 +2536,7 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 		return
 	}
 
-	turnID := backchannelPrefix + turnStamp()
+	turnID := ownPrefix + turnStamp()
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
@@ -3342,6 +3356,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 
 		case tts.SynthesisComplete:
 			done := a.takeUtterance(typed.SynthesisID)
+			if !typed.Interrupted && typed.Characters > 0 && typed.AudioDurationMs > 0 {
+				// Cut short, a synthesis was billed all of its text and made only part of its
+				// audio, so only whole ones say how fast the voice speaks.
+				a.mu.Lock()
+				a.voicedChars += float64(typed.Characters)
+				a.voicedMs += typed.AudioDurationMs
+				a.mu.Unlock()
+			}
 			if heardID == typed.SynthesisID {
 				heard, heardID = nil, ""
 			}
@@ -3933,20 +3955,54 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	return true
 }
 
-// shorten stops the model from adding more while allowing speech already sent to the
-// voice to finish.
-func (a *Agent) shorten() {
-	a.mu.Lock()
-	turnID := a.speakingTurn
-	reply := a.streams[turnID]
-	a.mu.Unlock()
-	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) || reply == nil {
+// shortenTail is how much of what it is saying a shortening lets the agent finish. The
+// caller added one more item for the request being answered (README, "The loop's contract"),
+// and the model was trained on shorten in a demo that let at most this much of the audio
+// playing finish, its voice having no word timing. The router's voices have none either:
+// what the voice was already sent can be seconds of speech, all of it playing on.
+const shortenTail = 250 * time.Millisecond
+
+// shorten has the agent add nothing more to turnID, the reply it is saying, and stop saying it
+// shortenTail later, once the item the caller added is to be answered (respondQueued). A line
+// the agent said of its own accord answers no request, so it is stopped at once.
+func (a *Agent) shorten(participant stt.Participant, turnID string, why interruption) {
+	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) {
 		return
 	}
-	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID)
-	if err := reply.Close(); err != nil {
-		a.fail(err, "llm")
+	saying := func(speaking string) bool { return speaking == turnID }
+	if ownLine(turnID) {
+		a.abandonReply(participant, saying, why)
+		return
 	}
+	a.mu.Lock()
+	reply, ctx := a.streams[turnID], a.ctx
+	if a.closed || ctx == nil {
+		a.mu.Unlock()
+		return
+	}
+	a.running.Add(1)
+	a.mu.Unlock()
+	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID, "tail", shortenTail)
+	if reply != nil {
+		if err := reply.Close(); err != nil {
+			a.fail(err, "llm")
+		}
+	}
+	go func() {
+		defer a.running.Done()
+		select {
+		case <-time.After(shortenTail):
+			a.abandonReply(participant, saying, why)
+		case <-ctx.Done():
+		}
+	}()
+}
+
+// ownLine reports whether a turn is a line the agent said of its own accord, rather than a
+// reply to something somebody asked: a check-in, an update or a hold, or a line said as
+// written, such as the greeting.
+func ownLine(turnID string) bool {
+	return strings.HasPrefix(turnID, ownPrefix) || Scripted(turnID)
 }
 
 // respondQueued answers the turn held back while the agent was talking, if it has

@@ -115,8 +115,9 @@ func histogramOf(name, label, value string) (samples, aboveOne uint64) {
 func (s *AgentSuite) TestWhatIsSaidAroundAToolIsSaidAsBefore() {
 	s.waitsOnATool()
 
-	// Probed on 7bf225e2b, before turns were linked and tool calls logged.
-	s.Equal([]string{"back|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
+	// Probed on 7bf225e2b, before turns were linked and tool calls logged. The line said
+	// while the tool runs is the agent's own turn, no longer a murmur's.
+	s.Equal([]string{"own|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
 }
 
 func (s *AgentSuite) TestATurnTheAgentStartedNamesTheCallerTurnItFollows() {

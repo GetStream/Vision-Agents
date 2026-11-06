@@ -2517,3 +2517,26 @@ func (s *ConverseSuite) TestOnlyTheFirstPauseOfATurnIsItsFirst() {
 	more := s.settle("my number is four one", s.quiet())
 	s.False(s.converse.firstPause(more))
 }
+
+// An utterance a stop over the agent was ruled on says more than the stop's words when it has
+// words after them, the last stop word perhaps cut off mid-word by the check's window, or, read
+// otherwise, more words than they are.
+func TestWhatSaysMoreThanAStop(t *testing.T) {
+	for _, c := range []struct {
+		text, stop string
+		more       bool
+	}{
+		{"Stop.", "Stop.", false},
+		{"stop", "Stop.", false},
+		{"Don't stop.", "Let's stop.", false},
+		{"No, Porto.", "No.", true},
+		{"Stop. What about Porto?", "Stop, wh", true},
+		{"Stop, wh", "Stop, wh", false},
+		{"Hi. What's the weather like in Lisbon tomorrow?", "Hi, what's the weather", true},
+		{"Disculpa, ilga.", "Desculpa.", true},
+	} {
+		if got := saysMore(c.text, c.stop); got != c.more {
+			t.Errorf("saysMore(%q, %q) = %v, want %v", c.text, c.stop, got, c.more)
+		}
+	}
+}

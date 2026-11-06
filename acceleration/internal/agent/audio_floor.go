@@ -132,13 +132,16 @@ func (v *audioFloor) keep(participant string, ruled audiofloor.Ruled) {
 }
 
 // findRuled finds the pause check's ruling on turn's words, if one made one: the
-// participant's, as the agent was when it was asked, on words the turn's end with.
-func (v *audioFloor) findRuled(turn harness.FlowTurn, participant string) {
+// participant's, on words the turn's end with. A check over the agent ended the turn at its
+// pause, and its ruling stands once the agent has gone quiet, as asking again with the floor
+// free would wait for the turn's end a second time; a check with the floor free heard nothing
+// of the agent's speech, so with the agent talking since there is none.
+func (v *audioFloor) findRuled(said, participant string, speaking bool, turnID string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
-	said := strings.ToLower(words(turn.Text))
+	said = strings.ToLower(words(said))
 	for i, r := range v.checked {
-		if r.participant != participant || r.ruled.Speaking != turn.Speaking || time.Since(r.at) > ruledFor {
+		if r.participant != participant || (speaking && !r.ruled.Speaking) || time.Since(r.at) > ruledFor {
 			continue
 		}
 		if heard := strings.ToLower(words(r.ruled.Words)); heard == "" || !strings.HasSuffix(said, heard) {
@@ -148,7 +151,7 @@ func (v *audioFloor) findRuled(turn harness.FlowTurn, participant string) {
 		if len(v.settled) >= audioFloorPending {
 			clear(v.settled)
 		}
-		v.settled[turn.ID] = r.ruled.Ruling
+		v.settled[turnID] = r.ruled.Ruling
 		return
 	}
 }
@@ -195,16 +198,18 @@ func (v *audioFloor) forget(participant string) {
 }
 
 // listen gives turn what the model hears: the participant's last 16 s, and the customer's
-// tools, and finds the ruling a pause check made on its words, if one did. The turn names
-// the participant by ID, which the model's checks of them are counted by: Participant is
-// how the flow controller's prompt calls them, and two callers may be called alike.
-func (v *audioFloor) listen(turn *harness.FlowTurn, participant string, tools []harness.Tool) {
+// tools, and finds the ruling a pause check made on its words, if one did: said, the words of
+// the utterance whole, which the check heard, whatever of them the turn is answered on. The
+// turn names the participant by ID, which the model's checks of them are counted by:
+// Participant is how the flow controller's prompt calls them, and two callers may be called
+// alike.
+func (v *audioFloor) listen(turn *harness.FlowTurn, participant, said string, tools []harness.Tool) {
 	if v == nil {
 		return
 	}
 	turn.ParticipantID = participant
 	turn.Tools = customerTools(tools)
-	v.findRuled(*turn, participant)
+	v.findRuled(said, participant, turn.Speaking, turn.ID)
 	if stream := v.stream(participant); stream != nil {
 		turn.Audio = stream.Last(audiofloor.Window)
 	}
@@ -228,6 +233,7 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 	if reply == "" {
 		reply = lastAssistantSaid(history)
 	}
+	heard, measured := a.replyHeardLocked(reply, time.Now())
 	tools := a.options.Tools.Tools
 	a.mu.Unlock()
 	return harness.FlowTurn{
@@ -235,6 +241,8 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 		History:      history,
 		Speaking:     speaking || a.speechPending(),
 		Reply:        reply,
+		Heard:        heard,
+		Measured:     measured,
 		Tools:        customerTools(tools),
 	}
 }
@@ -256,6 +264,16 @@ func (p pauseAsker) Ruled(participant stt.Participant, ruled audiofloor.Ruled) {
 func transcriptOf(participant stt.Participant, ruled audiofloor.Ruled) stt.Transcript {
 	return stt.Transcript{Participant: participant, Mode: stt.ModeReplacement, Text: ruled.Words, Provider: audiofloor.ProviderName,
 		ProcessingTimeMs: ruled.WordsMs, AudioDurationMs: ruled.AudioMs}
+}
+
+// Hearing has the agent take the caller as heard now, while they are in an utterance the
+// model has not ended: a silence is the line's, which the agent may fill with a check-in, only
+// once nobody is talking. Their words come at a pause or at the turn's end, and with interims
+// off or the words so far unstable, a caller counting slowly was checked in on mid-count.
+func (p pauseAsker) Hearing(stt.Participant) {
+	p.a.mu.Lock()
+	defer p.a.mu.Unlock()
+	p.a.lastHeardAt = time.Now()
 }
 
 // Speaking says the agent is talking, as Moment tells the model.
@@ -283,7 +301,7 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return
 	}
-	a.act(a.converse.Overheard(ruled.Ruling, participant, left, a.floor()))
+	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.floor()))
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's

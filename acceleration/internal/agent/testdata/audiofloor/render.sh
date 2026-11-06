@@ -46,3 +46,23 @@ render Joana porto-pt "E no Porto, vai chover este fim de semana?"
 render "$agent" list "Here are the forecasts you asked for. One, Lisbon on Friday: sunny and warm, twenty four degrees. Two, Porto on Saturday: cloudy in the morning, clearing by noon, nineteen degrees. Three, Coimbra on Sunday: a chance of showers in the afternoon, twenty one degrees. Four, Aveiro on Monday: windy by the lagoon, with sun in the afternoon."
 render "$agent" question "Tomorrow in Lisbon it will be sunny and warm, with a high of twenty four degrees. Would you like the forecast for Porto as well?"
 render "$agent" greeting "Hello, you have reached the weather line. How can I help you today?"
+
+# The loop's contract (TestAudioFloorContract): what is said over the agent and must leave it
+# talking, what stops it and leaves it quiet, what stops it and is answered, and a member ID
+# dictated with pauses. Only these are rendered when they are added, so that the audio of
+# the checks above stays as it was.
+render "$caller" mmhmm "Mm-hmm."
+render "$caller" hmhm "Hm hm."
+render "$caller" okay "Okay."
+render "$caller" right "Right."
+render "$caller" yeah "Yeah."
+render "$caller" laugh "Ha ha ha!"
+render "$caller" stoponly "Stop."
+render "$caller" wait "Wait."
+render "$caller" holdon "Hold on."
+render "$caller" okaystop "Okay, stop."
+render "$caller" andlisbon "And in Lisbon?"
+render "$caller" stopporto "Stop. What about Porto?"
+render "$caller" weatherporto "What's the weather in Porto?"
+render "$caller" dontstop "Don't stop."
+render "$caller" memberid "My member ID is K T R [[slnc 800]] 5 8 3 [[slnc 800]] 0 2 7."

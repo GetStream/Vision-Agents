@@ -247,6 +247,64 @@ func (a *Agent) cutShortLocked(turnID string, now time.Time) cutShort {
 	return cutShort{synthesisID: cut.synthesisID, heardMs: heardMs, message: &message}
 }
 
+// replyHeardLocked is reply, the message of the turn the agent is saying, as far as the caller
+// has heard it by now, and whether the agent could tell. The router has no word timing: an
+// utterance is heard from when the edge's track took its first audible frame, never more than
+// was published (heardBy), and what the voice says in that time is told by its speaking rate on
+// this call, from the syntheses it finished whole; before one has finished the agent can't
+// tell. Utterances of the turn ahead of the one being played were heard whole, none of a turn
+// whose audio has not gone out was, and all of one whose every utterance has finished was, but
+// for what the edge still had queued. It is cut back to a whole word. Agent.mu must be held.
+func (a *Agent) replyHeardLocked(reply string, now time.Time) (string, bool) {
+	turnID := a.speakingTurn
+	if turnID == "" || a.voicedMs == 0 {
+		return "", false
+	}
+	if a.voiced != turnID {
+		return "", true
+	}
+	var playing *utterance
+	var latest int64
+	start := -1
+	for _, heard := range a.heard {
+		if heard.turnID != turnID {
+			continue
+		}
+		if start < 0 || heard.message.Start < start {
+			start = heard.message.Start
+		}
+		if pulled := heard.pulledAt.Load(); pulled > latest {
+			playing, latest = heard, pulled
+		}
+	}
+	runes := []rune(reply)
+	end := len(runes)
+	switch {
+	case start < 0:
+	case playing == nil:
+		end = start
+	default:
+		heardMs, _ := playing.heardBy(now)
+		share := 1.0
+		if voiced := utf8.RuneCountInString(playing.text); voiced > 0 {
+			share = min(1, heardMs*a.voicedChars/a.voicedMs/float64(voiced))
+		}
+		end = playing.message.Start + int(share*float64(playing.message.End-playing.message.Start))
+	}
+	return wholeWords(runes, max(0, min(end, len(runes)))), true
+}
+
+// wholeWords is text up to end, without the word end falls part way through.
+func wholeWords(text []rune, end int) string {
+	inWord := func(r rune) bool { return unicode.IsLetter(r) || unicode.IsDigit(r) }
+	if end < len(text) && end > 0 && inWord(text[end]) && inWord(text[end-1]) {
+		for end > 0 && !unicode.IsSpace(text[end-1]) {
+			end--
+		}
+	}
+	return strings.TrimSpace(string(text[:end]))
+}
+
 // heardBefore reports an utterance that is about to be reported spoken as being heard, if
 // the track has not yet said so: a short one behind speech already queued finishes before
 // the track gets to it. ahead is how many milliseconds of speech are queued ahead of it,

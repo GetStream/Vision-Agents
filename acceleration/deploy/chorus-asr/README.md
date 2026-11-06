@@ -22,11 +22,68 @@ It plugs in twice, and each is optional:
   transcriber ask about each pause on its behalf, under its own instructions and tools,
   the decision and the words in one request: [Turns from the audio](#turns-from-the-audio).
 
+## The loop's contract
+
+What a caller can count on from an agent that acts on chorus-asr with `stream/chorus-asr` as
+its STT. Each line is held by checks of the replay ([Test it](#test-it)), named in brackets:
+`TestAudioFloorReplay` by number, `TestAudioFloorScenarios` by S, `TestAudioFloorContract` by
+C. The loop acts on the model's rulings and nothing else: where the model rules wrong, the
+check fails and the failure is the model's, reported as such, not worked around in the router.
+
+**While the agent talks**, the caller is ruled on 350 ms voiced into what they say and every
+`interval_ms` while they go on (the words so far), and at their first pause (the words said).
+
+- **Ignored.** A backchannel ("uh-huh", "mm-hmm", "hm hm", "okay", "right", "yeah"), a laugh,
+  a cough, the agent's own voice heard back on the line, somebody in the room speaking
+  another language: the reply plays whole, nothing is shortened or stopped, and nothing is
+  answered afterwards. [1, S7, C1]
+- **Stopped, then quiet.** "Stop", "wait", "hold on": the agent stops within 800 ms of the
+  caller's first word, none of what it was saying is heard after, and it says nothing more.
+  A stop ruled while the caller is still talking is not a turn (its disposition is `wait`):
+  the words it was ruled on are spent on it. [C2]
+- **Stopped, then answered.** A correction or a new request ("no, Porto", "and in Lisbon?",
+  "stop, what about Porto?" in one breath, or "stop" and then a question): the agent stops
+  within 800 ms of the first word, and words the caller says after those the stop was ruled
+  on make a turn, answered once. It is answered on all its words, the stop's too: a stop is
+  often ruled on the start of the request it makes ("hi, what's the weather" over the
+  greeting), which the words after it alone would cut ("like in Lisbon tomorrow?"). Where the
+  model rules a request one more item ("and in Lisbon?" over a forecast), it is shortened, as
+  below, and answered. [11, S2, S3, S10b, C3]
+- **Shortened.** One more item for the request being answered ("and in Porto?" over a
+  forecast): the agent adds nothing more to the reply, stops speaking within 250 ms of the
+  ruling, and answers the item. The model was trained on `shorten` as "one more item of the
+  same kind for the request being answered, neither correcting nor replacing it", in a demo
+  that let at most 250 ms of the audio playing finish, as its voice had no word timing; the
+  router's voices have none either. A line the agent says of its own accord, a greeting, a
+  check-in or an update, answers no request, so `shorten` over it stops it. [S4b, S8, C4]
+
+**After an interruption** the floor is the caller's: their turn ends once, by the agent's
+`end_of_turn` point at its check times from the voice's last frame, and is answered on that
+check's ruling, with no second wait. [S2, C5, C7]
+
+**While the agent listens**, pauses inside a sentence, slow counts and dictation are waited
+through as the agent's `end_of_turn` point was measured to (the table below), and a finished
+turn is answered at that point. The agent says nothing of its own accord, such as a check-in,
+while the model is waiting on the caller to finish. [4, 5, S1a, S6, C6]
+
+**Waits.** Every wait from the caller's voice to the reply is the policy's (first check,
+interval, bars, cap), the server's time to rule and write the words, or the reply model's. A
+final the model ended is put to the conversation at once, with no settle gap, no grace after
+an overlap and no retry. [8, C5, C7]
+
+What the loop can't know: the model's words and rulings are all it has. A stop ruled on
+misheard words ("let's stop" for "don't stop") is a stop. A stop first ruled at a pause, on
+words the caller has finished ("has just said"), means `respond`: the model's options there
+have no stop that leaves nothing to answer, so such a stop is answered. That is a "stop"
+short enough to end at a pause before the first check over the agent (under 350 ms voiced),
+or one whose first words that check rightly let pass ("okay, stop").
+
 ## Configure
 
 | Variable | Purpose |
 | --- | --- |
-| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`. Adds the `stream/chorus-asr` transcriber |
+| `ROUTER_CHORUS_ASR_URL` | The server, such as `http://floor:8080`, with the path of a gateway it sits behind if it has one ([Behind a gateway](#behind-a-gateway)). Adds the `stream/chorus-asr` transcriber |
+| `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as `Authorization: Bearer <key>` on every request, for a server behind a gateway that asks for a key. Never logged, and taken out of what a gateway says back. Send it over `https` |
 | `ROUTER_CHORUS_ASR_MODE` | `off` (default); `shadow`, which asks the model about each turn beside the flow controller and acts on nothing it says; or `act`, which asks it first and acts on its ruling |
 | `ROUTER_CHORUS_ASR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |
@@ -143,13 +200,14 @@ last frame, and a pause costs one request:
   on what a decision hears. The agent is registered with the session's languages, for the
   words.
 - **One final.** A check that ends the turn hands its ruling to the agent, and its words
-  go out as the utterance's one final, to the cadence as any final does (60 ms). The flow
-  controller's Hearer rules on those words as the check did, with no request of its own, and
-  the reply is asked for at once. Over the agent a pause check has no bar: the model's
-  ruling ends the turn, `stop`, `shorten`, `continue` or `ignore`, and words heard over a
-  reply reach the flow controller as settled words. A turn a check ended is over whatever
-  comes next: speech before its words are written, the caller going on or somebody else in
-  the room, is the next utterance's.
+  go out as the utterance's one final, which the conversation takes at once: the policy has
+  had its wait, and the words never change after it. The flow controller's Hearer rules on
+  those words as the check did, with no request of its own, and the reply is asked for at
+  once. Over the agent a pause check has no bar: the model's ruling ends the turn, `stop`,
+  `shorten`, `continue` or `ignore`, and words heard over a reply reach the flow controller
+  as settled words; that ruling stands if the agent has gone quiet before the turn is put. A
+  turn a check ended is over whatever comes next: speech before its words are written, the
+  caller going on or somebody else in the room, is the next utterance's.
 - **Over the agent, without a pause.** While the agent speaks, a caller who has been voiced
   for 350 ms in the utterance is asked about without waiting for a pause, the decision and
   the words of the utterance so far (up to 16 s) in one request, then every `interval_ms`
@@ -161,9 +219,13 @@ last frame, and a pause costs one request:
   (`OverlapDecided`, then the interruption): the agent drops its own echoed voice from the
   check's words first, as from any chorus-asr transcript, and an echo alone or a murmur
   stops nothing. The checks go on every `interval_ms` for as long as the caller's line is
-  voiced over the agent, its own echo included (Limits). The utterance goes on, its words
-  shown as interims, and ends at a pause with the floor free, where the reply to it is asked
-  for. 350 ms is most of an "uh-huh", so the model rules on a
+  voiced over the agent, its own echo included (Limits). A stop ruled while the caller talks on
+  is no turn: the words it was ruled on are spent on it. The utterance runs on, uncut, and
+  ends at its pauses with the floor free, by the agent's point, as the caller may go on
+  after a pause; its final is heard and not answered if it says nothing more than the stop's
+  words, and is the caller's turn if it does. A check that answers once its utterance has ended, a pause check
+  having ruled on it, is not acted on. Shortened, the utterance goes on, its words shown as interims, and ends at
+  a pause, where the item is answered. 350 ms is most of an "uh-huh", so the model rules on a
   murmur, which it was trained to let the agent talk through, rather than on the first
   syllable of anything, and a word that stops the agent, "no" or "stop", is said inside it.
 - **Live words, acted on at the end.** While the caller talks the transcriber shows the
@@ -249,20 +311,20 @@ the first check often is, stops nothing.
 | --- | --- |
 | S1a. Two pauses of 800 ms inside a turn | One final, one answer, no cut-in: ruled 271 ms, answered 420 ms |
 | S1b. Two pauses of 1,300 ms inside a turn | Cut in at both, three turns: past 1,100 ms the `safe` point's bar is 0.2, as measured (4.5% of mid-turn pauses) |
-| S2a. "No, Porto." 500 ms into the reply | The model ruled `stop` 541 ms after the first word, on the check at 350 ms voiced, and the agent stopped at 565 ms; answered 1.39 s after the voice, p_eot 0.85 to 0.96 until the 1,100 ms bar |
-| S2b. "No, I meant Porto." with a 300 ms pause, 500 ms into the reply | Ruled `stop` 544 ms after the first word, stopped at 566 ms; one turn, answered 532 ms |
-| S3. "Sorry, what was the second one?" 4 s into a list | Ruled `stop` 380 ms after the first word, stopped at 403 ms; answered 1.4 s after the voice |
-| S4a. A second question 20 ms into the reply | The model ruled `shorten`; answered once the reply ended, 7.5 s on, the replay's voice saying a reply as one sentence that a shortening cannot cut |
-| S4b. "And in Porto?" 2 s into the reply | Heard as "and in Porto" out of the echo; the model ruled `shorten` 581 ms after the first word and the agent gave way at 643 ms |
+| S2a. "No, Porto." 500 ms into the reply | The model ruled `stop` 544 ms after the first word, on the check at 350 ms voiced, and the agent stopped at 568 ms; the utterance ran on uncut, and "No, Porto." was answered 1.19 s after the voice, at the 1,100 ms bar |
+| S2b. "No, I meant Porto." with a 300 ms pause, 500 ms into the reply | Ruled `stop` 543 ms after the first word, stopped at 567 ms; one turn, answered 320 ms |
+| S3. "Sorry, what was the second one?" 4 s into a list | Ruled `stop` 383 ms after the first word, stopped at 405 ms; answered 1.19 s after the voice |
+| S4a. A second question 420 ms after the first, as the reply begins | The first reply cut, and the second question answered 1.75 s after its voice |
+| S4b. "And in Porto?" 2 s into the reply | Heard as "and in Porto" out of the echo; the model ruled `shorten` 588 ms after the first word, the agent gave way at 652 ms and stopped speaking 250 ms on; answered 2.73 s after the voice, the free floor's bars waiting on "and in Porto" |
 | S5. Silence after the agent asks a question | One answer; nothing written and no request made of the silence |
 | S6. "So I was thinking [1.2 s] hmm [0.9 s] maybe Friday…" | One turn, no cut-in: ruled 264 ms, answered 402 ms |
 | S7. A cough 2 s into the reply | The reply heard whole, nothing answered |
-| S8. "And also, should I bring an umbrella…" 1 s into the reply | The model's first `shorten` with the caller's words in it came 580 ms after the first word, and the agent gave way at 665 ms; the words heard whole, without the echo |
+| S8. "And also, should I bring an umbrella…" 1 s into the reply | The model's first `shorten` with the caller's words in it came 642 ms after the first word, the agent gave way at 669 ms and stopped speaking 250 ms on; the words heard whole, without the echo, and answered 323 ms after the voice |
 | S9a. Every decision 400 ms late | Ruled 662 ms, answered 766 ms, every turn the model's |
 | S9b. 503 to the first two decisions | The first turn answered by the flow controller 726 ms after the voice; the next ruled by the model, 265 ms |
 | S9c. 503 to every `POST /v1/transcribe` | 15 interims refused and the pauses' words shown instead; one final with the turn's beginning, answered 968 ms |
 | S10a. The agent greets first, the caller waits | Answered 391 ms; the greeting's echo nothing heard |
-| S10b. The caller asks 1 s into the greeting | The greeting stopped 1.34 s after the first word, on the model's ruling; answered 528 ms after the voice |
+| S10b. The caller asks 1 s into the greeting | The greeting stopped 1.34 s after the first word, on the model's ruling; the question answered whole, 322 ms after the voice |
 | S11. An 80 s monologue | Three finals, 60.0 s of 210 words, 2.6 s and 17.9 s: the utterance ends at 60 s as it is and is answered then, 62 s in, while the caller talks on; the caller's next words stop that reply, and the rest is answered 81 s in |
 | S12a. Portuguese after English, callers speak `en` | Nothing written, nothing answered: a language the callers don't speak is noise to the server |
 | S12b. Portuguese after English, no languages | Written in Portuguese, live words and final, answered 383 ms |

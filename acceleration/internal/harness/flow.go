@@ -73,6 +73,10 @@ type FlowTurn struct {
 	// Reply is what the agent is currently saying, so the controller can tell a cough
 	// overlapping a read-back from a caller who is correcting it.
 	Reply string
+	// Heard is how much of Reply the caller has heard by now, as the agent's voice has played
+	// it, when Measured says the agent could tell; otherwise Reply stands for it.
+	Heard    string
+	Measured bool
 	// Unfinished says the words are what has been heard so far of an utterance still in
 	// progress, so the only question is who keeps the floor rather than what to answer.
 	Unfinished bool

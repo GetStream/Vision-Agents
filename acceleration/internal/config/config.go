@@ -384,8 +384,10 @@ type Agent struct {
 	// how the audio is sent: opus (the default) or pcm, for debugging. AudioFloorInterims
 	// says whether its transcriber writes the words so far while the caller talks: on (the
 	// default) or off, for a server short of transcription lanes, where the words come at
-	// the turn's end.
+	// the turn's end. AudioFloorAPIKey is sent as a bearer token on every request to a server
+	// behind a gateway that asks for one.
 	AudioFloorURL      string `koanf:"chorus_asr_url"`
+	AudioFloorAPIKey   string `koanf:"chorus_asr_api_key"`
 	AudioFloorMode     string `koanf:"chorus_asr_mode"`
 	AudioFloorAudio    string `koanf:"chorus_asr_audio"`
 	AudioFloorInterims string `koanf:"chorus_asr_interims"`
@@ -567,6 +569,7 @@ var variables = map[string]string{
 	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
 	"agent.chorus_asr_url":      "ROUTER_CHORUS_ASR_URL",
+	"agent.chorus_asr_api_key":  "ROUTER_CHORUS_ASR_API_KEY",
 	"agent.chorus_asr_mode":     "ROUTER_CHORUS_ASR_MODE",
 	"agent.chorus_asr_audio":    "ROUTER_CHORUS_ASR_AUDIO",
 	"agent.chorus_asr_interims": "ROUTER_CHORUS_ASR_INTERIMS",

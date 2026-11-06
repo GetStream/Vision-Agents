@@ -23,6 +23,20 @@ type asking struct {
 	ruled    []Ruled
 	// overheard are the rulings over the agent handed over at once.
 	overheard []Ruled
+	// hearing counts the times the agent was told the caller is in an utterance.
+	hearing int
+}
+
+func (a *asking) Hearing(stt.Participant) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.hearing++
+}
+
+func (a *asking) heardSoFar() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.hearing
 }
 
 func (a *asking) Hearer() *Hearer { return a.hearer }
@@ -184,6 +198,81 @@ func (s *PausesSuite) TestACallerTalkingOverTheAgentIsAskedAboutWithoutAPause() 
 	s.Equal(stt.ModeFinal, end.Mode)
 	s.Equal(int64(1), end.Utterance, "the utterance went on through the checks over the agent, and ended at its pause")
 	s.Len(s.agent.rulings(), 1)
+}
+
+// The agent is told the caller is in an utterance every interval while it lasts, voiced or in
+// a pause the model is waiting on, whether or not any words have been written of it: a caller
+// whose words come only at the turn's end, with interims off or the words so far unstable, is
+// not a silent line the agent should fill. Once the utterance has ended it is told nothing.
+func (s *PausesSuite) TestTheAgentIsToldTheCallerIsTalkingUntilTheTurnEnds() {
+	s.ending(0.1)
+	s.say(1000, true)
+	voiced := s.agent.heardSoFar()
+	s.GreaterOrEqual(voiced, 3, "told while the caller talked")
+	s.say(900, false)
+	s.Greater(s.agent.heardSoFar(), voiced, "told while the model waited on the pause")
+	s.ending(0.999)
+	s.say(300, false)
+	next[stt.Transcript](&s.transcribing)
+	ended := s.agent.heardSoFar()
+	s.say(2000, false)
+	s.Equal(ended, s.agent.heardSoFar(), "told nothing once the turn had ended")
+}
+
+// An utterance a check over the agent stopped it in goes on, uncut, and ends by the free
+// floor's end-of-turn policy like any other once the agent has stopped: a pause whose words are
+// the stop's alone and which the model waits on ("No, [pause] Porto.") does not end it, and the
+// words after the pause are the same utterance's. Ended there, the next utterance began where
+// the speech gate had last heard voice, after the unvoiced P, and "Porto" was heard "Corto".
+func (s *PausesSuite) TestAnUtteranceThatStoppedTheAgentEndsByThePolicy() {
+	s.agent.speaks(true)
+	s.server.mu.Lock()
+	s.server.decision = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"wait","floor":"stop"}}`
+	s.server.words = "No."
+	s.server.mu.Unlock()
+	s.say(400, true)
+	s.Eventually(func() bool { return len(s.agent.overheardSoFar()) == 1 }, 5*time.Second, time.Millisecond, "the stop was never asked about")
+	s.agent.speaks(false)
+	s.ending(0.17)
+	s.say(400, false)
+	s.none()
+	s.server.mu.Lock()
+	s.server.words = "No, Porto."
+	s.server.mu.Unlock()
+	s.say(600, true)
+	s.ending(0.999)
+	s.say(300, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance, "one utterance, through the pause the model waited on")
+	s.Equal("No, Porto.", end.Text)
+}
+
+// A check over the agent that answers once its utterance has ended, a pause check over the
+// agent having ended it with a ruling of its own, is about an utterance that is over: it is not
+// acted on, and the final's ruling is the one that stands. Acted on, a check that misheard
+// "don't stop" as "let's stop" stopped the agent after the pause check had heard it right.
+func (s *PausesSuite) TestACheckOverTheAgentAnsweredAfterItsUtteranceEndedIsNotActedOn() {
+	s.agent.speaks(true)
+	s.server.mu.Lock()
+	s.server.decision = `{"answer":"stop","answer_probability":0.9,"options":[],"decide_ms":1,"ruling":{"disposition":"wait","floor":"stop"}}`
+	s.server.words = "Don't stop."
+	// Late, and inside the 250 ms a check over the agent has.
+	s.server.unfinishedAfter = 200 * time.Millisecond
+	s.server.mu.Unlock()
+	s.say(400, true)
+	s.say(220, false)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal(int64(1), end.Utterance)
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return !s.transcriber.over.inFlight
+	}, 5*time.Second, time.Millisecond, "the check over the agent never answered")
+	s.Empty(s.agent.overheardSoFar(), "a check about an utterance that has ended is not acted on")
+	s.Len(s.agent.rulings(), 1)
+	s.none()
 }
 
 // A check still out when speech resumes is waited for, the model having been asked about the

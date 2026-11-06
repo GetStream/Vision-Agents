@@ -92,20 +92,30 @@ func row(t *testing.T, format string, args ...any) {
 	t.Logf("row: %s", fmt.Sprintf(format, args...))
 }
 
-// stoppedAfter is how long after said began the agent stopped or shortened its reply, if it
-// did.
+// stoppedAfter is how long after said began the agent first gave way, stopping or shortening
+// its reply, if it did. A shortened reply is stopped its tail later, which is the shortening's
+// and not when the agent gave way.
 func (c *call) stoppedAfter(said *cue) (time.Duration, string, bool) {
+	var at time.Time
+	var how string
 	for _, i := range all[Interrupted](c) {
 		if !i.At.Before(said.began()) {
-			return i.At.Sub(said.began()), "stop", true
+			at, how = i.At, "stop"
+			break
 		}
 	}
 	for _, o := range all[OverlapDecided](c) {
 		if o.E.Action == "shorten" && !o.At.Before(said.began()) {
-			return o.At.Sub(said.began()), "shorten", true
+			if at.IsZero() || o.At.Before(at) {
+				at, how = o.At, "shorten"
+			}
+			break
 		}
 	}
-	return 0, "", false
+	if at.IsZero() {
+		return 0, "", false
+	}
+	return at.Sub(said.began()), how, true
 }
 
 // sharesRun says text has n words in a row that reference has in a row too: the agent's

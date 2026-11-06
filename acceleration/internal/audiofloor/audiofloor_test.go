@@ -89,6 +89,9 @@ type fakeServer struct {
 	// it.
 	decideAfter time.Duration
 	wordsAfter  time.Duration
+	// unfinishedAfter is how long a decision about words still coming, a check over the
+	// agent, takes on top of decideAfter.
+	unfinishedAfter time.Duration
 	// withWords counts the decisions asked for their words too, and agents the agents each
 	// decision was about.
 	withWords int
@@ -193,9 +196,9 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 		f.turns = append(f.turns, turn)
 		f.agents = append(f.agents, r.URL.Query().Get("agent"))
-		if f.decideAfter > 0 {
+		if after := f.decideAfter + map[bool]time.Duration{true: f.unfinishedAfter}[turn.Unfinished]; after > 0 {
 			f.mu.Unlock()
-			time.Sleep(f.decideAfter)
+			time.Sleep(after)
 			f.mu.Lock()
 		}
 		_, _ = w.Write([]byte(f.decision + "\n"))
@@ -267,6 +270,74 @@ func TestTheSettingsSayWhetherTheWordsAreWrittenWhileTheCallerTalks(t *testing.T
 	}
 	client, _ := Open(config.Agent{})
 	require.Nil(t, client)
+}
+
+// A gateway's address has a path of its own, and every route goes under it, with the key when
+// there is one.
+func TestEveryRequestGoesUnderTheAddressesPathWithTheKey(t *testing.T) {
+	const prefix = "/environments/production/sync"
+	for _, key := range []string{"", "a-key"} {
+		fake := &fakeServer{known: map[string]bool{}, info: testInfo, decision: `{"answer":"respond","p_eot":0.9,"options":[{"name":"respond","p":0.9}],"ruling":{"disposition":"respond","floor":"continue"}}`, words: "hello"}
+		var (
+			mu     sync.Mutex
+			routes []string
+		)
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			route, found := strings.CutPrefix(r.URL.Path, prefix)
+			require.True(t, found, r.URL.Path)
+			wantAuth := ""
+			if key != "" {
+				wantAuth = "Bearer " + key
+			}
+			require.Equal(t, wantAuth, r.Header.Get("Authorization"), route)
+			mu.Lock()
+			routes = append(routes, route)
+			mu.Unlock()
+			r.URL.Path = route
+			fake.ServeHTTP(w, r)
+		}))
+		defer srv.Close()
+		// Written with and without the slash an address may end in.
+		for _, address := range []string{srv.URL + prefix, srv.URL + prefix + "/"} {
+			routes = nil
+			client, _ := Open(config.Agent{AudioFloorURL: address, AudioFloorAudio: "pcm", AudioFloorAPIKey: key})
+			_, err := client.PolicyNow(context.Background())
+			require.NoError(t, err)
+			_, err = client.Decide(context.Background(), booking, Turn{Speaker: caller}, some)
+			require.NoError(t, err)
+			_, said, err := client.DecideWords(context.Background(), booking, Turn{Speaker: caller}, some)
+			require.NoError(t, err)
+			require.NoError(t, (<-said).Err)
+			_, err = client.Transcribe(context.Background(), some, nil)
+			require.NoError(t, err)
+			require.Equal(t, []string{"/v1/info", "/v1/agents", "/v1/decide", "/v1/decide", "/v1/transcribe"}, routes)
+		}
+	}
+}
+
+// A gateway that turns the key away is the router's to fix, not a server that is down, and
+// what it says, which is logged, doesn't carry the key, even when it quotes it.
+func TestARefusedKeyIsMisconfiguredAndInNoError(t *testing.T) {
+	const key = "a-key-to-keep-out-of-the-logs"
+	for _, status := range []int{http.StatusUnauthorized, http.StatusForbidden} {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			w.WriteHeader(status)
+			_ = json.NewEncoder(w).Encode(map[string]string{"error": "no such key: " + r.Header.Get("Authorization")})
+		}))
+		defer srv.Close()
+		client := New(srv.URL, PCM, srv.Client()).WithAPIKey(key)
+		_, policy := client.PolicyNow(context.Background())
+		_, decide := client.Decide(context.Background(), booking, Turn{Speaker: caller}, some)
+		_, _, words := client.DecideWords(context.Background(), Agent{}, Turn{Speaker: caller}, some)
+		_, transcribe := client.Transcribe(context.Background(), some, nil)
+		for name, err := range map[string]error{"policy": policy, "decide": decide, "words": words, "transcribe": transcribe} {
+			require.Error(t, err, name)
+			require.True(t, Misconfigured(err), "%s: %d is misconfigured", name, status)
+			require.False(t, Unreachable(err), "%s: %d is not a server down", name, status)
+			require.NotContains(t, fmt.Sprintf("%+v", err), key, name)
+			require.Contains(t, err.Error(), "[key]", name)
+		}
+	}
 }
 
 func (s *ClientSuite) TestAChangedAgentIsRegisteredAgain() {
@@ -525,6 +596,35 @@ func (s *HearerSuite) TestATurnIsSaidInTheModelsTerms() {
 	_, err := s.hearer.Hear(context.Background(), harness.FlowTurn{Audio: some, Participant: "Alice", AnotherVoice: true, Reply: "hello", Unfinished: true, History: history})
 	s.Require().NoError(err)
 	s.Equal(Turn{Speaker: anotherVoice, Conversation: []Line{{Text: "hi"}, {Agent: true, Text: "hello"}}}, s.server.turns[0])
+}
+
+// Over the agent the model is told what it was trained on (the rows of floor's testdata):
+// the conversation before the reply being spoken, which is not a line of it but what the agent
+// "has so far said", and that as far as the caller has heard it. The conversation is what was
+// said on the call: a turn typed or handed in by the app ("greet the user"), and a tool's
+// result, are no caller's words.
+func (s *HearerSuite) TestOverTheAgentTheModelIsToldWhatWasSaidAndHeard() {
+	s.server.decision = `{"answer":"continue","answer_probability":0.8,"options":[],"decide_ms":1,"ruling":{"disposition":"ignore","floor":"continue"}}`
+	reply := "Tomorrow in Lisbon it will be sunny and warm, with a high of twenty four degrees."
+	history := []llm.Message{
+		{Role: llm.User, Content: "greet the user in one short sentence", Typed: true},
+		{Role: llm.Assistant, Content: "Hello, how can I help you today?"},
+		{Role: llm.User, Content: "What's the weather like in Lisbon tomorrow?"},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "get_weather"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"forecast":"sunny","high":24}`},
+		{Role: llm.Assistant, Content: reply + " "},
+	}
+	_, err := s.hearer.Hear(context.Background(), harness.FlowTurn{Audio: some, Speaking: true, Unfinished: true, History: history,
+		Reply: reply, Heard: "Tomorrow in Lisbon it will be", Measured: true})
+	s.Require().NoError(err)
+	s.Equal(Turn{Speaker: caller, Speaking: true, Unfinished: true, Said: "Tomorrow in Lisbon it will be", Conversation: []Line{
+		{Agent: true, Text: "Hello, how can I help you today?"},
+		{Text: "What's the weather like in Lisbon tomorrow?"},
+	}}, s.server.turns[0])
+
+	_, err = s.hearer.Hear(context.Background(), harness.FlowTurn{Audio: some, Speaking: true, Unfinished: true, History: history, Reply: reply})
+	s.Require().NoError(err)
+	s.Equal(reply, s.server.turns[1].Said, "what the caller heard unknown, the reply stands for it")
 }
 
 // TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet, asking

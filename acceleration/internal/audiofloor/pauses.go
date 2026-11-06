@@ -36,8 +36,14 @@ type Asker interface {
 	Speaking() bool
 	// Overheard is a check's ruling over the agent to stop or shorten, asked while the
 	// caller talked on, with the words so far: the agent acts on it at once, unless the
-	// words are its own voice heard back, which is no reason to stop.
+	// words are its own voice heard back, which is no reason to stop. The utterance goes on,
+	// and ends by its pause checks.
 	Overheard(participant stt.Participant, ruled Ruled)
+	// Hearing says the caller is in an utterance, voiced or in a pause no check has ended,
+	// whether or not any words of it have been written: the line is not silent. It is said
+	// every interval of the policy while the utterance lasts, on the session's goroutine,
+	// and must not block.
+	Hearing(participant stt.Participant)
 }
 
 // Ruled is what a check ruled on an utterance, and the words it was about: a pause check's
@@ -55,6 +61,8 @@ type Ruled struct {
 	// Overheard says the check was asked over the agent without a pause, to be acted on at
 	// once.
 	Overheard bool
+	// Utterance is the utterance the words are of, which its final names.
+	Utterance int64
 }
 
 // Pauses is a transcriber an agent can have ask about each pause.
@@ -96,6 +104,9 @@ func (neutralAgent) Speaking() bool { return false }
 
 // Overheard is never asked, as nobody talks over an agent that says nothing.
 func (neutralAgent) Overheard(stt.Participant, Ruled) {}
+
+// Hearing tells nobody: the transcriber's own agent fills no silence.
+func (neutralAgent) Hearing(stt.Participant) {}
 
 // pause is the pause going on in the utterance being heard, and what its checks said.
 type pause struct {
@@ -263,6 +274,8 @@ type overChecks struct {
 	at       int64
 	polled   int64
 	speaking bool
+	// utterance is the utterance the checks are of: a new one starts them again.
+	utterance int64
 }
 
 // overPoll is how often the agent is asked whether it is speaking while the caller is
@@ -317,7 +330,7 @@ func (t *Transcriber) checksOver(participant stt.Participant, heard int64) bool 
 	if !speaking {
 		return false
 	}
-	t.over.inFlight, t.over.at = true, heard
+	t.over.inFlight, t.over.at, t.over.utterance = true, heard, t.utterance+1
 	length := time.Duration(heard-t.start) * frame
 	c := overCheck{participant: participant, utterance: t.utterance + 1, whole: length <= Window,
 		voiced: time.Duration(t.talked) * frame, length: length, asked: time.Now()}
@@ -406,7 +419,21 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 	if checked.Ruling.Disposition == harness.Ignore || checked.Ruling.Floor == harness.Continue {
 		return
 	}
-	asker.Overheard(c.participant, Ruled{Check: checked, Words: text, Speaking: true, Overheard: true, AudioMs: audioMs, WordsMs: wordsMs})
+	if t.overtaken(c) {
+		t.logger.Debug("a check over the agent answered after its utterance ended, which is not acted on",
+			"participant", c.participant.ID, "utterance", c.utterance, "floor", checked.Ruling.Floor)
+		return
+	}
+	asker.Overheard(c.participant, Ruled{Check: checked, Words: text, Speaking: true, Overheard: true, AudioMs: audioMs, WordsMs: wordsMs, Utterance: c.utterance})
+}
+
+// overtaken says the utterance a check over the agent asked about has ended since, a pause
+// check having ended it with a ruling of its own: the check is about an utterance that is
+// over, and that ruling is the one that stands.
+func (t *Transcriber) overtaken(c overCheck) bool {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return t.over.utterance != c.utterance || t.pause.ended != nil
 }
 
 // check asks the server about a pause, and keeps what it said if the pause is still going on.
@@ -471,9 +498,9 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 			"participant", c.participant.ID, "error", err)
 		return
 	}
-	if checked.Ended {
-		p.ended, p.endedAt = &Ruled{Check: checked, Speaking: turn.Speaking, Paused: c.paused}, c.at
-	} else if p.resumed {
+	if checked.Ended && p.ended == nil {
+		p.ended, p.endedAt = &Ruled{Check: checked, Speaking: turn.Speaking, Paused: c.paused, Utterance: c.utterance}, c.at
+	} else if !checked.Ended && p.resumed {
 		// Speech came while the check was out, and it did not end the turn: the pause is
 		// over. Its words, if asked for, are still the utterance's so far (await).
 		t.pause = pause{epoch: p.epoch + 1}
