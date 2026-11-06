@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -111,6 +112,41 @@ func (s *GateSuite) sent(channel string) int64 {
 	return count
 }
 
+// reached is who the organization reached on channel today, as the counters say.
+func (s *GateSuite) reached(channel string) []string {
+	key := "channel:" + time.Now().UTC().Format("20060102") + ":{" + s.owner.OrganizationID + "}:" + channel + ":to"
+	members, err := s.redis.Do(s.ctx, s.redis.B().Smembers().Key(key).Build()).AsStrSlice()
+	s.Require().NoError(err)
+	slices.Sort(members)
+	return members
+}
+
+func (s *GateSuite) TestAReplyIsCountedAgainstTheNumberItWentTo() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {RecipientsPerDay: new(2)}})
+	const first, second, third = "+15125550001", "+15125550002", "+15125550003"
+
+	s.gate.Sent(s.ctx, s.app(), dlc.SMS, first)
+
+	s.Equal([]string{first}, s.reached(dlc.SMS), "the number the reply went to, and nobody else, not even the empty recipient")
+	s.Equal(int64(1), s.sent(dlc.SMS))
+	s.gate.Sent(s.ctx, s.app(), dlc.SMS, second)
+	s.Equal([]string{first, second}, s.reached(dlc.SMS))
+	s.Equal(int64(2), s.sent(dlc.SMS))
+	s.ErrorIs(s.gate.Allow(s.ctx, s.app(), dlc.SMS, third), dlc.ErrRefused, "the day's two recipients are the two replied to")
+	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.SMS, first), "a number replied to is reached already")
+}
+
+// Catches a guard dropped from countChannel: a reply to nobody would put the empty recipient in
+// the day's reached set, and spend one of the organization's recipients on it.
+func (s *GateSuite) TestAReplyToNobodyIsCountedButReachesNobody() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {RecipientsPerDay: new(2)}})
+
+	s.gate.Sent(s.ctx, s.app(), dlc.SMS, "")
+
+	s.Equal(int64(1), s.sent(dlc.SMS), "the reply is a message sent")
+	s.Empty(s.reached(dlc.SMS), "to nobody")
+}
+
 func (s *GateSuite) TestATextToACountryTheTierDoesNotAllowIsRefused() {
 	s.money.Usage.SetTier(s.T(), usage.Tier{Name: usage.DefaultTier, FailMode: usage.FailClosed, Limits: usage.Limits{
 		Channels: map[string]usage.ChannelLimits{dlc.SMS: {Countries: []string{"US", "CA"}}},
@@ -135,6 +171,7 @@ func (s *GateSuite) TestAnOverrideOfTheCountriesLetsTheOrganizationReachThem() {
 	s.T().Cleanup(func() { s.money.Usage.SetTier(s.T(), usage.BuiltInDefaultTier()) })
 
 	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {Countries: []string{"US", "CA", "GB"}}})
+	s.waitForLimits(func(limits usage.Limits) bool { return slices.Contains(limits.Channels[dlc.SMS].Countries, "GB") })
 
 	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.SMS, "+442079460000"))
 }

@@ -162,7 +162,10 @@ type Session struct {
 	id      string
 	spec    Spec
 	created time.Time
-	logger  *slog.Logger
+	// began is when this process made the session, with the monotonic reading created lost to
+	// UTC and Truncate: how long the session has run, whatever the wall clock does meanwhile.
+	began  time.Time
+	logger *slog.Logger
 
 	persisted *persistent.Conversation
 	// held is the agent holding the conversation: one on the call while voice is started,

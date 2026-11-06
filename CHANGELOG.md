@@ -448,6 +448,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A session whose every reply was lost no longer counts as closed when the flow controller answered
 
 A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
+### A call that began before its number's link stays before it
+
+A call episode was dated by the router's clock while a number's link is dated by Postgres's, so with the router's clock ahead, a call that began just before the link counted as after it and the linked user's sessions read it. A call episode is now dated by Postgres's clock, from when its session began, also when its card is written later because the caller joined late (#1824).
 
 ### A phone operation that fails on the router's side is a 500
 

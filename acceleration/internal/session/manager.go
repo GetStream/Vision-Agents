@@ -355,6 +355,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
+		began:         time.Now(),
 		logger:        m.logger,
 		watchers:      map[uint64]*watcher{},
 		detachedGrace: m.options.DetachedGrace,
