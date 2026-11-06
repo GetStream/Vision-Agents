@@ -2123,3 +2123,23 @@ func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsT
 	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended on a caller still talking")
 	s.False(s.left(), "the agent left a caller still talking")
 }
+
+// Talking over the goodbye cancels the hang-up and then drops the goodbye, which leaves the
+// agent as quiet as a goodbye heard to its end. A hang-up that looks only once both are
+// done, as one on a busy machine does, still keeps the call: the test above, under load,
+// hung up on the caller this way.
+func (s *AgentSuite) TestAGoodbyeCutOffBeforeTheHangUpLooksKeepsTheCall() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	s.Require().False(s.agent.Busy() || s.agent.speechPending(), "the goodbye was dropped and the agent is quiet")
+	cut, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	result, left, err := s.agent.endCall(cut)
+
+	s.Require().NoError(err)
+	s.Equal(endCallCancelled, result, "the model is told the call is still open")
+	s.False(left)
+	s.Zero(s.ender.ends(), "the call ended on a caller who cut the goodbye off")
+}

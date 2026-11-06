@@ -3889,6 +3889,10 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 		}
 		stale, a.unheard = a.unheard, unheardReply{}
 		a.missed = stale
+		// The tools an interruption cancels are cancelled before the speech is dropped, as
+		// they are when the caller talks over a reply: an end_call waiting on its goodbye
+		// takes the agent gone quiet for the goodbye heard unless the call was cancelled first.
+		a.cancelToolsLocked()
 		return true
 	}, why) {
 		return

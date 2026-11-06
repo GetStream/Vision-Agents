@@ -434,6 +434,34 @@ func (s *AgentSuite) TestFinalWordsOverAReplyNobodyHeardDropIt() {
 	s.oneDropSince(dropped)
 }
 
+// An end_call made with a reply the caller said more over before hearing any of it is
+// cancelled before the reply's speech is dropped, as talking over a reply has it: a hang-up
+// waiting on the goodbye takes the agent gone quiet for the goodbye heard, unless the call
+// was cancelled first (endCall).
+func (s *AgentSuite) TestAnUnheardGoodbyesEndCallIsCancelledBeforeItsSpeechIsDropped() {
+	s.join(true)
+	bye := s.answering("that's all, thanks")
+	ending, _ := s.agent.prepareTool(harness.ToolRequested{Call: llm.ToolCall{ID: "call-1", Name: toolEndCall}, TurnID: bye})
+	cancelled := make(chan bool, 1)
+	s.edge.dropping(func() {
+		select {
+		case cancelled <- ending.Err() != nil:
+		default:
+		}
+	})
+
+	s.says(nash, "oh wait, one more thing")
+
+	s.eventually(func() bool { return s.model.abandoned(bye) }, "the goodbye was not dropped")
+	select {
+	case first := <-cancelled:
+		s.True(first, "the goodbye was dropped while its end_call still stood")
+	default:
+		s.Fail("the goodbye's speech was never dropped")
+	}
+	s.Error(ending.Err(), "the end_call outlived the goodbye")
+}
+
 func (s *AgentSuite) TestTheTurnAfterADroppedReplyIsAskedToAnswerWhatItWasFor() {
 	// The reply to a correction made over a tool's answer was dropped when the caller went on,
 	// and their next turn was answered alone, so the correction was never booked.

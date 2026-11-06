@@ -70,6 +70,8 @@ type loopbackEdge struct {
 	// unheard is speech that has been published but has not gone out yet, which is what a
 	// real edge holds while a reply is being spoken.
 	unheard bool
+	// onDrop, when set, is called as DropSpeech begins.
+	onDrop func()
 }
 
 func newLoopbackEdge() *loopbackEdge {
@@ -107,9 +109,22 @@ func (e *loopbackEdge) SpeechPending() bool {
 // empties its playout queue when the caller takes the floor.
 func (e *loopbackEdge) DropSpeech() {
 	e.mu.Lock()
+	onDrop := e.onDrop
+	e.mu.Unlock()
+	if onDrop != nil {
+		onDrop()
+	}
+	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.published = nil
 	e.unheard = false
+}
+
+// dropping has f called as the agent drops speech, from then on.
+func (e *loopbackEdge) dropping(f func()) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.onDrop = f
 }
 
 // holdSpeech makes the edge report published speech as still on its way out, the way a real
