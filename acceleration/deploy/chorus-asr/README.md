@@ -61,6 +61,14 @@ check fails and the failure is the model's, reported as such, not worked around 
   checks that go on while the caller talks have no reply to stop, so they act on nothing and
   spend none of what they hear. The whole correction is answered once, the stop's words with
   it. A bare "stop" said and ended is still spent on the stop and not answered. [C3]
+- **Gone on with, then answered.** A stop spends only words said to stop the agent: words the
+  caller began once they had heard some of its answer to their turn (the reply, or what it
+  went on to say of a tool's result). A caller who went on with their own turn before any of
+  the answer went out, the agent having taken a pause inside it for the turn's end ("the name
+  for the booking is Alvarez", begun 0.7 s before the reply to the request before it), is
+  stopping nothing they heard: a stop ruled on what they say is acted on, and their words are
+  their turn, answered with the part before them in the conversation, as the model rules on
+  them at their end.
 - **Shortened.** One more item for the request being answered ("and in Porto?" over a
   forecast): the agent gives way within 800 ms of the first word, as it would to a stop, the
   model ruling on the same checks: it adds nothing more to the reply, stops speaking within
@@ -85,11 +93,21 @@ final the model ended is put to the conversation at once, with no settle gap, no
 an overlap and no retry. [8, C5, C7]
 
 What the loop can't know: the model's words and rulings are all it has. A stop ruled on
-misheard words ("let's stop" for "don't stop") is a stop. A stop first ruled at a pause, on
-words the caller has finished ("has just said"), means `respond`: the model's options there
-have no stop that leaves nothing to answer, so such a stop is answered. That is a "stop"
-short enough to end at a pause before the first check over the agent (under 350 ms voiced),
-or one whose first words that check rightly let pass ("okay, stop").
+misheard words ("let's stop" for "don't stop") is a stop. Whether a stop's words need an answer
+is not among its rulings: over the agent `stop` is "a correction, a different request, a
+question, or a direct interruption" alike, and at the turn's end, with the floor free, the
+server shows the model no conversation (`conversation_on_free_floor: false`), so it rules a
+bare "Stop.", "Can you stop?" or "No, stop." `respond` as it does "the name for the booking is
+Alvarez" (at 1,100 ms of pause, 0.79, 1.00 and 0.93 of the answers that end the turn, against
+1.00). The loop tells them apart by when the caller began, against the agent's answer: a stop
+begun before any of it went out spends nothing, and is answered as the model rules; a
+continuation begun once some of the answer was heard, with a stop ruled on all of it, is spent.
+An utterance begins where the speech gate opens, so a bare stop in a room loud enough to hold
+the gate open from before the reply went out is taken as begun then, and answered. A stop first
+ruled at a pause, on words the caller has finished ("has just said"), means `respond`: the
+model's options there have no stop that leaves nothing to answer, so such a stop is answered.
+That is a "stop" short enough to end at a pause before the first check over the agent (under
+350 ms voiced), or one whose first words that check rightly let pass ("okay, stop").
 
 ## Configure
 
@@ -252,7 +270,8 @@ last frame, and a pause costs one request:
   check's words first, as from any chorus-asr transcript, and an echo alone or a murmur
   stops nothing. The checks go on every `interval_ms` for as long as the caller's line is
   voiced over the agent, its own echo included (Limits). A stop ruled while the caller talks on
-  is no turn: the words it was ruled on are spent on it. The utterance runs on, uncut, and
+  is no turn: the words it was ruled on are spent on it, if the caller began them once some of
+  the agent's answer had gone out (The loop's contract). The utterance runs on, uncut, and
   ends at its pauses with the floor free, by the agent's point, as the caller may go on
   after a pause; its final is heard and not answered if it says nothing more than the stop's
   words, and is the caller's turn if it does. A check that answers once its utterance has ended, a pause check
