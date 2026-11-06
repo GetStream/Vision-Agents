@@ -77,6 +77,10 @@ type FlowTurn struct {
 	// it, when Measured says the agent could tell; otherwise Reply stands for it.
 	Heard    string
 	Measured bool
+	// Unsaid says the agent is on a turn that has written and said nothing yet, such as the
+	// answer after a tool's result before its first words: Reply is then the agent's line
+	// before it, which was said whole, and the agent has so far said nothing of the turn.
+	Unsaid bool
 	// Unfinished says the words are what has been heard so far of an utterance still in
 	// progress, so the only question is who keeps the floor rather than what to answer.
 	Unfinished bool

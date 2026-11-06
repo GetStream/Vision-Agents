@@ -202,11 +202,17 @@ func turnOf(turn harness.FlowTurn) Turn {
 	// in), when that line is the agent's and is the reply.
 	replying := -1
 	if turn.Speaking {
-		out.Said, out.Unfinished = turn.Reply, turn.Unfinished
-		if turn.Measured {
+		out.Unfinished = turn.Unfinished
+		switch {
+		case turn.Unsaid:
+			// The reply is the line before a turn that has said nothing yet, which stays the
+			// conversation's.
+		case turn.Measured:
 			out.Said = turn.Heard
+		default:
+			out.Said = turn.Reply
 		}
-		for i := len(turn.History) - 1; i >= 0; i-- {
+		for i := len(turn.History) - 1; i >= 0 && !turn.Unsaid; i-- {
 			if !saidOnTheCall(turn.History[i]) {
 				continue
 			}
