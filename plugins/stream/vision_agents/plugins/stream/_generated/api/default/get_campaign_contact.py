@@ -6,19 +6,21 @@ import httpx
 
 from ... import errors
 from ...client import AuthenticatedClient, Client
-from ...models.campaign import Campaign
+from ...models.contact import Contact
 from ...models.error_response import ErrorResponse
 from ...types import Response
 
 
 def _get_kwargs(
     id: str,
+    contact_id: str,
 ) -> dict[str, Any]:
 
     _kwargs: dict[str, Any] = {
-        "method": "post",
-        "url": "/v1/agents/campaigns/{id}/start".format(
+        "method": "get",
+        "url": "/v1/agents/campaigns/{id}/contacts/{contact_id}".format(
             id=quote(str(id), safe=""),
+            contact_id=quote(str(contact_id), safe=""),
         ),
     }
 
@@ -27,11 +29,11 @@ def _get_kwargs(
 
 def _parse_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Campaign | ErrorResponse | None:
-    if response.status_code == 202:
-        response_202 = Campaign.from_dict(response.json())
+) -> Contact | ErrorResponse | None:
+    if response.status_code == 200:
+        response_200 = Contact.from_dict(response.json())
 
-        return response_202
+        return response_200
 
     if response.status_code == 400:
         response_400 = ErrorResponse.from_dict(response.json())
@@ -76,7 +78,7 @@ def _parse_response(
 
 def _build_response(
     *, client: AuthenticatedClient | Client, response: httpx.Response
-) -> Response[Campaign | ErrorResponse]:
+) -> Response[Contact | ErrorResponse]:
     return Response(
         status_code=HTTPStatus(response.status_code),
         content=response.content,
@@ -87,29 +89,29 @@ def _build_response(
 
 def sync_detailed(
     id: str,
+    contact_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Campaign | ErrorResponse]:
-    """Start ringing
+) -> Response[Contact | ErrorResponse]:
+    """One contact, with every dial made to them
 
-     Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left. An organization that may not pay for calls is refused here as a call would
-    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str): The campaign.
+        contact_id (str): The contact, as the campaign's contacts list it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Campaign | ErrorResponse]
+        Response[Contact | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
         id=id,
+        contact_id=contact_id,
     )
 
     response = client.get_httpx_client().request(
@@ -121,58 +123,58 @@ def sync_detailed(
 
 def sync(
     id: str,
+    contact_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Campaign | ErrorResponse | None:
-    """Start ringing
+) -> Contact | ErrorResponse | None:
+    """One contact, with every dial made to them
 
-     Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left. An organization that may not pay for calls is refused here as a call would
-    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str): The campaign.
+        contact_id (str): The contact, as the campaign's contacts list it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Campaign | ErrorResponse
+        Contact | ErrorResponse
     """
 
     return sync_detailed(
         id=id,
+        contact_id=contact_id,
         client=client,
     ).parsed
 
 
 async def asyncio_detailed(
     id: str,
+    contact_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Response[Campaign | ErrorResponse]:
-    """Start ringing
+) -> Response[Contact | ErrorResponse]:
+    """One contact, with every dial made to them
 
-     Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left. An organization that may not pay for calls is refused here as a call would
-    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str): The campaign.
+        contact_id (str): The contact, as the campaign's contacts list it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Response[Campaign | ErrorResponse]
+        Response[Contact | ErrorResponse]
     """
 
     kwargs = _get_kwargs(
         id=id,
+        contact_id=contact_id,
     )
 
     response = await client.get_async_httpx_client().request(**kwargs)
@@ -182,30 +184,30 @@ async def asyncio_detailed(
 
 async def asyncio(
     id: str,
+    contact_id: str,
     *,
     client: AuthenticatedClient | Client,
-) -> Campaign | ErrorResponse | None:
-    """Start ringing
+) -> Contact | ErrorResponse | None:
+    """One contact, with every dial made to them
 
-     Returns once the campaign is running rather than once it is over. A campaign that was paused carries
-    on from whoever is left. An organization that may not pay for calls is refused here as a call would
-    be, 402 or 403 account_suspended, and a campaign it refuses midway is paused with paused_reason set.
-    Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
-        id (str): The resource, as returned when it was created.
+        id (str): The campaign.
+        contact_id (str): The contact, as the campaign's contacts list it.
 
     Raises:
         errors.UnexpectedStatus: If the server returns an undocumented status code and Client.raise_on_unexpected_status is True.
         httpx.TimeoutException: If the request takes longer than Client.timeout.
 
     Returns:
-        Campaign | ErrorResponse
+        Contact | ErrorResponse
     """
 
     return (
         await asyncio_detailed(
             id=id,
+            contact_id=contact_id,
             client=client,
         )
     ).parsed

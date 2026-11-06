@@ -95,10 +95,10 @@ def sync_detailed(
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
 ) -> Response[Campaign | ErrorResponse]:
-    """Define a list of people to ring
+    """Make a draft campaign
 
-     A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
-    these calls may be happening at once, and every call is a conversation this service is running.
+     A campaign rings a list of people with one agent config. It is made a draft, with the default
+    sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -128,10 +128,10 @@ def sync(
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
 ) -> Campaign | ErrorResponse | None:
-    """Define a list of people to ring
+    """Make a draft campaign
 
-     A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
-    these calls may be happening at once, and every call is a conversation this service is running.
+     A campaign rings a list of people with one agent config. It is made a draft, with the default
+    sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -156,10 +156,10 @@ async def asyncio_detailed(
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
 ) -> Response[Campaign | ErrorResponse]:
-    """Define a list of people to ring
+    """Make a draft campaign
 
-     A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
-    these calls may be happening at once, and every call is a conversation this service is running.
+     A campaign rings a list of people with one agent config. It is made a draft, with the default
+    sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
@@ -187,10 +187,10 @@ async def asyncio(
     client: AuthenticatedClient | Client,
     body: CampaignRequest,
 ) -> Campaign | ErrorResponse | None:
-    """Define a list of people to ring
+    """Make a draft campaign
 
-     A campaign is created stopped. Add the people to ring, then start it: concurrency is how many of
-    these calls may be happening at once, and every call is a conversation this service is running.
+     A campaign rings a list of people with one agent config. It is made a draft, with the default
+    sequence and calling hours for whatever it leaves out: add the people to ring, then launch it.
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
