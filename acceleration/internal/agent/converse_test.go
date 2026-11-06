@@ -528,7 +528,8 @@ func (s *ConverseSuite) TestATurnQueuedWhileTheAgentTalksHoldsUpWhatIsOwedPastTh
 	_, handed := s.converse.Waiting(s.talking())
 	s.Require().False(handed)
 
-	s.Never(func() bool { return !s.converse.Undecided() }, 200*time.Millisecond, 10*time.Millisecond)
+	converse := s.converse
+	s.Never(func() bool { return !converse.Undecided() }, 200*time.Millisecond, 10*time.Millisecond)
 }
 
 func (s *ConverseSuite) TestATurnQueuedAfterItsRulingIsHeardOnlyOnce() {
@@ -1426,7 +1427,8 @@ func (s *ConverseSuite) TestATurnQueuedInALineHeardSinceIsNotHeardAgain() {
 	s.False(waiting)
 	s.eventually(func() bool { return len(s.heard()) == 1 }, "the line was never heard")
 	s.Equal("make it seven and a birthday cake", s.heard()[0].Text)
-	s.Never(func() bool { return len(s.heard()) > 1 }, 50*time.Millisecond, 5*time.Millisecond,
+	seen := s.seen
+	s.Never(func() bool { return countOf[Heard](seen()) > 1 }, 50*time.Millisecond, 5*time.Millisecond,
 		"the queued words were heard a second time")
 
 	// The next line is the caller's next words alone.
