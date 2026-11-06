@@ -790,7 +790,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			JudgeTarget:        m.options.FlowJudge,
 			AudioFloor:         m.options.AudioFloor,
 			AudioFloorMode:     m.floorMode(created.id, spec),
-			EndOfTurn:          EndOfTurnOf(spec.EndOfTurn),
+			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),

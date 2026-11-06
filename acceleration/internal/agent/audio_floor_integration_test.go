@@ -108,7 +108,6 @@ func TestAudioFloorReplay(t *testing.T) {
 	t.Run("2d one final, with the reply echoed at -20 dB", func(t *testing.T) { h.oneFinal(t, audiofloor.Act, nil, echoAt(-20)) })
 	t.Run("2e one final, with the reply echoed at -30 dB", func(t *testing.T) { h.oneFinal(t, audiofloor.Act, nil, echoAt(-30)) })
 	t.Run("2f one final, echoed at -20 dB, transcription alone", func(t *testing.T) { h.oneFinal(t, "", nil, echoAt(-20)) })
-	t.Run("2g one final, echoed at -20 dB, in shadow", func(t *testing.T) { h.oneFinal(t, audiofloor.Shadow, nil, echoAt(-20)) })
 	t.Run("3a trailing breath and noise, callers speak en", func(t *testing.T) { h.trailingNoise(t, []string{"en"}) })
 	t.Run("3b trailing breath and noise, no languages", func(t *testing.T) { h.trailingNoise(t, nil) })
 	t.Run("4 a slow count", h.slowCount)
@@ -761,7 +760,7 @@ func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions st
 // callSetup is what a call is started with. A nil client is the harness's, and an empty
 // endOfTurn the one every call chooses (CHORUS_ASR_END_OF_TURN).
 type callSetup struct {
-	// mode is the agent's floor control: empty or off, shadow or act.
+	// mode is the agent's floor control: empty or off, or act.
 	mode         audiofloor.Mode
 	instructions string
 	languages    []string

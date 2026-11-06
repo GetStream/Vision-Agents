@@ -44,7 +44,7 @@ func TestAChoiceIsCheckedForWhatItSays(t *testing.T) {
 	}{
 		{EndOfTurn{MaxWaitMs: 800, Preset: "fast"}, "end_of_turn names max_wait_ms and preset: it takes one of max_wait_ms, preset and bars"},
 		{EndOfTurn{Preset: "fast", Bars: []PolicyBar{{FromMs: 0, Bar: 0.9}}}, "end_of_turn names preset and bars"},
-		{EndOfTurn{MaxWaitMs: -1}, "end_of_turn.max_wait_ms is -1: a wait is a number of milliseconds above 0"},
+		{EndOfTurn{MaxWaitMs: -1}, "floor_control.max_wait_ms is -1: a wait is a number of milliseconds above 0"},
 		{EndOfTurn{Bars: []PolicyBar{}}, "end_of_turn.bars is empty"},
 		{EndOfTurn{Bars: []PolicyBar{{FromMs: 200, Bar: 0.9}}}, "end_of_turn.bars[0].from_ms is 200: the first bar begins at 0 ms into the pause"},
 		{EndOfTurn{Bars: []PolicyBar{{FromMs: 0, Bar: 0.9}, {FromMs: 800, Bar: 0.3}, {FromMs: 800, Bar: 0.2}}},
@@ -117,7 +117,7 @@ func TestAWaitChoosesTheFewestCutInsWithinIt(t *testing.T) {
 		require.Equal(t, c.checksInARow, got.ChecksInARow, "%d ms", c.wait)
 	}
 	_, err := p.Resolve(EndOfTurn{MaxWaitMs: 799})
-	require.EqualError(t, err, "end_of_turn.max_wait_ms is 799, under every wait the model was measured at: the quickest has a caller wait 800 ms at p90")
+	require.EqualError(t, err, "floor_control.max_wait_ms is 799, under every wait the model was measured at: the quickest has a caller wait 800 ms at p90")
 }
 
 // Between points with as few cut-ins, the shorter wait wins, then fewer dictation pauses cut.

@@ -61,11 +61,11 @@ check fails and the failure is the model's, reported as such, not worked around 
   check-in or an update, answers no request, so `shorten` over it stops it. [S4b, S8, C4]
 
 **After an interruption** the floor is the caller's: their turn ends once, by the agent's
-`end_of_turn` point at its check times from the voice's last frame, and is answered on that
+`max_wait_ms` point at its check times from the voice's last frame, and is answered on that
 check's ruling, with no second wait. [S2, C5, C7]
 
 **While the agent listens**, pauses inside a sentence, slow counts and dictation are waited
-through as the agent's `end_of_turn` point was measured to (the table below), and a finished
+through as the agent's `max_wait_ms` point was measured to (the table below), and a finished
 turn is answered at that point. The agent says nothing of its own accord, such as a check-in,
 while the model is waiting on the caller to finish. [4, 5, S1a, S6, C6]
 
@@ -108,38 +108,44 @@ Three ways to use it, each a short Go program in
 
 | Use | Router | Agent |
 | --- | --- | --- |
-| [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL` | `floor_control: stream/chorus-asr`, `stt: stream/chorus-asr`, its own `tts` |
-| [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL` | `floor_control: stream/chorus-asr`, any `stt` |
+| [Decisions and transcripts](../../../examples/routers/chorus_asr_example/decide_and_transcribe/main.go): one model hears the caller, writes the words and ends the turn | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: stream/chorus-asr}`, `stt: stream/chorus-asr`, its own `tts` |
+| [Decisions only](../../../examples/routers/chorus_asr_example/decide_only/main.go): another transcriber writes the words | `ROUTER_CHORUS_ASR_URL` | `floor_control: {model: stream/chorus-asr}`, any `stt` |
 | [Transcription only](../../../examples/routers/chorus_asr_example/transcribe_only/main.go): the words, through the router's STT | `ROUTER_CHORUS_ASR_URL` | a router config naming `stream/chorus-asr` |
 
 ## Floor control: `floor_control`
 
 Whether chorus-asr controls an agent's floor, when a caller has finished and what to do about
 speech over the agent, is the app's to choose, per agent, beside its `stt`, `llm` and `tts`.
-`floor_control` names the model that controls the floor, as `stt` names the transcriber; an
-agent that names none keeps the default flow controller, as every agent did before there was a
-choice:
+`floor_control` is one setting: `model` names the model that controls the floor, as `stt` names
+the transcriber, and `max_wait_ms` is its one knob, how long a caller may wait once they stop
+([How long a caller waits](#how-long-a-caller-waits-max_wait_ms)). An agent that names none
+keeps the default flow controller, as every agent did before there was a choice:
 
 ```yaml
 # agent.yaml
-floor_control: stream/chorus-asr   # leave it out to keep the default flow controller
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 1100   # optional: how long a caller may wait once they stop; default is the server's default point
 ```
 
 With `stream/chorus-asr` the agent asks chorus-asr first and acts on its ruling, and the flow
 controller rules a turn it does not answer in time. With `stt: stream/chorus-asr` too, this is
 [the loop's contract](#the-loops-contract). With none, the flow controller rules the floor as
-it does with no such model, and `end_of_turn` does nothing; chorus-asr still transcribes for an
-agent whose `stt` is `stream/chorus-asr` ([Transcription alone](#transcription-alone)).
+it does with no such model; chorus-asr still transcribes for an agent whose `stt` is
+`stream/chorus-asr` ([Transcription alone](#transcription-alone)).
 
 - **Where it is chosen.** A sync (`POST /v1/agents/sync`, as every SDK's folder sync sends
-  it), a config's create, replace and patch, and a server-side `createSession`, which chooses
-  for one session over its config's, all take the same field. Sent, it replaces the stored
-  choice, and an empty string is the default flow controller again; left out, or null, the
-  stored one stays. A device may not choose a session's (403).
+  it), a config's create, replace and patch, and a server-side `createSession` or the session
+  socket's start frame, which choose for one session over its config's, all take the same
+  field. Sent, it replaces the stored choice whole, `max_wait_ms` included, and
+  `floor_control: {}` is the default flow controller again; left out, or null, the stored one
+  stays. A device may not choose a session's (403).
 - **What is refused.** `stream/chorus-asr` sent to a router without `ROUTER_CHORUS_ASR_URL` is
   refused at write time (400, `not_configured`), before anything is stored, saying what the
-  router needs; so is any other value (400). A choice stored on one router and read on
-  another without a server asks nothing there, and the router logs a warning for the session.
+  router needs. So is, with a 400, a `max_wait_ms` without a `model`, a model nobody knows, a
+  key it doesn't have, the string `floor_control` once was, and `end_of_turn`, which
+  `max_wait_ms` replaced. A choice stored on one router and read on another without a server
+  asks nothing there, and the router logs a warning for the session.
 - **One router, many choices.** Each session runs by its own: on one router, an agent whose
   floor chorus-asr controls and one with the default flow controller take their calls side by
   side, and share nothing but the server. The Hearer, the transcriber's pause checks and the
@@ -148,34 +154,12 @@ agent whose `stt` is `stream/chorus-asr` ([Transcription alone](#transcription-a
 - **A session row** keeps the floor control it was opened with, which reopening it keeps; one
   opened with none takes its config's.
 
-## How eager turn-taking is: `end_of_turn`
+## How long a caller waits: `max_wait_ms`
 
-How long chorus-asr waits before it takes a pause for the end of a turn is the app's to
-choose, per agent, beside its `stt`, `llm` and `tts`. Waiting longer cuts the caller off less
-often, and answers later. `end_of_turn` takes one of three:
-
-```yaml
-# agent.yaml
-end_of_turn:
-  max_wait_ms: 1100   # the measured point with the fewest cut-ins that answers within 1.1 s at p90
-```
-
-```yaml
-end_of_turn:
-  preset: fast        # one of the server's presets, each naming a measured point
-```
-
-```yaml
-end_of_turn:
-  bars:               # your own: the first from 0 ms, each later one further into the pause
-    - {from_ms: 0, bar: 0.97}
-    - {from_ms: 900, bar: 0.25}
-```
-
-Left out, an agent keeps what is stored, and a new one ends its turns by the server's
-`default` preset; `end_of_turn: {}` is the default again. A sync (`POST /v1/agents/sync`, as
-every SDK's folder sync sends it), a config's create, replace and patch, and a server-side
-`createSession`, which chooses for one session over its config's, all take the same field.
+How long chorus-asr waits before it takes a pause for the end of a turn is the agent's
+`floor_control.max_wait_ms`: the most a caller who has finished may wait for the answer.
+Waiting longer cuts the caller off less often, and answers later. Left out, an agent ends its
+turns by the server's `default` point.
 
 The server measured a frontier of points on held-out calls, and these are the points of the
 checkpoint this was written against. Each point's bars apply from `from_ms` into a pause, and
@@ -184,8 +168,8 @@ their bar:
 
 | Point | Chosen by | Bars | In a row | Cut-ins | Answers at (median, p90) | Real dictation pauses cut | Slow counts cut | Dictation guard |
 | --- | --- | --- | ---: | ---: | --- | ---: | ---: | --- |
-| 500 ms | `preset: fast`, `max_wait_ms` 800 to 1,099 | 0.8 from 0 ms, 0.3 from 500 ms | 1 | 14.5% | 500 ms, 800 ms | 16.0% | 9 of 9 | fails |
-| 1,100 ms | `preset: safe` (default), `max_wait_ms` 1,100 to 1,399 | 0.995 from 0 ms, 0.2 from 1,100 ms | 1 | 4.5% | 1,100 ms, 1,100 ms | 12.6% | 0 of 9 | passes |
+| 500 ms | `max_wait_ms` 800 to 1,099 | 0.8 from 0 ms, 0.3 from 500 ms | 1 | 14.5% | 500 ms, 800 ms | 16.0% | 9 of 9 | fails |
+| 1,100 ms | `max_wait_ms` 1,100 to 1,399, and the default | 0.995 from 0 ms, 0.2 from 1,100 ms | 1 | 4.5% | 1,100 ms, 1,100 ms | 12.6% | 0 of 9 | passes |
 | 1,400 ms | `max_wait_ms` 1,400 and over | 0.99 from 0 ms, 0.2 from 1,100 ms | 2 | 3.1% | 1,400 ms, 1,400 ms | 10.6% | 0 of 9 | passes |
 
 Cut-ins are the share of mid-turn pauses a point ended a turn in. Real dictation pauses are a
@@ -198,34 +182,26 @@ callers read out numbers or IDs, or spell names, wants a point that passes.
   p90 wait is within it. That is the measured wait, not the one a point was fitted to: the
   500 ms point answers in 800 ms at p90, so a wait of 800 ms gets it, and a wait under 800 ms
   gets nothing measured and is refused.
-- **What is checked, and when.** A write is refused (400), before anything is stored, when
-  `end_of_turn` names more than one of the three, when its bars don't begin at 0 ms and rise,
-  or one isn't strictly between 0 and 1, when the server publishes no preset by that name,
-  or when `max_wait_ms` is shorter than every measured point's p90 wait. A device may not
-  choose a session's (403). A sync that chooses a point failing the dictation guard is stored,
-  and its `warnings` say what the point does to slow counts and dictation pauses. A preset or
-  wait is held to the server where the agent's `floor_control` is `stream/chorus-asr`, and
-  again when a write chooses it. With the default flow controller, or when the server can't say
-  what it publishes, the choice is kept and the sync's `warnings` say so.
-- **What it replaces.** A point brings its bars and its checks in a row; bars of your own end a
-  turn at the first check that reaches its bar. When a pause is checked, how much more a turn's
-  first pause asks, and the cap stay the server's, which are fitted to its model. A run of checks
-  is one pause's, one after another: the caller speaking, or a check under its bar, starts it
-  again. A check is asked once the one before has answered, so a slow answer makes the next
-  check late; it still counts, as the caller was quiet the while.
+- **What is checked, and when.** A write that chooses a wait is refused (400), before anything
+  is stored, when it is shorter than every measured point's p90 wait, saying what the quickest
+  is; it is checked against what the server publishes then. A sync that chooses a point
+  failing the dictation guard is stored, and its `warnings` say what the point does to slow
+  counts and dictation pauses. When the server can't say what it publishes, the wait is kept
+  and the sync's `warnings` say so.
+- **What it replaces.** A point brings its bars and its checks in a row. When a pause is
+  checked, how much more a turn's first pause asks, and the cap stay the server's, which are
+  fitted to its model. A run of checks is one pause's, one after another: the caller speaking,
+  or a check under its bar, starts it again. A check is asked once the one before has
+  answered, so a slow answer makes the next check late; it still counts, as the caller was
+  quiet the while.
 - **When it is read.** At each check, against the policy of the model the server runs then.
-  A preset or wait that model no longer publishes, as after a new checkpoint, ends the
-  session's turns by its default, and a warning says so once per session.
+  A wait that model has no point within, as after a new checkpoint, ends the session's turns
+  by its default, and a warning says so once per session.
 - **What you see.** Once a session, and again if it changes, the router logs the point its
   turns end by: `end_of_turn`, `checks_in_a_row`, `dictation_guard`, and the point's
   `max_wait_ms`, `cut_ins`, `answer_ms_p90`, `dictation_pauses_cut`, `slow_counts_cut` and
-  `slow_counts`. `router_agent_chorus_asr_compared_total` counts each shadow comparison by its
-  `end_of_turn` label, `preset:NAME`, `max_wait_ms:N` for the point fitted to `N` (whatever
-  wait the agent asked for) or `custom` for its own, and its `dictation_guard` label, `pass`,
-  `fail` or `unmeasured`; the shadow log line carries both, with the bar it was held to and
-  the checks in a row so far.
-
-Bars of your own were not measured: measure them on your own calls before relying on them.
+  `slow_counts`. `end_of_turn` is `max_wait_ms:N` for the point fitted to `N` (whatever wait
+  the agent asked for), or `preset:NAME` for the server's default.
 
 ### Turns from the audio
 
@@ -296,15 +272,15 @@ CPU is seconds for a long turn.
 The acceptance replay (`TestAudioFloorReplay`, [Test it](#test-it)) plays recorded calls
 into a real agent in real time, chorus-asr transcribing and acting, with the flow
 controller's language model answering wrong on purpose, so that a check passes only on the
-model's rulings; `CHORUS_ASR_END_OF_TURN` chooses the calls' `end_of_turn`. Against one CPU
+model's rulings; `CHORUS_ASR_END_OF_TURN` chooses the calls' point, such as `{"max_wait_ms":1400}`. Against one CPU
 server built from the policy above (f16, 2 deciding lanes and 1 transcribing), on a machine
 shared with other work, so the times are indicative:
 
-| Check | Default (`preset: safe`) | `preset: fast` | `max_wait_ms: 1400` |
+| Check | Default (the 1,100 ms point) | `max_wait_ms: 800` (the 500 ms point) | `max_wait_ms: 1400` |
 | --- | --- | --- | --- |
 | 1. "Uh-huh" over the reply | reply whole, no new answer | the same | the same |
 | 2. One final after 10 s of silence, room tone, line noise at -50 dBFS | one final, one request for the words | the same | the same |
-| 2. The reply echoed at -20 and -30 dB acting, -20 dB in `shadow` and transcribing alone | the conversation as with no echo; the transcriber still writes the echo, and transcribing alone as a final of its own, the caller's final written within a check or two of their voice | the same | the same |
+| 2. The reply echoed at -20 and -30 dB acting, -20 dB transcribing alone | the conversation as with no echo; the transcriber still writes the echo, and transcribing alone as a final of its own, the caller's final written within a check or two of their voice | the same | the same |
 | 3. A breath or a burst of noise after a turn | no other script | the same | the same |
 | 4. One to ten, a second apart | answered after "ten" | answered "One." 1.8 s in, as the point's 9 of 9 slow counts cut says | answered after "ten" |
 | 5. 19.8 s with pauses under a second | one final with its beginning, one answer | the same | the same |
@@ -316,7 +292,7 @@ From the end of the caller's voice: "Will it rain in Porto this weekend?" (five 
 what's the weather like in Lisbon tomorrow?" (two: a new agent's first turn, then one that
 pauses after "Hi"), the slow count's "ten", and the 19.8 s turn:
 
-| | Default (`preset: safe`) | `preset: fast` | `max_wait_ms: 1400` |
+| | Default (the 1,100 ms point) | `max_wait_ms: 800` (the 500 ms point) | `max_wait_ms: 1400` |
 | --- | --- | --- | --- |
 | The server's ruling, rain | 303 to 328 ms | 290 to 335 ms | 605 to 628 ms: the second check in a row |
 | The turn answered, rain | 680 to 814 ms | 589 to 853 ms | 666 to 689 ms |
@@ -458,8 +434,8 @@ the turn's first pause, and the check reaches it when `p_eot` is at least the ba
 has ended at the first check that reaches its bar with the `checks_in_a_row - 1` checks of
 the pause before it, and at `cap_ms` of pause whatever the model says. `frontier` is the
 measured points, `presets` name points by their `max_wait_ms`, and `default` is the preset
-for an agent that chooses none (see
-[How eager turn-taking is](#how-eager-turn-taking-is-end_of_turn)). A point's `measured` is
+for an agent that chooses no `max_wait_ms` (see
+[How long a caller waits](#how-long-a-caller-waits-max_wait_ms)). A point's `measured` is
 what it did on held-out calls: `cut_ins`, `answer_ms_median`, `answer_ms_p90`,
 `dictation_pauses_cut`, `slow_counts_cut` of `slow_counts`, and `dictation_guard`. A policy
 without a frontier, a point the router can't run as written, or a preset naming no point is
@@ -574,8 +550,7 @@ end by the server's `default` preset. The pauses are checked as they are acting
 decision and the words of the whole utterance in one request, and the utterance goes out
 as one final when the model says the turn has ended, within a check or two of the voice
 on a server that keeps up. Its ruling goes nowhere: what to do with the words is your
-pipeline's, or the flow controller's, as with any transcriber. The same holds in `shadow`,
-where the agent acts on nothing the model says.
+pipeline's, or the flow controller's, as with any transcriber.
 
 Before this the transcriber ended an utterance at a pause of 2.5 s, the policy's cap, and
 a pipeline that answered quickly had its own reply, heard back on the line, written into
@@ -637,8 +612,8 @@ when the transcriber is chorus-asr too, and otherwise from when the words last c
 | over the agent: `stop`, `shorten` | `wait` while unfinished, else `respond` | as said | |
 | over the agent: `continue`, `ignore` | `ignore` | `continue` | |
 
-The tool the caller wants, and `cannot`, are in the shadow log; nothing acts on them, and a
-tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
+Nothing acts on the tool the caller wants, or on `cannot`, and a tool's approval is
+untouched. Acting, a decision's `Ruler` is `heard`.
 
 ## Fallbacks
 
@@ -648,12 +623,6 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   language model or judge, with the other two thirds. `router_chorus_asr_checks_total`
   counts each check by outcome; acting, every outcome but `answered` and `superseded` is a
   turn the flow controller decided.
-- **Shadow.** No app chooses it any more; the agent's internal shadow mode, which the replay
-  still checks, asks one question at a time, none waited for: a slow server costs a call nothing.
-  `router_agent_chorus_asr_compared_total` counts both rulings by disposition and floor,
-  and the `end_of_turn` and `dictation_guard` it was read by, and a debug log line carries
-  `p_end`, the same two, the bar and the checks in a row, the pause, first check and first
-  pause.
 - **Transcripts.** A pause no check ruled on falls to the words alone, check by check,
   and a server that can't rule at all (no policy, 501) is asked once a session. A server
   that is busy, restarting or slow costs a request, not the
@@ -693,7 +662,7 @@ tool's approval is untouched. Acting, a decision's `Ruler` is `heard`.
   from `/v1/info` is read again in the background, every 5 minutes and after a 404 or a 422
   refusing an agent, with the last one read standing until then: no decision waits on it,
   and a read that fails is tried again after 30 s. An agent written meanwhile has its
-  `end_of_turn` checked against `/v1/info` as it answers then.
+  `floor_control.max_wait_ms` checked against `/v1/info` as it answers then.
 
 ## Measured
 
@@ -769,9 +738,7 @@ never ended the utterance; the new one wrote both replacements and the final.
   90 to 140 ms each, each ruled `ignore` and its words dropped as the echo.
   A check's window ends mid-word, where the model's barge-in training clips ended 100 to
   300 ms after the caller's last word, so its ruling there is less sure than at a pause.
-- In `shadow` with the transcriber on, a pause costs two decisions: the transcriber's
-  check, under its own agent, and the shadow's under the agent's. In every mode a pause of
-  speech costs a words-bearing request, the agent's own echoed voice included, and the
+- A pause of speech costs a words-bearing request, the agent's own echoed voice included, and the
   words of a long utterance hold a lane for seconds on a CPU.
 - Interims are best effort: a busy server refuses them, one is out at a time, and on a CPU
   server the words of a long utterance take seconds, so they come late and seldom there. The
@@ -788,7 +755,7 @@ never ended the utterance; the new one wrote both replacements and the final.
   misheard. Two or more words in a row are the caller's wherever they fall, as "and in
   Porto" does inside the reply's echo.
 - With unified replies the reply rules on its own words and no flow controller is asked,
-  so acting has nothing to stand in for; shadow compares the model with the reply's ruling.
+  so acting has nothing to stand in for.
 - Without turns from the audio, a CPU decision over a full window, 373 ms here, does not fit
   the 250 ms an overlap gives it, so words over the agent fall back to the flow controller
   on such a server. Acting with chorus-asr transcribing, a pause over the agent is settled
@@ -814,8 +781,7 @@ ROUTER_CHORUS_ASR_URL=http://127.0.0.1:8080 GOEXPERIMENT=simd \
 Both read `ROUTER_CHORUS_ASR_API_KEY` too, for a server behind a gateway; the replay counts
 its requests by route under the gateway's path. The router needs only the URL: each call's
 agent chooses its own floor control, as agents on one router do, acting unless a check says
-otherwise (transcribing alone with the default flow controller, or in the agent's internal
-shadow mode).
+otherwise (transcribing alone with the default flow controller).
 
 `TestAudioFloorScenarios`, in `audio_floor_scenarios_integration_test.go`, plays what the
 acceptance checks don't: pauses inside a turn, a correction, a question and a second turn

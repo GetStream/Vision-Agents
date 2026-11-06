@@ -59,8 +59,8 @@ type SyncAgentRequest struct {
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
-	EndOfTurn      *EndOfTurn         `json:"end_of_turn,omitempty" doc:"agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. It is held to the server where floor_control asks chorus-asr about turns. When the server cannot be asked, or floor_control is off, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
-	FloorControl   *string            `json:"floor_control,omitempty" pattern:"^(stream/chorus-asr)?$" doc:"agent.yaml's floor_control: the model that controls the agent's floor, stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400) before anything is written."`
+	FloorControl   *FloorControl      `json:"floor_control,omitempty" doc:"agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
+	EndOfTurn      any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -261,12 +261,12 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
-	if failure, refused := s.floorControlRefusal(body.FloorControl); refused {
+	if failure, refused := s.floorControlRefusal(body.FloorControl, body.EndOfTurn); refused {
 		return nil, failure
 	}
-	if warning, message, ok := s.endOfTurnComplaint(ctx, floorChoiceOf(config), floorChoiceOf(existing)); !ok {
+	if warning, message, ok := s.floorControlComplaint(ctx, config.FloorControl, existing.FloorControl); !ok {
 		return nil, invalidRequest(message)
-	} else if warning != "" && (body.EndOfTurn != nil || body.FloorControl != nil) {
+	} else if warning != "" && body.FloorControl != nil {
 		warnings = append(warnings, warning)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
@@ -585,7 +585,6 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	config.Scheduling = schedulingOr(config.Scheduling, body.Scheduling)
 	config.Calls = callsOr(config.Calls, body.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, body.ResumeHistory)
-	config.EndOfTurn = endOfTurnOr(config.EndOfTurn, body.EndOfTurn)
 	config.FloorControl = floorControlOr(config.FloorControl, body.FloorControl)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)

@@ -354,8 +354,8 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
-	// audioFloor is the router's chorus-asr server, for a suite about floor control or
-	// end_of_turn to set before it starts the harness. Nil is none.
+	// audioFloor is the router's chorus-asr server, for a suite about floor control to set
+	// before it starts the harness. Nil is none.
 	audioFloor *audiofloor.Client
 	// connectorsOff gives the router no connector keyring, transports or limiter, as a deployment with
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the

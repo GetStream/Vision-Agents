@@ -181,8 +181,9 @@ connectors:
   - github
 keyterms:
   - Vision Agents
-end_of_turn: {max_wait_ms: 900}  # chorus-asr's turn-taking: or a preset, or bars; {} is its default
-floor_control: stream/chorus-asr  # leave it out to keep the default flow controller
+floor_control:                    # leave it out to keep the stored choice; {} is the default flow controller
+  model: stream/chorus-asr
+  max_wait_ms: 800                # optional: how long a caller may wait once they stop
 tags:
   project: support
 ```

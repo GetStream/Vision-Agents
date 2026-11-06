@@ -261,11 +261,9 @@ type Spec struct {
 	// ResumeHistory is how a conversation the session carries on is handed back to the
 	// model: the session request's, else the agent config's. Zero is the router's default.
 	ResumeHistory store.ResumeHistory
-	// EndOfTurn is when chorus-asr has a caller's turn ended, where FloorControl asks it about
-	// turns: the session request's, else the agent config's. Zero is the server's default.
-	EndOfTurn store.EndOfTurn
-	// FloorControl is the model that controls the floor: the session request's, else the
-	// agent config's. Empty is the default flow controller.
+	// FloorControl is the model that controls the floor, and how long a caller may wait once
+	// they stop: the session request's, else the agent config's. Zero is the default flow
+	// controller.
 	FloorControl store.FloorControl
 	// Scheduling is the agent config's scheduled-task settings: whether the
 	// scheduling tools are offered, and the defaults a task takes.
@@ -416,7 +414,6 @@ func FromConfig(config store.AgentConfig) Spec {
 		EpisodeCardsRecord: config.EpisodeCardsRecord,
 		ProgressiveTools:   config.ProgressiveTools,
 		ResumeHistory:      config.ResumeHistory,
-		EndOfTurn:          config.EndOfTurn,
 		FloorControl:       config.FloorControl,
 		Scheduling:         config.Scheduling,
 		Calls:              config.Calls,

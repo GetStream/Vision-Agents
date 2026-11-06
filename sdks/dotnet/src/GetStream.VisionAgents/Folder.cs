@@ -188,18 +188,12 @@ public sealed record Declaration
     public DispatchDeclaration? Dispatch { get; init; }
 
     /// <summary>
-    /// How eager chorus-asr's turn-taking is: one of max_wait_ms, preset and bars, as written.
-    /// Null when agent.yaml says nothing, which leaves the stored choice; empty for the server's
-    /// default. Which one, and whether the bars rise, is the router's to judge.
+    /// The model that controls the agent's floor, and how long a caller may wait once they stop
+    /// (max_wait_ms), as written. Null when agent.yaml says nothing, which leaves the stored
+    /// choice; empty ({}) for the default flow controller again. Which models there are, and
+    /// whether a wait names one, is the router's to say.
     /// </summary>
-    public EndOfTurn? EndOfTurn { get; init; }
-
-    /// <summary>
-    /// The model that controls the agent's floor, stream/chorus-asr, or empty for the default flow
-    /// controller, as written. Null when agent.yaml says nothing, which leaves the stored choice.
-    /// Which models there are is the router's to say.
-    /// </summary>
-    public string? FloorControl { get; init; }
+    public FloorControl? FloorControl { get; init; }
 }
 
 /// <summary>
@@ -590,7 +584,6 @@ public sealed class Folder
             throw new ConfigurationException($"{path}: plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors");
         }
         var connectors = read.Connectors?.Items?.Select(entry => ConnectorOf(entry, path)).ToList();
-        var endOfTurn = read.EndOfTurn is { } turn ? EndOfTurnOf(turn, path) : null;
         return new Declaration
         {
             Name = read.Name ?? "",
@@ -612,24 +605,9 @@ public sealed class Folder
             Tags = read.Tags ?? [],
             Video = video,
             Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
-            EndOfTurn = endOfTurn,
-            FloorControl = read.FloorControl?.Value,
+            FloorControl = read.FloorControl is { Named: true } floor ? new FloorControl { Model = floor.Model, MaxWaitMs = floor.MaxWaitMs } : null,
         };
     }
-
-    /// <summary>
-    /// end_of_turn as the sync sends it: whatever the file names, as written, a wait of 0 or an
-    /// empty preset included, so a value the router refuses is refused there rather than
-    /// dropped here. Each bar names both from_ms and bar.
-    /// </summary>
-    private static EndOfTurn EndOfTurnOf(WrittenEndOfTurn written, string path) => new()
-    {
-        MaxWaitMs = written.MaxWaitMs,
-        Preset = written.Preset,
-        Bars = written.Bars?.Select((bar, index) => bar is { FromMs: { } from, Bar: { } reached }
-            ? new EndOfTurnBar { FromMs = from, Bar = reached }
-            : throw new ConfigurationException($"{path}: end_of_turn.bars[{index}] names both from_ms and bar")).ToList(),
-    };
 
     private static SandboxDeclaration SandboxOf(WrittenSandboxOptions written, string path)
     {
@@ -1117,7 +1095,6 @@ public sealed class Folder
         [YamlMember(Alias = "tags")] public Dictionary<string, string>? Tags { get; set; }
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
         [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
-        [YamlMember(Alias = "end_of_turn")] public WrittenEndOfTurn? EndOfTurn { get; set; }
         [YamlMember(Alias = "floor_control")] public WrittenFloorControl? FloorControl { get; set; }
     }
 
@@ -1208,50 +1185,69 @@ public sealed class Folder
         [YamlMember(Alias = "text")] public string? Text { get; set; }
     }
 
-    private sealed class WrittenEndOfTurn
-    {
-        [YamlMember(Alias = "max_wait_ms")] public long? MaxWaitMs { get; set; }
-        [YamlMember(Alias = "preset")] public string? Preset { get; set; }
-        [YamlMember(Alias = "bars")] public List<WrittenEndOfTurnBar?>? Bars { get; set; }
-    }
-
-    private sealed class WrittenEndOfTurnBar
-    {
-        [YamlMember(Alias = "from_ms")] public long? FromMs { get; set; }
-        [YamlMember(Alias = "bar")] public double? Bar { get; set; }
-    }
-
     /// <summary>
-    /// The <c>floor_control:</c> value, read by hand so that one that is not a string is refused by
-    /// name rather than sent as text: a mapping, a list, or a plain true, false or number. A plain
-    /// null is absent; anything else is sent as written, empty included.
+    /// The <c>floor_control:</c> mapping, read by hand so that each refusal names what is wrong:
+    /// not a mapping (as the string it once was), a key nobody knows, a model that is not a
+    /// string or a max_wait_ms that is not an integer. A plain null is absent; a key whose value
+    /// is null is left out; an empty mapping is sent empty.
     /// </summary>
     private sealed class WrittenFloorControl : IYamlConvertible
     {
-        public string? Value { get; private set; }
+        public bool Named { get; private set; }
+        public string? Model { get; private set; }
+        public long? MaxWaitMs { get; private set; }
 
         void IYamlConvertible.Read(IParser parser, Type expectedType, ObjectDeserializer nestedObjectDeserializer)
         {
-            if (!parser.TryConsume<Scalar>(out var scalar))
+            if (parser.Current is Scalar { Style: ScalarStyle.Plain } nothing && IsNull(nothing.Value))
             {
-                throw new YamlException("floor_control must be a string, such as stream/chorus-asr");
+                parser.MoveNext();
+                return;
             }
-            if (scalar.Style == ScalarStyle.Plain)
+            if (!parser.TryConsume<MappingStart>(out _))
             {
-                if (scalar.Value is "" or "~" or "null" or "Null" or "NULL")
+                throw new YamlException("floor_control is a mapping of model and, optionally, max_wait_ms");
+            }
+            Named = true;
+            while (!parser.TryConsume<MappingEnd>(out _))
+            {
+                var key = parser.Consume<Scalar>().Value;
+                if (key is not ("model" or "max_wait_ms"))
                 {
-                    return;
+                    throw new YamlException($"\"{key}\" is not a floor_control setting; model and max_wait_ms are");
                 }
-                if (NotAString.IsMatch(scalar.Value))
+                if (!parser.TryConsume<Scalar>(out var value))
                 {
-                    throw new YamlException("floor_control must be a string, such as stream/chorus-asr");
+                    throw new YamlException(key == "model" ? "floor_control.model must be a string" : "floor_control.max_wait_ms must be an integer");
+                }
+                if (value.Style == ScalarStyle.Plain && IsNull(value.Value))
+                {
+                    continue;
+                }
+                if (key == "model")
+                {
+                    // YAML 1.2's core schema: a plain true, false or number is not a string.
+                    if (value.Style == ScalarStyle.Plain && NotAString.IsMatch(value.Value))
+                    {
+                        throw new YamlException("floor_control.model must be a string");
+                    }
+                    Model = value.Value;
+                }
+                else
+                {
+                    if (value.Style != ScalarStyle.Plain || !long.TryParse(value.Value, System.Globalization.NumberStyles.AllowLeadingSign, System.Globalization.CultureInfo.InvariantCulture, out var wait))
+                    {
+                        throw new YamlException("floor_control.max_wait_ms must be an integer");
+                    }
+                    MaxWaitMs = wait;
                 }
             }
-            Value = scalar.Value;
         }
 
         void IYamlConvertible.Write(IEmitter emitter, ObjectSerializer nestedObjectSerializer) =>
             throw new NotSupportedException();
+
+        private static bool IsNull(string plain) => plain is "" or "~" or "null" or "Null" or "NULL";
 
         /// <summary>A plain scalar YAML 1.2's core schema reads as a boolean or a number.</summary>
         private static readonly System.Text.RegularExpressions.Regex NotAString = new(

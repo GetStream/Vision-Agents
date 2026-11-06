@@ -247,14 +247,13 @@ from .duplicate_campaign_request import DuplicateCampaignRequest
 from .duplicate_campaign_request_contacts import DuplicateCampaignRequestContacts
 from .effective_quota import EffectiveQuota
 from .end_call_settings import EndCallSettings
-from .end_of_turn import EndOfTurn
-from .end_of_turn_bar import EndOfTurnBar
 from .endpointing import Endpointing
 from .episode_cards_mode import EpisodeCardsMode
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
 from .error_response import ErrorResponse
 from .error_type import ErrorType
+from .floor_control import FloorControl
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
 from .generated_image import GeneratedImage
@@ -867,14 +866,13 @@ __all__ = (
     "DuplicateCampaignRequestContacts",
     "EffectiveQuota",
     "EndCallSettings",
-    "EndOfTurn",
-    "EndOfTurnBar",
     "Endpointing",
     "EpisodeCardsMode",
     "EqualsType1",
     "ErrorDetail",
     "ErrorResponse",
     "ErrorType",
+    "FloorControl",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
     "GeneratedImage",

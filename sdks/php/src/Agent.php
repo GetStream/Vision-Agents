@@ -294,14 +294,13 @@ final class Agent
             tags: $tags === [] ? null : $tags,
             dispatch: $declared->dispatch,
             simulations: $simulations === null ? null : array_map(static fn (Simulation $simulation) => $simulation->toDeclaration(), $simulations),
-            endOfTurn: $declared->endOfTurn,
             floorControl: $declared->floorControl,
         );
         $sent = $body->toArray();
-        if ($declared->endOfTurn !== null) {
-            // An empty end_of_turn is the server's default, so it goes as {} and not the [] an
-            // empty PHP array is written as.
-            $sent['end_of_turn'] = Json::objectValue($declared->endOfTurn->toArray());
+        if ($declared->floorControl !== null) {
+            // An empty floor_control is the default flow controller again, so it goes as {} and
+            // not the [] an empty PHP array is written as.
+            $sent['floor_control'] = Json::objectValue($declared->floorControl->toArray());
         }
         $result = SyncAgentResult::fromArray(Json::asObject($this->client->post('/v1/agents/sync', body: $sent)));
         $folder?->writeStamp($hash);

@@ -7,8 +7,8 @@ it. What each is and what the router needs is in
 
 | Program | Pick it when | Router | What it names |
 | --- | --- | --- | --- |
-| [`decide_and_transcribe`](decide_and_transcribe/main.go) | One model should hear the caller for both the words and the turn | `ROUTER_CHORUS_ASR_URL` | [`agents/ferry-concierge`](agents/ferry-concierge/agent.yaml): `floor_control: stream/chorus-asr`, `stt: stream/chorus-asr`, its own `llm` and `tts`, `end_of_turn: {max_wait_ms: 1100}` |
-| [`decide_only`](decide_only/main.go) | You keep your transcriber, and take the floor control from the audio | `ROUTER_CHORUS_ASR_URL` | [`agents/clinic-front-desk`](agents/clinic-front-desk/agent.yaml): `floor_control: stream/chorus-asr`, `stt: deepgram/flux-general-en`, the server's default `end_of_turn` |
+| [`decide_and_transcribe`](decide_and_transcribe/main.go) | One model should hear the caller for both the words and the turn | `ROUTER_CHORUS_ASR_URL` | [`agents/ferry-concierge`](agents/ferry-concierge/agent.yaml): `floor_control: {model: stream/chorus-asr, max_wait_ms: 1100}`, `stt: stream/chorus-asr`, its own `llm` and `tts` |
+| [`decide_only`](decide_only/main.go) | You keep your transcriber, and take the floor control from the audio | `ROUTER_CHORUS_ASR_URL` | [`agents/clinic-front-desk`](agents/clinic-front-desk/agent.yaml): `floor_control: {model: stream/chorus-asr}`, `stt: deepgram/flux-general-en`, the server's default point |
 | [`transcribe_only`](transcribe_only/main.go) | You want the words alone, and your own pipeline decides when to answer | `ROUTER_CHORUS_ASR_URL` | [`routers/chorus-asr.yaml`](routers/chorus-asr.yaml): `stream/chorus-asr` as the router config's one STT provider |
 
 ## Run
@@ -24,7 +24,9 @@ Each agent opts in to chorus-asr's floor control in its own `agent.yaml`, so one
 agents with it and without it at once:
 
 ```yaml
-floor_control: stream/chorus-asr   # leave it out to keep the default flow controller
+floor_control:            # leave it out to keep the default flow controller
+  model: stream/chorus-asr
+  max_wait_ms: 1100       # optional: how long a caller may wait once they stop
 ```
 
 A router without `ROUTER_CHORUS_ASR_URL` refuses the sync of an agent that names it, saying so.
@@ -47,12 +49,12 @@ server, as a loudspeaker needs for every transcriber. The two agent programs nee
 care from you for the router's own agent: it drops its own voice before the conversation
 hears it.
 
-## Choosing how eager turn-taking is
+## Choosing how long a caller waits
 
-`end_of_turn` in `agent.yaml` applies to an agent whose `floor_control` is `stream/chorus-asr`.
-It takes one of `max_wait_ms` (the measured point with the fewest cut-ins that answers within
-it at p90), `preset` (one of the server's, such as `safe` or `fast`) or `bars` of your own; the
-ferry agent waits at most 1.1 s. A wait under the quickest point's p90 is refused, and one
-whose point fails the dictation guard is kept with a warning saying what it does to callers
-reading out numbers. The trade-off each point makes is in
-[acceleration/deploy/chorus-asr](../../../acceleration/deploy/chorus-asr/README.md#how-eager-turn-taking-is-end_of_turn).
+`floor_control.max_wait_ms` is the one knob: the most a caller who has finished may wait for
+the answer. It chooses the measured point with the fewest cut-ins that answers within it at
+p90; the ferry agent waits at most 1.1 s, and the clinic agent, naming none, takes the
+server's default point. A wait under the quickest point's p90 is refused, and one whose point
+fails the dictation guard is kept with a warning saying what it does to callers reading out
+numbers. The trade-off each point makes is in
+[acceleration/deploy/chorus-asr](../../../acceleration/deploy/chorus-asr/README.md#how-long-a-caller-waits-max_wait_ms).

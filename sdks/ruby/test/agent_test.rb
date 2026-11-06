@@ -609,28 +609,14 @@ class TestAgent < LocalRouterTest
     end
   end
 
-  # agent.yaml's end_of_turn goes as written, and a file that names none sends none, so the
-  # stored choice stays.
-  def test_sync_sends_the_end_of_turn_the_agent_declared
-    { "end_of_turn:\n  max_wait_ms: 900\n" => { "max_wait_ms" => 900 },
-      "end_of_turn:\n  preset: fast\n" => { "preset" => "fast" },
-      "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n" =>
-        { "bars" => [{ "from_ms" => 0, "bar" => 0.97 }, { "from_ms" => 900, "bar" => 0.25 }] },
-      "end_of_turn: {}\n" => {},
-      "end_of_turn:\n  max_wait_ms: 0\n" => { "max_wait_ms" => 0 },
-      "end_of_turn:\n  preset: \"\"\n" => { "preset" => "" } }.each do |declared, want|
-      assert_equal want, sync_declaring(declared)["end_of_turn"], declared
-    end
-    ["end_of_turn:\n", "llm: openai/gpt-5.6\n"].each do |declared|
-      refute sync_declaring(declared).key?("end_of_turn"), declared
-    end
-  end
-
-  # agent.yaml's floor_control goes as written, "" and a model the router does not know included,
+  # agent.yaml's floor_control goes as written, {} and a model the router does not know included,
   # and a file that names none sends none, so the stored choice stays.
   def test_sync_sends_the_floor_control_the_agent_declared
-    { "floor_control: stream/chorus-asr\n" => "stream/chorus-asr", "floor_control: \"\"\n" => "",
-      "floor_control: other\n" => "other" }.each do |declared, want|
+    { "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n" =>
+        { "model" => "stream/chorus-asr", "max_wait_ms" => 800 },
+      "floor_control: {model: stream/chorus-asr}\n" => { "model" => "stream/chorus-asr" },
+      "floor_control: {}\n" => {},
+      "floor_control:\n  model: other\n" => { "model" => "other" } }.each do |declared, want|
       assert_equal want, sync_declaring(declared)["floor_control"], declared
     end
     ["floor_control:\n", "llm: openai/gpt-5.6\n"].each do |declared|

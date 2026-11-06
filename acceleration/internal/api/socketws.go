@@ -137,7 +137,7 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		refuse(failure.Error())
 		return
 	}
-	if failure, refused := s.sessionFloorRefusal(ctx, start.Session, config); refused {
+	if failure, refused := s.sessionFloorRefusal(ctx, start.Session); refused {
 		refuseWith(failure)
 		return
 	}
