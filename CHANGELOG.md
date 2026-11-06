@@ -399,6 +399,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A phone operation that fails on the router's side is a 500
+
+A phone operation (search, buy, release, attach, detach, a call, a transfer, pressing digits) whose failure was the router's own, such as a database read of the 10DLC gate, answered 400 `invalid_request` with the database's words. It now answers 500 "something went wrong" and the log keeps the error with its stack. Work waiting on the deployment's own Stream app answers 503 with `Retry-After`. A request the client can change keeps its 400 and its words: a search filter or a call term a vendor cannot take, a number that cannot be dialled, an unknown vendor, an app the customer cannot act in, and a deployment without sip trunks or Stream credentials (AI-2056).
+
 ### A code run that prints a lot no longer fills the router's memory
 
 The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 1 MiB and ends it with a line telling the model the output was cut. The rest is dropped as it is read, so the router holds about 6 MiB of one output, a few times that while cutting, and never more as the answer grows. An output under 1 MiB reaches the model as before. A command's, a download's and an upload's answer from the sandbox are bounded too. (#1804)
