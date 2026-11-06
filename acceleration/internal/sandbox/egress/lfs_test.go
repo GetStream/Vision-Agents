@@ -5,13 +5,21 @@ package egress_test
 import (
 	"bufio"
 	"crypto/tls"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
+	"os"
 	"strings"
 
+	"github.com/redis/rueidis"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/egress"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv/redisready"
 )
 
 // lfsBatch is git lfs's batch target on the test's git host.
@@ -21,6 +29,14 @@ const lfsBatch = "https://github.test/o/r.git/info/lfs/objects/batch"
 // debca01ac1ca27a20cc30ac6870151b48c014881): the operation, its objects, the ref and the hash.
 const lfsDownload = `{"operation":"download","objects":[{"oid":"fb6fd6c3893c67503897449a27d66246623e8de42a498f7f81f72c3ecad16f9c","size":872}],` +
 	`"ref":{"name":"refs/heads/main"},"hash_algo":"sha256"}`
+
+// lfsErrorBody is the body of the proxy's refusal of a Git LFS API request: an LFS error whose message
+// git-lfs prints (lfshttp/errors.go handleResponse, v3.3.0 and v3.8.1), what a fake that answered
+// so showed both versions printing (probe in the PR).
+func lfsErrorBody(message string) string {
+	body, _ := json.Marshal(map[string]string{"message": message})
+	return string(body) + "\n"
+}
 
 // lfsRequest is one request of git lfs in the sandbox, and the status the proxy answers it with.
 type lfsRequest struct {
@@ -64,8 +80,9 @@ func (s *ProxySuite) sendLFS(requests []lfsRequest) {
 		if c.status != http.StatusOK {
 			s.Empty(s.granted.requests(), c.name)
 			s.Equal(asked, s.asked, c.name)
-			s.Equal("egress: "+c.method+" "+request.URL.Host+request.URL.EscapedPath()+" refused: code in the sandbox only reads through a connector; "+
-				"write with the connector's tools\n", body, c.name)
+			s.Equal(lfsErrorBody("egress: "+c.method+" "+request.URL.Host+request.URL.EscapedPath()+" refused: code in the sandbox only reads through a "+
+				"connector; write with the connector's tools"), body, c.name)
+			s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"), c.name)
 			continue
 		}
 		s.Require().Len(s.granted.requests(), 1, c.name)
@@ -264,8 +281,179 @@ func (s *ProxySuite) TestALFSBatchIsRefusedWithoutAnLFSRead() {
 
 	s.Require().NoError(err)
 	s.Equal(http.StatusForbidden, response.StatusCode)
-	s.Equal("egress: POST github.test/o/r.git/info/lfs/objects/batch refused: code in the sandbox only reads through a connector; "+
-		"write with the connector's tools\n", body)
+	s.Equal(lfsErrorBody("egress: POST github.test/o/r.git/info/lfs/objects/batch refused: code in the sandbox only reads through a connector; "+
+		"write with the connector's tools"), body)
+	s.Contains(s.logs.String(), `why="a Git LFS request that no read lists"`)
 	s.Empty(s.granted.requests())
 	s.Equal(http.StatusForbidden, s.connectStatus("media.github.test:443", basic("sbx", s.credential)).StatusCode)
+}
+
+// TestGitLFSPushIsRefusedAtLocksVerifyWithTheHint: git lfs push first POSTs locks/verify
+// (locking/api.go SearchVerifiable, v3.8.1), which no read lists. The proxy refuses it, and the
+// lock requests beside it, with a 403 whose LFS error holds read-only's answer: git-lfs prints
+// that message, where it printed «Authorization error: <url>» for a plain-text 403 (probe of
+// v3.3.0 and v3.8.1 in the PR). It stays a 403: a 404 or a 501 there makes git-lfs write
+// locksverify=false into the repository's config and go on to the upload. The log says why.
+func (s *ProxySuite) TestGitLFSPushIsRefusedAtLocksVerifyWithTheHint() {
+	s.readLFS()
+	for _, target := range []string{"https://github.test/o/r.git/info/lfs/locks/verify", "https://github.test/o/r.git/info/lfs/locks",
+		"https://github.test/o/r.git/info/lfs/locks/1/unlock", "https://github.test/o/r/info/lfs/locks/verify"} {
+		s.granted.forget()
+		asked := s.asked
+		counted := s.requestCount("github.test", "POST", "denied_method", "4xx")
+		request := s.request(http.MethodPost, target, basic("x-access-token", s.placeholder), `{"ref":{"name":"refs/heads/main"}}`)
+		request.Header.Set("Content-Type", "application/vnd.git-lfs+json; charset=utf-8")
+
+		response, body, err := s.send(s.sandbox(s.credential), request)
+
+		s.Require().NoError(err, target)
+		s.Equal(http.StatusForbidden, response.StatusCode, target)
+		s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"), target)
+		s.Equal("nosniff", response.Header.Get("X-Content-Type-Options"), target)
+		s.Equal(counted+1, s.requestCount("github.test", "POST", "denied_method", "4xx"), target)
+		s.Equal(lfsErrorBody("egress: POST github.test"+request.URL.Path+" refused: code in the sandbox only reads through a connector; "+
+			"write with the connector's tools"), body, target)
+		s.Empty(s.granted.requests(), target)
+		s.Equal(asked, s.asked, target)
+	}
+	s.Contains(s.logs.String(), `why="a Git LFS request that no read lists"`)
+}
+
+// TestARefusalOutsideAGitLFSAPIStaysPlainText is the control: a refused request whose path is no
+// Git LFS API's, one with info/lfs but not as a directory included, gets read-only's answer in
+// plain text, as on the base, d3a1dbeb1 (probe in the PR), and logs no why; nor does a read that
+// passes.
+func (s *ProxySuite) TestARefusalOutsideAGitLFSAPIStaysPlainText() {
+	s.readLFS()
+	for _, target := range []string{"https://github.test/o/r.git/info/lfsobjects/batch", "https://github.test/o/r.git/info/lfs",
+		"https://github.test/repos/o/r/issues"} {
+		request := s.request(http.MethodPost, target, basic("x-access-token", s.placeholder), lfsDownload)
+
+		response, body, err := s.send(s.sandbox(s.credential), request)
+
+		s.Require().NoError(err, target)
+		s.Equal(http.StatusForbidden, response.StatusCode, target)
+		s.Equal("text/plain; charset=utf-8", response.Header.Get("Content-Type"), target)
+		s.Equal("egress: POST github.test"+request.URL.Path+" refused: code in the sandbox only reads through a connector; "+
+			"write with the connector's tools\n", body, target)
+	}
+	s.NotContains(s.logs.String(), "why=")
+
+	s.sendLFS([]lfsRequest{lfsCase("git lfs pull", lfsDownload, http.StatusOK)})
+	s.Contains(s.logs.String(), "carried a connection's token")
+	s.NotContains(s.logs.String(), "why=")
+}
+
+// TestAGitLFSRequestInATunnelWhoseGrantEndedGetsTheMessage: every refusal in a tunnel to a Git LFS
+// API is an LFS error with the refusal's own status, such as an upgrade's 501 and the 403 of a
+// grant that ended while its tunnel stayed open.
+func (s *ProxySuite) TestAGitLFSRequestInATunnelWhoseGrantEndedGetsTheMessage() {
+	s.readLFS()
+	client := s.sandbox(s.credential)
+	upgrade := s.request(http.MethodGet, "https://github.test/o/r.git/info/lfs/locks", "", "")
+	upgrade.Header.Set("Connection", "Upgrade")
+	upgrade.Header.Set("Upgrade", "websocket")
+	response, body, err := s.send(client, upgrade)
+	s.Require().NoError(err)
+	s.Equal(http.StatusNotImplemented, response.StatusCode)
+	s.Equal(lfsErrorBody("egress: protocol upgrades are not proxied"), body)
+
+	response, _, err = s.send(client, s.request(http.MethodGet, "https://github.test/o/r.git/info/lfs/locks", "", ""))
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, response.StatusCode)
+	s.put(s.credential, egress.Record{Session: s.session, Grants: []egress.Grant{s.grant(s.placeholder, "api.github.test")}})
+	request := s.request(http.MethodPost, lfsBatch, basic("x-access-token", s.placeholder), lfsDownload)
+	request.Header.Set("Content-Type", "application/vnd.git-lfs+json; charset=utf-8")
+
+	response, body, err = s.send(client, request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
+	s.Equal(lfsErrorBody("egress: the sandbox's grant for this host has ended"), body)
+	s.Len(s.granted.requests(), 1)
+}
+
+// TestAGitLFSRequestWhoseConnectionGivesNoTokenGetsTheMessage: git lfs pull on a connection that
+// is gone (401) or cannot give a token just now (502) reads the proxy's message, not git-lfs's
+// «Authorization error», which only an LFS error body avoids.
+func (s *ProxySuite) TestAGitLFSRequestWhoseConnectionGivesNoTokenGetsTheMessage() {
+	s.readLFS()
+	client := s.sandbox(s.credential)
+	for _, failure := range []struct {
+		err    error
+		status int
+	}{{sandbox.ErrNoCredential, http.StatusUnauthorized}, {errors.New("provider down"), http.StatusBadGateway}} {
+		s.fail(failure.err)
+		request := s.request(http.MethodPost, lfsBatch, basic("x-access-token", s.placeholder), lfsDownload)
+		request.Header.Set("Content-Type", "application/vnd.git-lfs+json; charset=utf-8")
+
+		response, body, err := s.send(client, request)
+
+		s.Require().NoError(err)
+		s.Equal(failure.status, response.StatusCode)
+		s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
+		s.Equal(lfsErrorBody("egress: the connection gives no token: github"), body)
+	}
+	s.Empty(s.granted.requests())
+}
+
+// TestAGitLFSRequestForAnotherHostInTheTunnelGetsTheMessage: the 421 of a Host the tunnel was not
+// opened to is an LFS error too, on an LFS path.
+func (s *ProxySuite) TestAGitLFSRequestForAnotherHostInTheTunnelGetsTheMessage() {
+	s.readLFS()
+	request := s.request(http.MethodPost, lfsBatch, basic("x-access-token", s.placeholder), lfsDownload)
+	request.Host = "outside.test"
+
+	response, body, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusMisdirectedRequest, response.StatusCode)
+	s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
+	s.Equal(lfsErrorBody("egress: Host is not the host the tunnel was opened to"), body)
+	s.Empty(s.granted.requests())
+}
+
+// TestAGitLFSRequestWhenTheGrantsCannotBeReadGetsTheMessage: Redis lost after the CONNECT is a 503
+// whose body is an LFS error on an LFS path.
+func (s *ProxySuite) TestAGitLFSRequestWhenTheGrantsCannotBeReadGetsTheMessage() {
+	s.readLFS()
+	lost, err := redisready.NewClient(rueidis.ClientOption{InitAddress: []string{os.Getenv("ROUTER_REDIS_ADDR")}, DisableCache: true})
+	s.Require().NoError(err)
+	s.proxy = httptest.NewServer(s.newProxy(egress.NewStore(lost)))
+	s.T().Cleanup(s.proxy.Close)
+	client := s.sandbox(s.credential)
+	batch := func() *http.Request {
+		request := s.request(http.MethodPost, lfsBatch, basic("x-access-token", s.placeholder), lfsDownload)
+		request.Header.Set("Content-Type", "application/vnd.git-lfs+json; charset=utf-8")
+		return request
+	}
+	warm, _, err := s.send(client, batch())
+	s.Require().NoError(err)
+	s.Require().Equal(http.StatusOK, warm.StatusCode)
+	lost.Close()
+
+	response, body, err := s.send(client, batch())
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusServiceUnavailable, response.StatusCode)
+	s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
+	s.Equal(lfsErrorBody("egress: the sandbox's grants cannot be read just now"), body)
+}
+
+// TestAnUnlistedGitLFSRequestWithAMethodOverrideLogsOneWhy: a refusal for two reasons logs the
+// first check's alone, so a log line holds one why key (as on the base) and the override stays
+// the reason an operator reads.
+func (s *ProxySuite) TestAnUnlistedGitLFSRequestWithAMethodOverrideLogsOneWhy() {
+	s.readLFS()
+	request := s.request(http.MethodPost, "https://github.test/o/r.git/info/lfs/locks/verify", basic("x-access-token", s.placeholder), `{}`)
+	request.Header.Set("X-HTTP-Method-Override", "DELETE")
+
+	response, _, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal(1, strings.Count(s.logs.String(), "why="), s.logs.String())
+	s.Contains(s.logs.String(), "a method override header")
+	s.NotContains(s.logs.String(), "a Git LFS request that no read lists")
 }
