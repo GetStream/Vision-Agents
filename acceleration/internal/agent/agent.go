@@ -2229,7 +2229,7 @@ func (a *Agent) respondTurn(
 		said = stt.Participant{ID: listened.author, UserID: listened.author}
 		a.writers = true
 	}
-	a.keepTurnLocked(said, text, listened.photos, images)
+	a.keepTurnLocked(said, text, listened.photos, images, listened.typed)
 	history := a.turnReplayLocked()
 	// This turn is answered, however it was asked, so what is speculated on next is a turn
 	// of its own.
@@ -2301,7 +2301,7 @@ func WithAuthor(ctx context.Context, userID string) context.Context {
 // userTurnLocked is a participant's words as a turn of the conversation. It names who
 // said them once somebody else in the call has had a turn answered too.
 func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Message {
-	turn := llm.Message{Role: llm.User, Content: harness.Defang(text), Typed: participant.ID == typedCaller}
+	turn := llm.Message{Role: llm.User, Content: harness.Defang(text)}
 	_, known := a.speakers[personOf(participant)]
 	if participant.ID != typedCaller && len(a.speakers) > 0 && !(known && len(a.speakers) == 1) {
 		turn.Speaker = a.speakerLocked(participant).label
@@ -2309,13 +2309,15 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 	return turn
 }
 
-// keepTurnLocked adds a turn being answered to the conversation and counts who said it.
+// keepTurnLocked adds a turn being answered to the conversation and counts who said it, typed
+// saying it was written or handed in rather than said on the call (llm.Message.Typed).
 // What tools showed the model before it stand as a note from here on (toolPicturesSeen),
 // and only this turn's images go with its replies. The turn is kept with a note of its
 // photos (PhotoNote), as an aside and a thread's history are; turnReplayLocked sends its
 // words alone while its images go with it.
-func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos int, images []llm.ImagePart) {
+func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos int, images []llm.ImagePart, typed bool) {
 	turn := a.userTurnLocked(participant, text)
+	turn.Typed = typed
 	a.turnSaid = turn.Content
 	turn.Content = PhotoNote(turn.Content, photos)
 	a.turnKept = turn.Content

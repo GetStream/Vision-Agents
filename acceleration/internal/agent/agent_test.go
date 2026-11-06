@@ -2736,14 +2736,15 @@ func (s *AgentSuite) TestATypedTurnIsAskedOfTheModelInTheNameOfWhoeverSentIt() {
 }
 
 // A turn the app typed or handed in ("greet the user") is kept as the caller's, and marked as
-// not said on the call: a model of the call's speech is told only what was. A spoken one is not.
+// not said on the call: a model of the call's speech is told only what was. A spoken one is
+// not, whatever the participant's id, "caller" included, which typed turns are answered as.
 func (s *AgentSuite) TestATypedTurnIsKeptAsNotSaid() {
 	s.join(true)
 	s.model.reply = []string{"Hello, how can I help you today?", "It will be sunny."}
 	_, err := s.agent.RespondTo(s.ctx, "greet the user in one short sentence", nil, options.LLM{})
 	s.Require().NoError(err)
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the greeting was never written")
-	participant := stt.Participant{ID: "alice"}
+	participant := stt.Participant{ID: typedCaller}
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon tomorrow")
 	s.eventually(func() bool { return countOf[Responded](s.reported()) == 2 }, "the caller was never answered")
