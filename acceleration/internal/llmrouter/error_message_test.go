@@ -7,6 +7,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
@@ -56,9 +57,14 @@ func (s *ErrorMessageSuite) SetupTest() {
 // timed asks provider for one response under the config's names and returns the timing
 // the caller was told and the error Create returned.
 func (s *ErrorMessageSuite) timed(provider Provider) (llm.CallTiming, error) {
+	return s.timedAs(provider, routing.ProviderConfig{Provider: "gemma", Model: "gemma-4"})
+}
+
+// timedAs is timed under the given config.
+func (s *ErrorMessageSuite) timedAs(provider Provider, config routing.ProviderConfig) (llm.CallTiming, error) {
 	recorder := routing.NewRecorder(routing.LLM, nil, nil, nil, slog.Default())
 	s.T().Cleanup(recorder.Close)
-	session := newSession(provider, routing.ProviderConfig{Provider: "gemma", Model: "gemma-4"},
+	session := newSession(provider, config,
 		routing.Owner{CustomerID: "acme"}, recorder, nil)
 	var timings []llm.CallTiming
 	stream, err := session.Create(context.Background(), llm.ResponseParams{
@@ -140,4 +146,23 @@ func (s *ErrorMessageSuite) TestACancelWithNoFailureSaysNothing() {
 	s.Require().NoError(err)
 	s.Equal(routing.ErrorCancelled, timing.ErrorCode)
 	s.Empty(timing.ErrorMessage)
+}
+
+func (s *ErrorMessageSuite) TestAKeyTheProviderRefusedSaysWhoseKeyItWasAndWhatTheProviderSaid() {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte("invalid api key"))
+	}))
+	s.T().Cleanup(refusing.Close)
+	provider, err := Started(openaicompat.New(openaicompat.Options{
+		Provider: "gemma", Model: "gemma-4", APIKey: "k", BaseURL: refusing.URL,
+	}))
+	s.Require().NoError(err)
+
+	timing, err := s.timedAs(provider, routing.ProviderConfig{Provider: "gemma", Model: "gemma-4", BYOK: true})
+
+	s.Require().Error(err)
+	s.Equal(routing.ErrorKeyRefused, timing.ErrorCode)
+	s.True(strings.HasPrefix(timing.ErrorMessage, "gemma refused the key this app keeps for it in "), timing.ErrorMessage)
+	s.Contains(timing.ErrorMessage, "invalid api key")
 }
