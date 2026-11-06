@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -267,7 +268,7 @@ func fromNote(text string) bool {
 
 // A name field can identify a place or business, not just a person. The lexical
 // heuristics must not reject a name the caller or a successful tool already gave. A tool that
-// reads back what the agent wrote with the name in it does not give it (returnedLines).
+// reads back what the agent wrote with the name in it does not give it (ownLines.readBack).
 func nameWasGiven(history []llm.Message, name string) bool {
 	words := func(text string) string {
 		return " " + strings.ToLower(strings.Join(strings.FieldsFunc(text, func(r rune) bool {
@@ -278,9 +279,55 @@ func nameWasGiven(history []llm.Message, name string) bool {
 	if wanted == "  " {
 		return false
 	}
-	contains := func(text string) bool { return strings.Contains(words(text), wanted) }
-	return slices.ContainsFunc(history, func(message llm.Message) bool { return message.Role == llm.User && contains(message.Content) }) ||
-		slices.ContainsFunc(returnedLines(history, alphanumeric(name)), contains)
+	// results are the successful tool results, each with how many lines the agent had written by then.
+	type result struct {
+		content string
+		wrote   int
+	}
+	var results []result
+	var wrote ownLines
+	for _, message := range history {
+		switch message.Role {
+		case llm.User:
+			if strings.Contains(words(message.Content), wanted) {
+				return true
+			}
+		case llm.Assistant:
+			wrote.write(message)
+		case llm.ToolResult:
+			if !failedResult(message.Content) {
+				results = append(results, result{message.Content, len(wrote)})
+			}
+		}
+	}
+	// A value gives the name whole, wherever its words break, but for the lines in it that read back
+	// what the agent wrote.
+	for _, given := range results {
+		var contains func(any) bool
+		contains = func(value any) bool {
+			switch value := value.(type) {
+			case string:
+				return strings.Contains(words(value), wanted) && strings.Contains(words(wrote.cut(value, given.wrote, alphanumeric(name))), wanted)
+			case []any:
+				return slices.ContainsFunc(value, contains)
+			case map[string]any:
+				for _, child := range value {
+					if contains(child) {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		var value any
+		if json.Unmarshal([]byte(given.content), &value) != nil {
+			value = given.content
+		}
+		if contains(value) {
+			return true
+		}
+	}
+	return false
 }
 
 // ownLines are the lines the agent wrote, in its replies and in the arguments of its calls (asWritten),
@@ -323,6 +370,56 @@ func (own ownLines) readBack(text string, upto int, wanted ...string) bool {
 	}
 	text = alphanumeric(html.UnescapeString(text))
 	return slices.ContainsFunc(held, func(line string) bool { return strings.Contains(text, line) })
+}
+
+// cut returns text, a tool's, without the lines it reads back that the agent wrote in its first upto
+// lines with one of wanted in them (readBack), each cut where it stands: what is left is what the
+// tool wrote beside them. A record that holds a note the agent saved, "Ana | phone +1 555 010 0199 |
+// notes: Call Ana back at +1 555 010 0199", still gives the phone.
+func (own ownLines) cut(text string, upto int, wanted ...string) string {
+	held := own[:upto].holding(wanted...)
+	if len(held) == 0 {
+		return text
+	}
+	text = html.UnescapeString(text)
+	// letters are text alphanumeric, as alphanumeric writes it, with the span of text each byte
+	// of it stands for.
+	var letters []byte
+	var from, to []int
+	for at, r := range text {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			continue
+		}
+		lower := string(unicode.ToLower(r))
+		for range len(lower) {
+			from, to = append(from, at), append(to, at+utf8.RuneLen(r))
+		}
+		letters = append(letters, lower...)
+	}
+	gone := make([]bool, len(text))
+	for _, line := range held {
+		for start := 0; ; {
+			found := strings.Index(string(letters[start:]), line)
+			if found < 0 {
+				break
+			}
+			found += start
+			for at := from[found]; at < to[found+len(line)-1]; at++ {
+				gone[at] = true
+			}
+			start = found + len(line)
+		}
+	}
+	// Each cut is a line break, so that nothing the tool wrote either side of it runs together.
+	var kept strings.Builder
+	for at := range len(text) {
+		if !gone[at] {
+			kept.WriteByte(text[at])
+		} else if at == 0 || !gone[at-1] {
+			kept.WriteByte('\n')
+		}
+	}
+	return kept.String()
 }
 
 // returnedLines are the lines of the successful tool results in history (asWritten), but for those

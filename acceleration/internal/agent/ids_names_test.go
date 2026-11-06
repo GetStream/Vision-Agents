@@ -95,3 +95,31 @@ func (s *GivenNamesSuite) TestAStandInNameTheAgentWroteIsNotGroundedByAToolReadi
 		s.Equal(c.refused, refused, c.name)
 	}
 }
+
+func (s *GivenNamesSuite) TestAToolGivesANameInAValueWholeNotInAKey() {
+	// A key names what a value is, it gives no name: a stand-in "User" is not given by a "user"
+	// field. A value gives the name whole, wherever its words break.
+	result := func(call, content string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.User, Content: "Can you sort this out for me?"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "t1", Name: call, Arguments: `{}`}}},
+			{Role: llm.ToolResult, ToolCallID: "t1", Content: content},
+		}
+	}
+	for _, c := range []struct {
+		name      string
+		history   []llm.Message
+		arguments string
+		refused   bool
+	}{
+		{"a user key", result("read_channel", `{"messages":[{"user":"U0BOB0001","text":"printer is down"}]}`), `{"name":"User"}`, true},
+		{"a customer key", result("get_order", `{"order_id":"A1","customer":{"id":"42"}}`), `{"customer_name":"Customer"}`, true},
+		{"a guest key with no value", result("availability", `{"rooms":[{"guest":null,"number":"12"}]}`), `{"guest_name":"Guest"}`, true},
+		{"a caller key", result("call_info", `{"caller":"+15550100199"}`), `{"name":"Caller"}`, true},
+		{"a name broken across lines in one value", result("guests", `{"guest":"John\nDoe"}`), `{"name":"John Doe"}`, false},
+		{"a name in a value", result("guests", `{"guest":"John Doe"}`), `{"name":"John Doe"}`, false},
+	} {
+		_, refused := placeholderName(c.history, llm.ToolCall{Name: "create_ticket", Arguments: c.arguments})
+		s.Equal(c.refused, refused, c.name)
+	}
+}
