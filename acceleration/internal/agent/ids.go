@@ -414,7 +414,7 @@ func (held heldLines) cut(text string, upto int) string {
 	text = html.UnescapeString(text)
 	// letters are text alphanumeric, as alphanumeric writes it, with the span of text each byte
 	// of it stands for.
-	var letters []byte
+	var letters strings.Builder
 	var from, to []int
 	for at, r := range text {
 		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
@@ -424,12 +424,13 @@ func (held heldLines) cut(text string, upto int) string {
 		for range len(lower) {
 			from, to = append(from, at), append(to, at+utf8.RuneLen(r))
 		}
-		letters = append(letters, lower...)
+		letters.WriteString(lower)
 	}
+	written := letters.String()
 	gone := make([]bool, len(text))
 	for _, own := range held {
 		for start := 0; ; {
-			found := strings.Index(string(letters[start:]), own.line)
+			found := strings.Index(written[start:], own.line)
 			if found < 0 {
 				break
 			}
