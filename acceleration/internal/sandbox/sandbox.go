@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -25,6 +26,15 @@ const MaxFiles = 4
 // MaxFileBytes is the largest file a run may hand back.
 const MaxFileBytes = 20 << 20
 
+// MaxOutputBytes is the most of what a run printed that comes back: a longer output is cut to fit
+// and ends with OutputCut, within the same bound. It is core.MaxResultBytes, the cap the session's
+// dispatcher puts on every other tool result the model reads (internal/session/dispatcher.go); a
+// run's output reaches the model without passing it.
+const MaxOutputBytes = core.MaxResultBytes
+
+// OutputCut ends an output cut at MaxOutputBytes, so the model knows it read only the start.
+const OutputCut = "\n[output cut: the code printed more than 32 KiB; print less, or only the part you need]"
+
 // MaxTimeout is the longest one run of code may be allowed.
 const MaxTimeout = 30 * time.Minute
 
@@ -32,7 +42,7 @@ const MaxTimeout = 30 * time.Minute
 type Result struct {
 	// Output is everything the code printed. A sandbox runs it the way a shell would, so
 	// what went to output and what went to errors arrive interleaved, as a person reading
-	// a terminal would see them.
+	// a terminal would see them. Past MaxOutputBytes it is cut and ends with OutputCut.
 	Output string
 	// ExitCode is what the process returned. Zero is success.
 	ExitCode int

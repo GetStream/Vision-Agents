@@ -34,6 +34,10 @@ const apiKeyEnvVar = "DAYTONA_API_KEY"
 const defaultTimeout = 60 * time.Second
 const defaultRunTimeout = 30 * time.Second
 
+// sdkTimeout is the SDK's own HTTP client timeout, which it uses when it is given no client (sdk-go
+// v0.211.2 pkg/daytona/client.go:87, :348).
+const sdkTimeout = 60 * time.Second
+
 // defaultIdleStop is Daytona's own: a sandbox nothing ran in for 15 minutes is stopped.
 const defaultIdleStop = 15 * time.Minute
 
@@ -204,7 +208,17 @@ func New(o Options) (*Sandbox, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, Target: o.Target, HTTPClient: o.HTTPClient})
+	httpClient := &http.Client{Timeout: sdkTimeout}
+	if o.HTTPClient != nil {
+		given := *o.HTTPClient
+		httpClient = &given
+	}
+	next := httpClient.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	httpClient.Transport = bounded{next: next}
+	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, Target: o.Target, HTTPClient: httpClient})
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
