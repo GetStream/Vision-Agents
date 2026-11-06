@@ -3999,11 +3999,16 @@ func (a *Agent) shorten(participant stt.Participant, turnID string, why interrup
 			a.fail(err, "llm")
 		}
 	}
+	// The agent stays on a turn it has finished saying until it takes the next, so a reply
+	// whose last audio went out within the tail was heard whole, and is not cut.
+	unfinished := func(speaking string) bool {
+		return speaking == turnID && (a.generating || a.audioOutstandingLocked(turnID))
+	}
 	go func() {
 		defer a.running.Done()
 		select {
 		case <-time.After(shortenTail):
-			a.abandonReply(participant, saying, why)
+			a.abandonReply(participant, unfinished, why)
 		case <-ctx.Done():
 		}
 	}()

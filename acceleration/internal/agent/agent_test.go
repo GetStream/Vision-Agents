@@ -3999,6 +3999,8 @@ func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTail() {
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
+	// Still playing at the edge when its tail is up.
+	s.edge.holdSpeech(true)
 	shorten := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Shorten}},
 		Words: "and in Porto", Speaking: true, Overheard: true, AudioMs: 900, WordsMs: 100}
 	shortened := time.Now()
@@ -4028,6 +4030,27 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnUnlessActingOnChorusASR() {
 		Interruption: interruption{cause: causeShortened, words: "and in Porto"}})
 	time.Sleep(shortenTail + 500*time.Millisecond)
 	s.Zero(countOf[Interrupted](s.reported()), "the shortened reply was cut")
+	s.Zero(s.voice.interrupted(), "the voice was stopped")
+}
+
+// A reply that ends within its shortened tail, its last audio out before the tail is up, is not
+// cut when the tail is: the caller heard it whole. Cut, the reply was reported interrupted, and
+// a transcript kept it as one, as soon as the caller's added item had not yet been answered.
+func (s *AgentSuite) TestAReplyThatEndsWithinItsShortenedTailIsNotCut() {
+	s.actsOnChorusASR()
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = []string{"Sunny and warm."}
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon tomorrow")
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the reply was never said")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never ended")
+	turnID := s.agent.floor().Speaking
+	s.Require().NotEmpty(turnID, "the reply is the turn the agent was last on")
+
+	s.agent.shorten(participant, turnID, interruption{cause: causeShortened, words: "and in Porto"})
+	time.Sleep(shortenTail + 500*time.Millisecond)
+	s.Zero(countOf[Interrupted](s.reported()), "a reply heard whole was reported cut")
 	s.Zero(s.voice.interrupted(), "the voice was stopped")
 }
 
