@@ -186,7 +186,9 @@ func (s *OutputSuite) TestAnAnswerFarOverItsBoundBesidesTheOutputFailsTheRun() {
 
 	_, err := s.box.Run(s.ctx, "print(it)", nil)
 
-	s.ErrorContains(err, "too large to read")
+	// The model reads this error: it says what was too much and what to do instead.
+	s.ErrorContains(err, "the run gave back more than 20 MiB")
+	s.ErrorContains(err, "print less, or write it to a file and hand the file back")
 	s.Eventually(func() bool {
 		select {
 		case <-ended:

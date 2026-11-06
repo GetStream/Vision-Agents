@@ -3,6 +3,7 @@ package daytona
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strings"
@@ -30,7 +31,7 @@ const maxHeldBytes = 6*sandbox.MaxOutputBytes + 16
 // errAnswerTooLarge is a toolbox answer past what the router reads of it, and errBadOutput one
 // whose output, cut, is not a JSON string.
 var (
-	errAnswerTooLarge = errors.New("daytona: the sandbox's answer is too large to read")
+	errAnswerTooLarge = fmt.Errorf("daytona: the run gave back more than %d MiB, which is too much to read; print less, or write it to a file and hand the file back", maxAnswerBytes>>20)
 	errBadOutput      = errors.New("daytona: the sandbox's answer holds an output that is not a JSON string")
 )
 
