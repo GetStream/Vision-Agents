@@ -7101,9 +7101,12 @@ type ModelCallTiming struct {
 	DurationMs *float64 `json:"duration_ms,omitempty"`
 
 	// ErrorCode Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
-	ErrorCode   *string `json:"error_code,omitempty"`
-	InputTokens *int64  `json:"input_tokens,omitempty"`
-	Model       string  `json:"model"`
+	ErrorCode *string `json:"error_code,omitempty"`
+
+	// ErrorMessage What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it.
+	ErrorMessage *string `json:"error_message,omitempty"`
+	InputTokens  *int64  `json:"input_tokens,omitempty"`
+	Model        string  `json:"model"`
 
 	// OperationId Response ID for this operation; retries can share an ID.
 	OperationId  *string `json:"operation_id,omitempty"`

@@ -2548,7 +2548,7 @@ module GetStream
           required: %w[actor].freeze, open: false
         }.freeze,
         "ModelCallTiming" => {
-          properties: %w[duration_ms error_code input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
+          properties: %w[duration_ms error_code error_message input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
           required: %w[model provider started_at success].freeze, open: false
         }.freeze,
         "ModelOverwrites" => {

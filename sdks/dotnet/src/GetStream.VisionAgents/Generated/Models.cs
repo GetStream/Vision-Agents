@@ -8881,6 +8881,12 @@ namespace GetStream.VisionAgents.Models
         [System.Text.Json.Serialization.JsonPropertyName("error_code")]
         public string? ErrorCode { get; set; } = default!;
 
+        /// <summary>
+        /// What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("error_message")]
+        public string? ErrorMessage { get; set; } = default!;
+
         [System.Text.Json.Serialization.JsonPropertyName("input_tokens")]
         public long? InputTokens { get; set; } = default!;
 

@@ -11,6 +11,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llmrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 )
@@ -33,6 +34,8 @@ type speculation struct {
 	ready   candidate
 	turn    harness.Turn
 	harness *harness.Harness
+	// model is the reply model beside harness, which a failed request is reported against.
+	model *llmrouter.Session
 	// history is how long the conversation was when the reply was built on it. A turn that
 	// changed it in the meantime is not what the reply answers.
 	history   int
@@ -107,6 +110,7 @@ func (a *Agent) speculate(current *harness.Harness, ready candidate, speaking, a
 		id:      a.speculating,
 		ready:   ready,
 		harness: current,
+		model:   a.llm,
 		history: len(a.history),
 		turn: harness.Turn{
 			ID:           ready.ID,
@@ -170,7 +174,7 @@ func (a *Agent) runSpeculation(spec *speculation) {
 		a.mu.Lock()
 		replies := a.replies
 		a.mu.Unlock()
-		replies <- llm.ResponseFailed{ResponseID: turnID, Err: err, Context: "llm"}
+		replies <- createFailed(turnID, spec.model, err)
 		replies <- llm.ResponseCompleted{Response: llm.Response{ID: turnID, Status: llm.StatusFailed}}
 		return
 	}

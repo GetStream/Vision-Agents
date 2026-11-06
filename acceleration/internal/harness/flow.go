@@ -1,6 +1,7 @@
 package harness
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -302,7 +303,7 @@ func (f *flow) run(asked *candidate) {
 		if f.yieldExpiredOverlap(asked) {
 			return
 		}
-		f.logger.Error("flow controller failed", "error", err)
+		f.logger.Error("flow controller failed", "provider", model.Provider(), "model", model.Model(), "error", err)
 		f.emitter.Send(Decided{
 			CandidateID: turn.ID,
 			TookMs:      millis(time.Since(asked.askedAt)),
@@ -509,7 +510,9 @@ func (f *flow) consume(asked *candidate, stream *llm.Stream, primary *llmrouter.
 			// answered: the ruling carries the timeout, as one for a Create that timed out does.
 			err = fmt.Errorf("harness: decide flow: %w", asked.ctx.Err())
 		}
-		f.logger.Error("flow controller failed", "error", err)
+		// The failing stream may come from a hedge or a failover, another provider behind the session.
+		f.logger.Error("flow controller failed", "provider", cmp.Or(response.Provider, primary.Provider()),
+			"model", cmp.Or(response.Model, primary.Model()), "error", err)
 		f.emitter.Send(Decided{CandidateID: candidateID, TookMs: took, Err: err})
 		return
 	}

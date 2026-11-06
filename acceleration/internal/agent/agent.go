@@ -1352,7 +1352,7 @@ func (a *Agent) Greet(ctx context.Context, greeting string, vary bool) error {
 	if vary {
 		line, err := a.compose(ctx, fmt.Sprintf(greetPurpose, greeting))
 		if err != nil {
-			a.logger.Warn("could not vary the greeting, saying it as written", "error", err)
+			a.logger.Warn("could not vary the greeting, saying it as written", append(a.replyModel(), "error", err)...)
 		} else if line != "" {
 			greeting = line
 		}
@@ -2543,7 +2543,7 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 		}()
 		line, err := a.compose(ctx, purpose)
 		if err != nil {
-			a.logger.Warn("could not write a line to say", "kind", kind, "error", err)
+			a.logger.Warn("could not write a line to say", append(a.replyModel(), "kind", kind, "error", err)...)
 			return
 		}
 		a.sayComposed(participant, line, purpose, asked)
@@ -2733,13 +2733,13 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		a.logger.Debug("a turn arrived while the models were changing, so it was dropped", "turn", turn.ID)
 		return nil
 	}
-	current := a.harness
+	current, model := a.harness, a.llm
 	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx, a.scheduled))
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
 
-	go a.startReply(current, turn, ctx, screen)
+	go a.startReply(current, model, turn, ctx, screen)
 	return nil
 }
 
@@ -2766,7 +2766,7 @@ func (a *Agent) chargedLocked(ctx context.Context, scheduled bool) context.Conte
 // the check had still not finished by the time the model began answering. A turn the
 // policy refuses has cost some tokens nobody will read, which is the trade.
 func (a *Agent) startReply(
-	current *harness.Harness, turn harness.Turn, ctx context.Context, screen string,
+	current *harness.Harness, model *llmrouter.Session, turn harness.Turn, ctx context.Context, screen string,
 ) {
 	defer a.pumps.Done()
 	defer a.finishGenerate(turn.ID)
@@ -2795,7 +2795,7 @@ func (a *Agent) startReply(
 		a.mu.Lock()
 		replies := a.replies
 		a.mu.Unlock()
-		replies <- llm.ResponseFailed{ResponseID: turn.ID, Err: err, Context: "llm"}
+		replies <- createFailed(turn.ID, model, err)
 		replies <- llm.ResponseCompleted{Response: llm.Response{ID: turn.ID, Status: llm.StatusFailed}}
 		return
 	}
@@ -2981,7 +2981,7 @@ func (a *Agent) handle(event llm.Event) {
 			a.emitter.Send(Error{Err: typed.Err, Context: "llm", TurnID: typed.ResponseID})
 			return
 		}
-		a.fail(typed.Err, "llm")
+		a.fail(typed.Err, "llm", "provider", typed.Provider, "model", typed.Model)
 
 	case llm.ResponseCompleted:
 		if !a.speaking(typed.Response.ID) {
@@ -4239,12 +4239,34 @@ func (a *Agent) settleVoice(voice *ttsrouter.Session) {
 
 // fail reports a failure without ending the conversation. One bad turn is a lost reply,
 // not a lost call.
-func (a *Agent) fail(err error, context string) {
+func (a *Agent) fail(err error, context string, attrs ...any) {
 	if err == nil {
 		return
 	}
-	a.logger.Error("agent failure", "context", context, "error", err)
+	a.logger.Error("agent failure", append(append([]any{"context", context}, attrs...), "error", err)...)
 	a.emitter.Send(Error{Err: err, Context: context})
+}
+
+// replyModel is the provider and model the reply model routes to, as log attributes, so a
+// search for either finds the line of a line the agent could not write.
+func (a *Agent) replyModel() []any {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.llm == nil {
+		return nil
+	}
+	return []any{"provider", a.llm.Provider(), "model", a.llm.Model()}
+}
+
+// createFailed is a reply whose request never started, sent on as a reply that failed
+// mid-stream is. It names the model it was asked of, so the failure line does too.
+func createFailed(turnID string, model *llmrouter.Session, err error) llm.ResponseFailed {
+	failed := llm.ResponseFailed{ResponseID: turnID, Err: err, Context: "llm"}
+	// A harness with no text model fails its turn before asking anyone.
+	if model != nil {
+		failed.Provider, failed.Model = model.Provider(), model.Model()
+	}
+	return failed
 }
 
 // lastExchange is the turn just finished: what was asked and what was answered. It is the
