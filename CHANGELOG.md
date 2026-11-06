@@ -401,7 +401,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A code run that prints a lot no longer fills the router's memory
 
-The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 32 KiB, the cap every other tool result has, and ends it with a line telling the model the output was cut. The rest is dropped as it is read. A command's, a download's and an upload's answer from the sandbox are bounded too. (#PRNUM)
+The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 32 KiB, the cap every other tool result has, and ends it with a line telling the model the output was cut. The rest is dropped as it is read. A command's, a download's and an upload's answer from the sandbox are bounded too. (#1804)
 ### A sandbox session cut while it opens leaves no Daytona secret
 
 When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
