@@ -467,35 +467,34 @@ func (c *converse) Spent(participant stt.Participant, utterance int64, words str
 	if !ok || stop.utterance != utterance {
 		return false
 	}
-	_, more := afterStop(words, stop.words)
-	return !more
+	return !saysMore(words, stop.words)
 }
 
-// afterStop is how many of text's words are the words a stop was ruled on, stop, said again,
-// and whether text says more. Text opens with them, the last of them perhaps cut off by the
-// check's window mid-word ("wh" for "what"), when that word is the caller's next. Text that
-// does not open with them is another reading of the same audio: it says no more if it has no
-// more words, and otherwise which of its words are new can't be told, so none are the stop's.
-func afterStop(text, stop string) (spent int, more bool) {
+// saysMore reports whether text, all of an utterance's words, says more than stop, the words
+// so far a stop was ruled on in it. Text opens with them, the last of them perhaps cut off by
+// the check's window mid-word ("wh" for "what"), when that word is the caller's next. Text that
+// does not open with them is another reading of the same audio: it says more if it has more
+// words, as which of them are new can't be told.
+func saysMore(text, stop string) bool {
 	said, stopped := wordList(text), wordList(stop)
 	last := len(stopped) - 1
 	switch {
 	case len(stopped) == 0:
-		return 0, len(said) > 0
+		return len(said) > 0
 	case len(said) >= len(stopped) && slices.Equal(said[:len(stopped)], stopped):
-		spent = len(stopped)
+		return len(said) > len(stopped)
 	case len(said) >= len(stopped) && slices.Equal(said[:last], stopped[:last]) && strings.HasPrefix(said[last], stopped[last]):
-		spent = last
-	case len(said) <= len(stopped):
-		return len(said), false
+		return true
 	}
-	return spent, spent < len(said)
+	return len(said) > len(stopped)
 }
 
 // stopSpent is a settled turn of the utterance a stop over the agent was ruled on in, if it
-// is one: with nothing more than the stop's words it is heard and set aside, as the agent has
-// done what they asked, and otherwise only what the caller said after them is the turn.
-func (c *converse) stopSpent(ready *candidate) (Action, bool) {
+// is one with nothing more than the stop's words: it is heard and set aside, as the agent has
+// done what they asked. One that says more is the caller's turn, and is answered on all its
+// words: a stop is often ruled on the start of the request it makes ("hi, what's the weather"
+// over a greeting), which the words after it alone would cut ("like in Lisbon tomorrow?").
+func (c *converse) stopSpent(ready candidate) (Action, bool) {
 	c.mu.Lock()
 	stop, ok := c.stops[ready.Participant.ID]
 	if ok && stop.utterance == ready.Utterance {
@@ -505,9 +504,7 @@ func (c *converse) stopSpent(ready *candidate) (Action, bool) {
 	if !ok || stop.utterance != ready.Utterance || ready.Utterance == 0 {
 		return Action{}, false
 	}
-	spent, more := afterStop(ready.Text, stop.words)
-	if more {
-		ready.Answered = strings.Join(wordList(stop.words)[:spent], " ")
+	if saysMore(ready.Text, stop.words) {
 		return Action{}, false
 	}
 	c.cadence.Resolve(ready.ID, false)
@@ -516,7 +513,7 @@ func (c *converse) stopSpent(ready *candidate) (Action, bool) {
 	return c.decide(Action{
 		Kind:        ActIgnore,
 		Reason:      "the words a stop over the agent was ruled on as they were said, which it has acted on: there is nothing more in them to answer",
-		Candidate:   *ready,
+		Candidate:   ready,
 		Participant: ready.Participant,
 		Text:        shown,
 		LineID:      line,
@@ -658,7 +655,7 @@ func (c *converse) supersede(participant stt.Participant, candidateID string) Ac
 
 // Settled registers a turn whose words have stopped changing and asks for a ruling on it.
 func (c *converse) Settled(ready candidate, state floor) Action {
-	if spent, ok := c.stopSpent(&ready); ok {
+	if spent, ok := c.stopSpent(ready); ok {
 		return spent
 	}
 	c.mu.Lock()

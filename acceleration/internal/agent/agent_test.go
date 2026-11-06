@@ -3902,11 +3902,12 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
 }
 
-// What the caller says after the words a stop over the agent was ruled on, in the same breath,
-// is the turn, and only it is answered: "No, Porto." stopped on "No." is answered "Porto.". The
+// Words the caller says after those a stop over the agent was ruled on, in the same breath,
+// make the utterance a turn, answered on all its words: "No, Porto." stopped on "No." is
+// answered "No, Porto.", as a stop ruled on the start of a request would otherwise cut it. The
 // utterance is not cut where the check's window ended, which was mid-word ("No, P|orto" was
 // heard as "Corto."), and the turn is ruled as the pause check that ended it ruled.
-func (s *AgentSuite) TestOnlyWhatIsSaidAfterTheStopIsAnswered() {
+func (s *AgentSuite) TestWhatIsSaidAfterTheStopMakesATurnOfItAll() {
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	s.model.reply = nil
@@ -3927,7 +3928,7 @@ func (s *AgentSuite) TestOnlyWhatIsSaidAfterTheStopIsAnswered() {
 	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "No, Porto.",
 		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
-	s.Equal("Porto.", harness.WithoutNotes(s.model.requests()[1].Input)[len(harness.WithoutNotes(s.model.requests()[1].Input))-1].Content)
+	s.Equal("No, Porto.", harness.WithoutNotes(s.model.requests()[1].Input)[len(harness.WithoutNotes(s.model.requests()[1].Input))-1].Content)
 }
 
 // A check-in is a turn the agent took, not a murmur: a caller who talks over it and is ruled

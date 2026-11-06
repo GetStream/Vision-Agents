@@ -43,10 +43,12 @@ check fails and the failure is the model's, reported as such, not worked around 
   the words it was ruled on are spent on it. [C2]
 - **Stopped, then answered.** A correction or a new request ("no, Porto", "and in Lisbon?",
   "stop, what about Porto?" in one breath, or "stop" and then a question): the agent stops
-  within 800 ms of the first word, and what the caller says after the words the stop was
-  ruled on is a turn of its own, from the voice after them, answered once. Where the model
-  rules a request one more item ("and in Lisbon?" over a forecast), it is shortened, as
-  below, and answered whole. [11, S2, S3, C3]
+  within 800 ms of the first word, and words the caller says after those the stop was ruled
+  on make a turn, answered once. It is answered on all its words, the stop's too: a stop is
+  often ruled on the start of the request it makes ("hi, what's the weather" over the
+  greeting), which the words after it alone would cut ("like in Lisbon tomorrow?"). Where the
+  model rules a request one more item ("and in Lisbon?" over a forecast), it is shortened, as
+  below, and answered. [11, S2, S3, S10b, C3]
 - **Shortened.** One more item for the request being answered ("and in Porto?" over a
   forecast): the agent adds nothing more to the reply, stops speaking within 250 ms of the
   ruling, and answers the item. The model was trained on `shorten` as "one more item of the
@@ -220,8 +222,7 @@ last frame, and a pause costs one request:
   voiced over the agent, its own echo included (Limits). A stop ruled while the caller talks on
   is no turn: the words it was ruled on are spent on it. The utterance runs on, uncut, and
   at a pause whose words add nothing to them it ends at once, heard and not answered;
-  otherwise it ends at its pauses with the floor free, and the turn is what the caller said
-  after the stop's words. A check that answers once its utterance has ended, a pause check
+  otherwise it ends at its pauses with the floor free, and is the caller's turn. A check that answers once its utterance has ended, a pause check
   having ruled on it, is not acted on. Shortened, the utterance goes on, its words shown as interims, and ends at
   a pause, where the item is answered. 350 ms is most of an "uh-huh", so the model rules on a
   murmur, which it was trained to let the agent talk through, rather than on the first
