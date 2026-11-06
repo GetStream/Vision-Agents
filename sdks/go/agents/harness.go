@@ -57,8 +57,8 @@ type Harness struct {
 	// "default", or the only entry, is the model that runs skills. Empty means the fast
 	// model answers everything itself.
 	Subagents map[string]string
-	// VM is where delegated code runs.
-	VM *Sandbox
+	// Sandbox is where delegated code runs. Nil runs none.
+	Sandbox *Sandbox
 	// Skills of your own, stored and named by the config in place of the built-in set.
 	Skills []Skill
 }
@@ -111,7 +111,7 @@ func (h *Harness) Validate() error {
 			return errors.New("agents: " + skill.Name + " needs instructions, since they are what the subagent answers under")
 		}
 	}
-	if h.VM != nil && h.VM.Provider == "" {
+	if h.Sandbox != nil && h.Sandbox.Provider == "" {
 		return errors.New("agents: a sandbox needs a provider")
 	}
 	return nil
@@ -128,8 +128,8 @@ func (h *Harness) stored() (name *acceleration.Harness, subagent *string, sandbo
 		name = &named
 	}
 	setString(&subagent, h.Subagent())
-	if h.VM != nil {
-		provider := acceleration.Sandbox(h.VM.Provider)
+	if h.Sandbox != nil {
+		provider := acceleration.Sandbox(h.Sandbox.Provider)
 		sandbox = &provider
 	}
 	return name, subagent, sandbox

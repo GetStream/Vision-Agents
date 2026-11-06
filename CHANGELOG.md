@@ -351,7 +351,7 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ### The Go SDK's helpers take a Backend, not the generated client
 
-`agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).
+`agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. `agents.Harness.VM` is `agents.Harness.Sandbox`, the name every other SDK and the docs use. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).
 
 ### `episode_cards` is `off`, `record` or `on`
 
