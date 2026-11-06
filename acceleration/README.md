@@ -71,8 +71,11 @@ the session frame is spelled; Gemini Live is its own package under `internal/sts
 
 ## Build prerequisites
 
-Everything builds without cgo. `cmd/say` needs `ffplay` at runtime (part of ffmpeg)
-to play audio, or `-out` to write a file instead.
+Everything builds without cgo. Build with Go's SIMD experiment, `GOEXPERIMENT=simd`, as
+`Dockerfile` and CI do: it compiles the vector kernels of the Opus codec every call's audio
+passes through, on amd64 and arm64, and other platforms build the same code without them.
+The commands below assume `export GOEXPERIMENT=simd`. `cmd/say` needs `ffplay` at runtime
+(part of ffmpeg) to play audio, or `-out` to write a file instead.
 
 ## Configuration
 
@@ -138,6 +141,9 @@ the other commands that read them there.
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
 | `ROUTER_FLOW_HEDGE` | `ROUTER_REPLY_HEDGE` for the flow controller's decisions, which the caller waits on in silence before the reply is asked for. A decision is a few tokens, so one that has said nothing by then has stalled rather than thought, and the same request is asked of another candidate of `llm-flow` as well; whichever says something first rules on the turn. Without it a stalled decision waits out the controller's 3 s deadline and the turn is answered unruled. Defaults to `400ms`; `0` turns it off. `cmd/agent` takes it as `-flow-hedge` |
+| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: stream/chorus-asr`, which is refused on a router without it. It rules no agent's floor of its own accord. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as a bearer token on every request to a chorus-asr server behind a gateway that asks for a key |
+| `ROUTER_CHORUS_ASR_AUDIO` | How the chorus-asr model's audio is sent: `opus` (default), encoded once as it arrives, or `pcm`, for debugging. `cmd/agent` reads the `ROUTER_CHORUS_ASR_*` variables too, and its agent opts in with `-floor-control stream/chorus-asr` |
 | `ROUTER_MOCK_PROVIDERS` | `true` adds `mock/mock-stt`, `mock/mock-tts` and `mock/mock-llm`, which answer from nothing, reach no vendor and bill nothing, for load testing the router itself (see `performance_benchmark/`). No capability alias routes to one, so a session only gets a mock by naming it. Off by default |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |

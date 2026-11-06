@@ -247,6 +247,8 @@ from .duplicate_campaign_request import DuplicateCampaignRequest
 from .duplicate_campaign_request_contacts import DuplicateCampaignRequestContacts
 from .effective_quota import EffectiveQuota
 from .end_call_settings import EndCallSettings
+from .end_of_turn import EndOfTurn
+from .end_of_turn_bar import EndOfTurnBar
 from .endpointing import Endpointing
 from .episode_cards_mode import EpisodeCardsMode
 from .equals_type_1 import EqualsType1
@@ -865,6 +867,8 @@ __all__ = (
     "DuplicateCampaignRequestContacts",
     "EffectiveQuota",
     "EndCallSettings",
+    "EndOfTurn",
+    "EndOfTurnBar",
     "Endpointing",
     "EpisodeCardsMode",
     "EqualsType1",

@@ -432,6 +432,8 @@ func sessionRow(created *Session) store.AgentSession {
 		Custom:          spec.Custom,
 		ModelOverwrites: spec.ModelOverwrites,
 		ResumeHistory:   spec.ResumeHistory,
+		EndOfTurn:       spec.EndOfTurn,
+		FloorControl:    spec.FloorControl,
 		ForkedFrom:      spec.ForkedFrom,
 		ReturnURL:       spec.ReturnURL,
 		State:           store.SessionRunning,

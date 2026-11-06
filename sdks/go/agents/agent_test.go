@@ -610,6 +610,76 @@ func TestSyncSendsTheSchedulingTheAgentDeclared(t *testing.T) {
 	}
 }
 
+// agent.yaml's end_of_turn goes as written, and a file that names none sends none, so the
+// stored choice stays.
+func TestSyncSendsTheEndOfTurnTheAgentDeclared(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *acceleration.EndOfTurn
+	}{
+		{"end_of_turn:\n  max_wait_ms: 900\n", &acceleration.EndOfTurn{MaxWaitMs: pointer(int64(900))}},
+		{"end_of_turn:\n  preset: fast\n", &acceleration.EndOfTurn{Preset: pointer("fast")}},
+		{"end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.97}\n    - {from_ms: 900, bar: 0.25}\n",
+			&acceleration.EndOfTurn{Bars: &[]acceleration.EndOfTurnBar{{FromMs: 0, Bar: 0.97}, {FromMs: 900, Bar: 0.25}}}},
+		{"end_of_turn: {}\n", &acceleration.EndOfTurn{}},
+		{"end_of_turn:\n  max_wait_ms: 0\n", &acceleration.EndOfTurn{MaxWaitMs: pointer(int64(0))}},
+		{"end_of_turn:\n  preset: \"\"\n", &acceleration.EndOfTurn{Preset: pointer("")}},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		got := router.syncs[0].EndOfTurn
+		router.mu.Unlock()
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q: end_of_turn went as %s, not %s", c.declared, describe(got), describe(c.want))
+		}
+	}
+}
+
+// agent.yaml's floor_control goes as written, "" and a model the router does not know included,
+// and a file that names none sends none, so the stored choice stays.
+func TestSyncSendsTheFloorControlTheAgentDeclared(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *string
+	}{
+		{"floor_control: stream/chorus-asr\n", pointer("stream/chorus-asr")},
+		{"floor_control: \"\"\n", pointer("")},
+		{"floor_control: other\n", pointer("other")},
+		{"floor_control:\n", nil},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", c.declared)
+		router := newBackend(t)
+		agent := agentOn(t, router, Options{Dir: root})
+
+		if _, err := agent.Sync(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+
+		router.mu.Lock()
+		got := router.syncs[0].FloorControl
+		router.mu.Unlock()
+		if !reflect.DeepEqual(got, c.want) {
+			t.Errorf("%q: floor_control went as %v, not %v", c.declared, got, c.want)
+		}
+	}
+}
+
+func describe(endOfTurn *acceleration.EndOfTurn) string {
+	raw, _ := json.Marshal(endOfTurn)
+	return string(raw)
+}
+
 func TestAFolderDeclaresCalls(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "concierge")
 	write(t, root, "agent.yaml", `calls:
@@ -1759,3 +1829,5 @@ func connectionPage(next string, items ...acceleration.Connection) acceleration.
 	}
 	return page
 }
+
+func pointer[T any](value T) *T { return &value }

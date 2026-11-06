@@ -206,11 +206,18 @@ type Settings struct {
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
 	// Calls are the tools the agent has on a phone call. A sync always sends them, with
 	// the defaults for what the file leaves out, so it replaces what the dashboard set.
-	Calls    *CallSettings     `yaml:"calls"`
-	Keyterms []string          `yaml:"keyterms"`
-	Tags     map[string]string `yaml:"tags"`
-	Video    *VideoSettings    `yaml:"video"`
-	Dispatch *DispatchSettings `yaml:"dispatch"`
+	Calls *CallSettings `yaml:"calls"`
+	// EndOfTurn is how eager chorus-asr's turn-taking is, where the router asks it about
+	// turns. Nil leaves the stored choice; an empty mapping ({}) is the server's default.
+	EndOfTurn *EndOfTurnSettings `yaml:"end_of_turn"`
+	// FloorControl is the model that controls the agent's floor, stream/chorus-asr, or "" for
+	// the default flow controller. Nil leaves the stored choice; an agent that never chose has
+	// the default flow controller.
+	FloorControl *FloorControlSetting `yaml:"floor_control"`
+	Keyterms     []string             `yaml:"keyterms"`
+	Tags         map[string]string    `yaml:"tags"`
+	Video        *VideoSettings       `yaml:"video"`
+	Dispatch     *DispatchSettings    `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -386,6 +393,54 @@ type TransferDestination struct {
 	When string `yaml:"when"`
 	// Warm announces the caller to the person answering before connecting them.
 	Warm bool `yaml:"warm"`
+}
+
+// EndOfTurnSettings is when chorus-asr has a caller's turn ended: one of MaxWaitMs, Preset
+// and Bars. The router refuses a sync that names more than one, bars that do not begin at 0
+// and rise, each strictly between 0 and 1, or a preset or wait its chorus-asr server does not
+// publish.
+//
+//	end_of_turn:
+//	    max_wait_ms: 900
+//
+// Each is nil when the file doesn't name it, and sent as written when it does, so a value the
+// router refuses is refused there rather than dropped here.
+type EndOfTurnSettings struct {
+	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
+	// milliseconds: the server's measured point with the fewest cut-ins within it.
+	MaxWaitMs *int `yaml:"max_wait_ms"`
+	// Preset is one of the presets the server publishes, such as safe or fast.
+	Preset *string `yaml:"preset"`
+	// Bars are the agent's own: the first from 0 ms, each later one from further into the
+	// pause.
+	Bars []EndOfTurnBar `yaml:"bars"`
+}
+
+// EndOfTurnBar is what chorus-asr's p_eot must reach for the turn to have ended, at a check
+// from FromMs into the pause on. A bar names both.
+type EndOfTurnBar struct {
+	FromMs *int     `yaml:"from_ms"`
+	Bar    *float64 `yaml:"bar"`
+}
+
+// FloorControlSetting is the model that controls the agent's floor, as written: when the
+// caller has finished, and what to do about speech over the agent.
+//
+//	floor_control: stream/chorus-asr
+//
+// It is sent as written, "" included, which is the default flow controller again: which models
+// there are is the router's to say, and it refuses stream/chorus-asr when it has no chorus-asr
+// server.
+type FloorControlSetting string
+
+// UnmarshalYAML refuses a floor_control that is not a string, naming it, rather than sending a
+// mapping, a list, a boolean or a number as text.
+func (setting *FloorControlSetting) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode || node.ShortTag() != "!!str" {
+		return errors.New("floor_control must be a string, such as stream/chorus-asr")
+	}
+	*setting = FloorControlSetting(node.Value)
+	return nil
 }
 
 // ChannelSettings is one line the agent is reachable on.
@@ -711,6 +766,13 @@ func declare(raw []byte) (Settings, error) {
 		}
 		if settings.Video.MaxFrames < 1 || settings.Video.MaxFrames > 8 {
 			return Settings{}, errors.New("video.max_frames must be an integer from 1 to 8")
+		}
+	}
+	if settings.EndOfTurn != nil {
+		for i, bar := range settings.EndOfTurn.Bars {
+			if bar.FromMs == nil || bar.Bar == nil {
+				return Settings{}, fmt.Errorf("end_of_turn.bars[%d] names both from_ms and bar", i)
+			}
 		}
 	}
 	if options := settings.SandboxOptions; options != nil && options.Timeout != "" {

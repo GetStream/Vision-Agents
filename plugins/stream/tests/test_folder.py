@@ -1,9 +1,12 @@
+import re
 from pathlib import Path
 
 import pytest
 from vision_agents.plugins.stream.folder import (
     ChannelSettings,
     ConnectorSettings,
+    EndOfTurnBar,
+    EndOfTurnSettings,
     GreetingSettings,
     ToolSettings,
     SandboxSettings,
@@ -855,6 +858,143 @@ class TestFolder:
         )
 
         with pytest.raises(ValueError, match="channels.whatsapp needs a number"):
+            load(root)
+
+    @pytest.mark.parametrize(
+        "declared, chosen",
+        [
+            ("end_of_turn:\n  max_wait_ms: 900\n", EndOfTurnSettings(max_wait_ms=900)),
+            ("end_of_turn: {preset: fast}\n", EndOfTurnSettings(preset="fast")),
+            (
+                "end_of_turn:\n  bars:\n"
+                "    - {from_ms: 0, bar: 0.97}\n"
+                "    - from_ms: 900\n      bar: 0.25\n",
+                EndOfTurnSettings(
+                    bars=[
+                        EndOfTurnBar(from_ms=0, bar=0.97),
+                        EndOfTurnBar(from_ms=900, bar=0.25),
+                    ]
+                ),
+            ),
+            ("end_of_turn: {}\n", EndOfTurnSettings()),
+            ("end_of_turn:\n", None),
+            ("llm: llm-fast\n", None),
+        ],
+    )
+    def test_the_end_of_turn_is_read_as_written(
+        self, tmp_path: Path, declared: str, chosen: EndOfTurnSettings | None
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        assert load(root).settings.end_of_turn == chosen
+
+    @pytest.mark.parametrize(
+        "declared, reason",
+        [
+            (
+                "end_of_turn:\n  max_wait: 900\n",
+                "unknown end_of_turn setting: max_wait",
+            ),
+            (
+                "end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n",
+                "unknown end_of_turn.bars setting: from",
+            ),
+            ("end_of_turn: fast\n", "should give end_of_turn as a mapping"),
+            (
+                "end_of_turn:\n  max_wait_ms: soon\n",
+                "max_wait_ms must be a whole number",
+            ),
+            (
+                "end_of_turn:\n  max_wait_ms: 900.5\n",
+                "max_wait_ms must be a whole number",
+            ),
+            ("end_of_turn:\n  preset: [fast]\n", "preset must be a preset's name"),
+            ("end_of_turn:\n  bars: 0.9\n", "should give end_of_turn.bars as a list"),
+            (
+                "end_of_turn:\n  bars: [0.9]\n",
+                "should give end_of_turn.bars[0] as a mapping of from_ms and bar",
+            ),
+            (
+                "end_of_turn:\n  bars:\n    - {bar: 0.9}\n",
+                "end_of_turn.bars[0] needs both from_ms and bar",
+            ),
+            (
+                "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.9}\n    - {from_ms: 900}\n",
+                "end_of_turn.bars[1] needs both from_ms and bar",
+            ),
+            (
+                "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: null}\n",
+                "end_of_turn.bars[0] needs both from_ms and bar",
+            ),
+            (
+                "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n",
+                "end_of_turn.bars[0].bar must be a number",
+            ),
+            (
+                "end_of_turn:\n  bars:\n    - {from_ms: soon, bar: 0.9}\n",
+                "end_of_turn.bars[0].from_ms must be a whole number",
+            ),
+        ],
+    )
+    def test_an_end_of_turn_that_cannot_be_read_is_refused(
+        self, tmp_path: Path, declared: str, reason: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        with pytest.raises(ValueError, match=re.escape(reason)):
+            load(root)
+
+    def test_what_an_end_of_turn_means_is_left_to_the_router(self, tmp_path: Path):
+        root = tmp_path / "jean"
+        write(
+            root,
+            "agent.yaml",
+            "name: jean\nend_of_turn:\n  preset: nobody-publishes-this\n"
+            "  bars: [{from_ms: 900, bar: 1.5}]\n",
+        )
+
+        assert load(root).settings.end_of_turn == EndOfTurnSettings(
+            preset="nobody-publishes-this", bars=[EndOfTurnBar(from_ms=900, bar=1.5)]
+        )
+
+    @pytest.mark.parametrize(
+        "declared, chosen",
+        [
+            ("floor_control: stream/chorus-asr\n", "stream/chorus-asr"),
+            ('floor_control: ""\n', ""),
+            # Which models there are is the router's to say.
+            ("floor_control: other\n", "other"),
+            ("floor_control:\n", None),
+            ("floor_control: ~\n", None),
+            ("llm: llm-fast\n", None),
+        ],
+    )
+    def test_the_floor_control_is_read_as_written(
+        self, tmp_path: Path, declared: str, chosen: str | None
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        assert load(root).settings.floor_control == chosen
+
+    @pytest.mark.parametrize(
+        "declared",
+        [
+            "floor_control: {model: chorus-asr, mode: act}\n",
+            "floor_control: [stream/chorus-asr]\n",
+            "floor_control: true\n",
+            "floor_control: 1\n",
+        ],
+    )
+    def test_a_floor_control_that_is_not_a_string_is_refused(
+        self, tmp_path: Path, declared: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        with pytest.raises(ValueError, match="floor_control must be a string"):
             load(root)
 
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):

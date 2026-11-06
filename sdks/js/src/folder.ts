@@ -598,6 +598,9 @@ const REPLACED = new Map([
  * greeting:
  *   text: Hello, how can I help?
  *   mode: variation
+ * end_of_turn:
+ *   max_wait_ms: 900
+ * floor_control: stream/chorus-asr
  * ```
  *
  * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for one list
@@ -670,6 +673,20 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       declared.scheduling = scheduling(mapping(nested, inline, key, where), where);
     } else if (key === "sandbox_options") {
       declared.sandboxOptions = sandboxOptions(indented, inline, where);
+    } else if (key === "end_of_turn") {
+      const chosen = endOfTurn(indented, inline, where);
+      if (chosen) {
+        declared.endOfTurn = chosen;
+      }
+    } else if (key === "floor_control") {
+      // One value, sent as written, "" included: which models there are is the router's to say.
+      const value = scalar(inline);
+      if (nested.some((one) => !one.startsWith("#")) || /^[[{]/.test(inline) || NOT_A_STRING.test(inline)) {
+        throw new ConfigurationError(`${where}: floor_control must be a string, such as stream/chorus-asr`);
+      }
+      if (value !== undefined) {
+        declared.floorControl = value;
+      }
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
@@ -988,6 +1005,250 @@ function sandboxOptions(lines: string[], inline: string, where: string): Schemas
     }
   }
   return options;
+}
+
+/** A value as agent.yaml writes it: a scalar, undefined for none, a list or a mapping. */
+type Tree = string | undefined | Tree[] | Map<string, Tree>;
+
+const END_OF_TURN_KEYS = new Set(["max_wait_ms", "preset", "bars"]);
+const BAR_KEYS = new Set(["from_ms", "bar"]);
+
+/**
+ * Reads `end_of_turn:`, how eager chorus-asr's turn-taking is, as a block or on one line:
+ *
+ * ```yaml
+ * end_of_turn:
+ *   bars:
+ *     - {from_ms: 0, bar: 0.97}
+ *     - from_ms: 900
+ *       bar: 0.25
+ * end_of_turn: {preset: fast}
+ * ```
+ *
+ * Undefined when the key says nothing, which leaves the stored choice; `{}` is the server's
+ * default. Only the shape is read here: naming more than one, bars that do not rise and a
+ * preset nobody publishes are the router's to refuse, since it knows its chorus-asr server.
+ */
+function endOfTurn(
+  lines: string[],
+  inline: string,
+  where: string,
+): Schemas["EndOfTurn"] | undefined {
+  let declared: Tree;
+  if (scalar(inline) !== undefined) {
+    if (lines.some((line) => !line.trim().startsWith("#"))) {
+      throw new ConfigurationError(`${where}: end_of_turn should be a mapping`);
+    }
+    declared = flow(inline, "end_of_turn", where);
+  } else {
+    declared = endOfTurnBlock(lines, where);
+  }
+  if (declared === undefined) {
+    return undefined;
+  }
+  if (!(declared instanceof Map)) {
+    throw new ConfigurationError(`${where}: end_of_turn should be a mapping`);
+  }
+  refuseUnknown(declared.keys(), END_OF_TURN_KEYS, "end_of_turn", where);
+
+  const read: { -readonly [key in keyof Schemas["EndOfTurn"]]: Schemas["EndOfTurn"][key] } = {};
+  const wait = declared.get("max_wait_ms");
+  if (wait !== undefined) {
+    read.max_wait_ms = whole(wait, "end_of_turn.max_wait_ms", where);
+  }
+  const preset = declared.get("preset");
+  if (preset !== undefined) {
+    if (typeof preset !== "string") {
+      throw new ConfigurationError(`${where}: end_of_turn.preset is one value, not a list`);
+    }
+    read.preset = preset;
+  }
+  const bars = declared.get("bars");
+  if (bars !== undefined) {
+    if (!Array.isArray(bars)) {
+      throw new ConfigurationError(`${where}: end_of_turn.bars should be a list`);
+    }
+    read.bars = bars.map((bar, index) => barOf(bar, index, where));
+  }
+  return read;
+}
+
+/** The block under `end_of_turn:`, each key's value read as written. */
+function endOfTurnBlock(lines: string[], where: string): Map<string, Tree> | undefined {
+  const keys = new Map<string, Written>();
+  let keyColumn = -1;
+  let value: Written | undefined;
+  for (const line of lines) {
+    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const column = line.length - line.trimStart().length;
+    if (keyColumn < 0) {
+      keyColumn = column;
+    }
+    // Kept as written, columns and all, since the bars under it may be mappings.
+    if (value && (column > keyColumn || trimmed.startsWith("-"))) {
+      value.nested.push(line);
+      continue;
+    }
+    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(trimmed);
+    if (column !== keyColumn || !entry) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} belongs to no end_of_turn setting`);
+    }
+    value = { inline: (entry[2] ?? "").trim(), nested: [] };
+    keys.set(entry[1] as string, value);
+  }
+  if (keyColumn < 0) {
+    return undefined;
+  }
+  refuseUnknown(keys.keys(), END_OF_TURN_KEYS, "end_of_turn", where);
+
+  const declared = new Map<string, Tree>();
+  for (const [key, written] of keys) {
+    const name = `end_of_turn.${key}`;
+    if (written.nested.length === 0) {
+      declared.set(key, flow(written.inline, name, where));
+      continue;
+    }
+    if (key !== "bars") {
+      throw new ConfigurationError(`${where}: ${name} is one value, not a list`);
+    }
+    if (scalar(written.inline) !== undefined) {
+      throw new ConfigurationError(`${where}: ${name} should be a list`);
+    }
+    declared.set(
+      key,
+      listed(written.nested, name, "bar", where).map((item) => {
+        if (item.alias !== undefined) {
+          return flow(item.alias, name, where);
+        }
+        const bar = new Map<string, Tree>();
+        for (const [setting, given] of item.keys) {
+          if (given.nested.length) {
+            throw new ConfigurationError(`${where}: ${name}.${setting} is one value, not a list`);
+          }
+          bar.set(setting, flow(given.inline, `${name}.${setting}`, where));
+        }
+        return bar;
+      }),
+    );
+  }
+  return declared;
+}
+
+/**
+ * One of end_of_turn's bars. It names both from_ms and bar: one left out is refused rather
+ * than sent as 0, which would be a bar nobody wrote.
+ */
+function barOf(declared: Tree, index: number, where: string): Schemas["EndOfTurnBar"] {
+  const name = `end_of_turn.bars[${index}]`;
+  if (!(declared instanceof Map)) {
+    throw new ConfigurationError(`${where}: ${name} should be a mapping of from_ms and bar`);
+  }
+  refuseUnknown(declared.keys(), BAR_KEYS, "end_of_turn.bars", where);
+  const from = declared.get("from_ms");
+  const bar = declared.get("bar");
+  if (from === undefined || bar === undefined) {
+    throw new ConfigurationError(`${where}: ${name} needs both from_ms and bar`);
+  }
+  if (typeof bar !== "string" || !/^[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?$/.test(bar)) {
+    throw new ConfigurationError(`${where}: ${name}.bar must be a number`);
+  }
+  return { from_ms: whole(from, `${name}.from_ms`, where), bar: Number(bar) };
+}
+
+/** A plain scalar YAML 1.2's core schema reads as a boolean or a number, not a string. */
+const NOT_A_STRING =
+  /^(?:true|True|TRUE|false|False|FALSE|[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+|[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$/;
+
+/**
+ * Reads a value written in YAML's flow style, `{from_ms: 0, bar: 0.97}` or `[one, two]`,
+ * nested as deep as it goes, or a scalar on its own.
+ */
+function flow(text: string, key: string, where: string): Tree {
+  let at = 0;
+  const unreadable = (): ConfigurationError =>
+    new ConfigurationError(`${where}: ${key} cannot be read from ${JSON.stringify(text)}`);
+  const space = (): void => {
+    while (/\s/.test(text.charAt(at))) {
+      at++;
+    }
+  };
+  // A scalar runs to whatever closes what it is in, unless it is quoted.
+  const word = (ends: string): string => {
+    space();
+    const start = at;
+    const quote = text.charAt(at);
+    if (quote === '"' || quote === "'") {
+      const close = text.indexOf(quote, at + 1);
+      if (close < 0) {
+        throw unreadable();
+      }
+      at = close + 1;
+      return text.slice(start, at);
+    }
+    while (at < text.length && !ends.includes(text.charAt(at))) {
+      at++;
+    }
+    return text.slice(start, at).trim();
+  };
+  const value = (ends: string): Tree => {
+    space();
+    const open = text.charAt(at);
+    if (open !== "{" && open !== "[") {
+      return scalar(word(ends));
+    }
+    at++;
+    const close = open === "{" ? "}" : "]";
+    const mapped = new Map<string, Tree>();
+    const items: Tree[] = [];
+    space();
+    while (text.charAt(at) !== close) {
+      if (open === "[") {
+        items.push(value(",]"));
+      } else {
+        const name = scalar(word(":,}"));
+        if (!name || text.charAt(at) !== ":") {
+          throw unreadable();
+        }
+        at++;
+        mapped.set(name, value(",}"));
+      }
+      space();
+      if (text.charAt(at) === ",") {
+        at++;
+        space();
+      } else if (text.charAt(at) !== close) {
+        throw unreadable();
+      }
+    }
+    at++;
+    return open === "{" ? mapped : items;
+  };
+
+  const read = value("");
+  space();
+  if (at < text.length) {
+    throw unreadable();
+  }
+  return read;
+}
+
+function refuseUnknown(keys: Iterable<string>, known: Set<string>, name: string, where: string): void {
+  for (const key of keys) {
+    if (!known.has(key)) {
+      throw new ConfigurationError(`${where}: unknown ${name} setting ${JSON.stringify(key)}`);
+    }
+  }
+}
+
+/** A whole number, as written: whether it is in range is the router's to say. */
+function whole(value: Tree, name: string, where: string): number {
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) {
+    throw new ConfigurationError(`${where}: ${name} must be a whole number`);
+  }
+  return Number(value);
 }
 
 function connectorOf(

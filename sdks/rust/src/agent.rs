@@ -650,6 +650,8 @@ impl Agent {
                 source: text(&video.source),
             }),
             dispatch: settings.dispatch.clone(),
+            end_of_turn: settings.end_of_turn.clone(),
+            floor_control: settings.floor_control.clone(),
             connectors,
             ..Default::default()
         };

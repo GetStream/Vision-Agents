@@ -81,6 +81,19 @@ func (s *AgentSuite) TestSilenceDeclinesOnceTheWaitHasPassedSinceTheQuestionWasS
 	s.never(func() bool { return len(s.runner.asked()) > 0 }, "a call nobody allowed ran")
 }
 
+// The note that silence declined a call is the router's, on the caller's side of the
+// conversation, and no caller's speech: a model of the call's speech is not told it was said.
+func (s *AgentSuite) TestTheNoteThatSilenceDeclinedIsNotSaid() {
+	s.agentAsksAndWaits(100 * time.Millisecond)
+	s.askFor()
+	s.eventually(s.declinedBySilence, "silence never declined the call")
+
+	at := slices.IndexFunc(s.history(), func(m llm.Message) bool { return strings.Contains(m.Content, "did not say yes") })
+	s.Require().GreaterOrEqual(at, 0)
+	s.Equal(llm.User, s.history()[at].Role)
+	s.True(s.history()[at].Typed, "the router's note was kept as said on the call")
+}
+
 func (s *AgentSuite) TestAYesAfterTheWaitAsksTheModelToCallTheToolAgain() {
 	s.agentAsksAndWaits(100 * time.Millisecond)
 	s.askFor()

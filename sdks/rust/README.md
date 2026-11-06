@@ -271,7 +271,11 @@ agent.knowledge()?.add_url("https://example.com/pricing", "Pricing", "", Some(24
 `sync` stores the directory as a config in one request, and `.agent_sync` records its
 fingerprint, so syncing on every startup sends nothing when nothing changed. A key
 `agent.yaml` does not know is refused; besides the models it takes `harness`, `subagent`,
-`greeting` (`{text, mode}`), `connectors`, `sandbox` and `dispatch`. A
+`greeting` (`{text, mode}`), `connectors`, `sandbox`, `dispatch`, `end_of_turn`, how eager
+chorus-asr's turn-taking is (`{max_wait_ms: 900}`, `{preset: fast}` or `{bars: [{from_ms, bar}, ...]}`,
+`{}` for the server's default; left out, the stored choice stays), and `floor_control`, the model
+that controls the agent's floor (`stream/chorus-asr`, or `""` for the default flow controller,
+sent as written; left out, the stored choice stays). A
 connector is its alias (`- github`) or `{name, connector, tools, connection, required}`; `connection`
 is an app connection's id or its only label. Leaving `connectors` out keeps the stored bindings, and
 `connectors: []` removes them. With a `simulations/` directory the config's

@@ -229,11 +229,107 @@ public sealed class FolderTests : IDisposable
     [InlineData("sandbox_options:\n  timeout: 2h\n")]
     [InlineData("sandbox_options:\n  cpu: two\n")]
     [InlineData("sandbox_options:\n  network: maybe\n")]
+    [InlineData("end_of_turn:\n  max_wait: 900\n")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n")]
+    [InlineData("end_of_turn: fast\n")]
+    [InlineData("end_of_turn: []\n")]
+    [InlineData("end_of_turn:\n  max_wait_ms: soon\n")]
+    [InlineData("end_of_turn:\n  max_wait_ms: 900.5\n")]
+    [InlineData("end_of_turn:\n  preset: {name: fast}\n")]
+    [InlineData("end_of_turn:\n  bars: {from_ms: 0, bar: 0.9}\n")]
+    [InlineData("end_of_turn:\n  bars: [0.9]\n")]
+    [InlineData("end_of_turn:\n  bars:\n    - ~\n")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from_ms: soon, bar: 0.9}\n")]
+    [InlineData("end_of_turn:\n  bars:\n    - {bar: 0.9}\n")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from_ms: 0}\n")]
     public void ADeclarationKeyNobodyKnowsIsRefused(string declaration)
     {
         Write("agent.yaml", declaration);
 
         Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Theory]
+    [InlineData("end_of_turn:\n  max_wait: 900\n", "'max_wait'")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n", "'from'")]
+    public void AnEndOfTurnKeyNobodyKnowsIsRefusedByName(string declaration, string named)
+    {
+        Write("agent.yaml", declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Contains(named, refused.Message);
+    }
+
+    [Theory]
+    [InlineData("end_of_turn:\n  bars:\n    - {bar: 0.9}\n", "end_of_turn.bars[0] names both from_ms and bar")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from_ms: 0}\n", "end_of_turn.bars[0] names both from_ms and bar")]
+    [InlineData("end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 0.9}\n    - {bar: 0.2}\n", "end_of_turn.bars[1] names both from_ms and bar")]
+    [InlineData("end_of_turn:\n  bars:\n    - ~\n", "end_of_turn.bars[0] names both from_ms and bar")]
+    public void ABarMissingFromMsOrBarIsRefusedWithItsPlace(string declaration, string reason)
+    {
+        Write("agent.yaml", declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.EndsWith(reason, refused.Message);
+    }
+
+    [Fact]
+    public void AnEndOfTurnIsReadAsWrittenAndNoneIsNull()
+    {
+        Write("agent.yaml", "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: 1}\n    - {from_ms: 900, bar: 0.25}\n");
+        var bars = Folder.Load(_root).Declaration.EndOfTurn!.Bars!;
+        Assert.Equal([(0L, 1.0), (900L, 0.25)], bars.Select(bar => (bar.FromMs, bar.Bar)));
+
+        Write("agent.yaml", "end_of_turn: {}\n");
+        var empty = Folder.Load(_root).Declaration.EndOfTurn!;
+        Assert.Equal((null, null, null), (empty.MaxWaitMs, empty.Preset, empty.Bars));
+
+        Write("agent.yaml", "end_of_turn:\n");
+        Assert.Null(Folder.Load(_root).Declaration.EndOfTurn);
+    }
+
+    /// <summary>
+    /// floor_control is read as written, empty included; which models there are is the router's to
+    /// say.
+    /// </summary>
+    [Theory]
+    [InlineData("floor_control: stream/chorus-asr\n", "stream/chorus-asr")]
+    [InlineData("floor_control: \"stream/chorus-asr\"\n", "stream/chorus-asr")]
+    [InlineData("floor_control: \"\"\n", "")]
+    [InlineData("floor_control: other\n", "other")]
+    public void AFloorControlIsReadAsWritten(string declaration, string chosen)
+    {
+        Write("agent.yaml", declaration);
+
+        Assert.Equal(chosen, Folder.Load(_root).Declaration.FloorControl);
+    }
+
+    [Theory]
+    [InlineData("floor_control:\n")]
+    [InlineData("floor_control: ~\n")]
+    [InlineData("llm: openai/gpt-5.6\n")]
+    public void AFileNamingNoFloorControlHasNone(string declaration)
+    {
+        Write("agent.yaml", declaration);
+
+        Assert.Null(Folder.Load(_root).Declaration.FloorControl);
+    }
+
+    [Theory]
+    [InlineData("floor_control: {model: chorus-asr, mode: act}\n")]
+    [InlineData("floor_control: [stream/chorus-asr]\n")]
+    [InlineData("floor_control: true\n")]
+    [InlineData("floor_control: 1\n")]
+    public void AFloorControlThatIsNotAStringIsRefusedByName(string declaration)
+    {
+        Write("agent.yaml", declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": floor_control must be a string, such as stream/chorus-asr", refused.Message);
     }
 
     [Fact]
