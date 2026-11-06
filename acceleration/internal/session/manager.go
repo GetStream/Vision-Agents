@@ -18,6 +18,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -101,6 +102,10 @@ type ManagerOptions struct {
 	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
 	// language model. Empty keeps the language model.
 	FlowJudge string
+	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
+	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
+	// nothing about turns.
+	AudioFloor *audiofloor.Client
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -349,6 +354,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
+		began:         time.Now(),
 		logger:        m.logger,
 		watchers:      map[uint64]*watcher{},
 		detachedGrace: m.options.DetachedGrace,
@@ -783,6 +789,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			ControllerTarget:   spec.ControllerTarget,
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
+			AudioFloor:         m.options.AudioFloor,
+			AudioFloorMode:     m.floorMode(created.id, spec),
+			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),

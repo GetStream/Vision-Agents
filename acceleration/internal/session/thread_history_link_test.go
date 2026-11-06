@@ -57,10 +57,10 @@ func (s *EpisodeReadingSuite) TestAThreadSessionOfALinkedNumberIsHandedItsHistor
 		handed  []string
 		hidden  []string
 	}{
-		{"neither field", "+15550100111", nil, nil, []string{"penicillin", "15:00"}},
-		{"false", "+15550100112", &store.PhoneHistory{}, nil, []string{"penicillin", "15:00"}},
-		{"since", "+15550100113", &store.PhoneHistory{Since: since}, []string{"15:00"}, []string{"penicillin"}},
-		{"true", "+15550100114", &store.PhoneHistory{All: true}, []string{"penicillin", "15:00"}, nil},
+		{"neither field", "+15550100111", nil, nil, []string{"penicillin", "appointment at 15:00"}},
+		{"false", "+15550100112", &store.PhoneHistory{}, nil, []string{"penicillin", "appointment at 15:00"}},
+		{"since", "+15550100113", &store.PhoneHistory{Since: since}, []string{"appointment at 15:00"}, []string{"penicillin"}},
+		{"true", "+15550100114", &store.PhoneHistory{All: true}, []string{"penicillin", "appointment at 15:00"}, nil},
 	} {
 		told := s.threadStory(c.number, true, c.history)
 
@@ -81,7 +81,7 @@ func (s *EpisodeReadingSuite) TestAThreadSessionOfAnUnlinkedNumberIsHandedItsWho
 
 	told := s.threadStory("+15550100115", false, nil)
 
-	for _, said := range []string{"penicillin", "15:00", "it is Bob"} {
+	for _, said := range []string{"penicillin", "appointment at 15:00", "it is Bob"} {
 		s.Contains(told, said)
 	}
 }

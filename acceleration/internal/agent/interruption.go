@@ -23,6 +23,9 @@ const (
 	causeVoiceLost = "voice_lost"
 	// causeVoiceRefused is the voice refusing a line said as written.
 	causeVoiceRefused = "voice_refused"
+	// causeShortened is a reply cut at its tail once the controller ruled the caller had
+	// added an item to the request, or a line of the agent's own talked over that way.
+	causeShortened = "shortened"
 )
 
 // echo buckets: how much of the words that took the floor the reply had itself said.

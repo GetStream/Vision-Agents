@@ -33,6 +33,8 @@ final readonly class SyncAgentRequest
         /** @var list<AgentConnectorBinding>|null */
         public ?array $connectors = null,
         public ?AgentDispatch $dispatch = null,
+        // agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once...
+        public ?FloorControl $floorControl = null,
         public ?Greeting $greeting = null,
         // The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Emp...
         public ?string $guardrail = null,
@@ -104,6 +106,7 @@ final readonly class SyncAgentRequest
             checkChanges: array_key_exists('check_changes', $data) && $data['check_changes'] !== null ? Json::bool($data, 'check_changes') : null,
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
+            floorControl: array_key_exists('floor_control', $data) && $data['floor_control'] !== null ? FloorControl::fromArray(Json::object($data, 'floor_control')) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -164,6 +167,9 @@ final readonly class SyncAgentRequest
         }
         if ($this->dispatch !== null) {
             $out['dispatch'] = $this->dispatch->toArray();
+        }
+        if ($this->floorControl !== null) {
+            $out['floor_control'] = $this->floorControl->toArray();
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();

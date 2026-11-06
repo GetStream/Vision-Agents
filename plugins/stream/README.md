@@ -181,6 +181,9 @@ connectors:
   - github
 keyterms:
   - Vision Agents
+floor_control:                    # leave it out to keep the stored choice; {} is the default flow controller
+  model: stream/chorus-asr
+  max_wait_ms: 800                # optional: how long a caller may wait once they stop
 tags:
   project: support
 ```

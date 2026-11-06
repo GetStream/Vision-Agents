@@ -134,6 +134,20 @@ stored config instead of sending it again. The fingerprint is the Go SDK's, so e
 the same directory. An unknown key in `agent.yaml`, `urls.yaml` or a simulations file is
 refused rather than ignored.
 
+`floor_control:` is the model that controls the agent's floor, and how long a caller may wait
+once they stop:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; the server's default point otherwise
+```
+
+It is sent as written, and `{}` is the default flow controller again. Left out, the stored choice
+stays, and an agent that never chose has the default flow controller; the router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point it
+measured.
+
 ```php
 $agent->knowledge()->addUrl('https://example.com/pricing', title: 'Pricing', refreshHours: 24);
 ```

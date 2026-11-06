@@ -32,6 +32,7 @@ if TYPE_CHECKING:
     from ..models.agent_review import AgentReview
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
@@ -63,6 +64,9 @@ class AgentConfigRequest:
             writes none and reads none. record writes each conversation's card and its summary into the person's omni-
             channel, and no session reads them. on writes them as record does, and a session starts with the person's other
             cards. Turning record into on reads what record wrote.
+        floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
+            once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+            anything else replaces the stored choice whole.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
@@ -144,6 +148,7 @@ class AgentConfigRequest:
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     episode_cards: EpisodeCardsMode | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -204,6 +209,10 @@ class AgentConfigRequest:
         episode_cards: str | Unset = UNSET
         if not isinstance(self.episode_cards, Unset):
             episode_cards = self.episode_cards.value
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -329,6 +338,8 @@ class AgentConfigRequest:
             field_dict["dispatch"] = dispatch
         if episode_cards is not UNSET:
             field_dict["episode_cards"] = episode_cards
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -409,6 +420,7 @@ class AgentConfigRequest:
         from ..models.agent_review import AgentReview
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
@@ -453,6 +465,13 @@ class AgentConfigRequest:
             episode_cards = UNSET
         else:
             episode_cards = EpisodeCardsMode(_episode_cards)
+
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -620,6 +639,7 @@ class AgentConfigRequest:
             connectors=connectors,
             dispatch=dispatch,
             episode_cards=episode_cards,
+            floor_control=floor_control,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

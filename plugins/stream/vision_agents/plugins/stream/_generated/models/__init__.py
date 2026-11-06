@@ -253,6 +253,7 @@ from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
 from .error_response import ErrorResponse
 from .error_type import ErrorType
+from .floor_control import FloorControl
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
 from .generated_image import GeneratedImage
@@ -871,6 +872,7 @@ __all__ = (
     "ErrorDetail",
     "ErrorResponse",
     "ErrorType",
+    "FloorControl",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
     "GeneratedImage",

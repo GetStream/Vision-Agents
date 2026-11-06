@@ -35,6 +35,7 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
@@ -158,6 +159,10 @@ type Options struct {
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
+	// AudioFloor is the router's chorus-asr server, which an agent's floor control opts in to.
+	// Absent, such a floor control is refused. Present, a floor control's max_wait_ms is
+	// checked against what the server publishes.
+	AudioFloor *audiofloor.Client
 	// Stream resolves which Stream app, and which credential, the router acts in for each
 	// customer: tokens, guests and the transcripts read back. Absent when the deployment
 	// has no Stream app at all, in which case those paths say so.
@@ -343,6 +348,7 @@ type Server struct {
 	forwarder          *node.Forwarder
 	peerCredentials    [][]byte // what a peer may present: one credential per key of the keyring
 	streams            *Streams
+	audioFloor         *audiofloor.Client // nil without a chorus-asr server
 	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
 	hookSecret         string
@@ -545,6 +551,7 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		directory:          options.Directory,
 		workers:            options.Workers,
 		streams:            options.Streams,
+		audioFloor:         options.AudioFloor,
 		stream:             options.Stream,
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
 		hookSecret:         options.HookSecret,

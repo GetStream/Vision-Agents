@@ -206,11 +206,15 @@ type Settings struct {
 	Scheduling *SchedulingSettings `yaml:"scheduling"`
 	// Calls are the tools the agent has on a phone call. A sync always sends them, with
 	// the defaults for what the file leaves out, so it replaces what the dashboard set.
-	Calls    *CallSettings     `yaml:"calls"`
-	Keyterms []string          `yaml:"keyterms"`
-	Tags     map[string]string `yaml:"tags"`
-	Video    *VideoSettings    `yaml:"video"`
-	Dispatch *DispatchSettings `yaml:"dispatch"`
+	Calls *CallSettings `yaml:"calls"`
+	// FloorControl is the model that controls the agent's floor, and how long a caller may
+	// wait once they stop. Nil leaves the stored choice; an empty mapping ({}) is the default
+	// flow controller again, which an agent that never chose has.
+	FloorControl *FloorControlSettings `yaml:"floor_control"`
+	Keyterms     []string              `yaml:"keyterms"`
+	Tags         map[string]string     `yaml:"tags"`
+	Video        *VideoSettings        `yaml:"video"`
+	Dispatch     *DispatchSettings     `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -386,6 +390,60 @@ type TransferDestination struct {
 	When string `yaml:"when"`
 	// Warm announces the caller to the person answering before connecting them.
 	Warm bool `yaml:"warm"`
+}
+
+// FloorControlSettings is the model that controls the agent's floor, hearing the caller: when
+// they have finished, and what to do about speech over the agent. MaxWaitMs is how long a
+// caller may wait once they stop; left out, the server's default point.
+//
+//	floor_control:
+//	    model: stream/chorus-asr
+//	    max_wait_ms: 800
+//
+// Each is nil when the file doesn't name it, and both are sent as written: which models there
+// are, and whether a wait needs one, is the router's to say, and it refuses stream/chorus-asr
+// when it has no chorus-asr server. An empty mapping is the default flow controller again.
+type FloorControlSettings struct {
+	// Model is the model that controls the floor; stream/chorus-asr is the one there is.
+	Model *string
+	// MaxWaitMs is the most a caller who has finished may wait for the answer, in
+	// milliseconds: the server's measured point with the fewest cut-ins within it.
+	MaxWaitMs *int
+}
+
+// UnmarshalYAML reads floor_control by hand, so that each refusal names what is wrong: a value
+// that is not a mapping, such as the string it once was, a key nobody knows, a model that is
+// not a string, or a wait that is not an integer.
+func (settings *FloorControlSettings) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.MappingNode {
+		return errors.New("floor_control is a mapping of model and, optionally, max_wait_ms")
+	}
+	var read FloorControlSettings
+	for i := 0; i+1 < len(node.Content); i += 2 {
+		key, value := node.Content[i].Value, node.Content[i+1]
+		if key != "model" && key != "max_wait_ms" {
+			return fmt.Errorf("%q is not a floor_control setting; model and max_wait_ms are", key)
+		}
+		if value.ShortTag() == "!!null" {
+			continue
+		}
+		switch key {
+		case "model":
+			if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!str" {
+				return errors.New("floor_control.model must be a string, such as stream/chorus-asr")
+			}
+			model := value.Value
+			read.Model = &model
+		case "max_wait_ms":
+			var wait int
+			if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!int" || value.Decode(&wait) != nil {
+				return errors.New("floor_control.max_wait_ms must be an integer of milliseconds")
+			}
+			read.MaxWaitMs = &wait
+		}
+	}
+	*settings = read
+	return nil
 }
 
 // ChannelSettings is one line the agent is reachable on.

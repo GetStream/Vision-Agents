@@ -412,8 +412,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ## Bug Fixes
 
 ### Photos an agent cannot see are refused before they are uploaded
-
 A question with photos and a `request_id`, on `createResponse` or the session socket's `respond`, sent to an agent with neither a vision skill nor a conversation model that accepts images, was refused only after its photos were uploaded and the person's message written, leaving a message in the channel that nothing would answer. It is now refused first, with the same 400 `not_configured`, and nothing is uploaded or written.
+
+### A call that began before its number's link stays before it
+A call episode was dated by the router's clock while a number's link is dated by Postgres's, so with the router's clock ahead, a call that began just before the link counted as after it and the linked user's sessions read it. A call episode is now dated by Postgres's clock, from when its session began, also when its card is written later because the caller joined late (#1824).
 
 ### A phone operation that fails on the router's side is a 500
 

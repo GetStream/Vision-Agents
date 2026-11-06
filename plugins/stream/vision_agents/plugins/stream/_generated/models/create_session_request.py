@@ -12,6 +12,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.create_session_request_custom import CreateSessionRequestCustom
     from ..models.create_session_request_tags import CreateSessionRequestTags
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
@@ -54,6 +55,9 @@ class CreateSessionRequest:
             back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
             writing.
         description (str | Unset): A longer note about the conversation, searched alongside the title.
+        floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
+            once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+            anything else replaces the stored choice whole.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         history (list[HistoryMessage] | Unset): The conversation so far, for a backend that keeps its own: a thread in
             its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on:
@@ -154,6 +158,7 @@ class CreateSessionRequest:
     context_truncated: bool | Unset = UNSET
     custom: CreateSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     history: list[HistoryMessage] | Unset = UNSET
     id: str | Unset = UNSET
@@ -215,6 +220,10 @@ class CreateSessionRequest:
             custom = self.custom.to_dict()
 
         description = self.description
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -329,6 +338,8 @@ class CreateSessionRequest:
             field_dict["custom"] = custom
         if description is not UNSET:
             field_dict["description"] = description
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if history is not UNSET:
@@ -400,6 +411,7 @@ class CreateSessionRequest:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.create_session_request_custom import CreateSessionRequestCustom
         from ..models.create_session_request_tags import CreateSessionRequestTags
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
@@ -448,6 +460,13 @@ class CreateSessionRequest:
             custom = CreateSessionRequestCustom.from_dict(_custom)
 
         description = d.pop("description", UNSET)
+
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -572,6 +591,7 @@ class CreateSessionRequest:
             context_truncated=context_truncated,
             custom=custom,
             description=description,
+            floor_control=floor_control,
             greeting=greeting,
             history=history,
             id=id,

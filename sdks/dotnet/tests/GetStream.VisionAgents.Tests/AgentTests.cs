@@ -836,6 +836,39 @@ public sealed class AgentTests : IDisposable
             synced["sandbox_options"]!.ToJsonString());
     }
 
+    /// <summary>
+    /// agent.yaml's floor_control goes as written, an empty one as {} and a model the router does
+    /// not know as it is, for the router to judge.
+    /// </summary>
+    [Theory]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", """{"max_wait_ms":800,"model":"stream/chorus-asr"}""")]
+    [InlineData("floor_control: {model: stream/chorus-asr}\n", """{"model":"stream/chorus-asr"}""")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: ~\n", """{"model":"stream/chorus-asr"}""")]
+    [InlineData("floor_control: {}\n", "{}")]
+    [InlineData("floor_control:\n  model: other\n", """{"model":"other"}""")]
+    public async Task SyncSendsTheFloorControlTheAgentDeclared(string declaration, string sent)
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router, declaration);
+
+        Assert.Equal(sent, synced["floor_control"]!.ToJsonString());
+    }
+
+    /// <summary>A file that names no floor_control sends none, so the stored choice stays.</summary>
+    [Theory]
+    [InlineData("llm: openai/gpt-5.6\n")]
+    [InlineData("floor_control:\n")]
+    [InlineData("floor_control: ~\n")]
+    public async Task SyncSendsNoFloorControlWhenAgentYamlNamesNone(string declaration)
+    {
+        await using var router = await TestRouter.StartAsync();
+
+        var synced = await SyncDeclaringAsync(router, declaration);
+
+        Assert.False(synced.AsObject().ContainsKey("floor_control"));
+    }
+
     private async Task<JsonNode> SyncDeclaringAsync(TestRouter router, string declaration)
     {
         var root = Path.Combine(_workspace, "agents", "jean");

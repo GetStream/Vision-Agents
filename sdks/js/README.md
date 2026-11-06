@@ -379,6 +379,20 @@ base and its sandbox are there and nowhere else. Left out, the stored region sta
 agent is in `us`. The router refuses a sync naming a model with no instance in the region,
 naming each, and one whose knowledge base is already kept in another region.
 
+`floor_control` is the model that controls the agent's floor, and how long a caller may wait
+once they stop, sent as written:
+
+```yaml
+floor_control:
+  model: stream/chorus-asr
+  max_wait_ms: 800      # optional; left out, the server's default point
+```
+
+Left out or null, the stored choice stays, and an agent that never chose has the default flow
+controller; `floor_control: {}` is the default flow controller again. The router refuses
+`stream/chorus-asr` without a chorus-asr server, and a `max_wait_ms` shorter than every point
+the server has measured.
+
 Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
 `variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
 `simulations/` directory the config's simulations become exactly what it declares, so an

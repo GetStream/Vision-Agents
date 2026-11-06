@@ -598,6 +598,9 @@ const REPLACED = new Map([
  * greeting:
  *   text: Hello, how can I help?
  *   mode: variation
+ * floor_control:
+ *   model: stream/chorus-asr
+ *   max_wait_ms: 800
  * ```
  *
  * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for one list
@@ -670,6 +673,11 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
       declared.scheduling = scheduling(mapping(nested, inline, key, where), where);
     } else if (key === "sandbox_options") {
       declared.sandboxOptions = sandboxOptions(indented, inline, where);
+    } else if (key === "floor_control") {
+      const chosen = floorControl(indented, inline, where);
+      if (chosen) {
+        declared.floorControl = chosen;
+      }
     } else {
       throw new ConfigurationError(
         `${where} declares ${JSON.stringify(key)}, which is not something an agent has`,
@@ -988,6 +996,186 @@ function sandboxOptions(lines: string[], inline: string, where: string): Schemas
     }
   }
   return options;
+}
+
+/** A value as agent.yaml writes it: a scalar, undefined for none, a list or a mapping. */
+type Tree = string | undefined | Tree[] | Map<string, Tree>;
+
+const FLOOR_CONTROL_KEYS = new Set(["model", "max_wait_ms"]);
+
+/**
+ * Reads `floor_control:`, the model that controls the agent's floor and how long a caller may
+ * wait once they stop, as a block or on one line:
+ *
+ * ```yaml
+ * floor_control:
+ *   model: stream/chorus-asr
+ *   max_wait_ms: 800
+ * floor_control: {model: stream/chorus-asr}
+ * ```
+ *
+ * Undefined when the key says nothing, which leaves the stored choice; `{}` is the default
+ * flow controller again. Each key is sent as written: which models there are, and whether a
+ * wait needs one, is the router's to say, and it refuses stream/chorus-asr when it has no
+ * chorus-asr server.
+ */
+function floorControl(
+  lines: string[],
+  inline: string,
+  where: string,
+): Schemas["FloorControl"] | undefined {
+  const notMapping = (): ConfigurationError =>
+    new ConfigurationError(`${where}: floor_control is a mapping of model and, optionally, max_wait_ms`);
+  let declared: Tree;
+  if (scalar(inline) !== undefined) {
+    if (lines.some((line) => !line.trim().startsWith("#"))) {
+      throw notMapping();
+    }
+    declared = flow(inline, "floor_control", where);
+  } else {
+    declared = floorControlBlock(lines, where);
+  }
+  if (declared === undefined) {
+    return undefined;
+  }
+  if (!(declared instanceof Map)) {
+    throw notMapping();
+  }
+  refuseUnknown(declared.keys(), FLOOR_CONTROL_KEYS, "floor_control", where);
+  const read: { -readonly [key in keyof Schemas["FloorControl"]]: Schemas["FloorControl"][key] } = {};
+  const model = declared.get("model");
+  if (model !== undefined) {
+    if (typeof model !== "string") {
+      throw new ConfigurationError(`${where}: floor_control.model must be a string`);
+    }
+    read.model = model;
+  }
+  const wait = declared.get("max_wait_ms");
+  if (wait !== undefined) {
+    read.max_wait_ms = whole(wait, "floor_control.max_wait_ms", where);
+  }
+  return read;
+}
+
+/** The block under `floor_control:`, each key's value read as written. */
+function floorControlBlock(lines: string[], where: string): Map<string, Tree> | undefined {
+  const declared = new Map<string, Tree>();
+  let keyColumn = -1;
+  let last: string | undefined;
+  for (const line of lines) {
+    const trimmed = line.replace(/\s+#.*$/, "").trim();
+    if (!trimmed || trimmed.startsWith("#")) {
+      continue;
+    }
+    const column = line.length - line.trimStart().length;
+    if (keyColumn < 0) {
+      if (trimmed.startsWith("-")) {
+        throw new ConfigurationError(`${where}: floor_control is a mapping of model and, optionally, max_wait_ms`);
+      }
+      keyColumn = column;
+    }
+    // A list or a mapping under model or max_wait_ms is not the one value either one is.
+    if (last !== undefined && (column > keyColumn || trimmed.startsWith("-"))) {
+      throw new ConfigurationError(`${where}: floor_control.${last} is one value, not a list or a mapping`);
+    }
+    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(trimmed);
+    if (column !== keyColumn || !entry) {
+      throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} belongs to no floor_control setting`);
+    }
+    last = entry[1] as string;
+    refuseUnknown([last], FLOOR_CONTROL_KEYS, "floor_control", where);
+    declared.set(last, flow((entry[2] ?? "").trim(), `floor_control.${last}`, where));
+  }
+  return keyColumn < 0 ? undefined : declared;
+}
+
+/**
+ * Reads a value written in YAML's flow style, `{from_ms: 0, bar: 0.97}` or `[one, two]`,
+ * nested as deep as it goes, or a scalar on its own.
+ */
+function flow(text: string, key: string, where: string): Tree {
+  let at = 0;
+  const unreadable = (): ConfigurationError =>
+    new ConfigurationError(`${where}: ${key} cannot be read from ${JSON.stringify(text)}`);
+  const space = (): void => {
+    while (/\s/.test(text.charAt(at))) {
+      at++;
+    }
+  };
+  // A scalar runs to whatever closes what it is in, unless it is quoted.
+  const word = (ends: string): string => {
+    space();
+    const start = at;
+    const quote = text.charAt(at);
+    if (quote === '"' || quote === "'") {
+      const close = text.indexOf(quote, at + 1);
+      if (close < 0) {
+        throw unreadable();
+      }
+      at = close + 1;
+      return text.slice(start, at);
+    }
+    while (at < text.length && !ends.includes(text.charAt(at))) {
+      at++;
+    }
+    return text.slice(start, at).trim();
+  };
+  const value = (ends: string): Tree => {
+    space();
+    const open = text.charAt(at);
+    if (open !== "{" && open !== "[") {
+      return scalar(word(ends));
+    }
+    at++;
+    const close = open === "{" ? "}" : "]";
+    const mapped = new Map<string, Tree>();
+    const items: Tree[] = [];
+    space();
+    while (text.charAt(at) !== close) {
+      if (open === "[") {
+        items.push(value(",]"));
+      } else {
+        const name = scalar(word(":,}"));
+        if (!name || text.charAt(at) !== ":") {
+          throw unreadable();
+        }
+        at++;
+        mapped.set(name, value(",}"));
+      }
+      space();
+      if (text.charAt(at) === ",") {
+        at++;
+        space();
+      } else if (text.charAt(at) !== close) {
+        throw unreadable();
+      }
+    }
+    at++;
+    return open === "{" ? mapped : items;
+  };
+
+  const read = value("");
+  space();
+  if (at < text.length) {
+    throw unreadable();
+  }
+  return read;
+}
+
+function refuseUnknown(keys: Iterable<string>, known: Set<string>, name: string, where: string): void {
+  for (const key of keys) {
+    if (!known.has(key)) {
+      throw new ConfigurationError(`${where}: unknown ${name} setting ${JSON.stringify(key)}`);
+    }
+  }
+}
+
+/** A whole number, as written: whether it is in range is the router's to say. */
+function whole(value: Tree, name: string, where: string): number {
+  if (typeof value !== "string" || !/^-?\d+$/.test(value)) {
+    throw new ConfigurationError(`${where}: ${name} must be a whole number`);
+  }
+  return Number(value);
 }
 
 function connectorOf(

@@ -629,6 +629,11 @@ type AgentConfig struct {
 	// ResumeHistory is how the config's sessions are handed back a conversation they
 	// carry on. The zero value is the router's default.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
+	// FloorControl is the model that controls the floor in the config's sessions, and how
+	// long a caller may wait once they stop, as the config chose
+	// (20261221090000_floor_control_max_wait.sql). The zero value, NULL, is the default flow
+	// controller.
+	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
 	// if it was never synced from a directory.
 	SyncHash  string     `bun:"sync_hash,notnull"`
@@ -1781,6 +1786,27 @@ func (m ModelOverwrites) Empty() bool {
 	return m == ModelOverwrites{}
 }
 
+// FloorControl is the model that controls an agent's floor, hearing the audio: when a
+// caller's turn has ended, and what is done about speech over the agent. The zero value is the
+// default flow controller, which every agent has until it opts in. MaxWaitMs is the most a
+// caller who has finished may wait for the answer: the point of the server's measured
+// trade-off with the fewest cut-ins whose p90 wait is within it (audiofloor.Policy.Resolve).
+// Zero is the server's default point.
+type FloorControl struct {
+	Model     string `json:"model,omitempty"`
+	MaxWaitMs int    `json:"max_wait_ms,omitempty"`
+}
+
+// FloorControlChorusASR has chorus-asr control the floor, the one model there is, named as
+// the stream/chorus-asr transcriber is.
+const FloorControlChorusASR = "stream/chorus-asr"
+
+// IsZero reports whether no model was chosen, which is the default flow controller. It is
+// also what the nullzero columns read.
+func (f FloorControl) IsZero() bool {
+	return f == FloorControl{}
+}
+
 // ResumeHistory is how much of a conversation a model is handed back when a session opens
 // on it: reopened, resumed by id, joined by voice or forked. A field left unset is no
 // opinion, and the zero value is the router's default: replies as text, the newest 100 turns
@@ -1875,7 +1901,10 @@ type AgentSession struct {
 	// ResumeHistory is what the session was opened with, which reopening it keeps. Zero
 	// takes the config's.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,nullzero"`
-	State         string        `bun:"state,notnull"`
+	// FloorControl is what the session was opened with over its config's, which reopening
+	// it keeps. Zero takes the config's.
+	FloorControl FloorControl `bun:"floor_control,type:jsonb,nullzero"`
+	State        string       `bun:"state,notnull"`
 	// Modality is ModalityText, ModalityVoice or ModalityVideo.
 	Modality  string    `bun:"modality,notnull"`
 	CreatedAt time.Time `bun:"created_at,notnull"`

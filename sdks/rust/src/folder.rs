@@ -161,6 +161,11 @@ pub struct Settings {
     /// What the agent leaves to this application's own dispatch worker. With `text`
     /// enabled the model does not answer what end users write; a worker is handed it.
     pub dispatch: Option<types::AgentDispatch>,
+    /// The model that controls the agent's floor, and how long a caller may wait once they stop
+    /// (`max_wait_ms`), sent as written. `None` leaves the stored choice; an empty mapping
+    /// (`{}`) is the default flow controller again. Which models there are, and whether a wait
+    /// names one, is the router's to say.
+    pub floor_control: Option<types::FloorControl>,
 }
 
 /// An agent written down as a directory.
@@ -486,6 +491,7 @@ fn declare(raw: &str) -> std::result::Result<Settings, String> {
             "tags" => settings.tags = mapping(&value, &key)?,
             "video" => settings.video = video(&value)?,
             "dispatch" => settings.dispatch = dispatch(&value)?,
+            "floor_control" => settings.floor_control = floor_control(&value)?,
             _ => return Err(format!("{key:?} is not a setting agent.yaml knows")),
         }
     }
@@ -676,6 +682,45 @@ fn dispatch(value: &Yaml) -> std::result::Result<Option<types::AgentDispatch>, S
         *setting = named(&text, "dispatch setting; enabled or disabled is")?;
     }
     Ok(Some(dispatch))
+}
+
+/// floor_control as written: the model and, optionally, `max_wait_ms`, a key whose value is
+/// null left out, and `{}` the default flow controller again. Only its shape is read here; the
+/// router refuses a model it does not have, or a wait without one.
+fn floor_control(value: &Yaml) -> std::result::Result<Option<types::FloorControl>, String> {
+    let Yaml::Hash(fields) = value else {
+        return if value.is_null() {
+            Ok(None)
+        } else {
+            Err("floor_control is a mapping of model and, optionally, max_wait_ms".into())
+        };
+    };
+    let mut floor_control = types::FloorControl::default();
+    for (key, value) in fields {
+        let key = scalar(key).unwrap_or_default();
+        match key.as_str() {
+            "model" => {
+                floor_control.model = match value {
+                    Yaml::String(model) => Some(model.clone()),
+                    Yaml::Null => None,
+                    _ => return Err("floor_control.model must be a string".into()),
+                }
+            }
+            "max_wait_ms" => {
+                floor_control.max_wait_ms = match value {
+                    Yaml::Integer(wait) => Some(*wait),
+                    Yaml::Null => None,
+                    _ => return Err("floor_control.max_wait_ms must be an integer".into()),
+                }
+            }
+            _ => {
+                return Err(format!(
+                    "{key:?} is not a floor_control setting; model and max_wait_ms are"
+                ));
+            }
+        }
+    }
+    Ok(Some(floor_control))
 }
 
 fn sandbox_options(value: &Yaml) -> std::result::Result<Option<types::SandboxOptions>, String> {

@@ -547,6 +547,7 @@ func (a *Agent) openCascade(s Settings) (*prepared, error) {
 		Model:        prep.llm,
 		Controller:   prep.controller,
 		Judge:        judge,
+		Hearer:       a.audioFloor.acting(),
 		OpenSubagent: a.openSubagent(s.SubagentTarget),
 		Capture:      a.captureVideo,
 		Skills:       a.options.Skills,
