@@ -116,6 +116,7 @@ func (s *GivenNamesSuite) TestAToolGivesANameInAValueWholeNotInAKey() {
 		{"a customer key", result("get_order", `{"order_id":"A1","customer":{"id":"42"}}`), `{"customer_name":"Customer"}`, true},
 		{"a guest key with no value", result("availability", `{"rooms":[{"guest":null,"number":"12"}]}`), `{"guest_name":"Guest"}`, true},
 		{"a caller key", result("call_info", `{"caller":"+15550100199"}`), `{"name":"Caller"}`, true},
+		{"a key that is the name", result("guests", `{"John Doe":{"room":"12"}}`), `{"name":"John Doe"}`, true},
 		{"a name broken across lines in one value", result("guests", `{"guest":"John\nDoe"}`), `{"name":"John Doe"}`, false},
 		{"a name in a value", result("guests", `{"guest":"John Doe"}`), `{"name":"John Doe"}`, false},
 	} {
