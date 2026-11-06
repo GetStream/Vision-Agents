@@ -136,10 +136,6 @@ type Transcriber struct {
 	voiced, fresh bool
 	quiet         time.Duration
 	utterance     int64
-	// missed is the utterance whose words the server failed to write, set by transcribe;
-	// retrying has its audio asked for again at its end, or once more speech has come.
-	missed   atomic.Int64
-	retrying bool
 	// interims says the words so far are written while the caller talks (interim), the
 	// client's setting; spoken is the speech since the utterance's words were last asked
 	// for, in frames, talked the speech in the utterance so far, and interimOut says an
@@ -166,13 +162,16 @@ type Transcriber struct {
 	running sync.WaitGroup
 }
 
-// request is an utterance's words to write, or with no audio its end on the words last
-// written.
+// request is an utterance's words to write, or its end. An end carries the whole
+// utterance's audio, and fresh says speech came since its words were last asked for: the end
+// is written from its audio then, or when the words last asked for were not written, and
+// otherwise on the words last written.
 type request struct {
 	participant stt.Participant
 	utterance   int64
 	audio       harness.Audio
 	final       bool
+	fresh       bool
 }
 
 // NewTranscriber returns an unstarted transcriber asking client, for callers who speak
@@ -237,20 +236,15 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	if at, ok := t.endedOnCheck(); ok {
 		// A pause check ended the utterance on its words: the next begins after its audio.
 		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken, t.talked = at, at, false, false, false, 0, 0, 0
+		t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked = at, at, false, false, 0, 0, 0
 	}
 	if speech {
-		t.voiced, t.fresh, t.retrying, t.quiet = true, true, false, 0
+		t.voiced, t.fresh, t.quiet = true, true, 0
 		t.spoken++
 		t.talked++
 		t.resumed()
 	} else {
 		t.quiet += frame
-	}
-	if t.missed.CompareAndSwap(t.utterance+1, 0) {
-		// Not at once, which a server failing fast would answer with a request a frame:
-		// at the end, or at the next pause after more speech.
-		t.fresh, t.retrying = true, true
 	}
 	heard := t.heard.Frames()
 	utterance := func() harness.Audio { return t.heard.Last(time.Duration(heard-t.start) * frame) }
@@ -260,20 +254,15 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	case t.checksPause(participant, heard):
 		// An agent's checks of the pause end the utterance, with its words.
 	case t.quiet >= endAfter || heard-t.start >= int64(maxUtterance/frame):
-		end := request{participant: participant, utterance: t.utterance + 1, final: true}
-		if t.fresh {
-			end.audio = utterance()
-		} else {
-			// No more to write, but the final is of all of it.
-			end.audio.Duration = time.Duration(heard-t.start) * frame
-		}
-		t.ask(end)
+		// Whether the words last asked for were written is transcribe's to know, which may
+		// not have asked for them yet, so the end takes the audio either way.
+		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance(), final: true, fresh: t.fresh})
 		t.utterance++
-		t.start, t.ended, t.voiced, t.fresh, t.retrying, t.quiet, t.spoken, t.talked = heard, heard, false, false, false, 0, 0, 0
+		t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked = heard, heard, false, false, 0, 0, 0
 		t.mu.Lock()
 		t.newUtteranceLocked()
 		t.mu.Unlock()
-	case t.quiet >= writeAfter && t.fresh && !t.retrying:
+	case t.quiet >= writeAfter && t.fresh:
 		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
 		t.fresh, t.spoken = false, 0
 	}
@@ -326,9 +315,13 @@ func (t *Transcriber) transcribe() {
 	var last string
 	var lastOf int64
 	// failed counts the requests in a row the server did not answer (Unreachable), and
-	// failedSince is when the first of them failed.
+	// failedSince is when the first of them failed. owed is the utterance whose words were
+	// last asked for and not written, which its end asks for again: a failure costs a
+	// request, and the end is asked for when the pause is, before the pause's words are
+	// written or have failed, as on a server that is slow to fail.
 	var failed int
 	var failedSince time.Time
+	var owed int64
 	for {
 		var r request
 		select {
@@ -346,7 +339,7 @@ func (t *Transcriber) transcribe() {
 		}
 		start := time.Now()
 		var words string
-		if len(r.audio.Data) > 0 {
+		if len(r.audio.Data) > 0 && (!r.final || r.fresh || owed == r.utterance) {
 			ctx, cancel := context.WithTimeout(t.ctx, transcribeTimeout+r.audio.Duration)
 			said, err := t.client.Transcribe(ctx, r.audio, t.languages)
 			cancel()
@@ -361,25 +354,27 @@ func (t *Transcriber) transcribe() {
 				t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Err: err, Context: "transcribe", Fatal: true})
 				return
 			case err != nil:
-				transcribeFailures.WithLabelValues(failure(err)).Inc()
-				t.logger.Warn("the chorus-asr server did not write an utterance's words, they are asked for again",
-					"participant", r.participant.ID, "utterance", r.utterance, "final", r.final, "error", err)
-				if !r.final {
-					t.missed.Store(r.utterance)
-				}
+				// The failure is counted once it is in the run of them, so that a count of
+				// failures is one of failures the failover has weighed.
+				var down time.Duration
 				if Unreachable(err) {
 					if failed++; failed == 1 {
 						failedSince = t.now()
 					}
-					if down := t.now().Sub(failedSince); failed >= failoverAfter && down >= failoverWindow {
-						t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Context: "transcribe", Fatal: true,
-							Err: stack.Wrap(fmt.Errorf("audiofloor: the server answered none of %d requests for words in %s, the last: %w",
-								failed, down.Round(time.Second), err))})
-						return
-					}
+					down = t.now().Sub(failedSince)
+				}
+				transcribeFailures.WithLabelValues(failure(err)).Inc()
+				t.logger.Warn("the chorus-asr server did not write an utterance's words, they are asked for again",
+					"participant", r.participant.ID, "utterance", r.utterance, "final", r.final, "error", err)
+				owed = r.utterance
+				if Unreachable(err) && failed >= failoverAfter && down >= failoverWindow {
+					t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Context: "transcribe", Fatal: true,
+						Err: stack.Wrap(fmt.Errorf("audiofloor: the server answered none of %d requests for words in %s, the last: %w",
+							failed, down.Round(time.Second), err))})
+					return
 				}
 			default:
-				failed = 0
+				failed, owed = 0, 0
 				words = strings.TrimSpace(said.Text)
 				if words != "" {
 					t.sent.establish(r.utterance, said.Language)

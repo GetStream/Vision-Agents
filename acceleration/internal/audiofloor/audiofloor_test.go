@@ -77,10 +77,12 @@ type fakeServer struct {
 	failDecide     bool
 	failingDecides int
 	// transcribeGate, when set, holds every transcription request until it is closed, or
-	// with holdOne the next one alone, and held counts the requests waiting at it.
+	// with holdOne the next one alone, and held counts the requests waiting at it. failHeld
+	// has a request let go of answer failWith.
 	transcribeGate chan struct{}
 	holdOne        bool
 	held           int
+	failHeld       bool
 	// language is the language the server says it heard words in, English unless set, and
 	// noise, when set, has it answer transcriptions with no words and that as the reason.
 	language string
@@ -166,6 +168,12 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			f.mu.Unlock()
 			<-gate
 			f.mu.Lock()
+			if f.failHeld {
+				f.failHeld = false
+				w.WriteHeader(f.failWith)
+				_, _ = w.Write([]byte(`{"error":"every lane is busy"}`))
+				return
+			}
 		}
 		if f.noise != "" {
 			_, _ = fmt.Fprintf(w, `{"transcript":{"text":"","language":%q,"noise":%q}}`+"\n", f.spoken(), f.noise)
@@ -1027,6 +1035,51 @@ func (s *TranscriberSuite) TestABusyServerCostsARequestNotTheSession() {
 	}
 }
 
+// A pause's words that fail after the utterance's end was asked for are asked for again at
+// the end, as they are when they fail before it: a server slow to fail, or a session that
+// hears faster than the server answers, costs a request, not the utterance.
+func (s *TranscriberSuite) TestWordsThatFailAfterTheEndIsAskedForAreAskedForAtTheEnd() {
+	gate := make(chan struct{})
+	s.T().Cleanup(func() {
+		select {
+		case <-gate:
+		default:
+			close(gate)
+		}
+	})
+	s.server.mu.Lock()
+	s.server.transcribeGate, s.server.holdOne, s.server.failHeld, s.server.failWith = gate, true, true, http.StatusServiceUnavailable
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(pauseMs, false)
+	s.Eventually(func() bool {
+		s.server.mu.Lock()
+		defer s.server.mu.Unlock()
+		return s.server.held == 1
+	}, 5*time.Second, time.Millisecond, "the pause's words are out")
+	s.say(int(endAfter/time.Millisecond), false)
+	close(gate)
+
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode, "the utterance ends on its words")
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	asked := s.requests()
+	s.Require().Len(asked, 2, "the pause's words, which failed, and the end's")
+	s.InDelta(float64(300+1000+int(endAfter/time.Millisecond)), float64(asked[1])*1000/SampleRate, 80, "of the whole utterance")
+}
+
+// Words written at a pause are what the utterance ends on, with nothing asked again.
+func (s *TranscriberSuite) TestAnEndWithNothingNewEndsOnTheWordsWritten() {
+	s.say(1000, true)
+	s.say(int(endAfter/time.Millisecond), false)
+	written := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeReplacement, written.Mode)
+	end := next[stt.Transcript](&s.transcribing)
+	s.Equal(stt.ModeFinal, end.Mode)
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+	s.Len(s.requests(), 1, "the end had nothing new to write")
+}
+
 // A server that isn't there, or doesn't answer in time, is asked again as well.
 func (s *TranscriberSuite) TestAServerThatIsGoneCostsARequestNotTheSession() {
 	failed := testutil.ToFloat64(transcribeFailures.WithLabelValues("connection"))
@@ -1085,22 +1138,23 @@ func (s *TranscriberSuite) TestABusyServerIsUpAndWordsAnsweredStartTheCountOver(
 	var skew atomic.Int64
 	s.reopen(skewed(&skew))
 	// failing has the server answer status to the next utterances' requests, two each: the
-	// pause's and the end's, which asks again what the pause was refused.
+	// pause's and the end's, which asks again what the pause was refused. The clock moves a
+	// window on once the transcriber has counted both, not once they are asked for: it
+	// weighs a failure when it reads its answer, which on a busy machine is later.
 	failing := func(status, utterances int) {
 		s.server.mu.Lock()
 		s.server.failing, s.server.failWith = 2*utterances, status
 		s.server.mu.Unlock()
+		counted := transcribeFailures.WithLabelValues(strconv.Itoa(status))
 		for range utterances {
+			before := testutil.ToFloat64(counted)
 			s.say(1000, true)
 			s.say(pauseMs, false)
 			s.say(int(endAfter/time.Millisecond), false)
+			s.Eventually(func() bool { return testutil.ToFloat64(counted) == before+2 }, 5*time.Second, time.Millisecond,
+				"the pause's and the end's words, refused")
 			skew.Add(int64(failoverWindow))
 		}
-		s.Eventually(func() bool {
-			s.server.mu.Lock()
-			defer s.server.mu.Unlock()
-			return s.server.failing == 0
-		}, 5*time.Second, time.Millisecond)
 	}
 	failing(http.StatusServiceUnavailable, 2)
 	failing(http.StatusTooManyRequests, 1)
