@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from ..models.create_session_request_custom import CreateSessionRequestCustom
     from ..models.create_session_request_tags import CreateSessionRequestTags
     from ..models.end_of_turn import EndOfTurn
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.history_message import HistoryMessage
     from ..models.model_overwrites import ModelOverwrites
@@ -55,12 +56,18 @@ class CreateSessionRequest:
             back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth
             writing.
         description (str | Unset): A longer note about the conversation, searched alongside the title.
-        end_of_turn (EndOfTurn | Unset): When chorus-asr has a caller's turn ended, where the router asks it about
-            turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait
-            chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach
-            them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever
-            the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read
-            when a pause is checked; one that model no longer publishes ends turns by its default.
+        end_of_turn (EndOfTurn | Unset): When chorus-asr has a caller's turn ended, where the agent's floor_control asks
+            it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or
+            a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must
+            reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn
+            whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server
+            runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+        floor_control (FloorControl | Unset): Whether a model that hears the caller's audio rules the agent's floor:
+            when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one
+            that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a
+            router without one is refused. Off, the flow controller rules the floor as it does with no such model, and
+            end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each
+            session runs by its own, so agents on one router may choose differently.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         history (list[HistoryMessage] | Unset): The conversation so far, for a backend that keeps its own: a thread in
             its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on:
@@ -162,6 +169,7 @@ class CreateSessionRequest:
     custom: CreateSessionRequestCustom | Unset = UNSET
     description: str | Unset = UNSET
     end_of_turn: EndOfTurn | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     history: list[HistoryMessage] | Unset = UNSET
     id: str | Unset = UNSET
@@ -227,6 +235,10 @@ class CreateSessionRequest:
         end_of_turn: dict[str, Any] | Unset = UNSET
         if not isinstance(self.end_of_turn, Unset):
             end_of_turn = self.end_of_turn.to_dict()
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -343,6 +355,8 @@ class CreateSessionRequest:
             field_dict["description"] = description
         if end_of_turn is not UNSET:
             field_dict["end_of_turn"] = end_of_turn
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if history is not UNSET:
@@ -415,6 +429,7 @@ class CreateSessionRequest:
         from ..models.create_session_request_custom import CreateSessionRequestCustom
         from ..models.create_session_request_tags import CreateSessionRequestTags
         from ..models.end_of_turn import EndOfTurn
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.history_message import HistoryMessage
         from ..models.model_overwrites import ModelOverwrites
@@ -470,6 +485,13 @@ class CreateSessionRequest:
             end_of_turn = UNSET
         else:
             end_of_turn = EndOfTurn.from_dict(_end_of_turn)
+
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -595,6 +617,7 @@ class CreateSessionRequest:
             custom=custom,
             description=description,
             end_of_turn=end_of_turn,
+            floor_control=floor_control,
             greeting=greeting,
             history=history,
             id=id,

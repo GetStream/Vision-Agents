@@ -1784,15 +1784,15 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentConfig" => {
-          properties: %w[calls channels connectors created_at dispatch end_of_turn episode_cards greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
+          properties: %w[calls channels connectors created_at dispatch end_of_turn episode_cards floor_control greeting guardrail harness id instructions keyterms knowledge_namespace left_out_connectors llm mode name region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent sync_hash tags tools tts updated_at video visible_tools voice].freeze,
           required: %w[created_at id mode name region updated_at].freeze, open: false
         }.freeze,
         "AgentConfigPatch" => {
-          properties: %w[calls channels connectors dispatch end_of_turn episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[calls channels connectors dispatch end_of_turn episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "AgentConfigRequest" => {
-          properties: %w[calls channels connectors dispatch end_of_turn episode_cards greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
+          properties: %w[calls channels connectors dispatch end_of_turn episode_cards floor_control greeting guardrail harness instructions keyterms knowledge_namespace llm mcp_servers mode name plugin_events plugins region resume_history review role sandbox sandbox_options scheduling search skills sts stt subagent tags tools tts video visible_tools voice].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "AgentConnectorBinding" => {
@@ -2272,7 +2272,7 @@ module GetStream
           required: %w[title instructions schedule].freeze, open: false
         }.freeze,
         "CreateSessionRequest" => {
-          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description end_of_turn greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
+          properties: %w[agent agent_id backchannel call config_id connector_bindings context_truncated custom description end_of_turn floor_control greeting history id incognito instructions keyterms languages llm max_tokens max_tool_rounds memory min_confidence model_overwrites navigating phone project_id resume_history return_url search start_voice sts stt tags timezone title tool_timeout_ms tools tts user_id user_name video voice].freeze,
           required: [].freeze, open: false
         }.freeze,
         "CreateSipTrunkRequest" => {
@@ -2366,6 +2366,10 @@ module GetStream
         "ErrorResponse" => {
           properties: %w[error].freeze,
           required: %w[error].freeze, open: false
+        }.freeze,
+        "FloorControl" => {
+          properties: %w[mode model].freeze,
+          required: %w[model mode].freeze, open: false
         }.freeze,
         "ForkSessionRequest" => {
           properties: %w[agent config_id custom description incognito messages model_overwrites project_id response_id title].freeze,
@@ -3024,7 +3028,7 @@ module GetStream
           required: %w[reason suspended_by].freeze, open: false
         }.freeze,
         "SyncAgentRequest" => {
-          properties: %w[base_change calls channels check_changes connectors dispatch end_of_turn greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
+          properties: %w[base_change calls channels check_changes connectors dispatch end_of_turn floor_control greeting guardrail harness hash instructions keyterms knowledge knowledge_urls left_out_connectors llm mcp_servers mode name plugin_events plugins region resume_history role sandbox sandbox_options scheduling search simulations skills sts stt subagent tags tools tts video voice].freeze,
           required: %w[name hash].freeze, open: false
         }.freeze,
         "SyncAgentResult" => {
