@@ -716,8 +716,8 @@ func (s *SessionSuite) TestTheEndOfASessionWhoseTurnsAlsoAskedOtherModels() {
 func (s *SessionSuite) TestTheEndOfASessionTheOtherModelsCannotChange() {
 	// Catches a change to the end of a session the flow controller's request never stood in
 	// for a reply in: a reply failover, a lost reply with the flow controller asked before it
-	// or failing, and an agent leaving after a failure. The reasons are what the session
-	// counted before the reply alone decided a lost turn.
+	// or failing, another turn's reply, and an agent leaving after a failure. The reasons are
+	// what the session counted before the reply alone decided a lost turn.
 	refused := agent.Error{Context: "llm", Err: errors.New("401 Unauthorized")}
 	answer := func(turn string) Event { return agent.Responded{TurnID: turn, Text: "Friday at ten."} }
 	apology := func(turn string) Event {
@@ -745,6 +745,10 @@ func (s *SessionSuite) TestTheEndOfASessionTheOtherModelsCannotChange() {
 		modelCall("flow", "turn-1", "deepseek", false, "create_failed"),
 		modelCall("reply", "turn-1", routing.CustomProvider, false, "create_failed"), refused, apology("turn-1"),
 	), "the flow controller failing before the customer's own model failed")
+	s.Equal(EndModelFailed, turnEnd(false,
+		modelCall("reply", "turn-1", "openai", false, "create_failed"),
+		modelCall("reply", "turn-2", "openai", true, ""), refused, apology("turn-1"),
+	), "the next turn's reply answering before the lost one was said")
 	s.Equal(EndModelFailed, turnEnd(true, modelCall("flow", "turn-1", "deepseek", false, "create_failed")),
 		"the agent leaving after the flow controller failed")
 }
