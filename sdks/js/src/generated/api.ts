@@ -7752,6 +7752,8 @@ export type components = {
             readonly duration_ms?: number;
             /** @description Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key. */
             readonly error_code?: string;
+            /** @description What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it. */
+            readonly error_message?: string;
             /** Format: int64 */
             readonly input_tokens?: number;
             readonly model: string;
