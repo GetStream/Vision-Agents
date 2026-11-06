@@ -301,8 +301,15 @@ func nameWasGiven(history []llm.Message, name string) bool {
 		}
 	}
 	// A value gives the name whole, wherever its words break, but for the lines in it that read back
-	// what the agent wrote.
-	held := wrote.holding(alphanumeric(name))
+	// what the agent wrote. A line of the agent's holds the name only where it wrote it as words:
+	// its letters run together across other words, or inside them, are no name.
+	named := slices.Clone(wrote)
+	for i, line := range named {
+		if !strings.Contains(words(line.text), wanted) {
+			named[i] = writtenLine{}
+		}
+	}
+	held := named.holding(alphanumeric(name))
 	for _, given := range results {
 		var contains func(any) bool
 		contains = func(value any) bool {
