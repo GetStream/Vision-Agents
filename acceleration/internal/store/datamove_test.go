@@ -736,6 +736,45 @@ func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredWhenEveryChangeWa
 	s.Contains(string(changes[0].Key), next)
 }
 
+// An export after a prune carries on from the last change of theirs pruned. Another customer's
+// change pruned right after it leaves a gap there, but the first read lost nothing.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredPastAnotherCustomersPrunedChange() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// A number rolled back right after an export's cursor at the last change of theirs pruned leaves
+// a gap there, but the first read lost nothing.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredPastANumberRolledBack() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	rolledBack := s.begin()
+	s.writeIn(rolledBack, "acme", "rolled back")
+	s.Require().NoError(rolledBack.Rollback())
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
 // Every replica prunes, and of two prunes running at once the one that dropped the lower numbers
 // can commit last: the highest number noted stays.
 func (s *DataMoveSuite) TestAPruneCommittingAfterOneThatDroppedHigherNumbersKeepsTheirs() {

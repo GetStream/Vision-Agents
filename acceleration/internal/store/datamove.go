@@ -325,7 +325,8 @@ WHERE locktype = 'transactionid' AND transactionid::text = ANY(?)`,
 // one above it may or may not be, which is safe because applying a change twice lands in
 // the same place as applying it once. It is not the watermark itself: with no change kept
 // at or below it, Changes would read a number rolled back right after it as a change
-// pruned, and refuse the cursor.
+// pruned, and refuse the cursor. It can be the last change of theirs pruned with none kept
+// at or below it: Changes reads a cursor there as a start and checks no gap after it.
 //
 // Call it after StartDataCapture and WaitForOpenWrites, in that order: on its own it still misses
 // a write that was open when the capture started and commits after the snapshot.
@@ -1371,10 +1372,10 @@ func (t dataTable) isKey(s shape, column string) bool {
 // Changes returns what has happened to a customer's rows since a cursor, oldest first,
 // and the cursor to ask from next time.
 //
-// A cursor older than what is still kept, or than where the recording last started again after
-// it expired, is ErrChangesExpired rather than a shorter answer: the caller would otherwise
-// carry on from a gap it could not see, and a missing change is a row that is wrong on the
-// other side forever.
+// A cursor older than what is still kept, than where the recording last started again after
+// it expired, or than the last change of theirs pruned, is ErrChangesExpired rather than a
+// shorter answer: the caller would otherwise carry on from a gap it could not see, and a
+// missing change is a row that is wrong on the other side forever.
 func (s *Store) Changes(ctx context.Context, customerID string, after int64, limit int) ([]DataChange, int64, error) {
 	if customerID == "" {
 		return nil, 0, errors.New("store: a customer id is required")
@@ -1396,9 +1397,11 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	// back after it leaves the same gap. With none of theirs kept, a quiet customer and one whose
 	// every change aged out look the same to this check. The highest number of theirs pruning
 	// dropped (pruned_through) tells them apart: a cursor below it lost a change, at
-	// recorded_since or after it, whatever is kept. Pruning drops only numbers at or below the
-	// mark it read, so the gap right after a cursor at or above this mark is a change still in
-	// flight rather than a pruned one. The mark can go down: the trigger
+	// recorded_since or after it, whatever is kept. A cursor at pruned_through is a start too: no
+	// change of theirs above it was pruned, or pruned_through would be higher, so the gap after it
+	// is other customers' pruned changes or numbers that were never a change. Pruning drops only
+	// numbers at or below the mark it read, so the gap right after a cursor at or above this mark
+	// is a change still in flight rather than a pruned one. The mark can go down: the trigger
 	// reads the sequence and takes its lock in two statements, and a mark read between them
 	// is above that lock. A prune in that window can drop an aged-out change before this
 	// check sees it, so the follower is refused (ErrChangesExpired) on a later read, not
@@ -1428,7 +1431,7 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		customerID).Scan(&kept, &theirs); err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
-	if after > since && after < mark && theirs && kept.Int64 > after+1 {
+	if after > max(since, pruned) && after < mark && theirs && kept.Int64 > after+1 {
 		return nil, 0, ErrChangesExpired
 	}
 
