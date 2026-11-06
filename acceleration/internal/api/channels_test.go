@@ -544,18 +544,20 @@ func (s *ChannelsSuite) TestAReplyOfASuspendedOrganizationIsNotWrittenBackAndWar
 }
 
 // A message the sandbox holds back stays an Info line, as it was: only an organization that may not
-// pay is a warning.
+// pay is a warning. The line says which rule held it and names no number.
 func (s *ChannelsSuite) TestAMessageTheSandboxHoldsBackIsLoggedAsInfo() {
 	s.holdSandbox(dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 1})
 	number := s.number()
 	line := s.connect(number)
 	s.agentOn(number, "")
 
-	s.Require().Equal(http.StatusAccepted, s.deliver(line, s.writer(), "msg-"+s.utils.uuid(), "what is open?"))
+	writer := s.writer()
+	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "what is open?"))
 
 	s.Require().Eventually(func() bool {
-		return strings.Contains(s.logged.String(), `level=INFO msg="not answering a channel message" channel=whatsapp reason=`)
+		return strings.Contains(s.logged.String(), `level=INFO msg="not answering a channel message" channel=whatsapp reason=sandbox_recipient`)
 	}, settleFor, 10*time.Millisecond, "the router never logged the refusal")
+	s.NotContains(s.logged.String(), writer, "the refusal's text names the number, the log does not")
 	s.NotContains(s.logged.String(), `level=WARN msg="not answering a channel message"`)
 }
 

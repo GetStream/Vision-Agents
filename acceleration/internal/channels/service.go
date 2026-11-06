@@ -592,13 +592,14 @@ func filesOf(attached []sandbox.Attachment) []File {
 
 // logGateRefusal logs why the gate kept an inbound text or its reply from going on. The customer
 // loses it until the organization pays when dlc.ErrUnpaid refuses, so that is a warning naming the
-// customer; the refusal says why and names no number.
+// customer; the refusal says why and names no number. Any other refusal names the recipient's
+// number in its text (dlc.Gate), so it is logged by its code only.
 func (s *Service) logGateRefusal(message, customerID, channel string, err error) {
 	if errors.Is(err, dlc.ErrUnpaid) {
 		s.logger.Warn(message, "channel", channel, "customer", customerID, "reason", err)
 		return
 	}
-	s.logger.Info(message, "channel", channel, "reason", err)
+	s.logger.Info(message, "channel", channel, "reason", dlc.RefusalCode(err))
 }
 
 // answering is who a reply to somebody who wrote is billed to: the app, under the origin of a
