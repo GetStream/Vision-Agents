@@ -478,6 +478,8 @@ final class CreateSessionRequest {
     this.contextTruncated,
     this.custom,
     this.description,
+    this.endOfTurn,
+    this.floorControl,
     this.greeting,
     this.history,
     this.id,
@@ -553,6 +555,14 @@ final class CreateSessionRequest {
       description: switch (json['description']) {
         null => null,
         final Object value => _string(value, 'CreateSessionRequest.description'),
+      },
+      endOfTurn: switch (json['end_of_turn']) {
+        null => null,
+        final Object value => EndOfTurn.fromJson(value),
+      },
+      floorControl: switch (json['floor_control']) {
+        null => null,
+        final Object value => _string(value, 'CreateSessionRequest.floor_control'),
       },
       greeting: switch (json['greeting']) {
         null => null,
@@ -705,6 +715,8 @@ final class CreateSessionRequest {
   final bool? contextTruncated;
   final Map<String, Object?>? custom;
   final String? description;
+  final EndOfTurn? endOfTurn;
+  final String? floorControl;
   final Greeting? greeting;
   final List<HistoryMessage>? history;
   final String? id;
@@ -749,6 +761,8 @@ final class CreateSessionRequest {
     'context_truncated': ?contextTruncated,
     'custom': ?custom,
     'description': ?description,
+    if (endOfTurn case final value?) 'end_of_turn': value.toJson(),
+    'floor_control': ?floorControl,
     if (greeting case final value?) 'greeting': value.toJson(),
     if (history case final value?) 'history': [for (final item in value) item.toJson()],
     'id': ?id,
@@ -782,6 +796,59 @@ final class CreateSessionRequest {
     if (video case final value?) 'video': value.toJson(),
     'voice': ?voice,
   };
+}
+
+/// When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars.
+final class EndOfTurn {
+  const EndOfTurn({this.bars, this.maxWaitMs, this.preset});
+
+  factory EndOfTurn.fromJson(Object? value) {
+    final json = _object(value, 'EndOfTurn');
+    return EndOfTurn(
+      bars: switch (json['bars']) {
+        null => null,
+        final Object value => [
+          for (final item in _list(value, 'EndOfTurn.bars')) EndOfTurnBar.fromJson(item),
+        ],
+      },
+      maxWaitMs: switch (json['max_wait_ms']) {
+        null => null,
+        final Object value => _int(value, 'EndOfTurn.max_wait_ms'),
+      },
+      preset: switch (json['preset']) {
+        null => null,
+        final Object value => _string(value, 'EndOfTurn.preset'),
+      },
+    );
+  }
+
+  final List<EndOfTurnBar>? bars;
+  final int? maxWaitMs;
+  final String? preset;
+
+  Map<String, Object?> toJson() => {
+    if (bars case final value?) 'bars': [for (final item in value) item.toJson()],
+    'max_wait_ms': ?maxWaitMs,
+    'preset': ?preset,
+  };
+}
+
+/// What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on.
+final class EndOfTurnBar {
+  const EndOfTurnBar({required this.bar, required this.fromMs});
+
+  factory EndOfTurnBar.fromJson(Object? value) {
+    final json = _object(value, 'EndOfTurnBar');
+    return EndOfTurnBar(
+      bar: _double(json['bar'], 'EndOfTurnBar.bar'),
+      fromMs: _int(json['from_ms'], 'EndOfTurnBar.from_ms'),
+    );
+  }
+
+  final double bar;
+  final int fromMs;
+
+  Map<String, Object?> toJson() => {'bar': bar, 'from_ms': fromMs};
 }
 
 /// Continue a conversation as a new one.

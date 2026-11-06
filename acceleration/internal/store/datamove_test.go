@@ -650,6 +650,185 @@ func (s *DataMoveSuite) TestAnExportAfterALapseIsFollowedFromItsCursor() {
 	s.Contains(ids, lost, "the write made while nothing was recorded is in the new export")
 }
 
+// exportAtRestart starts a customer's recording again after it lapsed and exports them, with
+// nothing recorded since: the cursor is the number the recording started again from.
+func (s *DataMoveSuite) exportAtRestart(customerID string) int64 {
+	s.capture(customerID)
+	s.lapse(customerID)
+	s.capture(customerID)
+	cursor := s.export(customerID).cursor
+	var since int64
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+		"SELECT recorded_since FROM data_change_capture WHERE customer_id = ?", customerID).Scan(&since))
+	s.Require().Positive(since)
+	s.Require().Equal(since, cursor)
+	return cursor
+}
+
+// A follower with nothing to read after the restart stays at its cursor while its reads keep
+// the capture on. A change recorded after it that aged out and was pruned is refused, not
+// skipped.
+func (s *DataMoveSuite) TestAFollowerAtTheRestartWhoseNextChangeWasPrunedSaysToExportAgain() {
+	cursor := s.exportAtRestart("acme")
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.age()
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "kept")
+	s.prune()
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// A follower whose every change after its cursor was pruned has none of its own kept, as a
+// quiet one has, and is refused all the same.
+func (s *DataMoveSuite) TestAFollowerWhoseEveryChangeSinceWasPrunedSaysToExportAgain() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.age()
+	s.prune()
+	s.seedAgentConfig(s.source, "other", "later")
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// A number rolled back after the restart and another customer's changes pruned after it leave
+// the same gap after the cursor as a pruned change, but the follower lost nothing.
+func (s *DataMoveSuite) TestAFollowerAtTheRestartIsAnsweredPastNumbersThatWereNeverItsChanges() {
+	s.capture("other")
+	cursor := s.exportAtRestart("acme")
+	rolledBack := s.begin()
+	s.writeIn(rolledBack, "acme", "rolled back")
+	s.Require().NoError(rolledBack.Rollback())
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.capture("acme")
+	next := s.seedAgentConfig(s.source, "acme", "next")
+	s.prune()
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// An export reads the rows its customer's pruned changes left behind, so the first read after it
+// is answered even with none of their changes kept and no other number below its cursor.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredWhenEveryChangeWasPruned() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// An export after a prune carries on from the last change of theirs pruned. Another customer's
+// change pruned right after it leaves a gap there, but the first read lost nothing.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredPastAnotherCustomersPrunedChange() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// A number rolled back right after an export's cursor at the last change of theirs pruned leaves
+// a gap there, but the first read lost nothing.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredPastANumberRolledBack() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	rolledBack := s.begin()
+	s.writeIn(rolledBack, "acme", "rolled back")
+	s.Require().NoError(rolledBack.Rollback())
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// A follower that read its customer's change stays at it while the customer is quiet. That
+// change and another customer's after it age out and are pruned; the follower lost nothing and is
+// answered the customer's next change.
+func (s *DataMoveSuite) TestAFollowerWhoseOwnReadChangeWasPrunedIsAnsweredTheNextOne() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	_, cursor := s.follow("acme", 0)
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// The same follower, with a change of its customer's after its cursor pruned too, lost it and is
+// refused.
+func (s *DataMoveSuite) TestAFollowerWhoseUnreadChangeWasPrunedSaysToExportAgain() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	_, cursor := s.follow("acme", 0)
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	s.seedAgentConfig(s.source, "acme", "next")
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// Every replica prunes, and of two prunes running at once the one that dropped the lower numbers
+// can commit last: the highest number noted stays.
+func (s *DataMoveSuite) TestAPruneCommittingAfterOneThatDroppedHigherNumbersKeepsTheirs() {
+	s.capture("acme")
+	s.ageChange(s.seedAgentConfig(s.source, "acme", "aged out"))
+	_, cursor := s.follow("acme", 0)
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE data_change_capture SET pruned_through = ? WHERE customer_id = 'acme'", cursor+10)
+	s.Require().NoError(err)
+	s.prune()
+
+	_, _, err = s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
 // afterQuery runs a function once, after the first query mentioning a phrase.
 type afterQuery struct {
 	mu     sync.Mutex
@@ -743,13 +922,14 @@ func (s *DataMoveSuite) prune() {
 func (s *DataMoveSuite) TestPruningDropsWhatNobodyCanResumeFrom() {
 	s.capture("acme")
 	s.seedAgentConfig(s.source, "acme", "old")
+	s.seedAgentConfig(s.source, "acme", "older")
 	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE data_changes SET at = now() - interval '30 days'")
 	s.Require().NoError(err)
 
 	removed, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
 
 	s.Require().NoError(err)
-	s.Positive(removed)
+	s.Equal(int64(2), removed)
 }
 
 // A change is numbered when it is written and seen when its transaction commits, so a
@@ -2200,21 +2380,22 @@ func (s *DataMoveSuite) seedCampaign(customerID, state string) string {
 	campaign := &Campaign{CustomerID: customerID, Name: "Renewals", ConfigID: "config-1", FromNumber: "+15550100"}
 	s.Require().NoError(s.source.CreateCampaign(s.ctx, campaign))
 	if state != Draft {
-		s.Require().NoError(s.source.SetCampaignState(s.ctx, customerID, campaign.ID, state))
+		s.setState(s.source, customerID, campaign.ID, state)
 	}
 	return campaign.ID
 }
 
 func (s *DataMoveSuite) TestARunningCampaignArrivesPausedAndTheCutOverNamesIt() {
 	running := s.seedCampaign("acme", Running)
+	scheduled := s.seedCampaign("acme", Scheduled)
 	paused := s.seedCampaign("acme", Paused)
 	draft := s.seedCampaign("acme", Draft)
 	s.move("acme", "moved")
 
 	_, campaigns := s.resume("moved")
 
-	s.Equal([]string{running}, campaigns)
-	for id, want := range map[string]string{running: Paused, paused: Paused, draft: Draft} {
+	s.ElementsMatch([]string{running, scheduled}, campaigns)
+	for id, want := range map[string]string{running: Paused, scheduled: Paused, paused: Paused, draft: Draft} {
 		campaign, err := s.destination.Campaign(s.ctx, "moved", id)
 		s.Require().NoError(err)
 		s.Equal(want, campaign.State, "only starting it here rings anybody")
@@ -2224,55 +2405,193 @@ func (s *DataMoveSuite) TestARunningCampaignArrivesPausedAndTheCutOverNamesIt() 
 	s.Equal(Running, source.State, "the deployment it left goes on ringing")
 }
 
+// setState puts a campaign on st in a state, as the runner and the API leave it.
+func (s *DataMoveSuite) setState(st *Store, customerID, id, state string) {
+	_, err := st.DB().NewUpdate().Model((*Campaign)(nil)).Set("state = ?", state).
+		Where("id = ?", id).Where("customer_id = ?", customerID).Exec(s.ctx)
+	s.Require().NoError(err)
+}
+
+// midCall is a running campaign on the source whose first contact is in a call, whose second
+// is waiting for the outcome of its answered call, and whose third is done, each with its dial.
+func (s *DataMoveSuite) midCall() string {
+	campaign := s.seedCampaign("acme", Draft)
+	_, _, err := s.source.AddContacts(s.ctx, campaign, []Contact{
+		{ToNumber: "+15550000001", Variables: map[string]string{"name": "Ada"}, TimeZone: "Europe/Berlin", Instructions: "ask for Ada"},
+		{ToNumber: "+15550000002"}, {ToNumber: "+15550000003"}})
+	s.Require().NoError(err)
+	s.setState(s.source, "acme", campaign, Running)
+	_, err = s.source.DB().ExecContext(s.ctx, `UPDATE campaign_contacts SET
+		stage = CASE to_number WHEN '+15550000001' THEN 'in_progress' WHEN '+15550000002' THEN 'awaiting_outcome' ELSE 'completed' END,
+		attempt = 1, leased_by = 'router-a', leased_until = now() + interval '1 hour', next_attempt_at = now() + interval '2 days'
+		WHERE campaign_id = ?`, campaign)
+	s.Require().NoError(err)
+	_, err = s.source.DB().ExecContext(s.ctx, `INSERT INTO campaign_attempts
+		(id, campaign_id, contact_id, step_id, attempt, call_outcome, ended_at, classify_state, classify_after)
+		SELECT 'att-' || to_number, campaign_id, id, 'step_1', 1,
+			CASE to_number WHEN '+15550000001' THEN NULL ELSE 'completed' END,
+			CASE to_number WHEN '+15550000001' THEN NULL ELSE now() END,
+			CASE to_number WHEN '+15550000002' THEN 'pending' ELSE '' END,
+			CASE to_number WHEN '+15550000002' THEN now() + interval '20 minutes' END
+		FROM campaign_contacts WHERE campaign_id = ?`, campaign)
+	s.Require().NoError(err)
+	return campaign
+}
+
+func (s *DataMoveSuite) TestAContactMidCallIsSettledHereFromItsCallOnceTheMoveIsCutOver() {
+	campaign := s.midCall()
+
+	s.move("acme", "moved")
+
+	later := time.Now().Add(time.Minute)
+	taken, err := s.destination.TakeOverExpired(s.ctx, "router-b", later, time.Hour, 10)
+	s.Require().NoError(err)
+	s.Empty(taken, "the source is still ringing it until the cut-over")
+	_, campaigns := s.resume("moved")
+	s.Require().Equal([]string{campaign}, campaigns)
+	s.Require().NoError(s.destination.ResumeCampaign(s.ctx, "moved", campaign))
+
+	taken, err = s.destination.TakeOverExpired(s.ctx, "router-b", later, time.Hour, 10)
+	s.Require().NoError(err)
+	s.Require().Len(taken, 1, "settled from its call rather than rung again at once")
+	ada := taken[0].Contact
+	s.Equal("+15550000001", ada.ToNumber)
+	s.Equal(InProgress, ada.Stage)
+	s.Equal(map[string]string{"name": "Ada"}, ada.Variables)
+	s.Equal("Europe/Berlin", ada.TimeZone)
+	s.Equal("ask for Ada", ada.Instructions)
+	dial, found, err := s.destination.LatestDial(s.ctx, ada.ID)
+	s.Require().NoError(err)
+	s.Require().True(found)
+	s.Equal(1, dial.Attempt, "the dial the attempt used is there to settle from")
+	s.Equal("unknown", dial.CallOutcome, "the call it was in ended there, and how is not known here")
+	done, err := s.destination.QueryContacts(s.ctx, campaign, ContactFilter{Number: "+15550000003"})
+	s.Require().NoError(err)
+	s.Require().Len(done, 1)
+	s.Equal(ContactCompleted, done[0].Stage, "a settled contact is not rung again")
+}
+
+func (s *DataMoveSuite) TestAnAnsweredCallsOutcomeIsReadHereOnceTheMoveIsCutOver() {
+	campaign := s.midCall()
+
+	s.move("acme", "moved")
+
+	later := time.Now().Add(time.Minute)
+	claimed, err := s.destination.ClaimClassifications(s.ctx, "router-b", later, time.Hour, 10)
+	s.Require().NoError(err)
+	s.Empty(claimed, "the source reads it until the cut-over")
+	_, campaigns := s.resume("moved")
+	s.Require().Equal([]string{campaign}, campaigns)
+	s.Require().NoError(s.destination.ResumeCampaign(s.ctx, "moved", campaign))
+
+	claimed, err = s.destination.ClaimClassifications(s.ctx, "router-b", later, time.Hour, 10)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1, "its transcript is read here, without waiting out the source's lease")
+	s.Equal("att-+15550000002", claimed[0].Attempt.ID)
+	s.Equal(AwaitingOutcome, claimed[0].Contact.Stage)
+}
+
+func (s *DataMoveSuite) TestAttemptsMoveWithTheirContactsAndAPendingClassificationStaysPending() {
+	campaign := s.seedCampaign("acme", Draft)
+	other := s.seedCampaign("other", Draft)
+	for _, c := range []string{campaign, other} {
+		_, _, err := s.source.AddContacts(s.ctx, c, []Contact{{ToNumber: "+15550000001"}})
+		s.Require().NoError(err)
+	}
+	_, err := s.source.DB().ExecContext(s.ctx, `INSERT INTO campaign_attempts
+		(id, campaign_id, contact_id, step_id, attempt, call_outcome, ended_at, classify_state, classify_after)
+		SELECT 'att-' || campaign_id, campaign_id, id, 'step_1', 1, 'completed', now(), 'pending', now() FROM campaign_contacts`)
+	s.Require().NoError(err)
+	_, err = s.source.DB().ExecContext(s.ctx, `INSERT INTO campaign_attempts (id, campaign_id, contact_id, step_id, attempt, result)
+		SELECT 'live-' || campaign_id, campaign_id, id, 'step_1', 2, '' FROM campaign_contacts WHERE campaign_id = ?`, campaign)
+	s.Require().NoError(err)
+
+	s.move("acme", "moved")
+
+	var ids []string
+	s.Require().NoError(s.destination.DB().NewRaw("SELECT id FROM campaign_attempts").Scan(s.ctx, &ids))
+	s.ElementsMatch([]string{"att-" + campaign, "live-" + campaign}, ids, "another customer's attempts do not move")
+	var state string
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT classify_state FROM campaign_attempts WHERE id = ?", "att-"+campaign).Scan(&state))
+	s.Equal("pending", state, "its transcript is read here once the move is cut over")
+	var source string
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+		"SELECT classify_state FROM campaign_attempts WHERE id = ?", "att-"+campaign).Scan(&source))
+	s.Equal("pending", source)
+
+	var called *string
+	var endedAt *time.Time
+	s.Require().NoError(s.destination.DB().QueryRowContext(s.ctx,
+		"SELECT call_outcome, ended_at FROM campaign_attempts WHERE id = ?", "live-"+campaign).Scan(&called, &endedAt))
+	s.Require().NotNil(called)
+	s.Equal("unknown", *called, "the call that was happening there will not be ended here")
+	s.Require().NotNil(endedAt)
+	s.WithinDuration(time.Now(), *endedAt, time.Minute)
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+		"SELECT call_outcome FROM campaign_attempts WHERE id = ?", "live-"+campaign).Scan(&called))
+	s.Nil(called, "the source's own row is left alone")
+}
+
 func (s *DataMoveSuite) TestACampaignStartedHereIsNoLongerTheMovesToName() {
 	running := s.seedCampaign("acme", Running)
 	s.move("acme", "moved")
 
-	s.Require().NoError(s.destination.SetCampaignState(s.ctx, "moved", running, Running))
-	s.Require().NoError(s.destination.SetCampaignState(s.ctx, "moved", running, Paused))
+	s.Require().NoError(s.destination.ResumeCampaign(s.ctx, "moved", running))
+	s.Require().NoError(s.destination.PauseCampaign(s.ctx, "moved", running, ""))
 
 	_, campaigns := s.resume("moved")
 	s.Empty(campaigns, "the customer paused it here")
 }
 
-// ringOnSource rings a campaign's next contact on the source, as its runner does, and returns
-// it in a call.
-func (s *DataMoveSuite) ringOnSource(campaignID string) Contact {
-	contact, found, err := s.source.ClaimContact(s.ctx, campaignID)
+// dueOnSource is a running campaign on the source with two contacts due to be rung.
+func (s *DataMoveSuite) dueOnSource() string {
+	campaign := s.seedCampaign("acme", Draft)
+	_, _, err := s.source.AddContacts(s.ctx, campaign, []Contact{{ToNumber: "+15550101"}, {ToNumber: "+15550102"}})
 	s.Require().NoError(err)
-	s.Require().True(found)
-	return contact
+	_, err = s.source.DB().ExecContext(s.ctx, "UPDATE campaign_contacts SET next_attempt_at = now() WHERE campaign_id = ?", campaign)
+	s.Require().NoError(err)
+	s.setState(s.source, "acme", campaign, Running)
+	return campaign
 }
 
-// hangUpOnSource ends a call the source rang.
+// ringOnSource rings the source's next due contact, as a runner there does, and returns it in
+// a call.
+func (s *DataMoveSuite) ringOnSource() Contact {
+	claimed, err := s.source.ClaimDueContacts(s.ctx, "router-a", time.Now(), time.Hour, 1)
+	s.Require().NoError(err)
+	s.Require().Len(claimed, 1)
+	return claimed[0].Contact
+}
+
+// hangUpOnSource ends a call the source rang, and the contact with it.
 func (s *DataMoveSuite) hangUpOnSource(contact Contact) {
-	contact.State = Done
-	s.Require().NoError(s.source.FinishContact(s.ctx, contact))
+	s.Require().NoError(s.source.SettleContact(s.ctx, "router-a", contact.ID, Settle{Stage: ContactCompleted, Attempt: 1}))
 }
 
-// startHere starts a moved campaign on the destination as campaign.Runner.Start does, and
-// returns the contact it rings first.
-func (s *DataMoveSuite) startHere(customerID, campaignID string) Contact {
-	s.Require().NoError(s.destination.ReleaseContacts(s.ctx, campaignID))
-	s.Require().NoError(s.destination.SetCampaignState(s.ctx, customerID, campaignID, Running))
-	contact, found, err := s.destination.ClaimContact(s.ctx, campaignID)
+// resumeHere resumes a moved campaign on the destination and returns the contacts a runner
+// there rings first.
+func (s *DataMoveSuite) resumeHere(campaign string) []Contact {
+	s.Require().NoError(s.destination.ResumeCampaign(s.ctx, "moved", campaign))
+	claimed, err := s.destination.ClaimDueContacts(s.ctx, "router-b", time.Now().Add(time.Minute), time.Hour, 10)
 	s.Require().NoError(err)
-	s.Require().True(found)
-	return contact
+	contacts := make([]Contact, 0, len(claimed))
+	for _, claim := range claimed {
+		contacts = append(contacts, claim.Contact)
+	}
+	return contacts
 }
 
 // The cut-over the docs give: pause the campaign at the source, let its calls end, then run the
 // last --once. The pause clears the move's mark, so --resume leaves the campaign alone, and
-// starting it here rings only those the source never rang.
+// resuming it here rings only those the source never rang.
 func (s *DataMoveSuite) TestACampaignPausedAtTheSourceBeforeTheLastCatchUpRingsNobodyTwiceHere() {
 	s.capture("acme")
-	running := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
-		{CampaignID: running, ToNumber: "+15550101"}, {CampaignID: running, ToNumber: "+15550102"}}))
-	inCall := s.ringOnSource(running)
+	running := s.dueOnSource()
+	inCall := s.ringOnSource()
 	cursor := s.move("acme", "moved")
 
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", running, Paused))
+	s.Require().NoError(s.source.PauseCampaign(s.ctx, "acme", running, ""))
 	s.hangUpOnSource(inCall)
 	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
 	s.Require().NoError(err)
@@ -2282,82 +2601,29 @@ func (s *DataMoveSuite) TestACampaignPausedAtTheSourceBeforeTheLastCatchUpRingsN
 	s.Empty(campaigns, "the user paused it at the source")
 	campaign, err := s.destination.Campaign(s.ctx, "moved", running)
 	s.Require().NoError(err)
-	s.Equal(Paused, campaign.State, "it rings here only once someone starts it")
+	s.Equal(Paused, campaign.State, "it rings here only once someone resumes it")
 
-	next := s.startHere("moved", running)
-	s.NotEqual(inCall.ID, next.ID, "the source rang them")
-	s.Equal("+15550102", next.ToNumber)
-	s.Equal(1, next.Attempts)
+	rung := s.resumeHere(running)
+	s.Require().Len(rung, 1)
+	s.Equal("+15550102", rung[0].ToNumber, "the source rang the other")
 }
 
 // A campaign running at the source when the last --once read it stays paused here, and the
 // cut-over names it. The contacts the source rang up to then are done here.
-func (s *DataMoveSuite) TestACampaignTheCopyPausedIsNamedAndStartsWhereTheCopyLeftOff() {
-	running := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
-		{CampaignID: running, ToNumber: "+15550101"}, {CampaignID: running, ToNumber: "+15550102"}}))
-	s.hangUpOnSource(s.ringOnSource(running))
+func (s *DataMoveSuite) TestACampaignTheCopyPausedIsNamedAndResumesWhereTheCopyLeftOff() {
+	running := s.dueOnSource()
+	s.hangUpOnSource(s.ringOnSource())
 	s.move("acme", "moved")
 
 	_, campaigns := s.resume("moved")
 	s.Equal([]string{running}, campaigns)
 	campaign, err := s.destination.Campaign(s.ctx, "moved", running)
 	s.Require().NoError(err)
-	s.Equal(Paused, campaign.State, "the cut-over starts no campaign")
+	s.Equal(Paused, campaign.State, "the cut-over resumes no campaign")
 
-	next := s.startHere("moved", running)
-	s.Equal("+15550102", next.ToNumber)
-	s.Equal(1, next.Attempts)
-}
-
-// A campaign the user paused at the source without waiting for its calls to end arrives paused
-// and unmarked with a contact still calling. The cut-over names it with how many, since a start
-// here rings them again.
-func (s *DataMoveSuite) TestACampaignPausedAtTheSourceWithContactsCallingIsNamedWithTheirCount() {
-	s.capture("acme")
-	inCalls := s.seedCampaign("acme", Running)
-	quiet := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{
-		{CampaignID: inCalls, ToNumber: "+15550101"}, {CampaignID: inCalls, ToNumber: "+15550102"},
-		{CampaignID: inCalls, ToNumber: "+15550103"}, {CampaignID: quiet, ToNumber: "+15550104"}}))
-	s.ringOnSource(inCalls)
-	s.ringOnSource(inCalls)
-	s.hangUpOnSource(s.ringOnSource(quiet))
-	cursor := s.move("acme", "moved")
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", inCalls, Paused))
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "acme", quiet, Paused))
-	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
-	s.Require().NoError(err)
-	s.Require().NoError(s.destination.ApplyChanges(s.ctx, "moved", changes))
-
-	_, campaigns := s.resume("moved")
-	s.Empty(campaigns, "the user paused both at the source")
-	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
-	s.Require().NoError(err)
-	s.Equal([]CampaignCalls{{ID: inCalls, Calls: 2}}, calling, "only the one with contacts in a call, counted")
-
-	first := s.startHere("moved", inCalls)
-	s.Equal(2, first.Attempts, "a start here rings the one the source was calling again")
-}
-
-func (s *DataMoveSuite) TestACampaignNotPausedHereIsNotNamedForItsCalls() {
-	running := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: running, ToNumber: "+15550101"}}))
-	s.ringOnSource(running)
-	marked := s.seedCampaign("acme", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: marked, ToNumber: "+15550103"}}))
-	s.ringOnSource(marked)
-	other := s.seedCampaign("other", Running)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: other, ToNumber: "+15550102"}}))
-	s.ringOnSource(other)
-	s.Require().NoError(s.source.SetCampaignState(s.ctx, "other", other, Paused))
-	s.move("acme", "moved")
-	s.move("other", "moved-other")
-	s.startHere("moved", running)
-
-	calling, err := s.destination.PausedCampaignsCalling(s.ctx, "moved")
-	s.Require().NoError(err)
-	s.Empty(calling, "one started here rings its own calls, the move's mark names its own, and another customer's is not its")
+	rung := s.resumeHere(running)
+	s.Require().Len(rung, 1)
+	s.Equal("+15550102", rung[0].ToNumber)
 }
 
 // assertArrivedWithoutCredentials checks a connection the destination received holds what a
@@ -2949,12 +3215,14 @@ func (s *DataMoveSuite) TestAContactAddedToAMovedCampaignIsRungAfterTheMovedOnes
 	// numbers the destination's sequence has not reached.
 	_, err := s.source.DB().ExecContext(s.ctx, "SELECT setval(pg_get_serial_sequence('campaign_contacts', 'seq'), 1000)")
 	s.Require().NoError(err)
-	s.Require().NoError(s.source.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000001"}}))
+	_, _, err = s.source.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+15550000001"}})
+	s.Require().NoError(err)
 
 	s.move("acme", "acme")
-	s.Require().NoError(s.destination.AddContacts(s.ctx, []Contact{{CampaignID: campaign.ID, ToNumber: "+15550000002"}}))
+	_, _, err = s.destination.AddContacts(s.ctx, campaign.ID, []Contact{{ToNumber: "+15550000002"}})
+	s.Require().NoError(err)
 
-	contacts, err := s.destination.CampaignContacts(s.ctx, campaign.ID)
+	contacts, err := s.destination.QueryContacts(s.ctx, campaign.ID, ContactFilter{})
 	s.Require().NoError(err)
 	s.Require().Len(contacts, 2)
 	s.Equal("+15550000001", contacts[0].ToNumber, "a contact added here is rung after the ones that moved")

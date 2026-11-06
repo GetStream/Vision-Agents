@@ -287,7 +287,7 @@ func (s *PriceFileSuite) TestTheRouterPricesFromTheDeploymentsOwnFile() {
 
 	used := pricing.Quantities{pricing.InputTokens: 1_000_000}
 	own := list.Quote(pricing.Item{Modality: "llm", Provider: "own", Model: "own-model", Region: pricing.RegionUS}, used)
-	s.EqualValues(3_600_000, own.CostMicros)
+	s.EqualValues(3_240_000, own.CostMicros)
 	s.EqualValues(3_000_000, own.BaseCostMicros)
 	s.Equal("llm-own-own-model-us", own.SKU)
 	s.Equal("files:dev", own.Version)

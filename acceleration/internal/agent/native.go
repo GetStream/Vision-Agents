@@ -668,6 +668,7 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	if said != "" {
 		a.history = append(a.history, llm.Message{Role: llm.Assistant, Content: said})
+		a.keptReply = complete.ResponseID
 	}
 	exchange := lastExchange(a.history)
 	pending := a.pendingTools

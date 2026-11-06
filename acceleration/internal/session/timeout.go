@@ -218,8 +218,8 @@ func (s *Session) closingNow() bool {
 	return s.closing
 }
 
-// endReason is why the session ended, empty while nothing has said.
-func (s *Session) endReason() EndReason {
+// EndReason is why the session ended, empty while nothing has said.
+func (s *Session) EndReason() EndReason {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.ended

@@ -32,7 +32,7 @@ func turnLatencies(pipeline string) map[string]latencySeries {
 	read := map[string]latencySeries{}
 	for leg := range turnLatencyLegs {
 		var metric dto.Metric
-		if err := turnLatency.WithLabelValues(leg, pipeline).(prometheus.Histogram).Write(&metric); err != nil {
+		if err := turnLatencySeconds.WithLabelValues(leg, pipeline).(prometheus.Histogram).Write(&metric); err != nil {
 			panic(err)
 		}
 		read[leg] = latencySeries{count: metric.GetHistogram().GetSampleCount(), sum: metric.GetHistogram().GetSampleSum()}
@@ -79,7 +79,7 @@ func (s *AgentSuite) TestACallerTurnIsObservedAtEachOfItsLatencies() {
 // turnLatencyBounds are the upper bounds of the histogram's buckets, as /metrics shows them.
 func turnLatencyBounds() []float64 {
 	var metric dto.Metric
-	if err := turnLatency.WithLabelValues("roundtrip", pipelineCascade).(prometheus.Histogram).Write(&metric); err != nil {
+	if err := turnLatencySeconds.WithLabelValues("roundtrip", pipelineCascade).(prometheus.Histogram).Write(&metric); err != nil {
 		panic(err)
 	}
 	var bounds []float64

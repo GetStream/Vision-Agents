@@ -404,11 +404,65 @@ fn a_declaration_key_nobody_knows_is_refused() {
         "sandbox_options:\n  timeout: 2h\n",
         "sandbox_options:\n  cpu: two\n",
         "sandbox_options:\n  network: maybe\n",
+        "end_of_turn:\n  max_wait: 900\n",
+        "end_of_turn:\n  bars:\n    - {from: 0, bar: 0.9}\n",
+        "end_of_turn: fast\n",
+        "end_of_turn:\n  max_wait_ms: soon\n",
+        "end_of_turn:\n  bars:\n    - {from_ms: 0, bar: high}\n",
+        "end_of_turn:\n  bars:\n    - {bar: 0.9}\n",
+        "end_of_turn:\n  bars:\n    - {from_ms: 0}\n",
     ] {
         let (_temporary, root) = directory("jean");
         write(&root, "agent.yaml", declaration);
 
         assert!(Folder::load(&root).is_err(), "accepted {declaration:?}");
+    }
+}
+
+/// floor_control is read as written, "" included; which models there are is the router's to say.
+#[test]
+fn the_floor_control_is_read_as_written() {
+    for (declaration, want) in [
+        (
+            "floor_control: stream/chorus-asr\n",
+            Some("stream/chorus-asr"),
+        ),
+        ("floor_control: \"\"\n", Some("")),
+        ("floor_control: other\n", Some("other")),
+        ("floor_control:\n", None),
+        ("floor_control: ~\n", None),
+        ("llm: openai/gpt-5.6\n", None),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+
+        let folder = Folder::load(&root).unwrap_or_else(|error| panic!("{declaration:?}: {error}"));
+
+        assert_eq!(
+            folder.settings.floor_control.as_deref(),
+            want,
+            "{declaration:?}"
+        );
+    }
+}
+
+#[test]
+fn a_floor_control_that_is_not_a_string_is_refused_by_name() {
+    for declaration in [
+        "floor_control: {model: chorus-asr, mode: act}\n",
+        "floor_control: [stream/chorus-asr]\n",
+        "floor_control: true\n",
+        "floor_control: 1\n",
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+
+        let error = Folder::load(&root).unwrap_err().to_string();
+
+        assert!(
+            error.contains("floor_control must be a string"),
+            "{declaration:?} was refused as {error:?}"
+        );
     }
 }
 

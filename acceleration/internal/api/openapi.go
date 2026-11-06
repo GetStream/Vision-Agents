@@ -381,6 +381,7 @@ func (s *Server) newAPI(router chi.Router) huma.API {
 	s.registerPhone(api)
 	s.registerConversations(api)
 	s.registerCampaigns(api)
+	s.registerCampaignContacts(api)
 	s.registerSimulations(api)
 	s.registerCalls(api)
 	s.registerReviews(api)

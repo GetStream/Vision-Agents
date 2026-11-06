@@ -276,6 +276,8 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		body.Scheduling = &declared
 	}
 	body.Calls = declareCalls(settings.Calls)
+	body.EndOfTurn = declareEndOfTurn(settings.EndOfTurn)
+	body.FloorControl = declareFloorControl(settings.FloorControl)
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}
@@ -323,6 +325,38 @@ func declareCalls(calls *CallSettings) *acceleration.AgentCalls {
 		declared.EndCall.When = &endCall.When
 	}
 	return declared
+}
+
+// declareEndOfTurn is what the file says of end_of_turn for the wire, or nil when it says
+// nothing, which leaves the stored choice.
+func declareEndOfTurn(settings *EndOfTurnSettings) *acceleration.EndOfTurn {
+	if settings == nil {
+		return nil
+	}
+	declared := &acceleration.EndOfTurn{Preset: settings.Preset}
+	if settings.MaxWaitMs != nil {
+		wait := int64(*settings.MaxWaitMs)
+		declared.MaxWaitMs = &wait
+	}
+	if settings.Bars != nil {
+		bars := make([]acceleration.EndOfTurnBar, 0, len(settings.Bars))
+		for _, bar := range settings.Bars {
+			// Load refused a bar without both.
+			bars = append(bars, acceleration.EndOfTurnBar{FromMs: int64(*bar.FromMs), Bar: *bar.Bar})
+		}
+		declared.Bars = &bars
+	}
+	return declared
+}
+
+// declareFloorControl is what the file says of floor_control for the wire, as written, or nil
+// when it says nothing, which leaves the stored choice.
+func declareFloorControl(setting *FloorControlSetting) *string {
+	if setting == nil {
+		return nil
+	}
+	declared := string(*setting)
+	return &declared
 }
 
 func enabledOr(enabled *bool, fallback bool) *bool {

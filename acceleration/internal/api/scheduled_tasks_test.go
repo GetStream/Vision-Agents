@@ -3220,7 +3220,7 @@ func (s *ScheduledTasksSuite) TestATaskTextedOnWhatsAppArrivesThere() {
 
 // seedSMSLine gives the app a text line the way buying the number and
 // connecting it would, without Telnyx on the line to be pointed anywhere.
-func (s *ScheduledTasksSuite) seedSMSLine(number string) {
+func (s *RouterSuite) seedSMSLine(number string) {
 	ctx := context.Background()
 	s.Require().NoError(s.store.RecordNumber(ctx, &store.PhoneNumber{
 		CustomerID: s.customerID(), E164: number, Vendor: "telnyx",
@@ -3579,7 +3579,7 @@ func (s *ScheduledTasksSuite) TestAFailureOnEveryChannelIsListedUnderTheFirstCha
 }
 
 // retryAtOnce has a failed occurrence tried again straight away, twice.
-func (s *ScheduledTasksSuite) retryAtOnce() {
+func (s *RouterSuite) retryAtOnce() {
 	retries := scheduling.DeliveryRetries
 	scheduling.DeliveryRetries = []time.Duration{time.Millisecond, time.Millisecond}
 	s.T().Cleanup(func() { scheduling.DeliveryRetries = retries })

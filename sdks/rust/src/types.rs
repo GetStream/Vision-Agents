@@ -259,6 +259,22 @@ impl ::std::convert::TryFrom<::std::string::String> for ActivityGranularity {
         value.parse()
     }
 }
+///`AddContactsRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AddContactsRequest {
+    ///Up to 1,000.
+    pub contacts: ::std::vec::Vec<ContactInput>,
+    ///The region, as ISO 3166-1 alpha-2, a number without a country code is read in. Omitted is the campaign's default_country, else US.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub default_country: ::std::option::Option<::std::string::String>,
+}
+///`AddContactsResponse`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct AddContactsResponse {
+    pub added: i64,
+    ///In the order sent.
+    pub refused: ::std::vec::Vec<RefusedContact>,
+}
 ///`AddTrunkNumberRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct AddTrunkNumberRequest {
@@ -325,9 +341,15 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///Absent when chorus-asr ends the agent's turns by the server's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     ///What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
+    ///The model that controls the floor in this agent's sessions: stream/chorus-asr. Absent for the default flow controller.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -408,8 +430,14 @@ pub struct AgentConfigPatch {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///Replaces the choice whole. An empty object is the server's default.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
+    ///The model that controls the floor: stream/chorus-asr, or empty for the default flow controller again. stream/chorus-asr on a router without a chorus-asr server is refused (400).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<::std::string::String>,
     ///Replaces the greeting whole. An empty text removes it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
@@ -516,9 +544,15 @@ pub struct AgentConfigRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///When chorus-asr has a caller's turn ended in this agent's sessions, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars. A session request's wins over this. Left out on a create, the server's default; left out on an update, the stored choice stays, and an empty object is the server's default again. A preset or wait the server does not publish is refused (400) when the floor control asks it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     ///What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
+    ///The model that controls the floor in this agent's sessions, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr, the one there is, or empty for the default flow controller. A session request's wins over this. Left out on a create, the default flow controller; left out on an update, the stored choice stays. stream/chorus-asr on a router without a chorus-asr server is refused (400).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     ///A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
@@ -2320,47 +2354,230 @@ pub struct CallUsage {
     ///How many calls to a model it took, transcription and speech included.
     pub requests: i64,
 }
+///`CallingHours`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CallingHours {
+    ///YYYY-MM-DD, the contact's local date, on which nobody is rung.
+    pub excluded_dates: ::std::vec::Vec<::std::string::String>,
+    pub time_zone: CampaignTimeZone,
+    ///Keyed monday to sunday. A day left out rings nobody.
+    pub windows: ::std::collections::BTreeMap<
+        ::std::string::String,
+        ::std::option::Option<::std::vec::Vec<CallingWindow>>,
+    >,
+}
+///`CallingWindow`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CallingWindow {
+    ///HH:MM, up to 24:00. A window does not cross midnight.
+    pub end: ::std::string::String,
+    ///HH:MM, on a 15-minute step.
+    pub start: ::std::string::String,
+}
 ///`Campaign`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Campaign {
-    pub concurrency: i64,
-    pub config_id: ::std::string::String,
-    pub created_at: ::std::string::String,
+    pub calling_hours: CallingHours,
+    ///When it had nobody left to ring.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub finished_at: ::std::option::Option<::std::string::String>,
+    pub completed_at: ::std::option::Option<::std::string::String>,
+    ///How many of these calls may be happening at once.
+    pub concurrency: i64,
+    ///The agent config the calls are made with, the same as the sequence's step names.
+    pub config_id: ::std::string::String,
+    pub contacts: ContactCounts,
+    pub created_at: ::std::string::String,
+    ///The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+    pub default_country: ::std::string::String,
+    ///One of the app's own numbers, which is what the person sees.
     pub from_number: ::std::string::String,
     pub id: ::std::string::String,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub launched_at: ::std::option::Option<::std::string::String>,
     pub name: ::std::string::String,
-    ///Why the router paused the campaign itself, as the code of what refused its next call: telephony_suspended, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached. The contact that call was for is rung once the campaign is started again. Absent for a campaign the customer paused, and cleared by starting it.
+    ///Why the router paused the campaign itself: the code of what refused its next call, for example telephony_suspended, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached, user_limit_reached or spend_check_unavailable, config_missing when its agent config was deleted, session_refused when its agent config makes a session that cannot open, or voicemail_needs_exact_words when its step leaves a voicemail message and its agent config became speech-to-speech. The contact that call was for is rung once the campaign is resumed. Absent for a campaign somebody paused, and cleared by resuming it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub paused_reason: ::std::option::Option<::std::string::String>,
+    pub sequence: CampaignSequence,
+    ///When it was launched to start ringing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub start_at: ::std::option::Option<::std::string::String>,
+    ///When it first rang anybody.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub started_at: ::std::option::Option<::std::string::String>,
     pub state: CampaignState,
-    #[serde(
-        default,
-        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
-    )]
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub stopped_at: ::std::option::Option<::std::string::String>,
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    #[serde(rename = "type")]
+    pub type_: CampaignType,
+}
+///`CampaignAnalytics`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignAnalytics {
+    ///Calls placed that ended, by how the phone says they ended: completed, busy, no_answer, failed, canceled or unknown. A call an answering machine took is completed.
+    pub call_outcomes: ::std::collections::BTreeMap<::std::string::String, i64>,
+    ///Contacts who answered at least one call.
+    pub connected: i64,
+    ///converted / dialed, 0 when nobody was dialed.
+    pub conversion_rate: f64,
+    ///Contacts that ended successfully.
+    pub converted: i64,
+    ///Contacts with at least one call placed.
+    pub dialed: i64,
+    ///Oldest first, only the days with a dial.
+    pub dials_per_day: ::std::vec::Vec<CampaignDialDay>,
+    ///Contacts that are done, by outcome id, no_response included.
+    pub outcomes: ::std::collections::BTreeMap<::std::string::String, i64>,
+}
+///`CampaignAttempt`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignAttempt {
+    ///Minutes after the previous attempt started, pushed into the calling hours.
+    pub delay_minutes: i64,
+}
+///`CampaignDialDay`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignDialDay {
+    ///Calls a person picked up and spoke on.
+    pub answered: i64,
+    ///YYYY-MM-DD, in UTC.
+    pub date: ::std::string::String,
+    ///Calls placed, answering machines included.
+    pub dials: i64,
+    ///Calls an answering machine took.
+    pub voicemail: i64,
+}
+///`CampaignNext`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+pub struct CampaignNext {
+    ///How the contact ends: successful counts as converted.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end: ::std::option::Option<CampaignNextEnd>,
+    ///Reserved for branching to another step, which is refused for now.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub step: ::std::option::Option<::std::string::String>,
+}
+///How the contact ends: successful counts as converted.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CampaignNextEnd {
+    #[serde(rename = "successful")]
+    Successful,
+    #[serde(rename = "unsuccessful")]
+    Unsuccessful,
+}
+impl ::std::fmt::Display for CampaignNextEnd {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Successful => f.write_str("successful"),
+            Self::Unsuccessful => f.write_str("unsuccessful"),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignNextEnd {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "successful" => Ok(Self::Successful),
+            "unsuccessful" => Ok(Self::Unsuccessful),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignNextEnd {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignNextEnd {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`CampaignOutcome`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignOutcome {
+    ///What the call has to have been for this outcome, which the model reading the transcript goes by.
+    pub description: ::std::string::String,
+    ///Lowercase letters, digits and underscores, starting with a letter.
+    pub id: ::std::string::String,
+    pub name: ::std::string::String,
+    pub next: CampaignNext,
+}
+///`CampaignPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<Campaign>,
+    ///Pass as cursor for the next page. Absent on the last.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
 }
 ///`CampaignRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
 pub struct CampaignRequest {
-    ///How many of these calls may be happening at once.
+    ///Omitted is weekdays 09:00 to 18:00 where the contact is, on create.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub calling_hours: ::std::option::Option<CallingHours>,
+    ///How many of these calls may be happening at once. Omitted is 1 on create.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub concurrency: ::std::option::Option<i64>,
-    ///The agent config the calls are made with.
-    pub config_id: ::std::string::String,
-    ///One of your own numbers, which is what the person sees.
-    pub from_number: ::std::string::String,
-    pub name: ::std::string::String,
+    ///The agent config the calls are made with. Setting it sets the sequence's step's too.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub config_id: ::std::option::Option<::std::string::String>,
+    ///The region, as ISO 3166-1 alpha-2, a contact's number without a country code is read in.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub default_country: ::std::option::Option<::std::string::String>,
+    ///One of the app's own numbers, which is what the person sees.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub from_number: ::std::option::Option<::std::string::String>,
+    ///Required on create.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub name: ::std::option::Option<::std::string::String>,
+    ///Omitted is four attempts over twenty days, with double dial, on create. Its step's config_id is the campaign's: sending both, they must agree.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub sequence: ::std::option::Option<CampaignSequence>,
     #[serde(
         default,
         skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
     )]
     pub tags: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///Omitted is standard on create. It never changes.
+    #[serde(
+        rename = "type",
+        skip_serializing_if = "::std::option::Option::is_none"
+    )]
+    pub type_: ::std::option::Option<CampaignType>,
 }
-///`CampaignState`
+///`CampaignRoute`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignRoute {
+    pub next: CampaignNext,
+}
+///`CampaignSequence`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct CampaignSequence {
+    ///Ring again at once when the first call of an attempt is not answered.
+    pub double_dial: bool,
+    ///Exactly one step for now.
+    pub steps: ::std::vec::Vec<CampaignStep>,
+}
+///Where a campaign is: draft until it is launched, scheduled until its start_at, running while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to ring.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -2376,20 +2593,26 @@ pub struct CampaignRequest {
 pub enum CampaignState {
     #[serde(rename = "draft")]
     Draft,
+    #[serde(rename = "scheduled")]
+    Scheduled,
     #[serde(rename = "running")]
     Running,
     #[serde(rename = "paused")]
     Paused,
-    #[serde(rename = "finished")]
-    Finished,
+    #[serde(rename = "stopped")]
+    Stopped,
+    #[serde(rename = "completed")]
+    Completed,
 }
 impl ::std::fmt::Display for CampaignState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Draft => f.write_str("draft"),
+            Self::Scheduled => f.write_str("scheduled"),
             Self::Running => f.write_str("running"),
             Self::Paused => f.write_str("paused"),
-            Self::Finished => f.write_str("finished"),
+            Self::Stopped => f.write_str("stopped"),
+            Self::Completed => f.write_str("completed"),
         }
     }
 }
@@ -2398,9 +2621,11 @@ impl ::std::str::FromStr for CampaignState {
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
             "draft" => Ok(Self::Draft),
+            "scheduled" => Ok(Self::Scheduled),
             "running" => Ok(Self::Running),
             "paused" => Ok(Self::Paused),
-            "finished" => Ok(Self::Finished),
+            "stopped" => Ok(Self::Stopped),
+            "completed" => Ok(Self::Completed),
             _ => Err("invalid value".into()),
         }
     }
@@ -2412,6 +2637,206 @@ impl ::std::convert::TryFrom<&str> for CampaignState {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for CampaignState {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`CampaignStep`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignStep {
+    ///1 to 10. The first has a delay of 0.
+    pub attempts: ::std::vec::Vec<CampaignAttempt>,
+    ///The agent config the step rings with, the same as the campaign's config_id.
+    pub config_id: ::std::string::String,
+    ///What this conversation is for, told to the agent on every call of the step. {{variable}} placeholders are filled from the contact. Required to launch.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub goal: ::std::option::Option<::std::string::String>,
+    ///step_1, for now.
+    pub id: ::std::string::String,
+    ///Where running out of attempts leads. It ends unsuccessfully.
+    pub no_response: CampaignRoute,
+    ///Where an answered call none of the outcomes fit leads.
+    pub other: CampaignRoute,
+    ///What an answered call can end as. do_not_call is built in.
+    pub outcomes: ::std::vec::Vec<CampaignOutcome>,
+    ///What the agent does when an answering machine picks up. Absent is off: the agent talks to a machine as to a person. Leaving a message needs an agent that is not speech-to-speech.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub voicemail: ::std::option::Option<CampaignVoicemail>,
+}
+///`CampaignTimeZone`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignTimeZone {
+    ///An IANA zone, used by contact mode.
+    pub fallback: ::std::string::String,
+    ///An IANA zone, used by fixed mode.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub fixed: ::std::option::Option<::std::string::String>,
+    ///contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+    pub mode: CampaignTimeZoneMode,
+}
+///contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CampaignTimeZoneMode {
+    #[serde(rename = "contact")]
+    Contact,
+    #[serde(rename = "fixed")]
+    Fixed,
+}
+impl ::std::fmt::Display for CampaignTimeZoneMode {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Contact => f.write_str("contact"),
+            Self::Fixed => f.write_str("fixed"),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignTimeZoneMode {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "contact" => Ok(Self::Contact),
+            "fixed" => Ok(Self::Fixed),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignTimeZoneMode {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignTimeZoneMode {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CampaignType {
+    #[serde(rename = "standard")]
+    Standard,
+    #[serde(rename = "auto_enroll")]
+    AutoEnroll,
+}
+impl ::std::fmt::Display for CampaignType {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Standard => f.write_str("standard"),
+            Self::AutoEnroll => f.write_str("auto_enroll"),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignType {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "standard" => Ok(Self::Standard),
+            "auto_enroll" => Ok(Self::AutoEnroll),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignType {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignType {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///`CampaignVoicemail`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct CampaignVoicemail {
+    pub action: CampaignVoicemailAction,
+    ///{{variable}} placeholders are filled from the contact, then it is said word for word once the greeting has ended, and the call ends. Required to launch for leave_message, and not only spaces.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub message: ::std::option::Option<::std::string::String>,
+}
+/**off: the agent talks to a machine as to a person. The default.
+hang_up: end the call at once, saying nothing.
+leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum CampaignVoicemailAction {
+    #[serde(rename = "off")]
+    Off,
+    #[serde(rename = "hang_up")]
+    HangUp,
+    #[serde(rename = "leave_message")]
+    LeaveMessage,
+}
+impl ::std::fmt::Display for CampaignVoicemailAction {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Off => f.write_str("off"),
+            Self::HangUp => f.write_str("hang_up"),
+            Self::LeaveMessage => f.write_str("leave_message"),
+        }
+    }
+}
+impl ::std::str::FromStr for CampaignVoicemailAction {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "off" => Ok(Self::Off),
+            "hang_up" => Ok(Self::HangUp),
+            "leave_message" => Ok(Self::LeaveMessage),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for CampaignVoicemailAction {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for CampaignVoicemailAction {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
@@ -4015,25 +4440,104 @@ pub struct ConnectorToolGrant {
 ///`Contact`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct Contact {
-    pub attempts: i64,
-    ///The call this contact became, which is what the call paths take.
+    ///Every dial made to them, oldest first. Only on a contact read alone.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub attempts: ::std::option::Option<::std::vec::Vec<ContactAttempt>>,
+    ///Attempts that placed at least one call.
+    pub attempts_made: i64,
+    ///The attempts the sequence makes at most.
+    pub attempts_total: i64,
+    ///The last call placed to them, which is what the call paths take.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub call_id: ::std::option::Option<::std::string::String>,
-    ///Why they could not be rung, when they could not be.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub error: ::std::option::Option<::std::string::String>,
+    ///They ended successfully.
+    pub converted: bool,
+    pub created_at: ::std::string::String,
     pub id: ::std::string::String,
+    ///When they are next rung, while they are waiting to be.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_attempt_at: ::std::option::Option<::std::string::String>,
+    ///The id of the outcome they ended with, once they have.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub outcome: ::std::option::Option<::std::string::String>,
+    ///Why they were rejected, failed or stopped.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub reason: ::std::option::Option<::std::string::String>,
+    pub stage: ContactStage,
+    ///The IANA zone they were added with.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub time_zone: ::std::option::Option<::std::string::String>,
+    ///E.164.
+    pub to_number: ::std::string::String,
+    ///Filled into the agent's {{placeholders}} on their calls.
+    pub variables: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
+    ///The IANA zone the calling hours are read in for them: the campaign's fixed zone, else their time_zone, else their number's, else the campaign's fallback.
+    pub zone: ::std::string::String,
+}
+///`ContactAttempt`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactAttempt {
+    ///Which attempt of the sequence, from 1.
+    pub attempt: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call_id: ::std::option::Option<::std::string::String>,
+    ///How the call the dial placed ended, as the phone says. Absent while it is happening and for a dial that placed none.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub call_outcome: ::std::option::Option<CallOutcome>,
+    ///1, or 2 for the second call of a double dial.
+    pub dial: i64,
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub ended_at: ::std::option::Option<::std::string::String>,
+    ///The outcome an answered call was read as: no_response when nobody but the agent spoke.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub outcome: ::std::option::Option<::std::string::String>,
+    ///Why the dial placed no call: invalid_number, refused, deferred, paused or not_placed (the router stopped before the call went out). voicemail for a call an answering machine took. Empty for any other call, whose end call_outcome says.
+    pub result: ::std::string::String,
+    pub started_at: ::std::string::String,
+}
+///`ContactCounts`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactCounts {
+    pub completed: i64,
+    ///Contacts that ended successfully.
+    pub converted: i64,
+    ///Contacts with at least one call placed.
+    pub dialed: i64,
+    pub enrolled: i64,
+    pub failed: i64,
+    pub in_progress: i64,
+    pub rejected: i64,
+    pub stopped: i64,
+    pub total: i64,
+}
+///`ContactInput`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactInput {
+    ///What to say to this person, added to whatever the config already says. Up to 2,000 characters; longer fails the whole request with 400.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub instructions: ::std::option::Option<::std::string::String>,
-    ///How the call to them ended, once it has. The state still says only whether they were rung.
+    ///An IANA zone, which a campaign reading its hours where each contact is goes by before the number's.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub outcome: ::std::option::Option<CallOutcome>,
-    pub state: ContactState,
+    pub time_zone: ::std::option::Option<::std::string::String>,
+    ///With or without a country code.
     pub to_number: ::std::string::String,
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub vendor_call_id: ::std::option::Option<::std::string::String>,
+    ///Filled into the agent's {{placeholders}}. Names are lowercase letters, digits and underscores, starting with a letter; up to 50, each value up to 1,000 characters on one line.
+    #[serde(
+        default,
+        skip_serializing_if = ":: std :: collections :: BTreeMap::is_empty"
+    )]
+    pub variables: ::std::collections::BTreeMap<::std::string::String, ::std::string::String>,
 }
-///`ContactState`
+///`ContactPage`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct ContactPage {
+    pub has_more: bool,
+    pub items: ::std::vec::Vec<Contact>,
+    ///Pass as cursor for the next page. Absent on the last.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub next_cursor: ::std::option::Option<::std::string::String>,
+}
+///Where a contact is: enrolled while waiting to be rung, in_progress while a call to them happens or is being read, completed once the sequence is done with them, rejected when their number was refused before any call, stopped when they were left unrung, failed when a call could not be made.
 #[derive(
     ::serde::Deserialize,
     ::serde::Serialize,
@@ -4046,64 +4550,59 @@ pub struct Contact {
     PartialEq,
     PartialOrd,
 )]
-pub enum ContactState {
-    #[serde(rename = "pending")]
-    Pending,
-    #[serde(rename = "calling")]
-    Calling,
-    #[serde(rename = "done")]
-    Done,
+pub enum ContactStage {
+    #[serde(rename = "enrolled")]
+    Enrolled,
+    #[serde(rename = "in_progress")]
+    InProgress,
+    #[serde(rename = "completed")]
+    Completed,
+    #[serde(rename = "rejected")]
+    Rejected,
+    #[serde(rename = "stopped")]
+    Stopped,
     #[serde(rename = "failed")]
     Failed,
 }
-impl ::std::fmt::Display for ContactState {
+impl ::std::fmt::Display for ContactStage {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
-            Self::Pending => f.write_str("pending"),
-            Self::Calling => f.write_str("calling"),
-            Self::Done => f.write_str("done"),
+            Self::Enrolled => f.write_str("enrolled"),
+            Self::InProgress => f.write_str("in_progress"),
+            Self::Completed => f.write_str("completed"),
+            Self::Rejected => f.write_str("rejected"),
+            Self::Stopped => f.write_str("stopped"),
             Self::Failed => f.write_str("failed"),
         }
     }
 }
-impl ::std::str::FromStr for ContactState {
+impl ::std::str::FromStr for ContactStage {
     type Err = self::error::ConversionError;
     fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         match value {
-            "pending" => Ok(Self::Pending),
-            "calling" => Ok(Self::Calling),
-            "done" => Ok(Self::Done),
+            "enrolled" => Ok(Self::Enrolled),
+            "in_progress" => Ok(Self::InProgress),
+            "completed" => Ok(Self::Completed),
+            "rejected" => Ok(Self::Rejected),
+            "stopped" => Ok(Self::Stopped),
             "failed" => Ok(Self::Failed),
             _ => Err("invalid value".into()),
         }
     }
 }
-impl ::std::convert::TryFrom<&str> for ContactState {
+impl ::std::convert::TryFrom<&str> for ContactStage {
     type Error = self::error::ConversionError;
     fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
 }
-impl ::std::convert::TryFrom<::std::string::String> for ContactState {
+impl ::std::convert::TryFrom<::std::string::String> for ContactStage {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
-}
-///`ContactsRequest`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct ContactsRequest {
-    pub contacts: ::std::vec::Vec<ContactsRequestContactsItem>,
-}
-///`ContactsRequestContactsItem`
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
-pub struct ContactsRequestContactsItem {
-    ///What to say to this person, added to whatever the config already says.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub instructions: ::std::option::Option<::std::string::String>,
-    pub to_number: ::std::string::String,
 }
 ///`ContentPart`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
@@ -4301,6 +4800,12 @@ pub struct CreateSessionRequest {
     ///A longer note about the conversation, searched alongside the title.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
+    ///When chorus-asr has the caller's turn ended in this session, over the agent config's, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars, and an empty object for the server's default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because how eager the agent is to answer is the app's to decide.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
+    ///The model that controls the floor in this session, over the agent config's: stream/chorus-asr, or empty for the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400). The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<::std::string::String>,
     ///What the agent opens the call with, over what the config says.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
@@ -5089,6 +5594,67 @@ impl ::std::convert::TryFrom<::std::string::String> for DispatchSetting {
         value.parse()
     }
 }
+///`DuplicateCampaignRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct DuplicateCampaignRequest {
+    ///none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+    pub contacts: DuplicateCampaignRequestContacts,
+}
+///none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum DuplicateCampaignRequestContacts {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "all")]
+    All,
+    #[serde(rename = "not_contacted")]
+    NotContacted,
+}
+impl ::std::fmt::Display for DuplicateCampaignRequestContacts {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::All => f.write_str("all"),
+            Self::NotContacted => f.write_str("not_contacted"),
+        }
+    }
+}
+impl ::std::str::FromStr for DuplicateCampaignRequestContacts {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "all" => Ok(Self::All),
+            "not_contacted" => Ok(Self::NotContacted),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for DuplicateCampaignRequestContacts {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for DuplicateCampaignRequestContacts {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///The quota a user is held to: each number is the first set of the user's own, the app's, the organization's and the router's default. Both are 0 on a router that counts nothing.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct EffectiveQuota {
@@ -5108,6 +5674,30 @@ pub struct EndCallSettings {
     ///When the agent should end the call, in the caller's terms.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub when: ::std::option::Option<::std::string::String>,
+}
+///When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct EndOfTurn {
+    ///Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub bars: ::std::option::Option<::std::vec::Vec<EndOfTurnBar>>,
+    ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_wait_ms: ::std::option::Option<i64>,
+    ///One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub preset: ::std::option::Option<::std::string::String>,
+}
+///What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct EndOfTurnBar {
+    ///What p_eot, chorus-asr's probability that the caller has finished, must reach for the turn to have ended: strictly between 0 and 1.
+    pub bar: f64,
+    ///How far into the pause, in milliseconds, the bar begins.
+    pub from_ms: i64,
 }
 ///What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 #[derive(
@@ -5228,7 +5818,7 @@ pub enum Equals {
 ///`ErrorDetail`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
 pub struct ErrorDetail {
-    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
+    ///What went wrong, for a program to branch on. Every type has a code of its own name (invalid_request, unauthenticated, forbidden, payment_required, not_found, method_not_allowed, not_acceptable, conflict, gone, payload_too_large, unsupported_media_type, rate_limited, internal_error, unavailable, timeout) that a failure has when nothing names it better. The others are validation_failed, missing_customer, missing_organization, server_side_only, not_configured (this deployment does not offer the feature), modality_not_routed, unsynced_changes (a sync asked to check would write over somebody's edits), name_taken (a 409: another agent config, router config or voice, or another skill of the same agent config, already has the name, so another name will do), channel_connection_taken (a 409: another live agent config binds the channel connection as fixed, and one agent answers a channel connection's messages, so the message names that config), call_unanswered (a 409: the call placed for a phone session ended with nobody answering, and the message names how: busy, no_answer, failed or canceled. Opening the session is refused, or, when the status came while the agent was joining the call, the session is ended at once and kept as ended), no_oauth_client (a 400: a consent found no OAuth client for the connector, and the message names each way the connector lets the app give it one), invalid_config (a 400: an agent config a run names does not start a session), insufficient_credits (a 402: the organization's credit is spent, so work that costs money is refused until credit is added; a model that costs nothing is still served), system_limit_reached (a 402: the organization's spend hard limit for the day or the month is reached, whatever its credit, and the message names the interval, the amount and when it resets), spend_limit_reached (a 402: one of the organization's own spend limits is spent, on the organization, an app, a key, a usage category or a team, and the message says which and when it resets, so retrying before then is refused again), user_limit_reached (a 429: a spend limit on the one end user the request is for is spent, which stops that user and no one else, and Retry-After says when its window ends), spend_check_unavailable (a 503: the router could not share what the organization is spending with the other routers for a while, so work that costs money is refused until it can; a model that costs nothing is still served, and Retry-After says to try again in a few seconds), budget_moved (a 400: a policy sent a budget, which spend limits replaced), limit_above_parent (a 400: a spend limit is above a limit of its parent in the same interval, and the message names the parent's limit), limit_exists (a 409: the subject already has a limit at that level and interval, and the message names its id), no_limit (a 404: the subject has no spend limit to reset or grant past), use_team (a 400: a category starting team: was sent, where the team field names a team), invalid_expiry (a 400: a grant's expires_at is not in the future, or is more than 366 days away), too_many_grants (a 409: the organization has 20 live grants, as many as it may), account_suspended (a 403: the organization is suspended, and every request is refused, one for a model that costs nothing included, until it is restored; the message says to contact support), concurrency_limited (a 429: the app has as many runs in flight as it may, and Retry-After says when to try again), model_failed (a 503: the model failed or gave no answer), prompt_injection (a 400: the prompt injection screen refused the input of a run or a tool result it read, which retrying an unchanged input does not fix), image_unavailable (a 400: an image a run was handed could not be fetched or is not a JPEG, PNG, WebP or GIF, which retrying the same image does not fix), invalid_usage_categories (a 400: the usage categories the request names, in the token's usage_categories and team claims or in X-Stream-Usage-Categories, are more than 10, one is not 1 to 64 characters of A-Z, a-z, 0-9, _ . : -, more than one names a team, or the team is over 59 characters), memory_unavailable (a 503: the memory store could not delete what was asked, so nothing that waits on it was deleted either, and the same request later can succeed), billing_not_enabled (a 404: this deployment bills nobody, or the caller's app is in no organization it bills, so there is no account to read), provider_takes_no_key (a 400: a key was put for a provider whose work is never routed on a customer's own key here, and the message names the ones that are), campaign_locked (a 409: the campaign's state does not allow the change, such as a launched campaign's sequence, or resuming one that is running), campaign_not_ready (a 400: a launch found the campaign missing what it needs to ring anybody, and the message says what), consent_required (a 400: a launch did not say the people on the campaign agreed to be called), and <resource>_not_found for agent_config, call, campaign, channel_account, command, connection, grant, knowledge_document, knowledge_url, limit, provider_key, router_config, scheduled_task, session, simulation, simulation_run, skill and voice. A scheduled task also has invalid_schedule (a schedule that does not read: at and in both or neither, a date, time or duration that does not parse, or until without repeat), schedule_in_past, schedule_too_far (a one-shot, or an in, more than a year ahead), invalid_timezone, timezone_unknown (no zone was given and neither the user nor the config has one), invalid_repeat, interval_too_short (a run moved to less than 15 minutes from now and earlier than the run it replaces) and too_many_tasks (a 409: the user is at their active-task limit). More may be added, so a client should expect one it does not know.
     pub code: ::std::string::String,
     ///Where the code is explained.
     pub doc_url: ::std::string::String,
@@ -6488,6 +7078,15 @@ impl ::std::convert::TryFrom<::std::string::String> for KnowledgeUrlState {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///`LaunchCampaignRequest`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
+pub struct LaunchCampaignRequest {
+    ///Must be true: the people on the campaign agreed to be called by it. Recorded with the time.
+    pub consent: bool,
+    ///When to start ringing. Omitted is now; up to a minute in the past is now too.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub start_at: ::std::option::Option<::std::string::String>,
 }
 ///A connector agent.yaml names that a sync left out, because the app has no connection by the id or label it names.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
@@ -7809,7 +8408,7 @@ pub struct OptOut {
     pub id: ::std::string::String,
     ///The number, in E.164.
     pub recipient: ::std::string::String,
-    ///keyword when they texted STOP, otherwise api or dashboard.
+    ///keyword when they texted STOP, campaign when they asked a campaign call not to call again, otherwise api or dashboard.
     pub source: ::std::string::String,
 }
 ///The channel a recipient opted out of, or all of them.
@@ -9066,6 +9665,74 @@ impl ::std::convert::TryFrom<::std::string::String> for RecordingStatus {
         value.parse()
     }
 }
+///`RefusedContact`
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+pub struct RefusedContact {
+    ///Its place in contacts, from 0.
+    pub index: i64,
+    pub reason: RefusedReason,
+    ///As it was sent.
+    pub to_number: ::std::string::String,
+}
+///Why a contact was not added: invalid_number is a number that cannot be read, duplicate one the campaign already holds or the request repeats, invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, invalid_time_zone a time zone that is not an IANA one.
+#[derive(
+    ::serde::Deserialize,
+    ::serde::Serialize,
+    Clone,
+    Copy,
+    Debug,
+    Eq,
+    Hash,
+    Ord,
+    PartialEq,
+    PartialOrd,
+)]
+pub enum RefusedReason {
+    #[serde(rename = "invalid_number")]
+    InvalidNumber,
+    #[serde(rename = "duplicate")]
+    Duplicate,
+    #[serde(rename = "invalid_variable")]
+    InvalidVariable,
+    #[serde(rename = "invalid_time_zone")]
+    InvalidTimeZone,
+}
+impl ::std::fmt::Display for RefusedReason {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::InvalidNumber => f.write_str("invalid_number"),
+            Self::Duplicate => f.write_str("duplicate"),
+            Self::InvalidVariable => f.write_str("invalid_variable"),
+            Self::InvalidTimeZone => f.write_str("invalid_time_zone"),
+        }
+    }
+}
+impl ::std::str::FromStr for RefusedReason {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "invalid_number" => Ok(Self::InvalidNumber),
+            "duplicate" => Ok(Self::Duplicate),
+            "invalid_variable" => Ok(Self::InvalidVariable),
+            "invalid_time_zone" => Ok(Self::InvalidTimeZone),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for RefusedReason {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for RefusedReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
 ///`RespondRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct RespondRequest {
@@ -9606,7 +10273,7 @@ pub struct ScheduledTaskRun {
     pub attempts: i64,
     ///Where the follow-up landed: conversation, sms, whatsapp, imessage or phone. Empty until it lands.
     pub delivered_to: ::std::string::String,
-    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
+    ///Why it failed, as a short code, when it did: delivery_failed, timed_out, schedule_unreadable, user_on_call, channel_unreachable, no_reply, reply_failed, no_phone_number, no_agent_number, not_answered, already_called (a call was placed for the occurrence on an earlier attempt, so the user is not rung again; that call may have carried the task out, so the run does not count toward the five failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no template to send), thread_gone (a thread task's thread no longer exists or is not its user's), connection_removed (a thread task's line was removed), or, refused for money, account_suspended, insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in the router's logs. Null otherwise.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub error: ::std::option::Option<::std::string::String>,
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
@@ -12347,6 +13014,12 @@ pub struct SyncAgentRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
+    ///agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. It is held to the server where floor_control asks chorus-asr about turns. When the server cannot be asked, or floor_control is off, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_of_turn: ::std::option::Option<EndOfTurn>,
+    ///agent.yaml's floor_control: the model that controls the agent's floor, stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400) before anything is written.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub floor_control: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     ///The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.

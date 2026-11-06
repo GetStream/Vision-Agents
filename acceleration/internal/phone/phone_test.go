@@ -175,6 +175,7 @@ func (s *PhoneSuite) TestAnUnknownVendorCannotBeOpened() {
 	_, err := registry.Open("carrier-pigeon")
 
 	s.ErrorContains(err, "not a known vendor")
+	s.ErrorIs(err, ErrInvalid)
 }
 
 func (s *PhoneSuite) TestADeclaredButUnimplementedVendorRefusesEveryOperation() {
@@ -206,7 +207,9 @@ func (s *PhoneSuite) TestOnlyWhatAKeypadHasCanBePressed() {
 	s.NoError(ValidateDigits("ABCD"), "no handset has the fourth column but every vendor's api takes it")
 
 	s.ErrorContains(ValidateDigits(""), "digits to press")
+	s.ErrorIs(ValidateDigits(""), ErrInvalid)
 	s.ErrorContains(ValidateDigits("one"), "keypad can press")
+	s.ErrorIs(ValidateDigits("one"), ErrInvalid)
 	s.ErrorContains(ValidateDigits("press 1"), "keypad can press")
 	s.ErrorContains(ValidateDigits("1E2"), "keypad can press", "the fourth column stops at D")
 }
@@ -249,24 +252,29 @@ func (s *PhoneSuite) TestACallThatCannotBePlacedAsDescribedIsRefused() {
 	missing := valid
 	missing.To = ""
 	s.ErrorContains(missing.Validate(), "from and a to")
+	s.ErrorIs(missing.Validate(), ErrInvalid)
 
 	unbridged := valid
 	unbridged.Bridge = Bridge{}
 	s.ErrorContains(unbridged.Validate(), "uri is required")
+	s.NotErrorIs(unbridged.Validate(), ErrInvalid, "the bridge is the router's own, not the caller's")
 
 	backwards := valid
 	backwards.RingTimeout = -time.Second
 	s.ErrorContains(backwards.Validate(), "less than no time")
+	s.ErrorIs(backwards.Validate(), ErrInvalid)
 
 	words := valid
 	words.InitialDigits = "extension four"
 	s.ErrorContains(words.Validate(), "keypad can press")
+	s.ErrorIs(words.Validate(), ErrInvalid)
 
 	// Twilio stops at 32, so more than that is a call that would be placed with the
 	// digits silently truncated at whichever vendor happened to answer.
 	long := valid
 	long.InitialDigits = strings.Repeat("1", maxInitialDigits+1)
 	s.ErrorContains(long.Validate(), "than the 32")
+	s.ErrorIs(long.Validate(), ErrInvalid)
 }
 
 func (s *PhoneSuite) TestOnlyAFullNumberThatIsNotPremiumRateCanBeDialled() {
@@ -299,6 +307,7 @@ func (s *PhoneSuite) TestACallSaysWhatItIsMissing() {
 
 	_, err = service.Call(s.ctx, CallRequest{From: "+15125551234", To: "+15550001111"})
 	s.ErrorContains(err, "stream credentials")
+	s.ErrorIs(err, ErrNoStream)
 }
 
 func (s *PhoneSuite) TestAVendorThatCannotSendAPasswordWillNotDialWithoutAnAllowlist() {
@@ -361,6 +370,8 @@ func (s *PhoneSuite) TestATransferSaysWhatItIsMissing() {
 	_, err = service.Transfer(s.ctx, TransferRequest{From: "+15125551234", To: "+15550001111"})
 	s.ErrorContains(err, "stream credentials",
 		"a transfer routes a leg into a call, which needs Stream")
+	s.ErrorIs(err, ErrNoStream)
+	s.NotErrorIs(err, ErrInvalid, "the deployment's credentials are not the caller's to change")
 }
 
 func (s *PhoneSuite) TestAVendorIsOpenedOnceAndReused() {
@@ -391,6 +402,8 @@ func (s *PhoneSuite) TestAVendorWithoutItsCredentialsSaysWhichAreMissing() {
 	_, err := registry.Open("twilio")
 
 	s.ErrorContains(err, "TWILIO_AUTH_TOKEN")
+	s.ErrorIs(err, ErrNotConfigured, "the deployment lacks the vendor's settings")
+	s.NotErrorIs(err, ErrInvalid)
 }
 
 func (s *PhoneSuite) TestOnlyVendorsThatCanActuallyBeUsedAreAvailable() {
@@ -542,6 +555,8 @@ func (s *PhoneSuite) TestSearchingWithNoUsableVendorSaysSoRatherThanAnsweringEmp
 	_, err = service.SearchAll(s.ctx, Search{Country: "US"})
 
 	s.ErrorContains(err, "no vendor has the credentials")
+	s.ErrorIs(err, ErrNotConfigured)
+	s.NotErrorIs(err, ErrInvalid)
 }
 
 // serviceWith returns a service whose registry resolves each stub under its own vendor name.
@@ -593,8 +608,10 @@ type stub struct {
 	// inbound is the last number this vendor was told to send to a bridge, so a test can see
 	// the address the service passed on.
 	inbound Inbound
-	// monthly is what a number bought here costs a month.
-	monthly int64
+	// monthly is what a number bought here costs a month, and vendorID the id it sells one
+	// under.
+	monthly  int64
+	vendorID string
 	// ordered counts the numbers this vendor was asked to sell, and released the numbers it
 	// was told to take back.
 	ordered  int
@@ -629,7 +646,7 @@ func (s *stub) BuyNumber(_ context.Context, order Order) (Number, error) {
 	if s.err != nil {
 		return Number{}, s.err
 	}
-	return Number{E164: order.E164, Vendor: s.vendor, Country: "US", MonthlyCostMicros: s.monthly}, nil
+	return Number{E164: order.E164, Vendor: s.vendor, VendorID: s.vendorID, Country: "US", MonthlyCostMicros: s.monthly}, nil
 }
 
 func (s *stub) ReleaseNumber(_ context.Context, e164 string) error {
@@ -753,7 +770,7 @@ func (s *PhoneSuite) TestOnlyANumberOnTheCustomersOwnTrunkIsFree() {
 		quote := prices.Quote(number(vendor.Vendor), nil)
 		s.True(quote.Billable && quote.Unpriced, vendor.Vendor)
 		resold := prices.Quoted(number(vendor.Vendor), 1_000_000)
-		s.Equal(int64(1_200_000), resold.CostMicros, vendor.Vendor)
+		s.Equal(int64(1_080_000), resold.CostMicros, vendor.Vendor)
 		s.Equal(int64(1_000_000), resold.BaseCostMicros, vendor.Vendor)
 		s.True(resold.Billable, vendor.Vendor)
 	}

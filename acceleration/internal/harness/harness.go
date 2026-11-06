@@ -65,6 +65,8 @@ type Options struct {
 	// Judge is a decision model the flow controller asks in place of Controller, which it
 	// then ignores. The harness takes ownership of it.
 	Judge Judge
+	// Hearer is asked before Judge or Controller, which decide the turns it can't.
+	Hearer Hearer
 	// Skills are what the fast model may hand over. They mean nothing without a subagent.
 	Skills Skills
 	// Tools are what the fast model may do rather than say. The harness offers them and
@@ -309,6 +311,7 @@ func New(options Options) (*Harness, error) {
 	if options.Controller != nil || options.Judge != nil {
 		h.flow = newFlow(options.Controller, h.emitter, h.logger)
 		h.flow.judge = options.Judge
+		h.flow.hearer = options.Hearer
 		h.flow.onModelCall = options.OnModelCall
 	}
 	return h, nil

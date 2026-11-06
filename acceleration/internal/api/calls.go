@@ -551,6 +551,17 @@ const callElsewhere = "that call was made in a Stream app this customer no longe
 // may no longer act there: what was said can be read, and nothing more is minted.
 const callReadOnly = "that call was made in the router's shared Stream app, where this app no longer mints tokens"
 
+// CallTranscript is what was said on one of a customer's calls, as GET
+// /v1/agents/calls/{id}/transcript reads it. The campaign dialer reads an answered call's
+// outcome from it.
+func (s *Server) CallTranscript(ctx context.Context, customerID, callID string) ([]chatlog.Spoken, error) {
+	call, err := s.store.Call(ctx, customerID, callID)
+	if err != nil {
+		return nil, err
+	}
+	return s.transcriptOf(ctx, customerID, call)
+}
+
 // transcriptOf is what was said on a call, read in the app the call was made in. A call
 // made in an app the customer no longer acts in has nothing readable from here.
 func (s *Server) transcriptOf(ctx context.Context, customerID string, call store.Call) ([]chatlog.Spoken, error) {

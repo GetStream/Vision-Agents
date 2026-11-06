@@ -378,6 +378,12 @@ module GetStream
           keyterms: settings["keyterms"]&.then { |k| k unless k.empty? },
           video: video && { source: video["source"], max_frames: video["max_frames"] }.compact,
           dispatch: settings["dispatch"],
+          # nil when agent.yaml names none, which leaves the stored choice; {} is the
+          # server's default.
+          end_of_turn: settings["end_of_turn"],
+          # As written, "" included, or nil when agent.yaml names none, which leaves the stored
+          # choice.
+          floor_control: settings["floor_control"],
           subagent: presence(@pipeline[:subagent].to_s) || presence(settings["subagent"]),
           sandbox: @sandbox&.provider || presence(settings["sandbox"]),
           sandbox_options: settings["sandbox_options"],

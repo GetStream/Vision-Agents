@@ -517,7 +517,7 @@ func (b *Bridge) Reply(reply conversation.FinishedReply) {
 		// A reply nobody may be sent (refusesReply), or one whose thread is gone, is no
 		// failure to log.
 		if err := b.reply(reply); err != nil && !errors.Is(err, ErrOptedOut) && !errors.Is(err, ErrHeldBack) &&
-			!errors.Is(err, store.ErrNoChannelThread) {
+			!errors.Is(err, dlc.ErrUnpaid) && !errors.Is(err, store.ErrNoChannelThread) {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
@@ -547,7 +547,7 @@ func (b *Bridge) Hold(commandID string) (replies <-chan conversation.FinishedRep
 }
 
 // Send sends a reply as Reply does, on the caller, and answers why it did not go out:
-// ErrOptedOut or ErrHeldBack, store.ErrNoChannelThread for a thread no longer linked, the
+// ErrOptedOut, ErrHeldBack or dlc.ErrUnpaid, store.ErrNoChannelThread for a thread no longer linked, the
 // provider refusing it, or the store failing. A reply sent already is nil.
 func (b *Bridge) Send(reply conversation.FinishedReply) error {
 	return b.reply(reply)

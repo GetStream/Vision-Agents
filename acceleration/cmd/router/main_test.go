@@ -30,11 +30,11 @@ func TestBuildSessionsSupportsAnLLMOnlyDeployment(t *testing.T) {
 	}, Registry: llmrouter.DefaultRegistry(), Logger: logger})
 	require.NoError(t, err)
 	t.Cleanup(model.Close)
-	manager, err := buildSessions(config.Defaults(), &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
+	manager, err := buildSessions(config.Defaults(), &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
 	t.Cleanup(func() { require.NoError(t, manager.Shutdown()) })
-	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
+	missing, err := buildSessions(config.Defaults(), &api.Streams{}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.Nil(t, missing)
 }
@@ -52,7 +52,7 @@ func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
 	settings.CodeSandbox.Broker, settings.CodeSandbox.ProxyPublicURL = config.CodeSandboxBrokerProxy, "http://203.0.113.7:8091"
 	settings.CodeSandbox.ProxyCACert = "cert"
 
-	_, err = buildSessions(settings, &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
+	_, err = buildSessions(settings, &api.Streams{LLM: model}, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, nil, session.Connectors{}, nil, nil, nil, logger)
 	require.ErrorContains(t, err, "redis.addr")
 
 	address := os.Getenv("ROUTER_REDIS_ADDR")
@@ -62,7 +62,7 @@ func TestBuildSessionsGivesTheProxyBrokerItsProxy(t *testing.T) {
 	liveClient, err := redisready.Retry(address, func() (*live.Client, error) { return live.New(live.Options{Address: address}) })
 	require.NoError(t, err)
 	t.Cleanup(liveClient.Close)
-	manager, err := buildSessions(settings, &api.Streams{LLM: model}, nil, nil, liveClient, nil, nil, nil, nil, nil, nil, nil,
+	manager, err := buildSessions(settings, &api.Streams{LLM: model}, nil, nil, liveClient, nil, nil, nil, nil, nil, nil, nil, nil,
 		session.Connectors{}, nil, nil, nil, logger)
 	require.NoError(t, err)
 	require.NotNil(t, manager)
@@ -99,8 +99,8 @@ func TestADeploymentWithNoDefaultDailyLimitStillCapsAnAppThatSetsOne(t *testing.
 // with no sessions holds nothing, with or without an idle scheduled-task
 // worker, as before the worker counted.
 func TestAnIdleRouterHoldsTheDrainForNothing(t *testing.T) {
-	require.Zero(t, running(nil, nil, nil, nil, nil))
-	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil), nil, nil, nil))
+	require.Zero(t, running(nil, nil, nil, nil, nil, nil))
+	require.Zero(t, running(nil, scheduling.NewScheduler(nil, nil, nil), nil, nil, nil, nil))
 }
 
 // TestKnowledgeURLsAreNotServedWithoutRedis: with a database, a knowledge base and a crawler

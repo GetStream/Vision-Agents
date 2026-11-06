@@ -277,6 +277,8 @@ type CreateSessionRequest struct {
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
+	EndOfTurn            *EndOfTurn         `json:"end_of_turn,omitempty" doc:"When chorus-asr has the caller's turn ended in this session, over the agent config's, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars, and an empty object for the server's default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because how eager the agent is to answer is the app's to decide."`
+	FloorControl         *string            `json:"floor_control,omitempty" pattern:"^(stream/chorus-asr)?$" doc:"The model that controls the floor in this session, over the agent config's: stream/chorus-asr, or empty for the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400). The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide."`
 	ResumeHistory        *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
 	Navigating           *bool              `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
 	Phone                *SessionPhone      `json:"phone,omitempty"`
@@ -962,6 +964,22 @@ func (VoicemailAction) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "VoicemailAction", "hang_up: end the call at once, saying nothing.\n"+
 		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
 		"hang_up", "leave_message")
+}
+
+// CampaignVoicemailAction is what a campaign's agent does on reaching an answering machine.
+type CampaignVoicemailAction string
+
+const (
+	CampaignVoicemailActionOff          CampaignVoicemailAction = "off"
+	CampaignVoicemailActionHangUp       CampaignVoicemailAction = "hang_up"
+	CampaignVoicemailActionLeaveMessage CampaignVoicemailAction = "leave_message"
+)
+
+func (CampaignVoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CampaignVoicemailAction", "off: the agent talks to a machine as to a person. The default.\n"+
+		"hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
+		"off", "hang_up", "leave_message")
 }
 
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {

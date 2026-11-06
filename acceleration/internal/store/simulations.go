@@ -172,7 +172,7 @@ func (s *Store) StartSimulationRun(ctx context.Context, run *SimulationRun, case
 	for i := range cases {
 		cases[i].ID = newID()
 		cases[i].RunID = run.ID
-		cases[i].State = Pending
+		cases[i].State = SimulationPending
 		cases[i].StartedAt = run.StartedAt
 		if cases[i].Transcript == nil {
 			cases[i].Transcript = []SimulationLine{}
@@ -364,7 +364,7 @@ func (s *Store) AbandonSimulationRuns(ctx context.Context, now time.Time) error 
 		_, err := tx.NewUpdate().Model((*SimulationCase)(nil)).
 			Set("state = ?", SimulationCancelled).
 			Set("finished_at = ?", now).
-			Where("state IN (?)", bun.In([]string{Pending, SimulationRunning})).
+			Where("state IN (?)", bun.In([]string{SimulationPending, SimulationRunning})).
 			Where("run_id IN (SELECT id FROM simulation_runs WHERE state = ? AND (held_until IS NULL OR held_until < ?))",
 				SimulationRunning, now).
 			Exec(ctx)

@@ -119,6 +119,24 @@ func (s *AgentSuite) TestWhatIsSaidAroundAToolIsSaidAsBefore() {
 	s.Equal([]string{"back|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
 }
 
+// Acting on chorus-asr while another transcriber hears the callers, the line said while the
+// tool runs is said as before, as a murmur.
+func (s *AgentSuite) TestWhatIsSaidAroundAToolActingWithAnotherTranscriberIsSaidAsBefore() {
+	s.actsWithAnotherTranscriber()
+	s.waitsOnATool()
+
+	s.Equal([]string{"back|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
+}
+
+// Acting on chorus-asr, the line said while the tool runs is the agent's own turn, which a
+// caller talking over it stops, rather than a murmur's.
+func (s *AgentSuite) TestWhatIsSaidAroundAToolActingOnChorusASRIsTheAgentsOwnTurn() {
+	s.actsOnChorusASR()
+	s.waitsOnATool()
+
+	s.Equal([]string{"own|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
+}
+
 func (s *AgentSuite) TestATurnTheAgentStartedNamesTheCallerTurnItFollows() {
 	s.logs = &logLines{}
 	s.waitsOnATool()

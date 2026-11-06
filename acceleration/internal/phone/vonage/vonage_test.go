@@ -161,6 +161,7 @@ func (s *VonageSuite) TestBuyingNeedsTheCountryTheNumberIsSoldIn() {
 	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+17195551234"})
 
 	s.ErrorContains(err, "needs the country")
+	s.ErrorIs(err, phone.ErrInvalid)
 	s.Empty(s.seen.path)
 }
 
@@ -257,6 +258,7 @@ func (s *VonageSuite) TestRingingOutsideWhatVonageAllowsIsRefusedBeforeItIsAsked
 	})
 
 	s.ErrorContains(err, "1-120s")
+	s.ErrorIs(err, phone.ErrInvalid)
 	s.Empty(s.seen.path, "a call vonage would reject is not sent")
 }
 
@@ -279,6 +281,7 @@ func (s *VonageSuite) TestDiallingWithoutTheVoiceCredentialsSaysWhichAreMissing(
 
 	s.ErrorContains(err, "VONAGE_APPLICATION_ID")
 	s.ErrorContains(err, "VONAGE_PRIVATE_KEY")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 }
 
 func (s *VonageSuite) TestAPrivateKeyThatIsNeitherAPemNorAFileIsRejectedOnOpening() {

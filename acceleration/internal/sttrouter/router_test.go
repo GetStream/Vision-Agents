@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -129,6 +130,7 @@ func (s *STTRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 	router := s.newRouter()
 	registry := DefaultRegistry()
 	RegisterMock(registry)
+	RegisterAudioFloor(registry, audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil))
 
 	for _, provider := range router.Config().Providers {
 		s.Truef(registry.Has(provider.Provider),
@@ -139,6 +141,11 @@ func (s *STTRouterSuite) TestRegistryKnowsEveryConfiguredProvider() {
 func (s *STTRouterSuite) TestTheMockIsBuiltOnlyWhereItWasAskedFor() {
 	s.False(DefaultRegistry().Has("mock"),
 		"a deployment that did not ask for mocks should fail to build one rather than route to it")
+}
+
+func (s *STTRouterSuite) TestTheAudioFloorIsBuiltOnlyWhereAServerIsNamed() {
+	s.False(DefaultRegistry().Has(audiofloor.ProviderName),
+		"a deployment with no chorus-asr server should fail to build its transcriber rather than route to it")
 }
 
 func (s *STTRouterSuite) TestRegistryPassesLanguageHintsOnlyToTheMultilingualModel() {
@@ -651,6 +658,31 @@ func (s *STTRouterSuite) TestTheMockIsStreamedAtByNameAndReachedByNoShortcut() {
 		s.Require().NoErrorf(err, "alias %s", alias)
 		for _, candidate := range candidates {
 			s.NotEqualf("mock/mock-stt", candidate.Config.Name(), "alias %s", alias)
+		}
+	}
+}
+
+// An agent reaches the chorus-asr transcriber by naming it, whatever languages it hints
+// at, and no shortcut reaches it.
+func (s *STTRouterSuite) TestTheAudioFloorIsStreamedAtByNameAndReachedByNoShortcut() {
+	config, err := routing.DefaultConfig()
+	s.Require().NoError(err)
+	registry := NewRegistry()
+	RegisterAudioFloor(registry, audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil))
+	router, err := New(Options{Config: config[routing.STT], Registry: registry})
+	s.Require().NoError(err)
+	s.T().Cleanup(router.Close)
+
+	for _, hints := range [][]string{nil, {"en"}, {"es", "fr"}} {
+		served, err := s.startOn(router, Request{Target: "stream/chorus-asr", LanguageHints: hints})
+		s.Require().NoErrorf(err, "hints %v", hints)
+		s.Equal(audiofloor.DefaultModel, served)
+	}
+	for alias := range router.Config().Aliases {
+		candidates, err := router.Resolve(s.ctx, alias, nil)
+		s.Require().NoErrorf(err, "alias %s", alias)
+		for _, candidate := range candidates {
+			s.NotEqualf(audiofloor.ProviderName, candidate.Config.Provider, "alias %s", alias)
 		}
 	}
 }

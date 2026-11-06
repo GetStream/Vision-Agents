@@ -62,7 +62,7 @@ func (s *UsageCommandsSuite) TestTheRentalJobBillsEachMonthAfterThePurchaseOnce(
 		s.True(month.Billable)
 	}
 	costs := []int64{months[0].CostMicros, months[1].CostMicros}
-	s.ElementsMatch([]int64{1_200_000, 0}, costs, "the vendor's 1,000,000 resold at the factor; a number with no price is billable work with no price")
+	s.ElementsMatch([]int64{1_080_000, 0}, costs, "the vendor's 1,000,000 resold at the factor; a number with no price is billable work with no price")
 }
 
 func (s *UsageCommandsSuite) TestTheRentalJobBillsNothingThatBeganBeforeFrom() {

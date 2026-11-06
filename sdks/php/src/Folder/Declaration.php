@@ -8,6 +8,8 @@ use GetStream\VisionAgents\Exception\ConfigurationException;
 use GetStream\VisionAgents\Folder;
 use GetStream\VisionAgents\Generated\AgentDispatch;
 use GetStream\VisionAgents\Generated\DispatchSetting;
+use GetStream\VisionAgents\Generated\EndOfTurn;
+use GetStream\VisionAgents\Generated\EndOfTurnBar;
 use GetStream\VisionAgents\Generated\Greeting;
 use GetStream\VisionAgents\Generated\GreetingMode;
 use GetStream\VisionAgents\Generated\SandboxOptions;
@@ -35,6 +37,11 @@ final readonly class Declaration
      *     the stored bindings; empty when it lists none, which removes them
      * @param ?SandboxOptions $sandboxOptions how the sandbox is built and what code in it may
      *     reach; outbound network is blocked unless network or an allow list opens it
+     * @param ?EndOfTurn $endOfTurn how eager chorus-asr's turn-taking is: null when the
+     *     declaration says nothing, which leaves the stored choice; empty for the server's default
+     * @param ?string $floorControl the model that controls the agent's floor, stream/chorus-asr,
+     *     or empty for the default flow controller, as written: null when the declaration says
+     *     nothing, which leaves the stored choice
      */
     public function __construct(
         public string $name = '',
@@ -56,6 +63,8 @@ final readonly class Declaration
         public ?AgentDispatch $dispatch = null,
         public ?array $connectors = null,
         public ?SandboxOptions $sandboxOptions = null,
+        public ?EndOfTurn $endOfTurn = null,
+        public ?string $floorControl = null,
     ) {
     }
 
@@ -65,7 +74,8 @@ final readonly class Declaration
      *
      * @param mixed $mapped the same file parsed with Yaml::PARSE_OBJECT_FOR_MAP, which
      *     `connectors` is read from: there `{}` is an object and not an empty list, so it is
-     *     refused rather than sent as [] and wiping the stored bindings
+     *     refused rather than sent as [] and wiping the stored bindings. `end_of_turn` is read
+     *     from it too, where `{}` is the server's default and `[]` is not a mapping
      */
     public static function fromYaml(mixed $parsed, mixed $mapped): self
     {
@@ -78,6 +88,8 @@ final readonly class Declaration
 
         $values = [];
         $connectors = null;
+        $endOfTurn = null;
+        $floorControl = null;
         foreach ($parsed as $key => $value) {
             $key = (string) $key;
             if (in_array($key, self::STRINGS, true)) {
@@ -100,6 +112,10 @@ final readonly class Declaration
                 self::refuseReplaced($mapped instanceof \stdClass ? $mapped->plugins : $value);
             } elseif ($key === 'connectors') {
                 $connectors = self::connectors($mapped instanceof \stdClass ? $mapped->connectors : $value);
+            } elseif ($key === 'end_of_turn') {
+                $endOfTurn = self::endOfTurn($mapped instanceof \stdClass ? $mapped->end_of_turn : $value);
+            } elseif ($key === 'floor_control') {
+                $floorControl = self::floorControl($value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
             }
@@ -125,6 +141,8 @@ final readonly class Declaration
             dispatch: ($values['dispatch'] ?? null) instanceof AgentDispatch ? $values['dispatch'] : null,
             connectors: $connectors,
             sandboxOptions: ($values['sandbox_options'] ?? null) instanceof SandboxOptions ? $values['sandbox_options'] : null,
+            endOfTurn: $endOfTurn,
+            floorControl: $floorControl,
         );
     }
 
@@ -253,6 +271,95 @@ final readonly class Declaration
             throw new ConfigurationException('connectors must be a list');
         }
         return array_map(Connector::fromYaml(...), $value);
+    }
+
+    /**
+     * One of `max_wait_ms`, `preset` and `bars`, or none for the server's default. Only the
+     * shape is checked here; which one, and whether the bars rise, is the router's to judge.
+     * Whatever the file names is sent as written, a wait of 0 or an empty preset included, so a
+     * value the router refuses is refused there rather than dropped here.
+     */
+    private static function endOfTurn(mixed $value): ?EndOfTurn
+    {
+        if ($value === null) {
+            return null;
+        }
+        if (!$value instanceof \stdClass) {
+            throw new ConfigurationException('end_of_turn is a mapping of max_wait_ms, preset or bars');
+        }
+        $wait = null;
+        $preset = null;
+        $bars = null;
+        foreach (get_object_vars($value) as $key => $each) {
+            $name = "end_of_turn.{$key}";
+            if ($key === 'max_wait_ms') {
+                if (!is_int($each) && $each !== null) {
+                    throw new ConfigurationException("{$name} must be a whole number of milliseconds");
+                }
+                $wait = $each;
+            } elseif ($key === 'preset') {
+                $preset = $each === null ? null : self::scalar($name, $each);
+            } elseif ($key === 'bars') {
+                $bars = $each === null ? null : self::bars($each);
+            } else {
+                throw new ConfigurationException("\"{$name}\" is not something agent.yaml declares");
+            }
+        }
+        return new EndOfTurn(bars: $bars, maxWaitMs: $wait, preset: $preset);
+    }
+
+    /**
+     * Each bar names both `from_ms` and `bar`.
+     *
+     * @return list<EndOfTurnBar>
+     */
+    private static function bars(mixed $value): array
+    {
+        if (!is_array($value) || !array_is_list($value)) {
+            throw new ConfigurationException('end_of_turn.bars is a list');
+        }
+        $bars = [];
+        foreach ($value as $index => $bar) {
+            $at = "end_of_turn.bars[{$index}]";
+            if (!$bar instanceof \stdClass && $bar !== null) {
+                throw new ConfigurationException("{$at} is a mapping of from_ms and bar");
+            }
+            $from = null;
+            $reached = null;
+            foreach ($bar === null ? [] : get_object_vars($bar) as $key => $each) {
+                $name = "{$at}.{$key}";
+                if ($key === 'from_ms') {
+                    if (!is_int($each) && $each !== null) {
+                        throw new ConfigurationException("{$name} must be a whole number of milliseconds");
+                    }
+                    $from = $each;
+                } elseif ($key === 'bar') {
+                    if (!is_int($each) && !is_float($each) && $each !== null) {
+                        throw new ConfigurationException("{$name} must be a number");
+                    }
+                    $reached = $each === null ? null : (float) $each;
+                } else {
+                    throw new ConfigurationException("\"{$name}\" is not something agent.yaml declares");
+                }
+            }
+            if ($from === null || $reached === null) {
+                throw new ConfigurationException("{$at} names both from_ms and bar");
+            }
+            $bars[] = new EndOfTurnBar(bar: $reached, fromMs: $from);
+        }
+        return $bars;
+    }
+
+    /**
+     * As written, empty included, which is the default flow controller again: which models there
+     * are is the router's to say.
+     */
+    private static function floorControl(mixed $value): ?string
+    {
+        if ($value === null || is_string($value)) {
+            return $value;
+        }
+        throw new ConfigurationException('floor_control must be a string, such as stream/chorus-asr');
     }
 
     /**

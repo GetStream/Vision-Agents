@@ -102,7 +102,7 @@ func New(options Options) (*Provider, error) {
 // SearchNumbers returns numbers Plivo is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("plivo: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("plivo: a country is required to search for numbers")))
 	}
 
 	query := url.Values{"country_iso": {strings.ToUpper(search.Country)}}
@@ -117,7 +117,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Type != "" {
 		kind, ok := kinds[search.Type]
 		if !ok {
-			return nil, stack.Wrap(fmt.Errorf("plivo: does not sell %s numbers", search.Type))
+			return nil, stack.Wrap(phone.Invalid(fmt.Errorf("plivo: does not sell %s numbers", search.Type)))
 		}
 		query.Set("type", kind)
 	}
@@ -352,7 +352,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("plivo: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.SetBasicAuth(p.authID, p.authToken)
 	request.Header.Set("Accept", "application/json")
@@ -362,20 +362,22 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("plivo: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("plivo: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("plivo: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }

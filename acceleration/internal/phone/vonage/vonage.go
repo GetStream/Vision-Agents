@@ -185,12 +185,12 @@ func parsePrivateKey(value string) (*rsa.PrivateKey, error) {
 // SearchNumbers returns numbers Vonage is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("vonage: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("vonage: a country is required to search for numbers")))
 	}
 	// Vonage matches one pattern one way, so it cannot be asked for digits at the front
 	// and digits anywhere in the same breath.
 	if search.Prefix != "" && search.Contains != "" {
-		return nil, stack.Wrap(errors.New("vonage: can match a prefix or a substring, not both"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("vonage: can match a prefix or a substring, not both")))
 	}
 
 	query := url.Values{"country": {strings.ToUpper(search.Country)}}
@@ -205,7 +205,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Type != "" {
 		kind, ok := kinds[search.Type]
 		if !ok {
-			return nil, stack.Wrap(fmt.Errorf("vonage: does not sell %s numbers", search.Type))
+			return nil, stack.Wrap(phone.Invalid(fmt.Errorf("vonage: does not sell %s numbers", search.Type)))
 		}
 		query.Set("type", kind)
 	}
@@ -241,7 +241,7 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 		return phone.Number{}, stack.Wrap(errors.New("vonage: a number is required"))
 	}
 	if order.Country == "" {
-		return phone.Number{}, stack.Wrap(errors.New("vonage: buying a number needs the country it is sold in"))
+		return phone.Number{}, stack.Wrap(phone.Invalid(errors.New("vonage: buying a number needs the country it is sold in")))
 	}
 
 	form := url.Values{
@@ -292,9 +292,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("vonage: %w", err))
 	}
 	if p.applicationID == "" || p.privateKey == nil {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(fmt.Errorf(
 			"vonage: placing a call needs %s and %s, which buying a number does not",
-			applicationIDEnvVar, privateKeyEnvVar))
+			applicationIDEnvVar, privateKeyEnvVar)))
 	}
 
 	request := callRequest{
@@ -308,9 +308,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	if outbound.RingTimeout > 0 {
 		seconds := int(outbound.RingTimeout.Seconds())
 		if seconds < minRingSeconds || seconds > maxRingSeconds {
-			return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+			return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf(
 				"vonage: %ds is outside the %d-%ds vonage will ring for",
-				seconds, minRingSeconds, maxRingSeconds))
+				seconds, minRingSeconds, maxRingSeconds)))
 		}
 		request.RingingTimer = seconds
 	}
@@ -439,7 +439,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query, form url.
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, body)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.SetBasicAuth(p.apiKey, p.apiSecret)
 	request.Header.Set("Accept", "application/json")
@@ -449,20 +449,22 @@ func (p *Provider) do(ctx context.Context, method, path string, query, form url.
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("vonage: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("vonage: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }
@@ -481,7 +483,7 @@ func (p *Provider) doVoice(ctx context.Context, method, path string, payload, in
 
 	request, err := http.NewRequestWithContext(ctx, method, p.voiceBaseURL+path, bytes.NewReader(body))
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.Header.Set("Authorization", "Bearer "+token)
 	request.Header.Set("Content-Type", "application/json")
@@ -489,20 +491,22 @@ func (p *Provider) doVoice(ctx context.Context, method, path string, payload, in
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("vonage: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("vonage: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("vonage: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }

@@ -121,7 +121,16 @@ type Config struct {
 	Usage       Usage       `koanf:"usage"`
 	Knowledge   Knowledge   `koanf:"knowledge"`
 	Limits      Limits      `koanf:"limits"`
+	// Retired says, of each setting the deployment set that is no longer read, what took its
+	// place. The router warns of each once at start, and neither refuses to start over one
+	// nor acts on it.
+	Retired []string `koanf:"-"`
 }
+
+// chorusASRModeRetired is what took the place of agent.chorus_asr_mode, which once had every
+// agent on the router shadow or act on chorus-asr: each agent opts in itself.
+const chorusASRModeRetired = "agent.chorus_asr_mode (ROUTER_CHORUS_ASR_MODE) is no longer read, and stream/chorus-asr controls " +
+	"no agent's floor of the router's accord: an agent opts in with floor_control: stream/chorus-asr on its config or in its agent.yaml"
 
 // Knowledge is the knowledge store's settings.
 type Knowledge struct {
@@ -168,6 +177,11 @@ type Limits struct {
 	// empty tells nobody.
 	SlackToken   string `koanf:"slack_token"`
 	SlackChannel string `koanf:"slack_channel"`
+	// AppURL and StaffURL are the pages each Slack notice links to, as URLs in which
+	// {organization} and {app} stand for the organization's and the app's ids: the app's own
+	// page, and the operator's. Either empty links nothing.
+	AppURL   string `koanf:"app_url"`
+	StaffURL string `koanf:"staff_url"`
 }
 
 // Usage is the usage service the router ships the rows it writes to. An empty URL is none:
@@ -376,6 +390,19 @@ type Agent struct {
 	// FlowJudge routes the flow controller to a decision model, such as
 	// typesafe/jev-latest, in place of a language model. Empty keeps the language model.
 	FlowJudge string `koanf:"flow_judge"`
+	// AudioFloorURL is a chorus-asr server (internal/audiofloor), which it makes available:
+	// its model transcribes for an agent that names stream/chorus-asr as its transcriber, and
+	// rules the floor of an agent whose floor control opts in (store.FloorControl). It rules
+	// no agent's floor of the router's accord. AudioFloorAudio is how the audio is sent: opus
+	// (the default) or pcm, for debugging. AudioFloorInterims says whether its transcriber
+	// writes the words so far while the caller talks: on (the default) or off, for a server
+	// short of transcription lanes, where the words come at the turn's end. AudioFloorAPIKey
+	// is sent as a bearer token on every request to a server behind a gateway that asks for
+	// one.
+	AudioFloorURL      string `koanf:"chorus_asr_url"`
+	AudioFloorAPIKey   string `koanf:"chorus_asr_api_key"`
+	AudioFloorAudio    string `koanf:"chorus_asr_audio"`
+	AudioFloorInterims string `koanf:"chorus_asr_interims"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -553,6 +580,10 @@ var variables = map[string]string{
 	"agent.reply_hedge":         "ROUTER_REPLY_HEDGE",
 	"agent.flow_hedge":          "ROUTER_FLOW_HEDGE",
 	"agent.flow_judge":          "ROUTER_FLOW_JUDGE",
+	"agent.chorus_asr_url":      "ROUTER_CHORUS_ASR_URL",
+	"agent.chorus_asr_api_key":  "ROUTER_CHORUS_ASR_API_KEY",
+	"agent.chorus_asr_audio":    "ROUTER_CHORUS_ASR_AUDIO",
+	"agent.chorus_asr_interims": "ROUTER_CHORUS_ASR_INTERIMS",
 	"auth.proxy_declares_kind":  "ROUTER_AUTH_PROXY_DECLARES_KIND",
 	"connectors.enabled":        "ROUTER_CONNECTORS_ENABLED",
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
@@ -590,6 +621,8 @@ var variables = map[string]string{
 	"limits.mode":          "ROUTER_LIMITS_MODE",
 	"limits.slack_token":   "ROUTER_LIMITS_SLACK_TOKEN",
 	"limits.slack_channel": "ROUTER_LIMITS_SLACK_CHANNEL",
+	"limits.app_url":       "ROUTER_LIMITS_APP_URL",
+	"limits.staff_url":     "ROUTER_LIMITS_STAFF_URL",
 
 	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
 	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
@@ -709,6 +742,9 @@ func Load(path string) (Config, string, error) {
 	if err := k.Unmarshal("", &config); err != nil {
 		return Config{}, "", fmt.Errorf("config: %s: %w", name, err)
 	}
+	if os.Getenv("ROUTER_CHORUS_ASR_MODE") != "" || k.Exists("agent.chorus_asr_mode") {
+		config.Retired = append(config.Retired, chorusASRModeRetired)
+	}
 	if config.Limits.Mode == "" {
 		config.Limits.Mode = LimitsEnforce
 	}
@@ -767,6 +803,29 @@ func (c Config) validate() error {
 	if c.RateLimit.MessagesPerDay < 0 || c.RateLimit.TokensPerDay < 0 {
 		return fmt.Errorf("config: a daily limit cannot be negative, got %d messages and %d tokens",
 			c.RateLimit.MessagesPerDay, c.RateLimit.TokensPerDay)
+	}
+	if c.Agent.AudioFloorURL != "" {
+		// The client appends its paths and queries to it, so a query or fragment of its own
+		// would be sent as part of them.
+		server, err := url.Parse(c.Agent.AudioFloorURL)
+		switch {
+		case err != nil:
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL): %w", err)
+		case server.Scheme != "http" && server.Scheme != "https", server.Host == "":
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL) is the server's http or https address, got %q", c.Agent.AudioFloorURL)
+		case server.RawQuery != "" || server.Fragment != "":
+			return fmt.Errorf("config: agent.chorus_asr_url (ROUTER_CHORUS_ASR_URL) takes no query or fragment, got %q", c.Agent.AudioFloorURL)
+		}
+	}
+	switch c.Agent.AudioFloorAudio {
+	case "", "opus", "pcm":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_audio (ROUTER_CHORUS_ASR_AUDIO) is opus or pcm, got %q", c.Agent.AudioFloorAudio)
+	}
+	switch c.Agent.AudioFloorInterims {
+	case "", "on", "off":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_interims (ROUTER_CHORUS_ASR_INTERIMS) is on or off, got %q", c.Agent.AudioFloorInterims)
 	}
 	switch c.Stream.Tenancy {
 	case "", TenancyDeployment:
@@ -1110,6 +1169,8 @@ func (c Config) export() error {
 		"limits.mode":          string(c.Limits.Mode),
 		"limits.slack_token":   c.Limits.SlackToken,
 		"limits.slack_channel": c.Limits.SlackChannel,
+		"limits.app_url":       c.Limits.AppURL,
+		"limits.staff_url":     c.Limits.StaffURL,
 
 		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
 		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),

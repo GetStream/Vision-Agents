@@ -35,8 +35,8 @@ import (
 	"go.opentelemetry.io/otel/trace"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/concurrency"
@@ -159,6 +159,12 @@ type Options struct {
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
+	// AudioFloor is the router's chorus-asr server, which an agent's floor control opts in to
+	// in shadow or acting. Absent, such a floor control is refused, and an agent's end_of_turn
+	// is checked only for what it says. Present, end_of_turn is checked against what the
+	// server publishes when the agent's floor control asks it about turns, and a sync is
+	// warned that it does nothing when it asks nothing.
+	AudioFloor *audiofloor.Client
 	// Stream resolves which Stream app, and which credential, the router acts in for each
 	// customer: tokens, guests and the transcripts read back. Absent when the deployment
 	// has no Stream app at all, in which case those paths say so.
@@ -167,9 +173,6 @@ type Options struct {
 	// caller it verified. The server tokens it forwards are trusted only with it, since
 	// without it every caller passes as a backend.
 	ProxyDeclaresKind bool
-	// Campaigns rings lists of people. Absent without telephony or sessions, in which
-	// case a campaign can be written down but not run.
-	Campaigns *campaign.Runner
 	// Simulations puts an agent through a conversation somebody wrote down and rules on
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
@@ -347,13 +350,13 @@ type Server struct {
 	forwarder          *node.Forwarder
 	peerCredentials    [][]byte // what a peer may present: one credential per key of the keyring
 	streams            *Streams
+	audioFloor         *audiofloor.Client // nil without a chorus-asr server
 	stream             *streamapp.Clients
 	proxyDeclaresKind  bool
 	hookSecret         string
 	telnyxPublicKey    ed25519.PublicKey
 	chatInboundKeys    []ed25519.PublicKey
 	telnyxConnectionID string
-	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
 	knowledgeLimits    ingest.Limits
@@ -550,13 +553,13 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		directory:          options.Directory,
 		workers:            options.Workers,
 		streams:            options.Streams,
+		audioFloor:         options.AudioFloor,
 		stream:             options.Stream,
 		proxyDeclaresKind:  options.ProxyDeclaresKind,
 		hookSecret:         options.HookSecret,
 		telnyxPublicKey:    options.TelnyxPublicKey,
 		chatInboundKeys:    options.ChatInboundKeys,
 		telnyxConnectionID: options.TelnyxConnectionID,
-		campaigns:          options.Campaigns,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
 		knowledgeLimits:    options.KnowledgeLimits,

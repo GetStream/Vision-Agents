@@ -1793,7 +1793,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 	}
 	// An agent still the session's that closed while the session is not closing, with no
 	// hang-up, transfer or timeout noted, left by itself.
-	if s.current() == held && !s.closingNow() && s.endReason() == "" {
+	if s.current() == held && !s.closingNow() && s.EndReason() == "" {
 		s.agentLeft.Store(true)
 	}
 }

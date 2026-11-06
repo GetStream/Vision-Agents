@@ -488,7 +488,7 @@ func observeTurnLatency(turn Turn, pipeline string) {
 		{"speech_end_to_audible", turn.SpeechEndToAudibleMs},
 	} {
 		if observed.ms > 0 {
-			turnLatency.WithLabelValues(observed.leg, pipeline).Observe(observed.ms / 1000)
+			turnLatencySeconds.WithLabelValues(observed.leg, pipeline).Observe(observed.ms / 1000)
 		}
 	}
 }

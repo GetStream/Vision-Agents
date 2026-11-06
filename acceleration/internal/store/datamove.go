@@ -115,6 +115,7 @@ var dataTables = []dataTable{
 	{name: "knowledge_documents", customer: "customer_id", vouched: []string{"state", "error", "object_key"}},
 	{name: "campaigns", customer: "customer_id"},
 	{name: "campaign_contacts", parent: "campaigns", parentColumn: "campaign_id"},
+	{name: "campaign_attempts", parent: "campaigns", parentColumn: "campaign_id"},
 	{name: "simulations", customer: "customer_id"},
 	{name: "simulation_runs", customer: "customer_id"},
 	{name: "simulation_cases", parent: "simulation_runs", parentColumn: "run_id"},
@@ -325,7 +326,8 @@ WHERE locktype = 'transactionid' AND transactionid::text = ANY(?)`,
 // one above it may or may not be, which is safe because applying a change twice lands in
 // the same place as applying it once. It is not the watermark itself: with no change kept
 // at or below it, Changes would read a number rolled back right after it as a change
-// pruned, and refuse the cursor.
+// pruned, and refuse the cursor. It can be the last change of theirs pruned with none kept
+// at or below it: Changes reads a cursor there as a start and checks no gap after it.
 //
 // Call it after StartDataCapture and WaitForOpenWrites, in that order: on its own it still misses
 // a write that was open when the capture started and commits after the snapshot.
@@ -354,13 +356,15 @@ func (s *Store) ExportCustomer(ctx context.Context, customerID string, write fun
 	// Never below where the recording last started again: Changes refuses a cursor from before
 	// it. A transaction holding a number at or below it had written its row before that start,
 	// so the WaitForOpenWrites before this export saw it end and these rows hold its write.
-	since, err := recordedSince(ctx, tx, customerID)
+	// Nor below the last change of theirs pruned: its transaction had ended before the prune read
+	// its mark, so these rows hold it too.
+	since, pruned, err := recordedSince(ctx, tx, customerID)
 	if err != nil {
 		return 0, err
 	}
 	var cursor int64
 	if err := tx.QueryRowContext(ctx,
-		"SELECT GREATEST(COALESCE(MAX(seq), 0), ?) FROM data_changes WHERE seq <= ?", since, mark).Scan(&cursor); err != nil {
+		"SELECT GREATEST(COALESCE(MAX(seq), 0), ?, ?) FROM data_changes WHERE seq <= ?", since, pruned, mark).Scan(&cursor); err != nil {
 		return 0, fmt.Errorf("store: export cursor: %w", err)
 	}
 
@@ -554,15 +558,15 @@ WHERE locktype = 'advisory' AND objsubid = 2
 }
 
 // recordedSince is the number a customer's changes have been recorded from without a gap: 0
-// unless their capture expired and was started again (StartDataCapture).
-func recordedSince(ctx context.Context, tx bun.Tx, customerID string) (int64, error) {
-	var since int64
-	err := tx.QueryRowContext(ctx,
-		"SELECT recorded_since FROM data_change_capture WHERE customer_id = ?", customerID).Scan(&since)
+// unless their capture expired and was started again (StartDataCapture). pruned is the highest
+// number of theirs PruneDataChanges dropped, 0 if none.
+func recordedSince(ctx context.Context, tx bun.Tx, customerID string) (since, pruned int64, err error) {
+	err = tx.QueryRowContext(ctx,
+		"SELECT recorded_since, pruned_through FROM data_change_capture WHERE customer_id = ?", customerID).Scan(&since, &pruned)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return 0, fmt.Errorf("store: recorded since: %w", err)
+		return 0, 0, fmt.Errorf("store: recorded since: %w", err)
 	}
-	return since, nil
+	return since, pruned, nil
 }
 
 func (s *Store) exportTable(ctx context.Context, tx bun.Tx, table dataTable, customerID string, write func(string, json.RawMessage) error) error {
@@ -653,9 +657,13 @@ func (s *Store) importRow(ctx context.Context, db bun.IDB, customerID, table str
 	}
 	switch table {
 	case "scheduled_tasks":
-		row, err = pauseImported(row, ScheduledTaskActive, ScheduledTaskPaused, true)
+		row, err = pauseImported(row, []string{ScheduledTaskActive}, ScheduledTaskPaused, true)
 	case "campaigns":
-		row, err = pauseImported(row, Running, Paused, false)
+		row, err = pauseImported(row, []string{Running, Scheduled}, Paused, false)
+	case "campaign_contacts":
+		row, err = requeueImportedContact(row, time.Now())
+	case "campaign_attempts":
+		row, err = endImportedAttempt(row, time.Now())
 	}
 	if err != nil {
 		return err
@@ -895,16 +903,16 @@ FROM %s`, sequence.name)
 // or failed there keeps its state and loses the mark: the user paused it, so the cut-over
 // leaves it paused.
 //
-// A campaign running there does not ring anybody here either way: only starting it here
-// does (campaign.Runner.Start). It arrives paused so that it says so, and marked so that the
-// cut-over can name the campaigns the source was still running. One the user paused there
-// before the last catch-up loses the mark: the copy holds every call it made there.
-func pauseImported(row json.RawMessage, active, paused string, claimed bool) (json.RawMessage, error) {
+// A campaign running or scheduled there does not ring anybody here either way: every router
+// dials a running campaign, so it arrives paused, and marked so that the cut-over can name the
+// campaigns the source was still running. One the user paused there before the last catch-up
+// loses the mark: the copy holds every call it made there.
+func pauseImported(row json.RawMessage, active []string, paused string, claimed bool) (json.RawMessage, error) {
 	var fields map[string]json.RawMessage
 	if err := json.Unmarshal(row, &fields); err != nil {
 		return nil, fmt.Errorf("store: read an imported row: %w", err)
 	}
-	moved := string(fields["state"]) == `"`+active+`"`
+	moved := slices.ContainsFunc(active, func(state string) bool { return string(fields["state"]) == `"`+state+`"` })
 	if moved {
 		fields["state"] = json.RawMessage(`"` + paused + `"`)
 	}
@@ -912,6 +920,54 @@ func pauseImported(row json.RawMessage, active, paused string, claimed bool) (js
 	if claimed {
 		fields["claim_id"] = json.RawMessage(`""`)
 		fields["lease_until"] = json.RawMessage("null")
+	}
+	return json.Marshal(fields)
+}
+
+// requeueImportedContact gives up the source's lease on a contact it was ringing, since the
+// runner that held it is in the deployment it came from. One in a call keeps its stage with a
+// lease already run out, so once the move is cut over a runner here settles it from its dial,
+// as it would one whose runner died: its next attempt waits its delay. One awaiting its
+// answered call's outcome keeps waiting, and has the transcript read here.
+func requeueImportedContact(row json.RawMessage, now time.Time) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(row, &fields); err != nil {
+		return nil, fmt.Errorf("store: read an imported row: %w", err)
+	}
+	until := json.RawMessage("null")
+	switch string(fields["stage"]) {
+	case `"` + InProgress + `"`:
+		var err error
+		if until, err = json.Marshal(now); err != nil {
+			return nil, fmt.Errorf("store: write an imported row: %w", err)
+		}
+	case `"` + AwaitingOutcome + `"`:
+	default:
+		return row, nil
+	}
+	fields["leased_by"] = json.RawMessage(`""`)
+	fields["leased_until"] = until
+	return json.Marshal(fields)
+}
+
+// endImportedAttempt closes a call that was still happening there, which nobody here will end,
+// as one whose ending is unknown, and makes an answered one whose outcome is still to be read due now rather than
+// when the source's lease on it would have run out.
+func endImportedAttempt(row json.RawMessage, now time.Time) (json.RawMessage, error) {
+	var fields map[string]json.RawMessage
+	if err := json.Unmarshal(row, &fields); err != nil {
+		return nil, fmt.Errorf("store: read an imported row: %w", err)
+	}
+	stamp, err := json.Marshal(now)
+	if err != nil {
+		return nil, fmt.Errorf("store: write an imported row: %w", err)
+	}
+	if string(fields["classify_state"]) == `"`+classifyPending+`"` {
+		fields["classify_after"] = stamp
+	}
+	if ended, ok := fields["ended_at"]; !ok || string(ended) == "null" {
+		fields["call_outcome"] = json.RawMessage(`"unknown"`)
+		fields["ended_at"] = stamp
 	}
 	return json.Marshal(fields)
 }
@@ -1023,11 +1079,11 @@ func settleSkippedRuns(ctx context.Context, tx bun.Tx, customerID string, tasks 
 // cancelled or paused tasks here.
 //
 // It returns how many tasks it resumed, how many it left paused for want of a config, how many
-// for want of room, and the campaigns still running there at the last catch-up. Those it
-// leaves paused and marked: a contact the source rang after that is still pending here, and
-// starting the campaign here (POST /v1/agents/campaigns/{id}/start) rings it again, so that
-// is left to a person. Any change of its state here clears the mark (setCampaignState).
-// Running it again resumes nothing twice.
+// for want of room, and the campaigns still running or scheduled there at the last catch-up.
+// Those it leaves paused and marked: a contact the source rang after that is still enrolled
+// here, and resuming the campaign here (ResumeCampaign) rings it again, so that is left to a
+// person. Any change of a campaign's state here clears the mark (transitionIn). Running it
+// again resumes nothing twice.
 func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed, skipped, overLimit int64, campaigns []string, err error) {
 	err = s.db.RunInTx(ctx, nil, func(ctx context.Context, tx bun.Tx) error {
 		var marked []ScheduledTask
@@ -1107,35 +1163,6 @@ func (s *Store) ResumeMovedRows(ctx context.Context, customerID string) (resumed
 		return 0, 0, 0, nil, stack.Wrap(err)
 	}
 	return resumed, skipped, overLimit, campaigns, nil
-}
-
-// CampaignCalls is a campaign and how many of its contacts are in a call.
-type CampaignCalls struct {
-	ID    string `bun:"id"`
-	Calls int    `bun:"calls"`
-}
-
-// PausedCampaignsCalling returns the customer's campaigns that are paused here, not by the move,
-// and still hold contacts in a call, with how many each. The source was calling them at the
-// last catch-up: a start here releases them to pending (ReleaseContacts) and rings them again.
-func (s *Store) PausedCampaignsCalling(ctx context.Context, customerID string) ([]CampaignCalls, error) {
-	var calling []CampaignCalls
-	err := s.db.NewSelect().
-		TableExpr("campaigns AS c").
-		ColumnExpr("c.id AS id").
-		ColumnExpr("count(*) AS calls").
-		Join("JOIN campaign_contacts AS cc ON cc.campaign_id = c.id").
-		Where("c.customer_id = ?", customerID).
-		Where("c.state = ?", Paused).
-		Where("NOT c.move_paused").
-		Where("cc.state = ?", Calling).
-		Group("c.id").
-		Order("c.id").
-		Scan(ctx, &calling)
-	if err != nil {
-		return nil, stack.Wrap(fmt.Errorf("store: paused campaigns calling: %w", err))
-	}
-	return calling, nil
 }
 
 // scheduledTaskHolder is a user on an agent config, who holds at most its limit of active tasks.
@@ -1369,10 +1396,10 @@ func (t dataTable) isKey(s shape, column string) bool {
 // Changes returns what has happened to a customer's rows since a cursor, oldest first,
 // and the cursor to ask from next time.
 //
-// A cursor older than what is still kept, or than where the recording last started again after
-// it expired, is ErrChangesExpired rather than a shorter answer: the caller would otherwise
-// carry on from a gap it could not see, and a missing change is a row that is wrong on the
-// other side forever.
+// A cursor older than what is still kept, than where the recording last started again after
+// it expired, or than the last change of theirs pruned, is ErrChangesExpired rather than a
+// shorter answer: the caller would otherwise carry on from a gap it could not see, and a
+// missing change is a row that is wrong on the other side forever.
 func (s *Store) Changes(ctx context.Context, customerID string, after int64, limit int) ([]DataChange, int64, error) {
 	if customerID == "" {
 		return nil, 0, errors.New("store: a customer id is required")
@@ -1390,11 +1417,15 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	// Sequence numbers are shared by every customer and pruning drops the oldest of all of
 	// them, so a gap before this customer's first change is the other customers' changes,
 	// not a pruned one: only a cursor older than the oldest change kept has lost any. A cursor
-	// at recorded_since is a start, as 0 is, and the gap after it is not checked. With none of
-	// theirs kept, a quiet customer and one whose every change aged out look the same, and the
-	// follower that is only waiting is not refused. Pruning drops only numbers at or below the
-	// mark it read, so the gap right after a cursor at or above this mark is a change still in
-	// flight rather than a pruned one. The mark can go down: the trigger
+	// at recorded_since is a start, as 0 is, and the gap after it is not checked: a number rolled
+	// back after it leaves the same gap. With none of theirs kept, a quiet customer and one whose
+	// every change aged out look the same to this check. The highest number of theirs pruning
+	// dropped (pruned_through) tells them apart: a cursor below it lost a change, at
+	// recorded_since or after it, whatever is kept. A cursor at pruned_through is a start too: no
+	// change of theirs above it was pruned, or pruned_through would be higher, so the gap after it
+	// is other customers' pruned changes or numbers that were never a change. Pruning drops only
+	// numbers at or below the mark it read, so the gap right after a cursor at or above this mark
+	// is a change still in flight rather than a pruned one. The mark can go down: the trigger
 	// reads the sequence and takes its lock in two statements, and a mark read between them
 	// is above that lock. A prune in that window can drop an aged-out change before this
 	// check sees it, so the follower is refused (ErrChangesExpired) on a later read, not
@@ -1410,11 +1441,11 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 	}
 	defer tx.Rollback() //nolint:errcheck // read-only, and the error on the way out says nothing
 
-	since, err := recordedSince(ctx, tx, customerID)
+	since, pruned, err := recordedSince(ctx, tx, customerID)
 	if err != nil {
 		return nil, 0, err
 	}
-	if after < since {
+	if after < since || after < pruned {
 		return nil, 0, ErrChangesExpired
 	}
 	var kept sql.NullInt64
@@ -1424,7 +1455,7 @@ func (s *Store) Changes(ctx context.Context, customerID string, after int64, lim
 		customerID).Scan(&kept, &theirs); err != nil {
 		return nil, 0, fmt.Errorf("store: changes: %w", err)
 	}
-	if after > since && after < mark && theirs && kept.Int64 > after+1 {
+	if after > max(since, pruned) && after < mark && theirs && kept.Int64 > after+1 {
 		return nil, 0, ErrChangesExpired
 	}
 
@@ -1560,7 +1591,9 @@ func (s *Store) deleteRow(ctx context.Context, db bun.IDB, customerID string, ch
 
 // PruneDataChanges drops the changes nobody can still use. It returns how many it removed.
 // A capture's row is kept after it expires: it is what tells a start after it from a first one
-// (StartDataCapture), one small row per customer that ever moved.
+// (StartDataCapture), one small row per customer that ever moved. It also notes there the highest
+// number of the customer's it dropped (pruned_through), in the same statement, so a cursor below
+// it is refused (Changes) whatever is kept after it.
 //
 // It drops only the oldest numbers, the ones below the first change still young and at
 // or below the watermark, so what is kept is everything from one number on and a cursor
@@ -1575,16 +1608,28 @@ func (s *Store) PruneDataChanges(ctx context.Context, retention time.Duration) (
 	if err != nil {
 		return 0, err
 	}
-	// LEAST ignores a NULL: with no change still young, the mark is the only bound.
-	result, err := s.db.ExecContext(ctx, `
-DELETE FROM data_changes
-WHERE at < now() - make_interval(secs => ?)
-  AND seq <= LEAST(?, (SELECT MIN(seq) - 1 FROM data_changes WHERE at >= now() - make_interval(secs => ?)))`,
-		retention.Seconds(), mark, retention.Seconds())
+	// LEAST ignores a NULL: with no change still young, the mark is the only bound. Every router
+	// prunes, and of two prunes at once the one that dropped the lower numbers can commit last, so
+	// pruned_through only goes up. A WITH statement that changes rows runs once and to the end
+	// whether or not the query reads it (https://www.postgresql.org/docs/current/queries-with.html).
+	var removed int64
+	err = s.db.QueryRowContext(ctx, `
+WITH pruned AS (
+  DELETE FROM data_changes
+  WHERE at < now() - make_interval(secs => ?)
+    AND seq <= LEAST(?, (SELECT MIN(seq) - 1 FROM data_changes WHERE at >= now() - make_interval(secs => ?)))
+  RETURNING customer_id, seq
+), noted AS (
+  UPDATE data_change_capture AS c SET pruned_through = p.seq
+  FROM (SELECT customer_id, MAX(seq) AS seq FROM pruned GROUP BY customer_id) AS p
+  WHERE c.customer_id = p.customer_id AND c.pruned_through < p.seq
+)
+SELECT count(*) FROM pruned`,
+		retention.Seconds(), mark, retention.Seconds()).Scan(&removed)
 	if err != nil {
 		return 0, fmt.Errorf("store: prune data changes: %w", err)
 	}
-	return result.RowsAffected()
+	return removed, nil
 }
 
 // watchDataChanges attaches the recording trigger to every table an export carries, in one

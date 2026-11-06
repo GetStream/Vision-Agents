@@ -66,7 +66,7 @@ func endCounter(reason EndReason) prometheus.Counter {
 // that dropped out, or a model that answered nothing, came first: what ends the session after
 // it is a consequence.
 func (s *Session) endLabel() EndReason {
-	reason := s.endReason()
+	reason := s.EndReason()
 	switch {
 	case s.agentLeft.Load(), s.modelErred.Load() && !s.replied.Load():
 		return s.failedFor()
@@ -96,7 +96,7 @@ func (s *Session) failedFor() EndReason {
 // kept is the reason the session's row keeps: the one noted, so a row keeps what it kept
 // before the reasons said whose fault an end was, and otherwise the one it is counted under.
 func (s *Session) kept() EndReason {
-	if reason := s.endReason(); reason != "" {
+	if reason := s.EndReason(); reason != "" {
 		return reason
 	}
 	return s.endLabel()

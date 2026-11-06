@@ -230,7 +230,7 @@ func (r *Registry) Lookup(name string) (Vendor, bool) { return r.config.Lookup(n
 func (r *Registry) Open(name string) (Provider, error) {
 	vendor, declared := r.Lookup(name)
 	if !declared {
-		return nil, stack.Wrap(fmt.Errorf("phone: %q is not a known vendor", name))
+		return nil, stack.Wrap(Invalid(fmt.Errorf("phone: %q is not a known vendor", name)))
 	}
 
 	r.mu.RLock()
@@ -245,7 +245,7 @@ func (r *Registry) Open(name string) (Provider, error) {
 		return NotImplemented(name), nil
 	}
 	if missing := vendor.Missing(); len(missing) > 0 {
-		return nil, stack.Wrap(fmt.Errorf("phone: %s needs %s", name, strings.Join(missing, " and ")))
+		return nil, stack.Wrap(NotConfigured(fmt.Errorf("phone: %s needs %s", name, strings.Join(missing, " and "))))
 	}
 
 	provider, err := factory()
