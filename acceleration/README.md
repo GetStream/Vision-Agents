@@ -108,7 +108,7 @@ the other commands that read them there.
 | `ROUTER_KNOWLEDGE_BUCKET_URL` | Bucket a file uploaded to a knowledge base waits in until it is read, e.g. `gs://knowledge`; each file is deleted once read. Each shard needs its own, in its own region, as the files are read by its workers alone. Without it, `POST /v1/agents/knowledge/files` answers 503 |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.2 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.08 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -2080,7 +2080,7 @@ outright, such as a number's month, is its price, and is not logged as unpriced.
 
 Work done with the customer's own key is billed to the customer by the vendor, so its price is
 a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2000). A million
-tokens that cost the vendor $1 are $1.20 on the operator's key and $0.20 on the customer's. A
+tokens that cost the vendor $1 are $1.08 on the operator's key and $0.20 on the customer's. A
 BYOK quote's `base_cost_micros` is 0, since the work costs the operator nothing, and its
 `cost_micros` is the fee. An instance is BYOK when it was built with the customer's key
 (`routing.ProviderConfig.BYOK`, never read from a file; see "Customers' own provider keys"). No price file writes BYOK entries:
@@ -2110,7 +2110,7 @@ it that names none is read as `us`, with a warning naming the entries: every rou
 deployment reads the same file at its start, and a router built before regions refuses a
 `region` field, so the file can name regions only once none of its routers is that old. An
 entry may set `prices`, `price_tiers` and `sku`. One with no price
-is priced at its rates times `pricing.PriceFactorBps` (12000, so 1.2), or a BYOK one at
+is priced at its rates times `pricing.PriceFactorBps` (10800, so 1.08), or a BYOK one at
 `pricing.BYOKFeeBps`, each rate kept to 12 significant digits. A file's top-level `markup_bps`,
 which older files have, is ignored with a warning.
 

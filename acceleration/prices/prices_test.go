@@ -67,8 +67,8 @@ func (s *PricesSuite) TestAnEntryWithoutAPriceIsPricedAtTheFactor() {
 	s.Require().NoError(err)
 
 	plain := s.named(file, "llm/openai/plain (us)")
-	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(2.4)}, plain.Prices)
-	s.Equal([]pricing.Tier{{AboveInputTokens: 1_000, Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(4.8)}}},
+	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(2.16)}, plain.Prices)
+	s.Equal([]pricing.Tier{{AboveInputTokens: 1_000, Rates: map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(4.32)}}},
 		plain.PriceTiers)
 	own := s.named(file, "llm/openai/own (us)")
 	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(2.1)}, own.Prices)
@@ -345,13 +345,13 @@ func (s *PricesSuite) TestAFilesMarkupIsIgnoredWithAWarning() {
 	file, err := Parse("own.json", []byte(`{"markup_bps": 2000, "entries": [
 		{"modality": "llm", "provider": "openai", "model": "m", "region": "us", "rates": {"input_tokens": {"usd": 1, "per": 1000000}}}]}`))
 	s.Require().NoError(err)
-	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(1.2)}, file.Entries[0].Prices)
+	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillion(1.08)}, file.Entries[0].Prices)
 
 	var logs bytes.Buffer
 	IgnoredMarkup(slog.New(slog.NewTextHandler(&logs, nil)), "own.json", file)
 	s.Contains(logs.String(), "level=WARN")
 	s.Contains(logs.String(), "markup_bps in a price file is ignored")
-	s.Contains(logs.String(), "file=own.json markup_bps=2000 factor_bps=12000")
+	s.Contains(logs.String(), "file=own.json markup_bps=2000 factor_bps=10800")
 
 	_, err = Parse("own.json", []byte(`{"markup_bps": 100001, "entries": []}`))
 	s.NoError(err)
@@ -400,7 +400,7 @@ func (s *PricesSuite) TestTheEmbeddedListPricesBYOKWorkAtTheFee() {
 
 	plain, own := list.Quote(haiku, used), list.Quote(byok, used)
 
-	s.Equal(plain.BaseCostMicros*12/10, plain.CostMicros)
+	s.Equal(plain.BaseCostMicros*108/100, plain.CostMicros)
 	s.Equal(plain.BaseCostMicros*2/10, own.CostMicros)
 	s.Zero(own.BaseCostMicros)
 	s.Equal("llm-anthropic-claude-haiku-5-5-us-byok", own.SKU)
