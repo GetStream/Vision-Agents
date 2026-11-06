@@ -440,3 +440,20 @@ func (s *ProxySuite) TestAGitLFSRequestWhenTheGrantsCannotBeReadGetsTheMessage()
 	s.Equal("application/vnd.git-lfs+json", response.Header.Get("Content-Type"))
 	s.Equal(lfsErrorBody("egress: the sandbox's grants cannot be read just now"), body)
 }
+
+// TestAnUnlistedGitLFSRequestWithAMethodOverrideLogsOneWhy: a refusal for two reasons logs the
+// first check's alone, so a log line holds one why key (as on the base) and the override stays
+// the reason an operator reads.
+func (s *ProxySuite) TestAnUnlistedGitLFSRequestWithAMethodOverrideLogsOneWhy() {
+	s.readLFS()
+	request := s.request(http.MethodPost, "https://github.test/o/r.git/info/lfs/locks/verify", basic("x-access-token", s.placeholder), `{}`)
+	request.Header.Set("X-HTTP-Method-Override", "DELETE")
+
+	response, _, err := s.send(s.sandbox(s.credential), request)
+
+	s.Require().NoError(err)
+	s.Equal(http.StatusForbidden, response.StatusCode)
+	s.Equal(1, strings.Count(s.logs.String(), "why="), s.logs.String())
+	s.Contains(s.logs.String(), "a method override header")
+	s.NotContains(s.logs.String(), "a Git LFS request that no read lists")
+}

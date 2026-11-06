@@ -387,9 +387,7 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// Code in the sandbox reads a granted host; it writes through the connector's tools, which
 		// a binding can make ask the user first. The answer tells the model so.
 		reads, graphQL, sql, lfs := record.reads(host, r.Method, r.URL)
-		if !reads && lfsAPI(r.URL.Path) {
-			logger = logger.With("why", "a Git LFS request that no read lists")
-		}
+		unlisted, said := !reads && lfsAPI(r.URL.Path), logger
 		if name := overrider(r.Header); name != "" {
 			reads, logger = false, logger.With("why", "a method override header: "+name)
 		}
@@ -416,6 +414,10 @@ func (p *Proxy) inner(t tunnel) http.HandlerFunc {
 		// read's), before the dry run.
 		if name := overrider(r.Trailer); name != "" {
 			reads, logger = false, logger.With("why", "a method override trailer: "+name)
+		}
+		// A refusal logs one why: the LFS one only when no check above gave its own.
+		if unlisted && logger == said {
+			logger = logger.With("why", "a Git LFS request that no read lists")
 		}
 		if !reads {
 			p.refuseWrite(w, r, t, logger, record.readsSQL(host), why)
