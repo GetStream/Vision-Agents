@@ -6,8 +6,8 @@ Stream token are all swift_assistant's, as they are for the [Android app](../and
 Only the page is here.
 
 ```
-package.json     React and Vite over @stream-io/calypso (sdks/js, as it is in this checkout)
-                 and stream-chat-react's AI components
+package.json     React and Vite over @stream-io/calypso (0.3.1 from npm, the first to take
+                 stream-chat 10) and stream-chat-react's AI components
 connected.html   where a connector's sign-in comes back to
 src/             the page
 tests/           its pure parts (captions, the glow's phases, photos, days) and the chat over a
@@ -37,11 +37,10 @@ go run ./backend
 ```
 
 The backend listens on `:8098`, which the page reaches through Vite's dev server at `/backend`:
-it answers no browser of another origin. Build the SDK once, then tell the page the Stream key,
-in `.env.local` here, which git ignores:
+it answers no browser of another origin. Tell the page the Stream key in `.env.local` here, which
+git ignores:
 
 ```bash
-(cd ../../../sdks/js && npm ci && npm run build)
 echo "VITE_STREAM_API_KEY=<the router's STREAM_API_KEY>" > .env.local
 npm install
 npm run dev
