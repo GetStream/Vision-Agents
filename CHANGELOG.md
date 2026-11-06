@@ -2,6 +2,10 @@
 
 ## Features
 
+### The link says how much of the number's past the user reads
+
+`PUT /v1/agents/users/{user_id}` takes `include_phone_history` and `phone_history_since`. `true` gives the user everything the number ever said. `false` gives what it says from the request on. A time gives what it said from then on. With neither field, a new link starts at the link, and the same number again keeps what was stored. The boundary covers the user's episode cards and the history a session on the number's SMS, WhatsApp or iMessage thread is handed, which until now held the whole thread. A conversation that started before it is left out whole. `true` with a time, or a time in the future, is a 400. `GET /v1/agents/users/{user_id}` answers the number and the boundary as stored. A thread whose number is linked to nobody is handed all of it, as before (AI-2861, #1790).
+
 ### Usage reads name who started the work `origin`
 
 A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names are gone (see Breaking Changes). Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). A query parameter tagged deprecated is marked `deprecated` on the parameter itself in both specs, so the generated JavaScript and Go clients flag it (AI-2812).
@@ -395,6 +399,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A sandbox session cut while it opens leaves no Daytona secret
+
+When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
+
+### A move whose recording lapsed is told to copy again
+
+A move nobody followed for longer than the source's retention stopped recording the app's changes, and a follower back after that was answered the changes recorded since as if they were all: the writes made while nothing was recorded never reached the target. The source now answers 410 for a cursor from before its recording started again, so `router replicate` says to run with `--full`; the export it copies then carries on (AI-2815).
+
 ### A repeatable read write is not lost by a move
 
 A repeatable read or serializable transaction that took its snapshot before an export started recording, and wrote after, was in neither the export nor its changes. Its write is now refused with a serialization failure, the error those levels are retried on, and the retry is recorded. An export waits up to 30 seconds for such a transaction that wrote before it started, then answers 503, as it does for any open write; a transaction that only reads holds no export (AI-2814).
@@ -418,6 +430,10 @@ A link a tool returns now gives an ID only of a kind that its line, the keys abo
 ### A link's address and a role's word name no ID's kind
 
 A link's own host and path no longer name what kind of thing its ID is: `see https://channels.example.com/u/U…` gives no channel. The words beside the link, the keys above it and the tool's name still do, so `Channel link: <link>` and a channel search's permalink still give the channel. A word between the kind and the ID is no longer read as the thing's name where a colon ends a label at it or the thing was named before its kind. So `Channel owner: U…` and `#help channel admin U…` give no channel, while `Channel #help: C…` and `channel help (C…)` still do. A link a tool writes twice, as `<link|host/path>`, names no kind by either copy (AI-2881, AI-2884, #1788).
+
+### What the agent wrote is no source when a tool reads it back
+
+A tool that reads back a note or a message the agent sent no longer gives a number in it, and one that reads back what the agent said or sent no longer gives a stand-in name in it. A near miss of the caller's number, a number to put the caller through to, or a name such as `John Doe` that the agent made up and a tool then read back is refused as before the read-back. A number the agent only said on the call, as when it reads one back to confirm it, still counts when a tool lists it. Only the agent's own lines are cut from a result, so a number or name the tool wrote beside them, on another line, or before the agent wrote it, still counts, a number in any of its written forms. A read-back message also gives no channel through a field of its own, as `"channel_id"` in its blocks, when its text is the agent's line with that ID; a field of any other result still does (AI-2886, AI-2883, #1795).
 
 ### A short video is sampled into the frames it has
 

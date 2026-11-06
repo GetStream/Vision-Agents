@@ -378,7 +378,8 @@ func (s *DataMoveSuite) TestAnExportStartWaitsForARepeatableReadWriteThatEndsWit
 	s.export()
 }
 
-// Following the changes of an expired recording waits for such a write within the bound too.
+// Following the changes of an expired recording waits for such a write within the bound too, and
+// then refuses the cursor from before the recording expired.
 func (s *DataMoveSuite) TestFollowingAnExpiredRecordingWaitsForARepeatableReadWriteThatEndsWithinTheBound() {
 	s.skipOnARouterWithShards()
 	s.export()
@@ -390,7 +391,52 @@ func (s *DataMoveSuite) TestFollowingAnExpiredRecordingWaitsForARepeatableReadWr
 	go func() { time.Sleep(500 * time.Millisecond); _ = looked.tx.Rollback() }()
 
 	status, _ := s.serverClient.call(http.MethodGet, "/v1/data/changes?after=0", nil)
-	s.Equal(http.StatusOK, status)
+	s.Equal(http.StatusGone, status)
+}
+
+// expireRecording lets the app's recording expire, as it does when nobody follows the changes for
+// longer than the retention.
+func (s *DataMoveSuite) expireRecording() {
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+}
+
+// A write made while the recording was off is in no change, so a follower back after that is told
+// to copy again rather than answered without it. The export it copies again carries on.
+func (s *DataMoveSuite) TestAFollowerBackAfterTheRecordingExpiredIsToldToExportAgain() {
+	exported := s.export()
+	s.data.createAgentConfig()
+	followed := s.changesSince(*exported[len(exported)-1].Cursor)
+	s.expireRecording()
+	missed := s.data.createAgentConfig()
+
+	status, body := s.serverClient.call(http.MethodGet,
+		"/v1/data/changes?after="+strconv.FormatInt(followed.Cursor, 10), nil)
+	var refused ErrorResponse
+	s.Require().NoError(json.Unmarshal(body, &refused))
+	s.Equal(http.StatusGone, status)
+	s.Equal("gone", refused.Error.Code)
+	s.Contains(refused.Error.Message, "export again")
+
+	again := s.export()
+	s.Contains(ndjson(again), missed.Id, "the write made while nothing was recorded is in the new export")
+	after := s.data.createAgentConfig()
+	s.Contains(s.rendered(s.changesSince(*again[len(again)-1].Cursor).Changes), after.Id)
+}
+
+// A follower that reads within the retention keeps the recording on, and is answered every change.
+func (s *DataMoveSuite) TestAFollowerReadingWithinTheRetentionIsAnsweredEveryChange() {
+	exported := s.export()
+	cursor := *exported[len(exported)-1].Cursor
+	first := s.data.createAgentConfig()
+	followed := s.changesSince(cursor)
+	second := s.data.createAgentConfig()
+
+	s.Contains(s.rendered(s.changesSince(followed.Cursor).Changes), second.Id)
+	again := s.rendered(s.changesSince(cursor).Changes)
+	s.Contains(again, first.Id)
+	s.Contains(again, second.Id)
 }
 
 // A shard's tables record no changes, so a write to one after the export would never reach the
