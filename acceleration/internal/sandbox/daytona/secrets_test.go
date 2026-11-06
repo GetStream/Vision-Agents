@@ -470,6 +470,56 @@ func (s *SecretsSuite) TestASandboxDaytonaWouldNotCreateLeavesNoSecret() {
 	s.Empty(s.platform.secretNames())
 }
 
+// cutOnceASecretIsMade cancels the returned context 200 ms after the first secret is made at Daytona.
+func (s *SecretsSuite) cutOnceASecretIsMade() context.Context {
+	ctx, cancel := context.WithCancel(s.ctx)
+	go func() {
+		defer cancel()
+		deadline := time.Now().Add(10 * time.Second)
+		for time.Now().Before(deadline) {
+			if len(s.platform.secretNames()) > 0 {
+				time.Sleep(200 * time.Millisecond)
+				return
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
+	}()
+	return ctx
+}
+
+// TestASessionCutWhileDaytonaMakesTheSandboxLeavesNoSecret: the caller's context is cancelled after
+// the secret was made, while Daytona builds the sandbox. Deleting on that context sent no DELETE,
+// so the live token stayed at Daytona until the session closed.
+func (s *SecretsSuite) TestASessionCutWhileDaytonaMakesTheSandboxLeavesNoSecret() {
+	s.platform.mu.Lock()
+	s.platform.slowCreate = time.Hour
+	s.platform.mu.Unlock()
+
+	_, err := s.box.Run(s.cutOnceASecretIsMade(), "print(1)", nil)
+
+	s.Require().Error(err)
+	s.Empty(s.platform.secretNames(), "the cut session left its secret at Daytona")
+}
+
+// TestASessionCutWhileTheLastSecretsAreDeletedForANewSandboxLeavesNoSecret: a sandbox Daytona deleted
+// is made again, and the caller's context is cancelled while the last secrets are deleted.
+func (s *SecretsSuite) TestASessionCutWhileTheLastSecretsAreDeletedForANewSandboxLeavesNoSecret() {
+	_, err := s.box.Run(s.ctx, "print(1)", nil)
+	s.Require().NoError(err)
+	s.Require().Len(s.platform.secretNames(), 1)
+	s.box.lost()
+	s.platform.mu.Lock()
+	s.platform.slowSecret = map[string]time.Duration{http.MethodDelete: 500 * time.Millisecond}
+	s.platform.mu.Unlock()
+	ctx, cancel := context.WithTimeout(s.ctx, 200*time.Millisecond)
+	defer cancel()
+
+	_, err = s.box.Run(ctx, "print(2)", nil)
+
+	s.Require().Error(err)
+	s.Empty(s.platform.secretNames(), "the cut session left its old secret at Daytona")
+}
+
 // TestASecretDaytonaWouldNotCreateLeavesNoOtherSecret: the grants made before it are deleted.
 func (s *SecretsSuite) TestASecretDaytonaWouldNotCreateLeavesNoOtherSecret() {
 	gitlab := github
@@ -484,6 +534,127 @@ func (s *SecretsSuite) TestASecretDaytonaWouldNotCreateLeavesNoOtherSecret() {
 	s.Require().Error(err)
 	s.Empty(s.platform.secretNames())
 	s.NotContains(s.platform.history(), "POST /api/sandbox")
+}
+
+// TestAPrepareCutPartwayDeletesTheSecretsItMade: the context Prepare ran on was cancelled, or ran
+// past its deadline, after the first grant's secret was made. Releasing on that context failed
+// every delete, so the first grant's live token stayed at Daytona until the session closed.
+func (s *SecretsSuite) TestAPrepareCutPartwayDeletesTheSecretsItMade() {
+	gitlab := github
+	gitlab.Binding, gitlab.Env = "gitlab", "GITLAB_TOKEN"
+	noHosts := gitlab
+	noHosts.Hosts = nil
+	late := gitlab
+	late.Late = true
+	lateRequired := late
+	lateRequired.Required = true
+	required := gitlab
+	required.Required = true
+	for _, c := range []struct {
+		name string
+		// second is the grant after the one that made a secret; cut says how the context ends once
+		// the first token is given, and the second token's answer.
+		second  sandbox.Grant
+		cut     string
+		bind    sandbox.Bind
+		secondT error
+	}{
+		{name: "the next secret cannot be made on a cancelled context", second: gitlab, cut: "cancel"},
+		{name: "the next secret cannot be made past the deadline", second: gitlab, cut: "deadline"},
+		{name: "a grant with no host", second: noHosts, cut: "cancel"},
+		{name: "a late grant with no Bind", second: late, cut: "cancel"},
+		{name: "a required late grant", second: lateRequired, cut: "cancel", bind: func(context.Context, sandbox.Grant) (sandbox.Grant, bool) { return sandbox.Grant{}, false }},
+		{name: "a required grant whose token cannot be had", second: required, cut: "cancel", secondT: context.Canceled},
+	} {
+		s.Run(c.name, func() {
+			platform := newPlatform()
+			s.T().Cleanup(platform.server.Close)
+			ctx, cancel := context.WithTimeout(s.ctx, time.Hour)
+			defer cancel()
+			if c.cut == "deadline" {
+				cancel()
+				ctx, cancel = context.WithTimeout(s.ctx, 300*time.Millisecond)
+				defer cancel()
+			}
+			asked := 0
+			broker, err := NewSecrets(SecretsOptions{APIKey: "key-1", APIURL: platform.server.URL + "/api", Prefix: "stg", Session: "session-1",
+				HTTPClient: &http.Client{Transport: cancelsAfterCreate{cancel: cancel, cut: c.cut == "cancel"}},
+				Bind:       c.bind, Logger: slog.New(slog.NewTextHandler(s.logs, nil)),
+				Tokens: func(ctx context.Context, _ sandbox.Grant) (sandbox.Token, error) {
+					asked++
+					if asked == 2 && c.cut == "deadline" {
+						<-ctx.Done()
+					}
+					if asked == 2 {
+						return sandbox.Token{Value: "gho_second", Revision: 1}, c.secondT
+					}
+					return sandbox.Token{Value: "gho_first", Revision: 1}, nil
+				}})
+			s.Require().NoError(err)
+
+			_, err = broker.Prepare(ctx, []sandbox.Grant{github, c.second})
+
+			s.Require().Error(err)
+			s.Require().Error(ctx.Err(), "the context was cut")
+			s.Equal([]string{"POST /api/secret", "DELETE /api/secret/secret-1"}, platform.history()[:2])
+			s.Empty(platform.secretNames())
+			s.Require().NoError(broker.Close(s.ctx))
+		})
+	}
+}
+
+// cancelsAfterCreate cancels a context once Daytona has answered the first request to make a secret,
+// as a caller giving up between two grants does.
+type cancelsAfterCreate struct {
+	cancel context.CancelFunc
+	cut    bool
+}
+
+func (c cancelsAfterCreate) RoundTrip(r *http.Request) (*http.Response, error) {
+	response, err := http.DefaultTransport.RoundTrip(r)
+	if c.cut && r.Method == http.MethodPost {
+		c.cancel()
+	}
+	return response, err
+}
+
+// TestAPrepareNotCutKeepsItsSecrets is the control: a Prepare that succeeds deletes nothing.
+func (s *SecretsSuite) TestAPrepareNotCutKeepsItsSecrets() {
+	broker, err := NewSecrets(SecretsOptions{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Prefix: "stg", Session: "session-1",
+		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) { return s.token, nil }})
+	s.Require().NoError(err)
+
+	_, err = broker.Prepare(s.ctx, []sandbox.Grant{github})
+
+	s.Require().NoError(err)
+	s.Len(s.platform.secretNames(), 1)
+	s.Equal(defaultTimeout, broker.releaseTimeout, "the bound of the release of a failed Prepare is the one the sandbox puts on its broker")
+}
+
+// TestAPrepareCutPartwayWaitsOnlyTheBoundForADeleteDaytonaStalls: the release on a context that
+// is not cancelled has a bound of its own, and a secret it could not delete is kept for Close.
+func (s *SecretsSuite) TestAPrepareCutPartwayWaitsOnlyTheBoundForADeleteDaytonaStalls() {
+	s.platform.mu.Lock()
+	s.platform.slowSecret = map[string]time.Duration{http.MethodDelete: time.Hour}
+	s.platform.mu.Unlock()
+	broker, err := NewSecrets(SecretsOptions{APIKey: "key-1", APIURL: s.platform.server.URL + "/api", Prefix: "stg", Session: "session-1",
+		Tokens: func(context.Context, sandbox.Grant) (sandbox.Token, error) { return s.token, nil }})
+	s.Require().NoError(err)
+	broker.releaseTimeout = 200 * time.Millisecond
+	noHosts := github
+	noHosts.Binding, noHosts.Hosts = "gitlab", nil
+
+	started := time.Now()
+	_, err = broker.Prepare(s.ctx, []sandbox.Grant{github, noHosts})
+
+	s.Require().Error(err)
+	s.Less(time.Since(started), 10*time.Second)
+	s.Len(s.platform.secretNames(), 1)
+	s.platform.mu.Lock()
+	s.platform.slowSecret = nil
+	s.platform.mu.Unlock()
+	s.Require().NoError(broker.Close(s.ctx))
+	s.Empty(s.platform.secretNames())
 }
 
 func (s *SecretsSuite) TestASecretNameKeepsToDaytonasCharacters() {
