@@ -1,5 +1,6 @@
-// Command quickstart is the Go code from the quickstart: the agent in agents/myagent, with
-// one function the model can call, asked one question in writing.
+// Command quickstart is the README's quickstart: the agent in agents/myagent, with one
+// function the model can call, asked one question in writing. The README shows this file's
+// code as it is, which readme_test.go holds it to.
 //
 // The model runs in the backend; when it asks for lookup_order, the call comes to this
 // process, which runs it and sends the result back. Sync stores the folder in the backend,

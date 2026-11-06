@@ -1,23 +1,102 @@
-# sdks/go
+# Vision Agents Go SDK
 
-The Go SDK for agents that run in the [acceleration backend](../../acceleration).
+The Go SDK for agents that run in Stream's [acceleration backend](https://github.com/GetStream/Vision-Agents/tree/accelerate/acceleration).
 
-It is the Go counterpart of [plugins/stream](../../plugins/stream), not of
-[sdks/python](../python). The backend already runs the whole pipeline: it joins the
+It is the Go counterpart of [plugins/stream](https://github.com/GetStream/Vision-Agents/tree/accelerate/plugins/stream), not of
+[sdks/python](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/python). The backend already runs the whole pipeline: it joins the
 call, transcribes, answers and speaks. What this does is create the session, hold the events
 socket, run your functions and configure everything.
 
+It needs Go 1.25 or newer.
+
 ```bash
-go get github.com/GetStream/Vision-Agents/sdks/go
+go get github.com/GetStream/Vision-Agents/sdks/go@latest
 ```
+
+## Quickstart
+
+The hosted router needs a Stream app's key and secret, and nothing else:
+
+```bash
+export STREAM_API_KEY=your_api_key
+export STREAM_API_SECRET=your_api_secret
+```
+
+It is in us-east4. `STREAM_ACCELERATION_REGION=europe-west4`, or
+`stream.Backend{Region: "europe-west4"}`, is the one in another region.
+
+This is [examples/quickstart](examples/quickstart): an agent read from its directory,
+`agents/myagent`, with one function the model can call, asked one question in writing. Run it
+from that directory with `go run .`.
+
+```go
+package main
+
+import (
+	"context"
+	"fmt"
+	"log"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/tools"
+)
+
+type LookupOrder struct {
+	OrderID string `json:"order_id" schema:"the order number, e.g. 1042"`
+}
+
+func (LookupOrder) Name() string        { return "lookup_order" }
+func (LookupOrder) Description() string { return "Look up an order by its number" }
+func (l LookupOrder) Run(ctx context.Context) (any, error) {
+	return fmt.Sprintf("Order %s shipped yesterday.", l.OrderID), nil
+}
+
+func main() {
+	ctx := context.Background()
+
+	agent, err := agents.New(agents.Options{
+		Name:  "myagent",
+		Tools: []tools.Tool{LookupOrder{}},
+	})
+	if err != nil {
+		log.Fatal(err)
+	}
+	if _, err := agent.Sync(ctx); err != nil {
+		log.Fatal(err)
+	}
+
+	session, err := agent.Sessions.Create(ctx, agents.SessionOptions{})
+	if err != nil {
+		log.Fatal(err)
+	}
+	defer session.Close(ctx)
+
+	if _, err := session.Responses.Create(ctx, "Where is order 1042?"); err != nil {
+		log.Fatal(err)
+	}
+	for event := range session.Events() {
+		if event.Kind == "response_delta" {
+			fmt.Print(event.Text)
+		}
+		if event.Kind == "responded" && !event.PendingWork {
+			fmt.Println()
+			break
+		}
+	}
+}
+```
+
+`Sync` stores the directory in the backend, so the session runs on it. The model asks for
+`lookup_order` over the session's socket, and the function runs here, in your process.
+
+### Against a local router
+
+A router you run yourself is named with its URL and the customer to bill:
 
 ```bash
 export STREAM_ACCELERATION_URL=http://localhost:8080
 export STREAM_ACCELERATION_CUSTOMER_ID=acme
 ```
-
-Unset, it is Stream's hosted router in us-east4. `STREAM_ACCELERATION_REGION=europe-west4`, or
-`stream.Backend{Region: "europe-west4"}`, is the one in another region.
 
 ## In writing
 
@@ -236,8 +315,9 @@ recent, _ := docs.Sessions.Query(ctx, client.Query{ProjectID: "docs", Limit: 20}
 found, _ := docs.Sessions.Search(ctx, "sendbird comparison", client.Query{})
 ```
 
-Every text conversation is kept in a Stream Chat channel, and `session.ConversationID()` is
-the one to pass back as `ConversationID` to resume it. `Incognito: true` holds the
+Every text conversation is kept in a Stream Chat channel, `session.ConversationID()`.
+`docs.Sessions.Resume(ctx, session.ID())` carries it on later, and one that ended is reopened
+with what was said in it. `Incognito: true` holds the
 conversation and keeps nothing: no row, no turns, no transcript. It cannot be listed,
 searched or forked afterwards, which is the point of it.
 
@@ -266,7 +346,7 @@ _, err := session.Update(ctx, client.SessionUpdate{
     Title: pointer("Pricing"),
     Llm:   pointer("openai/gpt-5"),
 })
-_, err = agent.Sessions.Update(ctx, "session-id", client.SessionUpdate{Title: pointer("Pricing")})
+_, err = docs.Sessions.Update(ctx, "session-id", client.SessionUpdate{Title: pointer("Pricing")})
 ```
 
 Somebody who has not signed up yet is a guest. `api.GuestUser` mints one with a token to
@@ -324,7 +404,7 @@ rather than queued behind. `OnCall` is the same thing for calls that arrive over
 
 A message only arrives here when no session is running on its channel. One written to an
 agent that *is* running is answered by the router from that session, because that agent is
-the one that knows what has been said. That is what `ChatOptions.AgentID` is for: a session
+the one that knows what has been said. That is what `agents.SessionOptions.AgentID` is for: a session
 opened without it joins under the agent's own user id, and the router cannot find it.
 
 The router needs to know whose channel it is. A channel a conversation has already been held
@@ -382,7 +462,6 @@ agent, _ := agents.New(agents.Options{
     // A subagent turns the built-in think, recall and explain skills on: the fast model
     // hands the hard questions over and keeps talking while the slower one reasons.
     Harness: &agents.Harness{
-        UseSkills: true,
         Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
     },
 })
@@ -435,18 +514,18 @@ A client is where the router is and who is calling it, said once. Anything route
 reads the same whether that turned out to be localhost or the hosted proxy:
 
 ```go
-client, _ := stream.NewClient(stream.Backend{})
+routers, _ := stream.NewClient(stream.Backend{})
 ```
 
 The zero `Backend` reads the environment. A hosted router authenticates a Stream app rather
 than naming a customer, which is `stream.Backend{URL: ..., Authenticate: true}` and the key
 and secret in the environment.
 
-`client.Router` then routes a modality on its own, live or from a recording, with the options
+`routers.Router` then routes a modality on its own, live or from a recording, with the options
 said once in a stored config:
 
 ```go
-router := client.Router("healthcare")
+router := routers.Router("healthcare")
 
 yes := true
 transcript, _ := router.STT().Recording(ctx,
@@ -512,6 +591,12 @@ the `Type` and `Code` to branch on, the `Message` and the `DocURL` explaining it
 added, so expect one this SDK does not know, and a failure that was not the router's own, such
 as a proxy's error page, has its body as the `Message` and no type or code.
 
+A 429 or a 503 that asks to be given time says how long in `RetryAfter`. The SDK retries no
+request itself: it cannot know which of yours are safe to send twice. `Responses.Create` is,
+because every question carries a request id the router answers once, and so is a tool call,
+which the router may send again and is answered from what the first run returned. A text
+session's socket is the one thing reconnected for you.
+
 ## What it cost, and when credit runs low
 
 Every successful answer to a backend says what the request cost and what the organization has
@@ -533,7 +618,9 @@ The balance warning fires once on going `low` and once more on going on to `exha
 again until an answer has said there is credit enough, so a balance hovering near the line does
 not fire on every answer. Both callbacks run on the goroutine that made the request: they must
 not block, and requests made at once call them at once. With neither option the client logs one
-WARN per crossing. A `stream.Router` built on `api.Backend()` is heard the same way, and its
+WARN per crossing. A router from `stream.NewClient(api.Backend())` is heard the same way, and so
+is an agent whose pipeline is built on `api.Backend()` (`stream.Config{Backend: api.Backend()}`)
+or a dispatch worker given it as `DispatchOptions.Backend`. A router's
 sockets carry `CostMicros` on a final `Transcript`, a finished `Audio` and a finished `Answer`,
 and a `Balance` when credit goes down into low or exhausted while the socket is open. That
 `Balance` comes as an item of its own on the socket's channel, so a loop over the channel
@@ -551,14 +638,34 @@ connector `stream`, which is sent `account.balance_low` and `account.balance_exh
 | `edge/`         | Creating the Stream call and minting a link to listen in on it     |
 | `tools/`        | The function registry and the JSON Schema derived from an argument struct |
 | `acceleration/` | The generated client. Do not edit it                               |
-| `examples/`     | A conversation in writing, and one out loud                        |
+| `examples/`     | Runnable programs: `quickstart`, `text`, `voice`, `dispatch`, `caregiving` |
+| `api/`          | The oapi-codegen config that generates `acceleration/`             |
+
+## Versioning
+
+Versions are tags of the form `sdks/go/vX.Y.Z`, which `go get` reads as `vX.Y.Z`. The SDK is
+developed on the repository's `accelerate` branch and released from `main`, which holds a copy
+of this directory taken from one `accelerate` commit. While the version is `0.x`, a minor
+version may change a signature; a patch only fixes. A version found broken after release is
+retracted in `go.mod` and followed by the next patch, never replaced.
+
+## Generated types
+
+`acceleration/` is generated from the router's OpenAPI spec. Its types are this SDK's models:
+`Session`, `AgentConfig`, `SttOptions` and the rest appear in signatures, and you build and read
+them like any struct. Its operation methods (`CreateSessionWithResponse` and the rest) are not
+the SDK's API. They are regenerated as the router changes and carry no compatibility promise.
+`stream.Backend.Client()` and `agents.Agent.Client()` hand out the generated client for an
+operation this SDK has no method for yet; prefer a method of `client`, `agents` or `stream`
+wherever one exists.
 
 ## Regenerating the client
 
 `acceleration/generated.go` comes from
-[acceleration/api/openapi.yaml](../../acceleration/api/openapi.yaml), which is the same file
+[acceleration/api/openapi.yaml](https://github.com/GetStream/Vision-Agents/blob/accelerate/acceleration/api/openapi.yaml), which is the same file
 the Go server and the Python client come from. It is committed, so installing this module
-needs no code generation.
+needs no code generation. Generating it needs the spec beside it, so it runs in a checkout of
+`accelerate`:
 
 ```bash
 go generate ./...
@@ -579,7 +686,7 @@ what they are given.
 
 `e2e_test.go` drives a running router instead of a stand-in for one, so it is behind a tag.
 Start Postgres, Redis and the router as
-[acceleration/README.md](../../acceleration/README.md) describes, then:
+[acceleration/README.md](https://github.com/GetStream/Vision-Agents/blob/accelerate/acceleration/README.md) describes, then:
 
 ```bash
 STREAM_ACCELERATION_URL=http://localhost:8080 \
@@ -588,4 +695,6 @@ go test -tags e2e -v .
 ```
 
 Anything the deployment cannot do is skipped rather than failed: a router with no knowledge
-provider is a valid router, and so is one with no telephony.
+provider is a valid router, and so is one with no telephony. `E2E_REQUIRED=1` fails every one of
+those skips instead, which is how a release is checked. Its models are real, so a run costs
+money; `e2e_test.go`'s package comment names the release's smoke set.
