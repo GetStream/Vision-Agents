@@ -205,3 +205,58 @@ func (s *TelnyxUnpaidSuite) TestAnSMSTaskOfAnOrganizationWithNoCreditIsNotRetrie
 	s.Equal(int32(1), attempts, "spent credit outlasts every retry of the run")
 	s.Contains(s.logged.String(), `level=WARN msg="a scheduled task failed to deliver" task=`+task.ID)
 }
+
+// A task whose organization is suspended while its turn runs passes Reachable, and the text
+// Notify then sends is refused with dlc.ErrUnpaid: the run is not tried again.
+func (s *TelnyxUnpaidSuite) TestAnSMSTaskWhoseOrganizationStopsPayingDuringItsTurnIsNotRetried() {
+	number, writer := "+1555"+digits(s.utils.uuid()), "+1347"+digits(s.utils.uuid())
+	s.seedSMSLine(number)
+	s.config.Channels = store.AgentChannels{SMS: &store.ChannelLine{Number: number}}
+	s.config.LLM = "holding/holding-model"
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
+	user := s.data.createUser()
+	s.Require().NoError(s.store.SaveChannelIdentity(context.Background(), &store.ChannelIdentity{
+		CustomerID: s.customerID(), ConfigID: s.config.ID, Kind: string(channels.SMS), Address: writer, UserID: user.userID,
+	}))
+	organization := s.RouterSuite.app.organization.ID
+	s.usage.Credit(s.T(), organization, 10_000_000)
+	s.Require().Eventually(func() bool {
+		return s.gate.Allow(context.Background(), s.customerID(), dlc.SMS, writer) == nil
+	}, 10*time.Second, 50*time.Millisecond, "the credit is read")
+	opened := user.createSession(CreateSessionRequest{ConfigId: &s.config.ID})
+	next := time.Now().Add(2 * time.Hour).UTC()
+	task := store.ScheduledTask{CustomerID: s.customerID(), ConfigID: s.config.ID, SessionID: opened.Id, UserID: user.userID,
+		CallerKind: "authenticated", APIKey: s.RouterSuite.app.key, Title: "Stretch", Instructions: "Remind them to stretch.",
+		StartLocal: next, Timezone: "Europe/Amsterdam", NextRunAt: &next, Channels: []string{"sms"}}
+	s.Require().NoError(s.store.CreateScheduledTask(context.Background(), &task, 0))
+
+	model := s.holding
+	model.mu.Lock()
+	before := model.turns
+	model.mu.Unlock()
+	model.holds()
+	defer model.answers()
+	type result struct {
+		run      store.ScheduledTaskRun
+		attempts int32
+	}
+	done := make(chan result, 1)
+	go func() {
+		run, attempts := s.settledByTheWorker(task)
+		done <- result{run, attempts}
+	}()
+	s.Require().Eventually(func() bool {
+		model.mu.Lock()
+		defer model.mu.Unlock()
+		return model.turns > before
+	}, deliveryWait, 10*time.Millisecond, "the task's turn never began")
+	s.usage.Suspend(s.T(), organization, "fraud review")
+	s.refusedForMoney(writer)
+	model.answers()
+
+	got := <-done
+	s.Equal(store.ScheduledTaskRunFailed, got.run.State)
+	s.Require().NotNil(got.run.Error)
+	s.Equal(codeAccountSuspended, *got.run.Error)
+	s.Equal(int32(1), got.attempts, "a suspension outlasts every retry of the run")
+}
