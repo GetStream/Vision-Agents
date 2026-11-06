@@ -659,10 +659,10 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   each chunk from when it was queued, after what was queued ahead of it, for as long as it
   plays, and its silences, the padding after the last word included, carry no words;
   speech the edge throws away on an interruption never goes out. 800 ms is the way out to
-  the caller and back, each at most ITU-T G.114's 400 ms one-way planning limit. It does so in every mode, interims included, and
-  a pause check's ruling is kept on the words so dropped, which are the words the turn is
-  matched by; the transcriber itself still writes what it heard. Other transcribers are left
-  as they are.
+  the caller and back, each at most ITU-T G.114's 400 ms one-way planning limit. It does so
+  in every mode, interims included, and a pause check's ruling is kept on the words so
+  dropped, which are the words the turn is matched by; the transcriber itself still writes
+  what it heard. Other transcribers are left as they are.
 - **Noise.** The transcriber drops nothing itself. The server returns empty text for audio
   with no speech in it and for words in a language the callers don't speak, and cuts a
   fragment in a script they don't write from either end of the words. Empty text is nothing
