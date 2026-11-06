@@ -600,6 +600,9 @@ type Agent struct {
 	// replaces another speaks at a rate of its own, measured afresh.
 	voicedChars, voicedMs float64
 	ratedVoice            *ttsrouter.Session
+	// keptReply is the turn whose line the agent last kept in the history as its own: what it
+	// goes on saying once the turn's text is no longer held (replyLocked).
+	keptReply string
 	// pausesAsked says chorus-asr transcribes the callers of this agent and asks the model
 	// about their pauses for it (actsOnChorusASR), as the last transcriber opened for one does.
 	pausesAsked atomic.Bool
@@ -1258,7 +1261,7 @@ func (a *Agent) sayFor(text, purpose string) error {
 		a.mu.Unlock()
 		return stack.Wrap(errors.New("agent: not joined"))
 	}
-	a.speakingTurn = turnID
+	a.speakingTurn, a.keptReply = turnID, turnID
 	a.saying = text
 	// The model reads what the agent said from the history, so a line said without it has
 	// to be kept too, or the caller's answer to a greeting's question reaches it with no
@@ -1976,10 +1979,7 @@ func (a *Agent) ask(ready candidate) {
 	// Pending tools still own the turn even after its spoken acknowledgement ends.
 	// The flow controller must be able to stop that work on a caller's correction.
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
-	reply := a.saying
-	if reply == "" {
-		reply = lastAssistantSaid(history)
-	}
+	reply, unsaid := a.replyLocked(history)
 	heard, measured := a.replyHeardLocked(reply, time.Now())
 	anotherVoice := a.anotherVoiceLocked(ready)
 	participant := ready.Participant.Name
@@ -2003,6 +2003,7 @@ func (a *Agent) ask(ready candidate) {
 		Reply:        reply,
 		Heard:        heard,
 		Measured:     measured,
+		Unsaid:       unsaid,
 		Unfinished:   ready.Unfinished,
 		AnotherVoice: anotherVoice,
 		Waited:       a.converse.waitedOn(ready),
@@ -2072,6 +2073,18 @@ type heard struct {
 	// photos is how many photos a typed turn came with, whether the model or the vision
 	// skill looks at them, not counting the frames of a video.
 	photos int
+}
+
+// replyLocked is what the agent is saying, as the flow controller is told it (FlowTurn.Reply):
+// the turn's text so far, or before it has any the agent's last line in history, and unsaid
+// when that line is not the turn's own but the one before a turn that has written and said
+// nothing yet, as the answer after a tool's result is until its first words. Agent.mu must
+// be held.
+func (a *Agent) replyLocked(history []llm.Message) (reply string, unsaid bool) {
+	if a.saying != "" {
+		return a.saying, false
+	}
+	return lastAssistantSaid(history), a.keptReply != a.speakingTurn
 }
 
 func lastAssistantSaid(history []llm.Message) string {
@@ -2562,7 +2575,7 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 		a.mu.Unlock()
 		return
 	}
-	a.speakingTurn = turnID
+	a.speakingTurn, a.keptReply = turnID, turnID
 	a.saying = line
 	said := llm.Message{Role: llm.Assistant, Content: line}
 	if callsOpen(a.history) {
@@ -3149,6 +3162,9 @@ func (a *Agent) finish(response llm.Response) {
 			ToolCalls: calls,
 			Reasoning: response.ReasoningText,
 		})
+		if said != "" {
+			a.keptReply = response.ID
+		}
 	}
 	exchange := lastExchange(a.history)
 	history := append([]llm.Message(nil), a.history...)

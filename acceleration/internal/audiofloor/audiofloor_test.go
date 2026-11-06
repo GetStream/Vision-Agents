@@ -690,6 +690,27 @@ func (s *HearerSuite) TestTheReplyIsToldOnceWhenATurnFollowsItInTheHistory() {
 	}}, s.server.turns[0])
 }
 
+// A turn the agent starts after its own line, such as the answer after a tool's result, has
+// said and written nothing yet: the line before it was said whole and is the conversation's,
+// and the agent has so far said nothing of the turn. Taken for the reply being said, that line
+// was dropped from the conversation and the model told the agent had never said it.
+func (s *HearerSuite) TestATurnThatHasSaidNothingYetLeavesTheLineBeforeIt() {
+	s.server.decision = `{"answer":"continue","answer_probability":0.8,"options":[],"decide_ms":1,"ruling":{"disposition":"ignore","floor":"continue"}}`
+	line := "Let me look that up for you."
+	history := []llm.Message{
+		{Role: llm.User, Content: "Where is my order?"},
+		{Role: llm.Assistant, Content: line, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_order"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"status":"shipped"}`},
+	}
+	_, err := s.hearer.Hear(context.Background(), harness.FlowTurn{Audio: some, Speaking: true, Unfinished: true, History: history,
+		Reply: line, Measured: true, Unsaid: true})
+	s.Require().NoError(err)
+	s.Equal(Turn{Speaker: caller, Speaking: true, Unfinished: true, Conversation: []Line{
+		{Text: "Where is my order?"},
+		{Agent: true, Text: line},
+	}}, s.server.turns[0])
+}
+
 // TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet, asking
 // about no pauses: the words alone, which is how a session ends up once the server has said
 // it can't rule on them, and what any pause falls to when a check of it fails.

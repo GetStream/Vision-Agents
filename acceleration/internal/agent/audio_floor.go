@@ -229,10 +229,7 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 		instructions += "\n\n" + line
 	}
 	speaking := a.generating || a.utterances > 0 || a.pendingTools > 0
-	reply := a.saying
-	if reply == "" {
-		reply = lastAssistantSaid(history)
-	}
+	reply, unsaid := a.replyLocked(history)
 	heard, measured := a.replyHeardLocked(reply, time.Now())
 	tools := a.options.Tools.Tools
 	a.mu.Unlock()
@@ -243,6 +240,7 @@ func (p pauseAsker) Moment(participant stt.Participant) harness.FlowTurn {
 		Reply:        reply,
 		Heard:        heard,
 		Measured:     measured,
+		Unsaid:       unsaid,
 		Tools:        customerTools(tools),
 	}
 }

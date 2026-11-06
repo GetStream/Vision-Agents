@@ -195,7 +195,7 @@ func (a *Agent) takeApprovalQuestionsLocked() string {
 // back answers a question the model can see.
 func (a *Agent) askLocked(turnID, question string) error {
 	a.toolReply = false
-	a.speakingTurn = turnID
+	a.speakingTurn, a.keptReply = turnID, turnID
 	a.saying = question
 	said := llm.Message{Role: llm.Assistant, Content: question}
 	if callsOpen(a.history) {
