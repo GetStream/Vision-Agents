@@ -137,7 +137,7 @@ class SimulationDeclaration:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = SimulationDeclarationMode(_mode)
+            mode = SimulationDeclarationMode._decode(_mode)
 
         _tags = d.pop("tags", UNSET)
         tags: SimulationDeclarationTags | Unset

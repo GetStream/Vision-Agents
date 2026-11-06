@@ -61,11 +61,11 @@ class EffectiveQuota:
         d = dict(src_dict)
         messages_per_user_per_day = d.pop("messages_per_user_per_day")
 
-        messages_set_by = QuotaLevel(d.pop("messages_set_by"))
+        messages_set_by = QuotaLevel._decode(d.pop("messages_set_by"))
 
         tokens_per_user_per_day = d.pop("tokens_per_user_per_day")
 
-        tokens_set_by = QuotaLevel(d.pop("tokens_set_by"))
+        tokens_set_by = QuotaLevel._decode(d.pop("tokens_set_by"))
 
         effective_quota = cls(
             messages_per_user_per_day=messages_per_user_per_day,

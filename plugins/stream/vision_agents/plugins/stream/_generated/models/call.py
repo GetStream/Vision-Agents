@@ -257,7 +257,7 @@ class Call:
 
         call_id = d.pop("call_id")
 
-        direction = CallDirection(d.pop("direction"))
+        direction = CallDirection._decode(d.pop("direction"))
 
         id = d.pop("id")
 
@@ -289,7 +289,7 @@ class Call:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = SessionMode(_mode)
+            mode = SessionMode._decode(_mode)
 
         review_notes = d.pop("review_notes", UNSET)
 

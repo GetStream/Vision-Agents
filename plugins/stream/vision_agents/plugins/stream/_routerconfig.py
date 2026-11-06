@@ -3,11 +3,12 @@
 import asyncio
 import hashlib
 import logging
+from enum import StrEnum
 from pathlib import Path
 from typing import Any, Optional, TypeVar, Union
 
 import yaml
-from attrs import fields
+from attrs import asdict, fields
 
 from ._backend import Backend
 from ._generated import AuthenticatedClient
@@ -175,7 +176,26 @@ def block(model: type[Block], given: dict[str, Any]) -> Block:
             f"it has {', '.join(sorted(allowed))}"
         )
     named = {name: value for name, value in given.items() if value is not None}
-    return model.from_dict(named)
+    built = model.from_dict(named)
+    _listed(asdict(built))
+    return built
+
+
+def _listed(value: Any) -> None:
+    """Refuse a value an enum does not list.
+
+    ``from_dict`` keeps such a value, so that an answer from a newer router still reads, but
+    a caller's own keywords are checked here, where a typo is still the caller's to fix.
+    """
+    if isinstance(value, StrEnum):
+        # An enum's own constructor refuses a value it does not list.
+        type(value)(value.value)
+    elif isinstance(value, dict):
+        for each in value.values():
+            _listed(each)
+    elif isinstance(value, list):
+        for each in value:
+            _listed(each)
 
 
 async def find(client: AuthenticatedClient, name: str) -> Optional[RouterConfig]:

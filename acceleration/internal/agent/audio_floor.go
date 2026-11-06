@@ -252,7 +252,8 @@ func (p pauseAsker) Speaking() bool {
 // the caller talked on, as the agent does on a provisional ruling about a revision's words
 // (overlapRuled): its own voice heard back on the caller's line is dropped from the words
 // first, as from any chorus-asr transcript, and an echo alone, or a murmur, is no reason to
-// stop.
+// stop. Whether the caller had heard any of the agent's answer when they began says whether
+// a stop's words are spent on it (answerHeardBefore).
 func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) {
 	a := p.a
 	left, ok := a.droppingEcho(transcriptOf(participant, ruled), "a check over the agent")
@@ -264,7 +265,24 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return
 	}
-	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.floor()))
+	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.answerHeardBefore(ruled.Began), a.floor()))
+}
+
+// answerHeardBefore says whether the caller had heard any of the agent's answer to their turn, the
+// speech a stop over it silences, before at, when they began the utterance the stop was ruled
+// in: the reply, or what the agent went on to say of a tool's result. A caller who began before
+// any of it went out was not stopping it: they went on with their own turn, as a caller who
+// says more before hearing any of the reply does (stale). Speech that answers no turn of
+// theirs, and a beginning that is not known, are taken as heard.
+func (a *Agent) answerHeardBefore(at time.Time) bool {
+	if at.IsZero() {
+		return true
+	}
+	a.mu.Lock()
+	speaking := a.speakingTurn
+	a.mu.Unlock()
+	heard, answering := a.turns.answerHeardBefore(speaking, at)
+	return heard || !answering
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's

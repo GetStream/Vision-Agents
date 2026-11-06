@@ -132,7 +132,7 @@ class SessionTool:
         if isinstance(_executor, Unset):
             executor = UNSET
         else:
-            executor = SessionToolExecutor(_executor)
+            executor = SessionToolExecutor._decode(_executor)
 
         interruptible = d.pop("interruptible", UNSET)
 

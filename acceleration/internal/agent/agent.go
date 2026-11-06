@@ -548,9 +548,9 @@ type Agent struct {
 	lastParticipant stt.Participant
 	lastHeardAt     time.Time
 	lastSpokeAt     time.Time
-	// spokeFrom is when the run of speech lastSpokeAt ends began, which is where an echo of
-	// the agent on the caller's line can begin (withoutEcho).
-	spokeFrom time.Time
+	// voiceOut is when the agent's voice went out on the edge's track, which is when an echo
+	// of it on the caller's line can be in their audio (withoutEcho).
+	voiceOut voiceOut
 	// The native agent's own state. A speech-to-speech model takes one stream, so bound
 	// is the participant whose audio it hears and arrivals is everyone whose audio has
 	// come in, heard or not, which is what a warm transfer counts. waitingSince is when the
@@ -3344,7 +3344,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				continue
 			}
+			a.turns.wentOut(turnOf(typed.SynthesisID), time.Now())
 			speech := leveller.Level(typed.Audio)
+			queued := time.Now()
 			var err error
 			if marks {
 				// Publishing returns once the chunk is queued, which for a long one is well
@@ -3369,12 +3371,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				heard.FirstAudiblePulled(time.Now())
 			}
 			overlapping.published(typed.SynthesisID, typed.Audio.DurationMs())
-			a.mu.Lock()
-			if time.Since(a.lastSpokeAt) > echoRun {
-				a.spokeFrom = time.Now()
-			}
-			a.lastSpokeAt = time.Now()
-			a.mu.Unlock()
+			a.spoke(queued, time.Now(), speech)
 			// The wait ends when the participant can hear something, so this is timed
 			// after the publish rather than before it.
 			a.turns.firstAudio(turnOf(typed.SynthesisID), time.Now())
@@ -4142,10 +4139,14 @@ func (a *Agent) speechPending() bool {
 	return ok && playout.SpeechPending()
 }
 
-// dropSpeech throws away speech the agent has published but the caller has not heard yet.
+// dropSpeech throws away speech the agent has published but the caller has not heard yet,
+// which never goes out to be heard back as its echo either.
 func (a *Agent) dropSpeech() {
 	if playout, ok := a.options.Edge.(Playout); ok {
 		playout.DropSpeech()
+		a.mu.Lock()
+		a.voiceOut.dropped(time.Now())
+		a.mu.Unlock()
 	}
 }
 

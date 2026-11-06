@@ -237,39 +237,57 @@ func TestARulingOverTheAgentStandsOnceItIsQuiet(t *testing.T) {
 // A pause check's ruling is kept on the words as the conversation will see them: with the
 // agent's own voice heard back dropped from their end, as consumeSTT drops it from the final
 // before the cadence settles on it. Kept whole, the ruling matched no turn and the model was
-// asked again about words it had ruled on.
+// asked again about words it had ruled on. A caller who repeats the agent once its voice
+// could no longer be heard back keeps their words on both, and the ruling matches them.
 func TestAPauseChecksRulingIsKeptWithoutTheAgentsEcho(t *testing.T) {
-	asked := atomic.Int64{}
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/v1/info":
-			_, _ = w.Write([]byte(floorInfo))
-		case "/v1/agents":
-			_, _ = w.Write([]byte(`{"agent":"a"}`))
-		default:
-			asked.Add(1)
-			_, _ = w.Write([]byte(`{"answer":"wait","p_eot":0.1,"options":[],"ruling":{"disposition":"respond","floor":"stop"}}`))
-		}
-	}))
-	t.Cleanup(srv.Close)
-	v := newAudioFloor(audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
-	a := &Agent{audioFloor: v, logger: quietLogger(), history: []llm.Message{{Role: llm.Assistant, Content: echoReply}},
-		spokeFrom: time.Now().Add(-3 * time.Second), lastSpokeAt: time.Now().Add(-100 * time.Millisecond)}
-	participant := stt.Participant{ID: "p"}
-	ruling := harness.Decided{Disposition: harness.Ignore, Floor: harness.Continue}
-	ruled := audiofloor.Ruled{Check: audiofloor.Check{Ruling: ruling, Ended: true}, Words: "Uh huh. sunny and warm, with a high of", Speaking: true, AudioMs: 2000, WordsMs: 100}
-	pauseAsker{a}.Ruled(participant, ruled)
+	for _, c := range []struct {
+		name, said, words, left string
+		echo                    int
+		audioMs, wordsMs        float64
+		// voiced has the agent have spoken said before the check's audio began at began.
+		voiced func(a *Agent, began time.Time)
+	}{
+		{"its echo dropped", echoReply, "Uh huh. sunny and warm, with a high of", "Uh huh.", 7, 2000, 100, func(a *Agent, _ time.Time) {
+			a.voiceOut = voiceOut{from: time.Now().Add(-3 * time.Second), to: time.Now().Add(-100 * time.Millisecond)}
+		}},
+		{"the caller's after it stopped", movedLine, keptAndMoved, keptAndMoved, 0, 4460, 120, func(a *Agent, began time.Time) {
+			publishLine(a, began.Add(-ms(1240+8500)), spokenLine(ms(8980), ms(20), ms(8500)), ms(400))
+		}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			asked := atomic.Int64{}
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/v1/info":
+					_, _ = w.Write([]byte(floorInfo))
+				case "/v1/agents":
+					_, _ = w.Write([]byte(`{"agent":"a"}`))
+				default:
+					asked.Add(1)
+					_, _ = w.Write([]byte(`{"answer":"wait","p_eot":0.1,"options":[],"ruling":{"disposition":"respond","floor":"stop"}}`))
+				}
+			}))
+			t.Cleanup(srv.Close)
+			v := newAudioFloor(audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger())
+			a := &Agent{audioFloor: v, logger: quietLogger(), history: []llm.Message{{Role: llm.Assistant, Content: c.said}}}
+			participant := stt.Participant{ID: "p"}
+			ruling := harness.Decided{Disposition: harness.Ignore, Floor: harness.Continue}
+			ruled := audiofloor.Ruled{Check: audiofloor.Check{Ruling: ruling, Ended: true}, Words: c.words, Speaking: true, AudioMs: c.audioMs, WordsMs: c.wordsMs}
+			c.voiced(a, time.Now().Add(-ms(ruled.WordsMs+ruled.AudioMs)))
+			pauseAsker{a}.Ruled(participant, ruled)
 
-	heard := stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Provider: audiofloor.ProviderName, Text: ruled.Words,
-		AudioDurationMs: ruled.AudioMs, ProcessingTimeMs: ruled.WordsMs}
-	left, echo := a.withoutEcho(heard)
-	require.Equal(t, 7, echo)
-	require.Equal(t, "Uh huh.", left, "what the conversation sees of the final")
-	v.heard(InboundAudio{Participant: participant, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
-	turn := harness.FlowTurn{ID: "c1", Text: left, Speaking: true}
-	v.listen(&turn, "p", turn.Text, nil)
-	got, err := v.acting().Hear(context.Background(), turn)
-	require.NoError(t, err)
-	require.Equal(t, ruling, got, "the check's ruling, on the words the conversation saw")
-	require.Zero(t, asked.Load(), "the model was not asked again")
+			heard := stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Provider: audiofloor.ProviderName, Text: ruled.Words,
+				AudioDurationMs: ruled.AudioMs, ProcessingTimeMs: ruled.WordsMs}
+			left, echo := a.withoutEcho(heard)
+			require.Equal(t, c.echo, echo)
+			require.Equal(t, c.left, left, "what the conversation sees of the final")
+			v.heard(InboundAudio{Participant: participant, Audio: audio.PcmData{Samples: make([]int16, 320), SampleRate: 16000, Channels: 1}})
+			turn := harness.FlowTurn{ID: "c1", Text: left, Speaking: true}
+			v.listen(&turn, "p", turn.Text, nil)
+			got, err := v.acting().Hear(context.Background(), turn)
+			require.NoError(t, err)
+			require.Equal(t, ruling, got, "the check's ruling, on the words the conversation saw")
+			require.Zero(t, asked.Load(), "the model was not asked again")
+		})
+	}
 }

@@ -251,7 +251,7 @@ class SttOptions:
         if isinstance(_endpointing, Unset):
             endpointing = UNSET
         else:
-            endpointing = Endpointing(_endpointing)
+            endpointing = Endpointing._decode(_endpointing)
 
         entities = d.pop("entities", UNSET)
 
@@ -272,14 +272,14 @@ class SttOptions:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = TranscriptionMode(_mode)
+            mode = TranscriptionMode._decode(_mode)
 
         _output = d.pop("output", UNSET)
         output: TranscriptFormat | Unset
         if isinstance(_output, Unset):
             output = UNSET
         else:
-            output = TranscriptFormat(_output)
+            output = TranscriptFormat._decode(_output)
 
         _overwrites = d.pop("overwrites", UNSET)
         overwrites: SttOptionsOverwrites | Unset

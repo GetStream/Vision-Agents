@@ -446,14 +446,19 @@ func (c *converse) Glimpsed(transcript stt.Transcript) {
 // utterance's so far, are spent on it, and only what the caller says after them is answered
 // (Settled). Only a stop that stopped a reply spends them: the checks that go on while the
 // caller talks after it find no reply speaking and act on nothing (overlapRuled), so the
-// words they were ruled on, the correction the stop began, are the caller's turn.
-func (c *converse) Overheard(ruling harness.Decided, participant stt.Participant, words string, utterance int64, state floor) []Action {
+// words they were ruled on, the correction the stop began, are the caller's turn. And only
+// one ruled on words said to stop it: heard says the caller had heard some of what the agent
+// was saying when they began them. A caller who began before any of it went out was going
+// on with their own turn, which the agent talked over ("the name for the booking is
+// Alvarez", said as the reply to the request before it began), and what they said is
+// answered as any turn is.
+func (c *converse) Overheard(ruling harness.Decided, participant stt.Participant, words string, utterance int64, heard bool, state floor) []Action {
 	// The ruling was asked for by the transcriber, not through the flow controller: it is
 	// named here as a provisional ask would be, for the log and for Valid.
 	ruling.CandidateID = cmp.Or(ruling.CandidateID, overlapPrefix+turnStamp())
 	ruling.Ruler = cmp.Or(ruling.Ruler, harness.Heard)
 	actions := c.overlapRuled(ruling, overlapState{turnID: state.Speaking, participant: participant, text: words}, state)
-	if utterance != 0 && slices.ContainsFunc(actions, func(action Action) bool { return action.Kind == ActInterrupt }) {
+	if heard && utterance != 0 && slices.ContainsFunc(actions, func(action Action) bool { return action.Kind == ActInterrupt }) {
 		c.mu.Lock()
 		c.stops[participant.ID] = stoppedOn{utterance: utterance, words: words}
 		c.mu.Unlock()

@@ -604,3 +604,13 @@ uv run plugins/stream/generate.py
 ```
 
 The WebSockets are hand-written in `_socket.py`, since OpenAPI stops at the upgrade.
+
+`templates/` replaces two of openapi-python-client's templates. Every string enum gets
+`_decode`, and every model's `from_dict` reads its enums with it. A value the client lists is
+its member, as before. Any other string is a member of its own that carries the value, so
+`str(session.end_reason)` is `"closed"` and `to_dict` writes `"closed"` back. A router adds
+values before every client is released (AI-2951), and a rollback leaves them in stored rows.
+`SessionEndReason("closed")` written by a caller still raises `ValueError`, and a value that is
+not a string still fails to decode. An option block a caller writes (`define_router`, a
+`router.yaml`) goes through `from_dict` too, so `_routerconfig.block` checks its enums against
+the values the client lists.

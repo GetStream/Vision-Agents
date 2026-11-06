@@ -187,11 +187,11 @@ class Campaign:
 
         sequence = CampaignSequence.from_dict(d.pop("sequence"))
 
-        state = CampaignState(d.pop("state"))
+        state = CampaignState._decode(d.pop("state"))
 
         tags = CampaignTags.from_dict(d.pop("tags"))
 
-        type_ = CampaignType(d.pop("type"))
+        type_ = CampaignType._decode(d.pop("type"))
 
         _completed_at = d.pop("completed_at", UNSET)
         completed_at: datetime.datetime | Unset

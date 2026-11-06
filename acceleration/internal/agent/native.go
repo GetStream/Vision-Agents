@@ -604,6 +604,7 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 		a.turns.dropped(chunk.ResponseID, chunk.Audio.DurationMs())
 		return
 	}
+	queued := time.Now()
 	var err error
 	marked, marks := a.options.Edge.(MarkedPlayout)
 	if marks {
@@ -628,9 +629,7 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 	if heard.sent(chunk.Audio.DurationMs()) && !marks {
 		heard.FirstAudiblePulled(time.Now())
 	}
-	a.mu.Lock()
-	a.lastSpokeAt = time.Now()
-	a.mu.Unlock()
+	a.spoke(queued, time.Now(), chunk.Audio)
 	// The wait ends when the participant can hear something, so this is timed after the
 	// publish rather than before it.
 	a.turns.firstAudio(chunk.ResponseID, time.Now())

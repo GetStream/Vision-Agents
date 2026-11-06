@@ -101,7 +101,7 @@ class ToolResultCommand:
         d = dict(src_dict)
         tool_call_id = d.pop("tool_call_id")
 
-        type_ = ToolResultCommandType(d.pop("type"))
+        type_ = ToolResultCommandType._decode(d.pop("type"))
 
         error = d.pop("error", UNSET)
 

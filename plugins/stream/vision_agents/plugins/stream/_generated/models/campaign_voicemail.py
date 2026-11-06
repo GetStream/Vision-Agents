@@ -48,7 +48,7 @@ class CampaignVoicemail:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        action = CampaignVoicemailAction(d.pop("action"))
+        action = CampaignVoicemailAction._decode(d.pop("action"))
 
         message = d.pop("message", UNSET)
 

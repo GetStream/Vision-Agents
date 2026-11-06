@@ -141,7 +141,7 @@ class CampaignRequest:
         if isinstance(_type_, Unset):
             type_ = UNSET
         else:
-            type_ = CampaignType(_type_)
+            type_ = CampaignType._decode(_type_)
 
         campaign_request = cls(
             calling_hours=calling_hours,
