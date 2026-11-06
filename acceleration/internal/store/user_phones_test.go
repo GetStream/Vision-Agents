@@ -180,7 +180,7 @@ func (s *StoreSuite) TestASetAsideRowIsStillReachedAtItsNumber() {
 	s.Require().NoError(err)
 	callID := newID()
 	call := &Episode{CustomerID: "acme-app", ContactID: sms.ID, Source: EpisodeCall, ThreadChannel: "agent:" + callID,
-		CallID: callID, SessionID: newID()}
+		CallID: callID, SessionID: newID(), StartedAt: time.Now().Add(-time.Hour)}
 	_, err = s.store.OpenEpisode(s.ctx, call)
 	s.Require().NoError(err)
 
