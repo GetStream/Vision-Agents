@@ -838,7 +838,7 @@ func writeSTS(out *socket, event sts.Event) error {
 		return out.frame(frame{
 			"type":    "error",
 			"id":      typed.ResponseID,
-			"error":   typed.Err.Error(),
+			"error":   errorText(typed.Err),
 			"context": typed.Context,
 			"fatal":   typed.Fatal,
 		})
@@ -1050,7 +1050,7 @@ func sttFrame(event stt.Event) (frame, bool) {
 	case stt.Error:
 		return frame{
 			"type":    "error",
-			"error":   typed.Err.Error(),
+			"error":   errorText(typed.Err),
 			"context": typed.Context,
 			"fatal":   typed.Fatal,
 		}, true
@@ -1113,7 +1113,7 @@ func writeTTS(out *socket, event tts.Event, cost *unitCost) error {
 		return out.frame(frame{
 			"type":    "error",
 			"id":      typed.SynthesisID,
-			"error":   typed.Err.Error(),
+			"error":   errorText(typed.Err),
 			"context": typed.Context,
 			"fatal":   typed.Fatal,
 		})
@@ -1160,7 +1160,7 @@ func llmFrame(event llm.Event) (frame, bool) {
 		return withRefusal(frame{
 			"type":    "error",
 			"id":      typed.ResponseID,
-			"error":   typed.Err.Error(),
+			"error":   errorText(typed.Err),
 			"context": typed.Context,
 			"fatal":   typed.Fatal,
 		}, typed.Err), true
@@ -1225,15 +1225,15 @@ func (s *socket) failed(err error) {
 	s.frame(frame{"type": "error", "error": err.Error()})
 }
 
-// end sends the close frame after the last frame: 1000, or a failure code with the failure
-// as the reason. A request the router refused (routing.ErrRequest), or refused for money, is
-// the caller's to change, so it ends with 1008, policy violation; any other failure, as often a provider's as a
-// caller's, with 1011, an unexpected condition (RFC 6455 section 7.4.1,
-// https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1).
+// end sends the close frame after the last frame: 1000, or a failure code with the failure,
+// redacted by errorText, as the reason. A request the router refused (routing.ErrRequest),
+// or refused for money, is the caller's to change, so it ends with 1008, policy violation;
+// any other failure, as often a provider's as a caller's, with 1011, an unexpected condition
+// (RFC 6455 section 7.4.1, https://www.rfc-editor.org/rfc/rfc6455#section-7.4.1).
 func (s *socket) end(failure error) {
 	code, reason := websocket.CloseNormalClosure, ""
 	if failure != nil {
-		code, reason = websocket.CloseInternalServerErr, failure.Error()
+		code, reason = websocket.CloseInternalServerErr, errorText(failure)
 		if errors.Is(failure, routing.ErrRequest) {
 			code = websocket.ClosePolicyViolation
 		}
