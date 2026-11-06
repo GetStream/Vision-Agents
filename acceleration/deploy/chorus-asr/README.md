@@ -652,9 +652,14 @@ untouched. Acting, a decision's `Ruler` is `heard`.
   caller's line, and the model writes it as the caller's words, or around theirs when they
   speak over it. The agent drops from a chorus-asr transcript every run of three or more of
   its own words, near enough (a quarter of them may be heard wrong, one at a time), when
-  the audio overlapped its speech or came within 1.5 s of it: what is left, before, between
-  and after the runs, is the caller's, and an echo alone is nothing heard
-  (`router_agent_chorus_asr_echoes_total`). It does so in every mode, interims included, and
+  the audio the words are of came while the agent's voice was going out, or began within
+  800 ms of its last audible sample going out: what is left, before, between and after the
+  runs, is the caller's, and an echo alone is nothing heard
+  (`router_agent_chorus_asr_echoes_total`). When the voice goes out is the edge's pace:
+  each chunk from when it was queued, after what was queued ahead of it, for as long as it
+  plays, and its silences, the padding after the last word included, carry no words;
+  speech the edge throws away on an interruption never goes out. 800 ms is the way out to
+  the caller and back, each at most ITU-T G.114's 400 ms one-way planning limit. It does so in every mode, interims included, and
   a pause check's ruling is kept on the words so dropped, which are the words the turn is
   matched by; the transcriber itself still writes what it heard. Other transcribers are left
   as they are.
@@ -760,7 +765,10 @@ never ended the utterance; the new one wrote both replacements and the final.
   `max_wait_ms: 1400` so.
 - Echo is dropped by its words, not its sound: an echo the model writes too far from what
   the agent said, or of fewer than three words, is still the caller's; a caller who repeats
-  three or more of the agent's words in a row while it speaks, or within 1.5 s, loses them;
+  three or more of the agent's words in a row while it speaks, or in an utterance that began
+  (300 ms before their voice) within 800 ms of the agent's last audible sample going out,
+  loses them, as the model writes no word's time and only the utterance's start can be
+  weighed;
   and one word of the caller's between two runs of the echo reads as a word of the agent's
   misheard. Two or more words in a row are the caller's wherever they fall, as "and in
   Porto" does inside the reply's echo.
