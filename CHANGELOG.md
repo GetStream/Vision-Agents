@@ -401,7 +401,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A scheduled text the organization may not pay for is not tried again
 
-A task due on SMS, WhatsApp or iMessage, or in the thread it was made in, whose organization is suspended, out of credit or past a spend limit, was tried twice more. A thread task's run also said `channel_unreachable`. The run now fails at once, under the refusal's code (`account_suspended`, `insufficient_credits`, `system_limit_reached` or `spend_limit_reached`), and the router logs a warning that names the customer. A refusal because the router could not check the money is still tried again.
+A task due on SMS, WhatsApp or iMessage, or in the thread it was made in, whose organization is suspended, out of credit or past a spend limit, was tried up to three more times. A thread task's run also said `channel_unreachable`. The run now fails at once, under the refusal's code (`account_suspended`, `insufficient_credits`, `system_limit_reached` or `spend_limit_reached`), and the router logs a warning that names the customer. A refusal because the router could not check the money is still tried again.
 
 ### A code run that prints a lot no longer fills the router's memory
 
