@@ -410,27 +410,32 @@ client in Europe about 120 ms from the gateway, with this router's client and Op
 | | p50 | p99 | the server's own |
 | --- | ---: | ---: | ---: |
 | Decision, a 16 s window (28 KB) | 224 ms | 240 ms | 97 / 106 ms |
-| Words with the decision, 16 s / 21.5 s / 43 s | 1.11 / 1.63 / 1.87 s | 1.12 / 1.65 / 1.90 s | 0.88 / 1.29 / 1.52 s |
+| Words with the decision, 16 s / 21.5 s / 43 s (15 each) | 1.11 / 1.63 / 1.87 s | 1.12 / 1.65 / 1.90 s | 0.88 / 1.29 / 1.52 s |
 | `GET /v1/info` | 134 ms | 410 ms | |
 
 - **The decision comes first.** The gateway passes each line as the server writes it: on a
   43 s turn the decision's line arrived at 373 ms (median of 10, HTTP/2) and the words at
   1.89 s, 1.51 s later, which is the server's `transcript_ms`. Over HTTP/1.1, and asking for
   no compression, the same.
-- A body over 64 KiB costs one more round trip over HTTP/2, the gateway's initial window: a
-  decision line on a 65 KB turn came 120 ms after one on a 46 KB turn.
+- A decision line on a 65 KB turn came 120 ms, one round trip, after one on a 46 KB turn,
+  as an HTTP/2 window of 64 KiB, which Baseten documents, would make it.
 - The gateway takes up to 100 MiB of body, above the server's own bound, and its headers end
   between 8 and 16 KiB, past which it closes the connection (`GOAWAY`, `ENHANCE_YOUR_CALM`).
-- Two callers fit an L4 there as on a cluster's: decisions at 135 ms p99 at the server, 3% of
-  interims turned away. Three take decisions to 184 ms.
+- Callers, each with an interim a second while talking and checks at 200, 500, 800 and
+  1,100 ms of each pause, the first with the words: at 1, decisions at 132 ms p99 at the
+  server and interims at 1.16 s; at 2, 135 ms and 1.18 s, 3% of interims turned away; at 3,
+  184 ms. No count holds interims within 1 s, as on a cluster's L4. The interims here asked
+  for a decision too, since `/v1/transcribe` doesn't pass, which costs the GPU more.
 - A model scaled to zero starts on the first request, which waits for it at the gateway: 131 s
   to the first answer, most of it loading the model. The router's checks can't wait that long,
   so a router that acts on the model wants a replica kept up.
-- **`POST /v1/transcribe` does not pass.** Baseten's gateway does not hand a raw body's
-  `audio/*` type to the server, which answers 415 to every one, while multipart and JSON
-  bodies pass. So behind Baseten the interims are not written, a transcriber whose words
-  come from `/v1/transcribe` alone stops with a fatal error, and the acceptance replay stops
-  in its warm-up. Decisions, and the words a check asks for with `transcript=true`, work.
+- **`POST /v1/transcribe` does not pass.** Every raw body with an `audio/*` type, over HTTP/2
+  and HTTP/1.1, reached the server as a type it doesn't take, and it answered 415; multipart
+  and JSON bodies passed. That is as the gateway changing the type would do; what the server
+  received was not seen. So behind Baseten the interims are not written, a transcriber whose
+  words come from `/v1/transcribe` alone stops with a fatal error, and the acceptance replay
+  stops in its warm-up. Decisions, and the words a check asks for with `transcript=true`,
+  work.
 
 ## Transcription alone
 
