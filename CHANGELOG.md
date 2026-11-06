@@ -395,6 +395,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### git lfs push in a sandbox says why it is refused
+
+Under the proxy broker, `git lfs push` in a sandbox is refused at its first request, `locks/verify`, and git-lfs showed «Authentication error … Check that you have proper access to the repository». The proxy now answers every refused request under a Git LFS API (`/info/lfs/`) with an LFS error, so git-lfs prints the proxy's hint: code in the sandbox only reads through a connector, and writes with the connector's tools. Uploads stay refused, and the log says why (AI-2876).
+
 ### A move whose recording lapsed is told to copy again
 
 A move nobody followed for longer than the source's retention stopped recording the app's changes, and a follower back after that was answered the changes recorded since as if they were all: the writes made while nothing was recorded never reached the target. The source now answers 410 for a cursor from before its recording started again, so `router replicate` says to run with `--full`; the export it copies then carries on (AI-2815).
