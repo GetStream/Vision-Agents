@@ -38,6 +38,23 @@ const defaultRunTimeout = 30 * time.Second
 // v0.211.2 pkg/daytona/client.go:87, :348).
 const sdkTimeout = 60 * time.Second
 
+// boundedClient is a client for the SDK that bounds what the router reads of the toolbox's
+// answers. Given none it has the SDK's own timeout; given one it is a copy of it, with its timeout
+// and whatever it carries, so the caller's client is not changed.
+func boundedClient(given *http.Client) *http.Client {
+	client := &http.Client{Timeout: sdkTimeout}
+	if given != nil {
+		copied := *given
+		client = &copied
+	}
+	next := client.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	client.Transport = bounded{next: next}
+	return client
+}
+
 // defaultIdleStop is Daytona's own: a sandbox nothing ran in for 15 minutes is stopped.
 const defaultIdleStop = 15 * time.Minute
 
@@ -208,16 +225,7 @@ func New(o Options) (*Sandbox, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	httpClient := &http.Client{Timeout: sdkTimeout}
-	if o.HTTPClient != nil {
-		given := *o.HTTPClient
-		httpClient = &given
-	}
-	next := httpClient.Transport
-	if next == nil {
-		next = http.DefaultTransport
-	}
-	httpClient.Transport = bounded{next: next}
+	httpClient := boundedClient(o.HTTPClient)
 	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, Target: o.Target, HTTPClient: httpClient})
 	if err != nil {
 		return nil, stack.Wrap(err)

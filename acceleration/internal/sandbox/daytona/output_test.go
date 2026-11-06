@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net/http"
 	"runtime"
 	"strings"
 	"testing"
@@ -331,3 +332,26 @@ func (s *OutputSuite) TestADownloadOneByteOverItsBoundFails() {
 
 	s.ErrorIs(err, errAnswerTooLarge)
 }
+
+func (s *OutputSuite) TestTheClientGivenNoneKeepsTheSDKsTimeoutAndIsBounded() {
+	client := boundedClient(nil)
+
+	s.Equal(60*time.Second, client.Timeout, "the SDK's own client has this timeout; without it a hung toolbox holds a run forever")
+	s.Equal(bounded{next: http.DefaultTransport}, client.Transport)
+}
+
+func (s *OutputSuite) TestAGivenClientKeepsItsTimeoutAndIsNotChanged() {
+	own := &roundTripper{}
+	given := &http.Client{Timeout: 7 * time.Second, Transport: own}
+
+	client := boundedClient(given)
+
+	s.Equal(7*time.Second, client.Timeout)
+	s.Equal(bounded{next: own}, client.Transport, "the caller's transport is wrapped, not replaced")
+	s.Same(own, given.Transport, "the caller's client keeps its own transport")
+	s.NotSame(given, client)
+}
+
+type roundTripper struct{}
+
+func (*roundTripper) RoundTrip(*http.Request) (*http.Response, error) { return nil, io.EOF }
