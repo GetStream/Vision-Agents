@@ -148,20 +148,20 @@ func New(options Options) (*Provider, error) {
 // inventory.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("bandwidth: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("bandwidth: a country is required to search for numbers")))
 	}
 	if country := strings.ToUpper(search.Country); country != "US" && country != "CA" {
-		return nil, stack.Wrap(fmt.Errorf("bandwidth: only the north american inventory is wrapped here, not %s", country))
+		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("bandwidth: only the north american inventory is wrapped here, not %s", country)))
 	}
 	if search.Type != "" && search.Type != phone.Local {
-		return nil, stack.Wrap(fmt.Errorf("bandwidth: only local numbers are wrapped here, not %s", search.Type))
+		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("bandwidth: only local numbers are wrapped here, not %s", search.Type)))
 	}
 	if search.AreaCode == "" && search.Locality == "" && search.AdministrativeArea == "" {
-		return nil, stack.Wrap(errors.New("bandwidth: a search needs an area code, a city or a state"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("bandwidth: a search needs an area code, a city or a state")))
 	}
 	// Bandwidth requires a state alongside a city, because a city name is not unique.
 	if search.Locality != "" && search.AdministrativeArea == "" {
-		return nil, stack.Wrap(errors.New("bandwidth: searching a city needs the state it is in"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("bandwidth: searching a city needs the state it is in")))
 	}
 
 	// enableTNDetail is what turns a bare list of numbers into ones that say where they

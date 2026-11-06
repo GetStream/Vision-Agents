@@ -309,7 +309,7 @@ func (s *Service) openSIPTrunk(ctx context.Context, customerID, id string) (*SIP
 		return nil, err
 	}
 	if !trunk.HasPassword() {
-		return nil, stack.Wrap(fmt.Errorf("phone: sip trunk %s has no password; set one before calling through it", id))
+		return nil, stack.Wrap(Invalid(fmt.Errorf("phone: sip trunk %s has no password; set one before calling through it", id)))
 	}
 	password, err := s.sealer.OpenWithAADVersion(trunk.PasswordSealed, sipTrunkAAD(customerID, id), trunk.PasswordKEKVersion)
 	if err != nil {

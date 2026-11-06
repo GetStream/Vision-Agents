@@ -294,7 +294,7 @@ type Offers struct {
 func (s *Service) SearchAll(ctx context.Context, search Search) (Offers, error) {
 	usable := s.registry.Available()
 	if len(usable) == 0 {
-		return Offers{}, stack.Wrap(errors.New("phone: no vendor has the credentials to be searched"))
+		return Offers{}, stack.Wrap(Invalid(errors.New("phone: no vendor has the credentials to be searched")))
 	}
 
 	type answer struct {
@@ -719,7 +719,7 @@ func (s *Service) Attach(ctx context.Context, attachment Attachment) (Attached, 
 		return Attached{}, stack.Wrap(err)
 	}
 	if held.Vendor == SIPTrunkVendor {
-		return Attached{}, stack.Wrap(errors.New("phone: inbound calls to a number on the customer's own sip trunk are not supported"))
+		return Attached{}, stack.Wrap(Invalid(errors.New("phone: inbound calls to a number on the customer's own sip trunk are not supported")))
 	}
 	stream, pin, err := s.streamFor(ctx, attachment.CustomerID)
 	if errors.Is(err, errNoStream) {
@@ -931,7 +931,7 @@ type CallRequest struct {
 
 // errCustomKept is a call into a session whose call is already there with other custom data:
 // the call keeps the custom it was created with, so the agent in it would not read this one.
-var errCustomKept = errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session")
+var errCustomKept = Invalid(errors.New("phone: the session's call already carries other custom data; leave custom out or use a new session"))
 
 // Placed is a call that is on its way, and where to meet it.
 type Placed struct {
@@ -995,7 +995,7 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		return Placed{}, stack.Wrap(errors.New("phone: placing a call needs a database to know who holds the number"))
 	}
 	if request.To == "" {
-		return Placed{}, stack.Wrap(errors.New("phone: a call needs someone to call"))
+		return Placed{}, stack.Wrap(Invalid(errors.New("phone: a call needs someone to call")))
 	}
 
 	held, err := s.store.Number(ctx, request.Owner.CustomerID, request.From)
@@ -1018,8 +1018,8 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	// A term the vendor cannot express is refused rather than dropped: a call placed
 	// without the ring timeout that was asked for is not the call that was asked for.
 	if missing := outbound.Unsupported(provider); len(missing) > 0 {
-		return Placed{}, stack.Wrap(fmt.Errorf("phone: %s cannot place a call with %s",
-			held.Vendor, joinFeatures(missing)))
+		return Placed{}, stack.Wrap(Invalid(fmt.Errorf("phone: %s cannot place a call with %s",
+			held.Vendor, joinFeatures(missing))))
 	}
 
 	allowedIPs, err := s.allowlistFor(held.Vendor)
@@ -1033,7 +1033,7 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 	} else if held, ok := conversation.SessionID(sessionID); ok {
 		sessionID = held
 	} else {
-		return Placed{}, stack.Wrap(fmt.Errorf("phone: the session id %q is not one a session can have", sessionID))
+		return Placed{}, stack.Wrap(Invalid(fmt.Errorf("phone: the session id %q is not one a session can have", sessionID)))
 	}
 	callID, callType := sessionID, defaultCallType
 
@@ -1745,10 +1745,10 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 		return Dialed{}, stack.Wrap(errors.New("phone: transferring a call needs a database to know who holds the number"))
 	}
 	if request.CallID == "" {
-		return Dialed{}, stack.Wrap(errors.New("phone: a transfer needs the call to transfer into"))
+		return Dialed{}, stack.Wrap(Invalid(errors.New("phone: a transfer needs the call to transfer into")))
 	}
 	if request.To == "" {
-		return Dialed{}, stack.Wrap(errors.New("phone: a transfer needs someone to transfer to"))
+		return Dialed{}, stack.Wrap(Invalid(errors.New("phone: a transfer needs someone to transfer to")))
 	}
 
 	held, err := s.store.Number(ctx, request.Owner.CustomerID, request.From)
@@ -1884,7 +1884,7 @@ func (s *Service) Transfer(ctx context.Context, request TransferRequest) (Dialed
 // customerID did not place is ErrCallNotFound, as one nobody placed is.
 func (s *Service) SendDigits(ctx context.Context, customerID, vendor, vendorCallID, digits string) error {
 	if vendorCallID == "" {
-		return stack.Wrap(errors.New("phone: pressing digits needs the call to press them on"))
+		return stack.Wrap(Invalid(errors.New("phone: pressing digits needs the call to press them on")))
 	}
 	if err := ValidateDigits(digits); err != nil {
 		return err

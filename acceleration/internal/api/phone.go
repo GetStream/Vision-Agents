@@ -648,9 +648,19 @@ var (
 		Message: "This app's telephony is suspended. Contact Stream support."}
 )
 
+// clientPhoneFailures are the failures of a phone operation the client can fix, answered in
+// their own words: a request the phone cannot carry out as asked, a number that cannot be
+// dialled or stored, an app the customer cannot act in, and sip trunks this deployment is
+// without.
+var clientPhoneFailures = []error{
+	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164, phone.ErrSIPTrunksDisabled,
+	streamapp.ErrNoIdentity, streamapp.ErrStreamAppMoved, streamapp.ErrStreamAppDisconnected, streamapp.ErrReadOnly,
+}
+
 // phoneFailure is the answer to a phone operation that failed. A vendor's own error is logged
-// in full and answered without its words, which can hold an account id. Anything else is the
-// router's or Stream's and says what the client can fix.
+// in full and answered without its words, which can hold an account id. A failure the client
+// can fix says what to fix. Anything else, such as a database that failed, is the router's own:
+// it is returned as is, which Huma answers 500 and logs with its stack.
 func phoneFailure(logger *slog.Logger, err error) error {
 	if errors.Is(err, phone.ErrSuspended) {
 		return errTelephonySuspended
@@ -678,7 +688,12 @@ func phoneFailure(logger *slog.Logger, err error) error {
 			"status", refused.Status, "code", refused.Code, "message", refused.Message, "error", err)
 		return errPhoneVendorFailed
 	}
-	return invalidRequest(err.Error())
+	for _, theirs := range clientPhoneFailures {
+		if errors.Is(err, theirs) {
+			return invalidRequest(err.Error())
+		}
+	}
+	return err
 }
 
 // callFailure is phoneFailure for an operation that starts a call: the vendor may have

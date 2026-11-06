@@ -67,6 +67,20 @@ var ErrSuspended = errors.New("phone: this app's telephony is suspended; contact
 // as a destination. A caller that holds a list of numbers can tell it from a failed call.
 var ErrNotDialable = errors.New("phone: not dialable")
 
+// ErrInvalid is a request that cannot be carried out as it was asked, such as a search filter
+// a vendor cannot apply or a ring timeout it does not allow. Its message says what to change.
+// A failure of the router's own, a database or a deployment setting, is never one.
+var ErrInvalid = errors.New("phone: invalid request")
+
+// Invalid marks err as ErrInvalid without changing its message.
+func Invalid(err error) error { return invalidRequest{err} }
+
+type invalidRequest struct{ err error }
+
+func (e invalidRequest) Error() string        { return e.err.Error() }
+func (e invalidRequest) Unwrap() error        { return e.err }
+func (e invalidRequest) Is(target error) bool { return target == ErrInvalid }
+
 // premiumPrefixes are the North American codes billed to the caller at a premium rate, which
 // is how toll fraud turns a stolen account into money.
 var premiumPrefixes = []string{"+1900", "+1976"}
@@ -550,7 +564,7 @@ func (o Outbound) Unsupported(provider Provider) []CallFeature {
 // Validate reports whether the call can be placed as described.
 func (o Outbound) Validate() error {
 	if o.From == "" || o.To == "" {
-		return stack.Wrap(errors.New("phone: a call needs a from and a to"))
+		return stack.Wrap(Invalid(errors.New("phone: a call needs a from and a to")))
 	}
 	if err := Dialable(o.To); err != nil {
 		return err
@@ -559,15 +573,15 @@ func (o Outbound) Validate() error {
 		return err
 	}
 	if o.RingTimeout < 0 {
-		return stack.Wrap(errors.New("phone: a call cannot ring for less than no time"))
+		return stack.Wrap(Invalid(errors.New("phone: a call cannot ring for less than no time")))
 	}
 	if o.InitialDigits != "" {
 		if err := ValidateDigits(o.InitialDigits); err != nil {
 			return err
 		}
 		if len(o.InitialDigits) > maxInitialDigits {
-			return stack.Wrap(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
-				len(o.InitialDigits), maxInitialDigits))
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %d digits is more than the %d every vendor takes on answer",
+				len(o.InitialDigits), maxInitialDigits)))
 		}
 	}
 	return nil
@@ -691,14 +705,14 @@ func (n *notImplemented) err() error {
 // silent no-op on the call.
 func ValidateDigits(digits string) error {
 	if digits == "" {
-		return stack.Wrap(errors.New("phone: pressing needs digits to press"))
+		return stack.Wrap(Invalid(errors.New("phone: pressing needs digits to press")))
 	}
 	for _, key := range digits {
 		switch {
 		case key >= '0' && key <= '9', key >= 'A' && key <= 'D',
 			key == '*', key == '#', key == 'w', key == 'W':
 		default:
-			return stack.Wrap(fmt.Errorf("phone: %q is not something a keypad can press", string(key)))
+			return stack.Wrap(Invalid(fmt.Errorf("phone: %q is not something a keypad can press", string(key))))
 		}
 	}
 	return nil

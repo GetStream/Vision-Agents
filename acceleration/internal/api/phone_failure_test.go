@@ -12,6 +12,8 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 func vendorRefusal(code string) error {
@@ -70,26 +72,63 @@ func TestAFailedCallIsNotAnsweredWithTryAgain(t *testing.T) {
 	require.NotContains(t, response.Body.String(), "Try again")
 }
 
-func TestACallFailureOfOurOwnStillSaysWhatToFix(t *testing.T) {
-	handler, _ := served(t, func() error {
-		return callFailure(slog.New(slog.DiscardHandler), errors.New("phone: a call needs someone to call"))
-	})
-
-	response := postSync(handler, `{"name":"jean"}`)
-
-	require.Equal(t, http.StatusBadRequest, response.Code)
-	require.Equal(t, "phone: a call needs someone to call", answered(t, response.Body.Bytes()).Message)
+// clientPhoneErrors are failures the client can fix, each made the way the phone service
+// makes it.
+func clientPhoneErrors() map[string]error {
+	return map[string]error{
+		"digits a keypad cannot press":      phone.ValidateDigits("one"),
+		"a number that is not E.164":        phone.Dialable("911"),
+		"a number stored in another form":   stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, "5125551234")),
+		"sip trunks off on this deployment": stack.Wrap(phone.ErrSIPTrunksDisabled),
+		"no app for the customer":           stack.Wrap(streamapp.ErrNoIdentity),
+		"an app the customer moved from":    stack.Wrap(streamapp.ErrStreamAppMoved),
+		"a disconnected app":                stack.Wrap(streamapp.ErrStreamAppDisconnected),
+		"an app the customer may only read": stack.Wrap(streamapp.ErrReadOnly),
+	}
 }
 
-func TestAnErrorOfOurOwnStillSaysWhatToFix(t *testing.T) {
+func TestAPhoneFailureTheClientCanFixSaysWhatToFix(t *testing.T) {
+	for name, failure := range clientPhoneErrors() {
+		for answer, failed := range map[string]func(*slog.Logger, error) error{"phone": phoneFailure, "call": callFailure} {
+			handler, _ := served(t, func() error { return failed(slog.New(slog.DiscardHandler), failure) })
+
+			response := postSync(handler, `{"name":"jean"}`)
+
+			require.Equal(t, http.StatusBadRequest, response.Code, "%s: %s", answer, name)
+			got := answered(t, response.Body.Bytes())
+			require.Equal(t, ErrorTypeInvalidRequest, got.Type, "%s: %s", answer, name)
+			require.Equal(t, failure.Error(), got.Message, "%s: %s", answer, name)
+		}
+	}
+}
+
+// What the gate or the store failed with is the router's: the client is told only that
+// something went wrong, and the log keeps the rest.
+func TestAPhoneFailureOfOursIsAServerErrorWithoutItsWords(t *testing.T) {
+	ours := stack.Wrap(fmt.Errorf("store: opted out: %w", errors.New("sql: database is closed")))
+	for answer, failed := range map[string]func(*slog.Logger, error) error{"phone": phoneFailure, "call": callFailure} {
+		handler, logged := served(t, func() error { return failed(slog.New(slog.DiscardHandler), ours) })
+
+		response := postSync(handler, `{"name":"jean"}`)
+
+		require.Equal(t, http.StatusInternalServerError, response.Code, answer)
+		require.Equal(t, "something went wrong", answered(t, response.Body.Bytes()).Message, answer)
+		require.NotContains(t, response.Body.String(), "database is closed", answer)
+		require.Contains(t, logged.String(), "database is closed", "%s: the log keeps what failed", answer)
+	}
+}
+
+// Work waiting on the deployment's own Stream app reaches Huma as it is, which answers it
+// 503 for the caller to retry.
+func TestAPhoneOperationWaitingOnTheDeploymentsAppIsAnsweredTryAgain(t *testing.T) {
 	handler, _ := served(t, func() error {
-		return phoneFailure(slog.New(slog.DiscardHandler), errors.New("phone: a call needs someone to call"))
+		return phoneFailure(slog.New(slog.DiscardHandler), stack.Wrap(streamapp.ErrDeploymentAppUnknown))
 	})
 
 	response := postSync(handler, `{"name":"jean"}`)
 
-	require.Equal(t, http.StatusBadRequest, response.Code)
-	require.Equal(t, "phone: a call needs someone to call", answered(t, response.Body.Bytes()).Message)
+	require.Equal(t, http.StatusServiceUnavailable, response.Code)
+	require.NotEmpty(t, response.Header().Get("Retry-After"))
 }
 
 func TestASkippedVendorIsAnsweredWithoutItsWords(t *testing.T) {

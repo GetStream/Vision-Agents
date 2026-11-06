@@ -185,12 +185,12 @@ func parsePrivateKey(value string) (*rsa.PrivateKey, error) {
 // SearchNumbers returns numbers Vonage is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("vonage: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("vonage: a country is required to search for numbers")))
 	}
 	// Vonage matches one pattern one way, so it cannot be asked for digits at the front
 	// and digits anywhere in the same breath.
 	if search.Prefix != "" && search.Contains != "" {
-		return nil, stack.Wrap(errors.New("vonage: can match a prefix or a substring, not both"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("vonage: can match a prefix or a substring, not both")))
 	}
 
 	query := url.Values{"country": {strings.ToUpper(search.Country)}}
@@ -205,7 +205,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Type != "" {
 		kind, ok := kinds[search.Type]
 		if !ok {
-			return nil, stack.Wrap(fmt.Errorf("vonage: does not sell %s numbers", search.Type))
+			return nil, stack.Wrap(phone.Invalid(fmt.Errorf("vonage: does not sell %s numbers", search.Type)))
 		}
 		query.Set("type", kind)
 	}
@@ -241,7 +241,7 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 		return phone.Number{}, stack.Wrap(errors.New("vonage: a number is required"))
 	}
 	if order.Country == "" {
-		return phone.Number{}, stack.Wrap(errors.New("vonage: buying a number needs the country it is sold in"))
+		return phone.Number{}, stack.Wrap(phone.Invalid(errors.New("vonage: buying a number needs the country it is sold in")))
 	}
 
 	form := url.Values{
@@ -308,9 +308,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 	if outbound.RingTimeout > 0 {
 		seconds := int(outbound.RingTimeout.Seconds())
 		if seconds < minRingSeconds || seconds > maxRingSeconds {
-			return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+			return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf(
 				"vonage: %ds is outside the %d-%ds vonage will ring for",
-				seconds, minRingSeconds, maxRingSeconds))
+				seconds, minRingSeconds, maxRingSeconds)))
 		}
 		request.RingingTimer = seconds
 	}
