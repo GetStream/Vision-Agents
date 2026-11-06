@@ -766,6 +766,8 @@ type callSetup struct {
 	languages    []string
 	client       *audiofloor.Client
 	endOfTurn    *audiofloor.EndOfTurn
+	// tools runs the replay's tools, which the agent is offered only when it is set.
+	tools ToolRunner
 }
 
 // startWith is start, with what setup says.
@@ -826,6 +828,7 @@ func (h *floorHarness) startWith(t *testing.T, setup callSetup) *call {
 		Edge:           c.edge,
 		Instructions:   instructions,
 		Tools:          replayTools,
+		ToolRunner:     setup.tools,
 		CustomerID:     "acme",
 		AgentID:        "audio-floor-replay",
 		SessionID:      "replay",

@@ -3925,7 +3925,7 @@ func (a *Agent) interrupt(participant stt.Participant, why interruption) {
 
 // abandonReply abandons the reply being spoken, and reports whether there was one. still,
 // when set, is asked under the lock whether it is still the reply to abandon. why is
-// reported with it.
+// reported with it. Acting on chorus-asr, every turn still being said is abandoned with it.
 func (a *Agent) abandonReply(participant stt.Participant, still func(turnID string) bool, why interruption) bool {
 	a.mu.Lock()
 	turnID := a.speakingTurn
@@ -3939,10 +3939,19 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		a.mu.Unlock()
 		return false
 	}
-	heard, played := a.voiced == turnID, time.Since(a.voicedAt)
-	cut := a.cutShortLocked(turnID, time.Now())
+	now := time.Now()
+	voiced, played := a.voiced, now.Sub(a.voicedAt)
+	cut := a.cutShortLocked(turnID, now)
 	outstanding := a.generating || a.audioOutstandingLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
+	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
+	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
+	// takes a turn of its own, to say what a tool came back with, while the reply before is
+	// still playing.
+	var behind []playingTurn
+	if a.actsOnChorusASR() {
+		behind = a.abandonPlayingLocked(turnID, now)
+	}
 	a.interrupting = true
 	a.speakingTurn = ""
 	a.generating = false
@@ -3950,8 +3959,9 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.saying = ""
 	reply, voice, model, current := a.streams[turnID], a.tts, a.sts, a.harness
 	a.mu.Unlock()
-	if heard {
-		playedBeforeInterrupt.WithLabelValues(a.turns.originOf(turnID).kind).Observe(played.Seconds())
+	// The turn whose audio went out last is the one the caller was hearing.
+	if voiced == turnID || slices.ContainsFunc(behind, func(playing playingTurn) bool { return playing.turnID == voiced }) {
+		playedBeforeInterrupt.WithLabelValues(a.turns.originOf(voiced).kind).Observe(played.Seconds())
 	}
 	// Clear audio already queued at the edge before provider or model interruption can block.
 	// Keep the final drop below as well to catch audio published by an in-flight send.
@@ -3960,6 +3970,11 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.finishGenerate(turnID)
 	if current != nil && outstanding {
 		current.Release(turnID)
+	}
+	for _, playing := range behind {
+		if current != nil {
+			current.Release(playing.turnID)
+		}
 	}
 	a.logger.Debug("stopping mid-reply, the caller took the floor",
 		"turn", turnID, "participant", participant.ID)
@@ -3988,6 +4003,10 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		}
 	}
 
+	for _, playing := range behind {
+		a.interrupted(playing.turnID, participant, why)
+		a.emitter.Send(playing.cut.cut(Interrupted{TurnID: playing.turnID, Participant: participant}))
+	}
 	a.interrupted(turnID, participant, why)
 	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID, Participant: participant}))
 	a.mu.Lock()
@@ -3995,6 +4014,31 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	a.mu.Unlock()
 	a.respondQueued()
 	return true
+}
+
+// playingTurn is a turn the agent had moved on from that was still being said when it was
+// cut, and what of it had been heard.
+type playingTurn struct {
+	turnID string
+	cut    cutShort
+}
+
+// abandonPlayingLocked abandons every turn but turnID that still has an utterance being said,
+// so that what the voice goes on sending of it is dropped rather than heard, and returns them.
+// A murmur is left: it is meant to overlap. Agent.mu must be held.
+func (a *Agent) abandonPlayingLocked(turnID string, now time.Time) []playingTurn {
+	var playing []playingTurn
+	for _, heard := range a.heard {
+		if heard.turnID == turnID || strings.HasPrefix(heard.turnID, backchannelPrefix) {
+			continue
+		}
+		if _, gone := a.abandoned[heard.turnID]; gone {
+			continue
+		}
+		a.abandoned[heard.turnID] = struct{}{}
+		playing = append(playing, playingTurn{turnID: heard.turnID, cut: a.cutShortLocked(heard.turnID, now)})
+	}
+	return playing
 }
 
 // shortenTail is how much of what it is saying a shortening lets the agent finish. The
