@@ -902,8 +902,8 @@ func (s *Store) ReplyItems(ctx context.Context, customerID, conversationID strin
 }
 
 // Opening is the first thing said in a customer's conversation, across every session that
-// held it, or empty when none recorded anything said. Refused says the prompt injection
-// screen refused it.
+// held it, and when (At), or empty when none recorded anything said. Refused says the prompt
+// injection screen refused it.
 func (s *Store) Opening(ctx context.Context, customerID, conversationID string) (Exchange, error) {
 	if customerID == "" || conversationID == "" {
 		return Exchange{}, stack.Wrap(errors.New("store: a customer and a conversation id are required"))
@@ -930,7 +930,7 @@ func (s *Store) Opening(ctx context.Context, customerID, conversationID string) 
 	if len(first) == 0 {
 		return Exchange{}, nil
 	}
-	return Exchange{ResponseID: first[0].ID, Said: first[0].Said, Refused: first[0].Status == ResponseRefused}, nil
+	return Exchange{ResponseID: first[0].ID, Said: first[0].Said, Refused: first[0].Status == ResponseRefused, At: first[0].CreatedAt}, nil
 }
 
 // RewindResponses takes every response after kept out of the session's conversation.

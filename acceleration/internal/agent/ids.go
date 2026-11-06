@@ -10,6 +10,7 @@ import (
 	"slices"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
@@ -33,7 +34,14 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		return "", "", nil, false
 	}
 	var said strings.Builder
-	var results []any
+	// results are the JSON results, each with its lines (asWritten) and how many lines the agent had
+	// written by then.
+	type result struct {
+		value any
+		lines []string
+		wrote int
+	}
+	var results []result
 	// answers are what the caller said straight after the agent asked them something, with
 	// the question.
 	type answer struct{ question, said string }
@@ -46,14 +54,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 	sent := map[string]string{}
 	// called are the names of the tools called, by the call's ID.
 	called := map[string]string{}
-	// wrote are the lines the agent wrote, in its replies and in the arguments of its calls
-	// (sent), each alphanumeric. A tool that reads back a channel or a thread returns them too.
-	var wrote []string
-	write := func(text string) {
-		for _, own := range strings.Split(text, "\n") {
-			wrote = append(wrote, alphanumeric(own))
-		}
-	}
+	var wrote ownLines
 	// lines are the lines a JSON result writes out for people, with the arguments of the
 	// call it answers and how many lines the agent had written by then.
 	type line struct {
@@ -82,11 +83,10 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 			if strings.TrimSpace(message.Content) != "" {
 				question = message.Content
 			}
-			write(message.Content)
+			wrote.write(message)
 			for _, made := range message.ToolCalls {
 				sent[made.ID] = asWritten(made.Arguments)
 				called[made.ID] = made.Name
-				write(sent[made.ID])
 			}
 		case llm.User:
 			heard := message.Content + " " + withSpokenSeparators(digitsFor(message.Content))
@@ -118,16 +118,16 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 					}
 				}
 			})
-			var result any
-			if json.Unmarshal([]byte(message.Content), &result) != nil {
+			var value any
+			if json.Unmarshal([]byte(message.Content), &value) != nil {
 				texts = append(texts, line{message.Content, "", len(wrote)})
-			} else if text, bare := result.(string); bare {
+			} else if text, bare := value.(string); bare {
 				texts = append(texts, line{text, "", len(wrote)})
 			} else {
-				results = append(results, result)
+				results = append(results, result{value, strings.Split(asWritten(message.Content), "\n"), len(wrote)})
 				// A result may write its answer out under a key of its own: a list of channels
 				// as "1. #general (C0123) - public_channel".
-				for _, text := range prose(result) {
+				for _, text := range prose(value) {
 					for _, written := range strings.Split(text, "\n") {
 						lines = append(lines, line{written, sent[message.ToolCallID], len(wrote)})
 					}
@@ -148,18 +148,14 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 			continue
 		}
 		if wanted == "" {
-			return name, text, collectIDs(results), true
+			var values []any
+			for _, result := range results {
+				values = append(values, result.value)
+			}
+			return name, text, collectIDs(values), true
 		}
-		// A line a tool returned that holds a line the agent wrote before it, with the ID in it,
-		// is the agent's own text read back: a channel's history holds what the agent posted
-		// there, and what the agent wrote is no source of an ID. A line of the agent's that is
-		// the ID alone, an argument's value, is not counted: every line that gives the ID holds it.
-		agents := func(returned line) bool {
-			text := alphanumeric(html.UnescapeString(returned.text))
-			return slices.ContainsFunc(wrote[:returned.wrote], func(own string) bool {
-				return own != wanted && strings.Contains(own, wanted) && strings.Contains(text, own)
-			})
-		}
+		held := wrote.holding(wanted)
+		agents := func(returned line) bool { return held.readBack(returned.text, returned.wrote) }
 		if strings.Contains(heard, wanted) && holdsKind(plainWords(said.String()), entityOf(name), strings.Contains) || slices.Contains(pasted, wanted) ||
 			slices.ContainsFunc(linked, func(link toolLink) bool {
 				return link.part == wanted && holdsKind(link.named, entityOf(name), strings.Contains) && !agents(link.in)
@@ -174,7 +170,14 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 		returned := false
 		var ids []string
 		for _, result := range results {
-			walkIDs(result, "", func(at, id string) {
+			// A result that reads back what the agent wrote with the ID in it returns the ID in none
+			// of its fields either: a message read back keeps a channel the agent named in it as a
+			// field of its own, a "channel_id" in its blocks.
+			echoes := slices.ContainsFunc(result.lines, func(text string) bool { return held.readBack(text, result.wrote) })
+			walkIDs(result.value, "", func(at, id string) {
+				if echoes && alphanumeric(id) == wanted {
+					return
+				}
 				if (at == name || at == "id") && alphanumeric(id) == wanted {
 					returned = true
 				}
@@ -264,7 +267,8 @@ func fromNote(text string) bool {
 }
 
 // A name field can identify a place or business, not just a person. The lexical
-// heuristics must not reject a name the caller or a successful tool already gave.
+// heuristics must not reject a name the caller or a successful tool already gave. A tool that
+// reads back what the agent wrote with the name in it does not give it (ownLines.readBack).
 func nameWasGiven(history []llm.Message, name string) bool {
 	words := func(text string) string {
 		return " " + strings.ToLower(strings.Join(strings.FieldsFunc(text, func(r rune) bool {
@@ -275,42 +279,201 @@ func nameWasGiven(history []llm.Message, name string) bool {
 	if wanted == "  " {
 		return false
 	}
-	var contains func(any) bool
-	contains = func(value any) bool {
-		switch value := value.(type) {
-		case string:
-			return strings.Contains(words(value), wanted)
-		case []any:
-			return slices.ContainsFunc(value, contains)
-		case map[string]any:
-			for _, child := range value {
-				if contains(child) {
-					return true
-				}
-			}
-		}
-		return false
+	// results are the successful tool results, each with how many lines the agent had written by then.
+	type result struct {
+		content string
+		wrote   int
 	}
+	var results []result
+	var wrote ownLines
 	for _, message := range history {
 		switch message.Role {
 		case llm.User:
-			if contains(message.Content) {
+			if strings.Contains(words(message.Content), wanted) {
 				return true
 			}
+		case llm.Assistant:
+			wrote.write(message)
 		case llm.ToolResult:
-			if failedResult(message.Content) {
-				continue
-			}
-			var result any
-			if json.Unmarshal([]byte(message.Content), &result) != nil {
-				result = message.Content
-			}
-			if contains(result) {
-				return true
+			if !failedResult(message.Content) {
+				results = append(results, result{message.Content, len(wrote)})
 			}
 		}
 	}
+	// A value gives the name whole, wherever its words break, but for the lines in it that read back
+	// what the agent wrote.
+	held := wrote.holding(alphanumeric(name))
+	for _, given := range results {
+		var contains func(any) bool
+		contains = func(value any) bool {
+			switch value := value.(type) {
+			case string:
+				if !strings.Contains(words(value), wanted) {
+					return false
+				}
+				rest := held.cut(value, given.wrote)
+				return strings.Contains(words(rest), wanted)
+			case []any:
+				return slices.ContainsFunc(value, contains)
+			case map[string]any:
+				for _, child := range value {
+					if contains(child) {
+						return true
+					}
+				}
+			}
+			return false
+		}
+		var value any
+		if json.Unmarshal([]byte(given.content), &value) != nil {
+			value = given.content
+		}
+		if contains(value) {
+			return true
+		}
+	}
 	return false
+}
+
+// ownLines are the lines the agent wrote, in its replies and in the arguments of its calls (asWritten),
+// each alphanumeric. A tool that reads back a channel, a thread or a message returns them too, and
+// what the agent wrote is no source of an ID, a number or a name in it.
+type ownLines []string
+
+// write adds the lines of what an assistant message says and of the arguments of each call it makes.
+func (own *ownLines) write(message llm.Message) {
+	own.add(message.Content)
+	own.send(message)
+}
+
+// send adds the lines of the arguments of each call an assistant message makes: a note it saved or a
+// message it sent, which a tool may read back. A number guard counts only these: an agent reads a
+// number back to the caller to confirm it ("Billing: 555-010-0199?"), and a tool may well list it.
+func (own *ownLines) send(message llm.Message) {
+	for _, made := range message.ToolCalls {
+		own.add(asWritten(made.Arguments))
+	}
+}
+
+// add adds the lines of text.
+func (own *ownLines) add(text string) {
+	for _, line := range strings.Split(text, "\n") {
+		*own = append(*own, alphanumeric(line))
+	}
+}
+
+// heldLines are the lines the agent wrote with a value in them (ownLines.holding), in the order it
+// wrote them.
+type heldLines []heldLine
+
+// heldLine is a line the agent wrote, with how many lines it had written before it.
+type heldLine struct {
+	line string
+	at   int
+}
+
+// holding returns the lines with one of wanted in them, each of wanted alphanumeric, the forms of one
+// value. A line that is the value alone, an argument's, is not one: every line that gives the value
+// holds it.
+func (own ownLines) holding(wanted ...string) heldLines {
+	var held heldLines
+	for at, line := range own {
+		if !slices.Contains(wanted, line) && slices.ContainsFunc(wanted, func(value string) bool { return strings.Contains(line, value) }) {
+			held = append(held, heldLine{line, at})
+		}
+	}
+	return held
+}
+
+// before returns the lines the agent had written once it had written upto lines.
+func (held heldLines) before(upto int) heldLines {
+	end, _ := slices.BinarySearchFunc(held, upto, func(line heldLine, upto int) int { return line.at - upto })
+	return held[:end]
+}
+
+// readBack reports whether text, a line a tool returned once the agent had written upto lines, holds
+// one of the lines held by then: the agent's own text read back.
+func (held heldLines) readBack(text string, upto int) bool {
+	held = held.before(upto)
+	if len(held) == 0 {
+		return false
+	}
+	text = alphanumeric(html.UnescapeString(text))
+	return slices.ContainsFunc(held, func(own heldLine) bool { return strings.Contains(text, own.line) })
+}
+
+// cut returns text, a tool's, without the lines held by the time the agent had written upto lines
+// that it reads back (readBack), each cut where it stands: what is left is what the tool wrote beside
+// them. A record that holds a note the agent saved, "Ana | phone +1 555 010 0199 | notes: Call Ana
+// back at +1 555 010 0199", still gives the phone.
+func (held heldLines) cut(text string, upto int) string {
+	held = held.before(upto)
+	if len(held) == 0 {
+		return text
+	}
+	text = html.UnescapeString(text)
+	// letters are text alphanumeric, as alphanumeric writes it, with the span of text each byte
+	// of it stands for.
+	var letters strings.Builder
+	var from, to []int
+	for at, r := range text {
+		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
+			continue
+		}
+		lower := string(unicode.ToLower(r))
+		for range len(lower) {
+			from, to = append(from, at), append(to, at+utf8.RuneLen(r))
+		}
+		letters.WriteString(lower)
+	}
+	written := letters.String()
+	gone := make([]bool, len(text))
+	for _, own := range held {
+		for start := 0; ; {
+			found := strings.Index(written[start:], own.line)
+			if found < 0 {
+				break
+			}
+			found += start
+			for at := from[found]; at < to[found+len(own.line)-1]; at++ {
+				gone[at] = true
+			}
+			start = found + len(own.line)
+		}
+	}
+	// Each cut is a line break, so that nothing the tool wrote either side of it runs together.
+	var kept strings.Builder
+	for at := range len(text) {
+		if !gone[at] {
+			kept.WriteByte(text[at])
+		} else if at == 0 || !gone[at-1] {
+			kept.WriteByte('\n')
+		}
+	}
+	return kept.String()
+}
+
+// toolResult is a successful tool result, with how many lines the agent had sent by then (ownLines).
+type toolResult struct {
+	content string
+	wrote   int
+}
+
+// toolResults returns the lines the agent sent in the arguments of its calls in history (ownLines.send)
+// and its successful tool results.
+func toolResults(history []llm.Message) (sent ownLines, results []toolResult) {
+	for _, message := range history {
+		switch message.Role {
+		case llm.Assistant:
+			sent.send(message)
+		case llm.ToolResult:
+			// A refusal quotes the value refused: "56305" refused let 5630 through.
+			if !failedResult(message.Content) {
+				results = append(results, toolResult{message.Content, len(sent)})
+			}
+		}
+	}
+	return sent, results
 }
 
 // unheardNumber reports an argument of four or more digits that neither the caller, a tool
@@ -336,15 +499,18 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 				}
 			}
 			spoken = append(spoken, digitGroups(message.Content, withSpokenSeparators(digitsFor(message.Content)))...)
-		case llm.ToolResult:
-			// A refusal quotes the value refused: "56305" refused let 5630 through.
-			if !failedResult(message.Content) {
-				sources = append(sources, message.Content)
-			}
 		}
 	}
 	spoken = append(spoken, heard...)
 	digits := digitGroups(sources...)
+	sent, results := toolResults(history)
+	// groups are the numbers each result writes, as its digits alone. lines are its lines (asWritten),
+	// read only for a result with the number in it once the agent sent it: a long call holds many.
+	groups := make([][]string, len(results))
+	for i, result := range results {
+		groups[i] = digitGroups(result.content)
+	}
+	lines := make([][]string, len(results))
 	keys := make([]string, 0, len(arguments))
 	for name := range arguments {
 		keys = append(keys, name)
@@ -355,7 +521,34 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 		if !ok || len(text) < 4 || !allDigits(text) {
 			continue
 		}
-		if slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) }) {
+		given := func(digits []string) bool {
+			return slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) })
+		}
+		if given(digits) {
+			continue
+		}
+		held := sent.holding(text)
+		returns := false
+		for i, result := range results {
+			if !given(groups[i]) {
+				continue
+			}
+			if len(held.before(result.wrote)) == 0 {
+				returns = true
+				break
+			}
+			if lines[i] == nil {
+				lines[i] = strings.Split(asWritten(result.content), "\n")
+			}
+			if slices.ContainsFunc(lines[i], func(line string) bool {
+				rest := held.cut(line, result.wrote)
+				return given(digitGroups(rest))
+			}) {
+				returns = true
+				break
+			}
+		}
+		if returns {
 			continue
 		}
 		if slices.ContainsFunc(spoken, func(said string) bool { return nearMiss(text, said) }) {
@@ -373,14 +566,14 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 	if call.Name != toolTransfer || json.Unmarshal([]byte(call.Arguments), &arguments) != nil || strings.TrimSpace(arguments.To) == "" {
 		return "", false
 	}
-	sources := []string{told}
-	for _, message := range history {
-		if message.Role == llm.ToolResult && !failedResult(message.Content) {
-			sources = append(sources, message.Content)
-		}
-	}
 	wanted := strings.Join(digitGroups(arguments.To), "")
-	for _, source := range sources {
+	// The agent may have written the number without its country code, as a US number is written.
+	forms := []string{wanted}
+	if local, ok := strings.CutPrefix(wanted, "1"); ok && len(local) == 10 {
+		forms = append(forms, local)
+	}
+	// gives reports whether source writes the number as its digits alone.
+	gives := func(source string) bool {
 		for _, run := range writtenNumber.FindAllString(source, -1) {
 			groups := digitGroups(run)
 			spans := numberGroup.FindAllStringIndex(run, -1)
@@ -402,15 +595,45 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 				for end := start + 1; end <= len(groups); end++ {
 					digits := strings.Join(groups[start:end], "")
 					if digits == wanted && before(start) && after(end) {
-						return "", false
+						return true
 					}
 					// A US number written without its country code is the same line, unless
 					// digits run on from it unmarked, as a country code or a second number do.
 					if len(digits) == 10 && "1"+digits == wanted &&
 						before(start) && after(end) {
-						return "", false
+						return true
 					}
 				}
+			}
+		}
+		return false
+	}
+	if gives(told) {
+		return "", false
+	}
+	// held are the lines the agent sent with the number in them (ownLines.send), and sent how many it
+	// sent: read as the call goes, a source early in a long call is found without reading the rest.
+	var held heldLines
+	sent := 0
+	for _, message := range history {
+		switch message.Role {
+		case llm.Assistant:
+			var own ownLines
+			own.send(message)
+			for _, line := range own.holding(forms...) {
+				held = append(held, heldLine{line.line, sent + line.at})
+			}
+			sent += len(own)
+		case llm.ToolResult:
+			// A refusal quotes the value refused: "56305" refused let 5630 through.
+			if failedResult(message.Content) || !gives(message.Content) {
+				continue
+			}
+			if len(held) == 0 || slices.ContainsFunc(strings.Split(asWritten(message.Content), "\n"), func(line string) bool {
+				rest := held.cut(line, sent)
+				return gives(rest)
+			}) {
+				return "", false
 			}
 		}
 	}

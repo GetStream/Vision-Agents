@@ -274,7 +274,15 @@ over HTTPS to a host in `sandbox.hosts`. Daytona's egress swaps it for the token
   A read with `sql: true` takes a POST whose dry run the host says is one SELECT (BigQuery
   revision 4: jobs.query).
   A read with `lfs: true` takes a POST to the LFS batch path whose operation is `download` (GitHub
-  revision 11), so `git lfs pull` works and `git lfs push` gets the 403.
+  revision 11), so `git lfs pull` works and `git lfs push` gets the 403 at its first request,
+  `locks/verify`. A refusal under `/info/lfs/` is an LFS error (`{"message": ...}`, the LFS media
+  type), so git-lfs prints the hint after its own «Authentication error:» (git-lfs 3.3.0 and 3.8.1
+  against a fake, AI-2876).
+  Daytona's default image has no git-lfs: give the config `sandbox_options.setup:
+  ["apt-get update && apt-get install -y git-lfs"]`. A config with `setup` and no `image` builds on
+  Debian slim (`sdk.DebianSlim`, `internal/sandbox/daytona/daytona.go`), which has no apt lists, so a
+  bare `apt-get install` finds no package. With it, `git lfs pull` of a public repository read its
+  objects through the proxy (staging, 2026-11-05, AI-2066).
   Connections pinned to an earlier revision get the reads without a reconnect. Allowed domains
   take any method. Under the Daytona broker nothing checks methods: code can write with the token
   (`internal/sandbox/egress/AGENTS.md`, «Read-only»).

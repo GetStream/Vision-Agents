@@ -69,3 +69,59 @@ func (s *GivenNamesSuite) TestAGivenHotelDoesNotExcuseAMissingGuestName() {
 	s.True(refused)
 	s.Equal("John Doe", name)
 }
+
+func (s *GivenNamesSuite) TestAStandInNameTheAgentWroteIsNotGroundedByAToolReadingItBack() {
+	// A tool that reads back what the agent said or posted returns the name the agent wrote (AI-2886).
+	said := llm.Message{Role: llm.Assistant, Content: "I will book it for John Doe."}
+	posted := llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: "send_message", Arguments: `{"text":"New booking: John Doe, 2 nights"}`}}}
+	read := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_notes", Arguments: `{}`}}},
+			{Role: llm.ToolResult, ToolCallID: "r1", Content: result},
+		}
+	}
+	given := llm.Message{Role: llm.ToolResult, Content: `{"guest":"John Doe","room":"204"}`}
+	for _, c := range []struct {
+		name    string
+		history []llm.Message
+		refused bool
+	}{
+		{"said, read back", append([]llm.Message{said}, read(`{"notes":"Agent: I will book it for John Doe."}`)...), true},
+		{"posted, read back as text", append([]llm.Message{posted}, read("[bot] New booking: John Doe, 2 nights\n[ana] ok")...), true},
+		{"said, read back on another line than a tool's", append([]llm.Message{said}, read(`{"notes":"Agent: I will book it for John Doe.\nFront desk: John Doe checked in"}`)...), false},
+		{"given by a tool before the agent posted a copy of its line", append(append([]llm.Message{}, read(`{"note":"Guest John Doe is in room 5"}`)...), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s2", Name: "send_message", Arguments: `{"text":"Guest John Doe"}`}}}), false},
+		{"given by a tool before the agent said it", append([]llm.Message{given, said}, read(`{"notes":"Agent: I will book it for John Doe."}`)...), false},
+	} {
+		_, refused := placeholderName(c.history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
+		s.Equal(c.refused, refused, c.name)
+	}
+}
+
+func (s *GivenNamesSuite) TestAToolGivesANameInAValueWholeNotInAKey() {
+	// A key names what a value is, it gives no name: a stand-in "User" is not given by a "user"
+	// field. A value gives the name whole, wherever its words break.
+	result := func(call, content string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.User, Content: "Can you sort this out for me?"},
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "t1", Name: call, Arguments: `{}`}}},
+			{Role: llm.ToolResult, ToolCallID: "t1", Content: content},
+		}
+	}
+	for _, c := range []struct {
+		name      string
+		history   []llm.Message
+		arguments string
+		refused   bool
+	}{
+		{"a user key", result("read_channel", `{"messages":[{"user":"U0BOB0001","text":"printer is down"}]}`), `{"name":"User"}`, true},
+		{"a customer key", result("get_order", `{"order_id":"A1","customer":{"id":"42"}}`), `{"customer_name":"Customer"}`, true},
+		{"a guest key with no value", result("availability", `{"rooms":[{"guest":null,"number":"12"}]}`), `{"guest_name":"Guest"}`, true},
+		{"a caller key", result("call_info", `{"caller":"+15550100199"}`), `{"name":"Caller"}`, true},
+		{"a key that is the name", result("guests", `{"John Doe":{"room":"12"}}`), `{"name":"John Doe"}`, true},
+		{"a name broken across lines in one value", result("guests", `{"guest":"John\nDoe"}`), `{"name":"John Doe"}`, false},
+		{"a name in a value", result("guests", `{"guest":"John Doe"}`), `{"name":"John Doe"}`, false},
+	} {
+		_, refused := placeholderName(c.history, llm.ToolCall{Name: "create_ticket", Arguments: c.arguments})
+		s.Equal(c.refused, refused, c.name)
+	}
+}

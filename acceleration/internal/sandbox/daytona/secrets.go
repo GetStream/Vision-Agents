@@ -11,6 +11,7 @@ import (
 	"os"
 	"regexp"
 	"sync"
+	"time"
 
 	sdk "github.com/daytona/clients/sdk-go/pkg/daytona"
 	"github.com/daytona/clients/sdk-go/pkg/types"
@@ -66,6 +67,8 @@ type SecretsOptions struct {
 type Secrets struct {
 	client  *sdk.Client
 	options SecretsOptions
+	// releaseTimeout bounds the release of a Prepare that failed: defaultTimeout, shorter in tests.
+	releaseTimeout time.Duration
 
 	mu   sync.Mutex
 	held []*secret
@@ -98,7 +101,7 @@ func NewSecrets(o SecretsOptions) (*Secrets, error) {
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
-	return &Secrets{client: c, options: o}, nil
+	return &Secrets{client: c, options: o, releaseTimeout: defaultTimeout}, nil
 }
 
 // WithAPIKey is the broker on another organization's key, for the same session, names and
@@ -116,13 +119,13 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 	mount := sandbox.Mount{Secrets: map[string]string{}}
 	for _, grant := range grants {
 		if len(grant.Hosts) == 0 {
-			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: connector %q has no host for the sandbox to send its credential to", grant.Binding), s.release(ctx))
+			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: connector %q has no host for the sandbox to send its credential to", grant.Binding), s.abandon(ctx))
 		}
 		if grant.Late && s.options.Bind == nil {
-			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, and the broker has no Bind", grant.Binding)), s.release(ctx))
+			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, and the broker has no Bind", grant.Binding)), s.abandon(ctx))
 		}
 		if grant.Late && grant.Required {
-			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, so it cannot be required", grant.Binding)), s.release(ctx))
+			return sandbox.Mount{}, errors.Join(stack.Wrap(fmt.Errorf("daytona: connector %q is bound late, so it cannot be required", grant.Binding)), s.abandon(ctx))
 		}
 		// A provider's refresh error may quote its answer, so only its class is logged, and a
 		// required grant's error carries none of it. A late grant has no connection to ask yet.
@@ -136,7 +139,7 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 				if !errors.Is(err, sandbox.ErrNoCredential) {
 					reason = fmt.Errorf("the credential cannot be had just now (%s)", sandbox.ErrorClass(err))
 				}
-				return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: required connector %q gives the sandbox no credential: %w", grant.Binding, reason), s.release(ctx))
+				return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: required connector %q gives the sandbox no credential: %w", grant.Binding, reason), s.abandon(ctx))
 			}
 			s.options.Logger.Warn("the sandbox is created without a connector's credential", "connector", grant.Binding,
 				"connection", grant.Connection.ConnectionID, "class", sandbox.ErrorClass(err))
@@ -144,11 +147,11 @@ func (s *Secrets) Prepare(ctx context.Context, grants []sandbox.Grant) (sandbox.
 		}
 		name, err := s.name(grant)
 		if err != nil {
-			return sandbox.Mount{}, errors.Join(err, s.release(ctx))
+			return sandbox.Mount{}, errors.Join(err, s.abandon(ctx))
 		}
 		created, err := s.client.Secret.Create(ctx, &types.CreateSecretParams{Name: name, Value: token.Value, Hosts: grant.Hosts})
 		if err != nil {
-			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: secret %s: %w", name, err), s.release(ctx))
+			return sandbox.Mount{}, errors.Join(fmt.Errorf("daytona: secret %s: %w", name, err), s.abandon(ctx))
 		}
 		s.held = append(s.held, &secret{grant: grant, id: created.ID, name: name, revision: token.Revision, unbound: grant.Late})
 		mount.Secrets[grant.Env] = name
@@ -198,6 +201,18 @@ func (s *Secrets) BeforeRun(ctx context.Context) error {
 		held.revision, held.unbound = token.Revision, false
 	}
 	return nil
+}
+
+// abandon is release for a Prepare that failed, which may have failed because ctx ran out: on
+// ctx itself every delete would fail too, and the live token of a secret made before would stay
+// at Daytona until the session closed. It runs on ctx's values without its cancellation, bounded
+// by releaseTimeout, which is defaultTimeout: the most the sandbox's own bound on its broker's
+// calls (daytona.go, Sandbox.check, at most defaultTimeout) allows, as the gate is held. The
+// caller holds mu.
+func (s *Secrets) abandon(ctx context.Context) error {
+	ctx, end := context.WithTimeout(context.WithoutCancel(ctx), s.releaseTimeout)
+	defer end()
+	return s.release(ctx)
 }
 
 func (s *Secrets) Close(ctx context.Context) error {

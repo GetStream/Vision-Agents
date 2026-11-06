@@ -2099,6 +2099,19 @@ impl Client {
         )
         .await
     }
+    /// Get a user's phone link
+    ///
+    /// `GET /v1/agents/users/{user_id}` (`getUser`).
+    pub async fn get_user(&self, user_id: &str) -> Result<types::AgentUser> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/users/{user_id}", user_id = segment(user_id)),
+            None::<&()>,
+            None::<&()>,
+            "getUser",
+        )
+        .await
+    }
     /// Link a user to a phone number
     ///
     /// `PUT /v1/agents/users/{user_id}` (`updateUser`).

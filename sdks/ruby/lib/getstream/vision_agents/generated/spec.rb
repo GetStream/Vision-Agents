@@ -752,6 +752,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getUser" => {
+          method: :get, path: "/v1/agents/users/{user_id}",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getUserPolicy" => {
           method: :get, path: "/v1/policies/users/{user_id}",
           path_params: %w[user_id].freeze, query: [].freeze,
@@ -1780,11 +1786,11 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentUser" => {
-          properties: %w[phone user_id].freeze,
+          properties: %w[include_phone_history phone phone_history_since user_id].freeze,
           required: %w[user_id phone].freeze, open: false
         }.freeze,
         "AgentUserRequest" => {
-          properties: %w[phone].freeze,
+          properties: %w[include_phone_history phone phone_history_since].freeze,
           required: %w[phone].freeze, open: false
         }.freeze,
         "AnalyzeReviewsRequest" => {

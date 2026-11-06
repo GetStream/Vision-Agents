@@ -105,3 +105,37 @@ func lfsMembers(raw []byte, keys map[string]bool) (map[string]json.RawMessage, e
 	}
 	return members, nil
 }
+
+// lfsAPI says whether path is under a Git LFS API: git-lfs puts it at its remote's URL with
+// .git/info/lfs, «/info/lfs» after a URL ending in .git (lfsapi/endpoint_finder.go:224-229, v3.8.1),
+// and a read's pattern can take it without .git, as GitHub's /*/*/info/lfs/objects/batch does. Its
+// batch, locks and locks/verify are under it.
+func lfsAPI(path string) bool {
+	return strings.Contains(path, "/info/lfs/")
+}
+
+// lfsError is the body of a Git LFS API error, its message alone (batch.md, «Response Errors»).
+type lfsError struct {
+	Message string `json:"message"`
+}
+
+// refuseRequest is refuse for a request in a tunnel: to a Git LFS API, the message goes in an LFS
+// error, which git-lfs prints. git-lfs reads the message of an error answer only from a body in the
+// LFS or the JSON media type, and prints «Authorization error: <url>» in place of any other 403's
+// (lfshttp/errors.go handleResponse and defaultError, lfshttp/lfshttp.go DecodeJSON, v3.3.0 and
+// v3.8.1; probe of both in the PR). A 403 on locks/verify stays a 403: git-lfs reads a 404 or a 501
+// there as a host with no locking API and writes locksverify=false into the repository's config
+// (locking/locks.go:272-275, commands/lockverifier.go:65-66, commands/uploader.go disableFor, v3.8.1).
+func refuseRequest(w http.ResponseWriter, r *http.Request, host, decision string, status int, message string) {
+	if !lfsAPI(r.URL.Path) {
+		refuse(w, host, r.Method, decision, status, message)
+		return
+	}
+	count(host, r.Method, decision, status)
+	body, _ := json.Marshal(lfsError{Message: message})
+	w.Header().Del("Content-Length")
+	w.Header().Set("Content-Type", lfsMediaType)
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.WriteHeader(status)
+	_, _ = w.Write(append(body, '\n'))
+}
