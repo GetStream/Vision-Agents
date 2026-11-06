@@ -14,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -66,6 +67,15 @@ func TestAudioFloorIsOffUnlessAModeAsksIt(t *testing.T) {
 func TestActingIsTheFlowControllersHearer(t *testing.T) {
 	client := audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil)
 	require.NotNil(t, newAudioFloor(client, audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger()).acting())
+}
+
+// Acting, the flow controller waits for the model over the agent as long as the deployment
+// says, and at a pause for its own share of its deadline.
+func TestActingTheModelHasTheDeploymentsWaitOverTheAgent(t *testing.T) {
+	client := audiofloor.Open(config.Agent{AudioFloorURL: "http://127.0.0.1:1", AudioFloorOverlapTimeout: 400 * time.Millisecond})
+	hearer := newAudioFloor(client, audiofloor.Act, audiofloor.EndOfTurn{}, quietLogger()).acting()
+	require.Equal(t, 400*time.Millisecond, hearer.HearDeadline(harness.FlowTurn{Speaking: true, Unfinished: true}))
+	require.Equal(t, harness.HearDeadline(harness.FlowTurn{}), hearer.HearDeadline(harness.FlowTurn{}))
 }
 
 // The router's own tools don't reach the model's prompt: listing them flips its answers.

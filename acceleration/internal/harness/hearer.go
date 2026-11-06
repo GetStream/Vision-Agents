@@ -13,6 +13,9 @@ import (
 type Hearer interface {
 	// Hear rules on turn: its Disposition and Floor, and Tool, Cannot and Again.
 	Hear(ctx context.Context, turn FlowTurn) (Decided, error)
+	// HearDeadline is how long it has to rule on turn, within the flow controller's own
+	// deadline: HearDeadline's share, unless the deployment sets its own for its server.
+	HearDeadline(turn FlowTurn) time.Duration
 }
 
 // Audio is a recording of the speaker, encoded as a Hearer's server takes it.
@@ -24,9 +27,9 @@ type Audio struct {
 	Duration time.Duration
 }
 
-// HearDeadline is how long a Hearer has to rule on turn: a third of the flow controller's
-// own deadline, which leaves the judge or the model the other two thirds to decide as they
-// would without it.
+// HearDeadline is how long a Hearer has to rule on turn unless it says otherwise: a third of
+// the flow controller's own deadline, which leaves the judge or the model the other two
+// thirds to decide as they would without it.
 func HearDeadline(turn FlowTurn) time.Duration {
 	if turn.Unfinished && turn.Speaking {
 		return overlapDeadline / 3
@@ -37,7 +40,7 @@ func HearDeadline(turn FlowTurn) time.Duration {
 // runHearer asks the hearer about one candidate and reports its ruling, or false when it
 // did not rule in time.
 func (f *flow) runHearer(asked *candidate) bool {
-	ctx, cancel := context.WithTimeout(asked.ctx, HearDeadline(asked.turn))
+	ctx, cancel := context.WithTimeout(asked.ctx, f.hearer.HearDeadline(asked.turn))
 	defer cancel()
 	ruling, err := f.hearer.Hear(ctx, asked.turn)
 	if errors.Is(asked.ctx.Err(), context.Canceled) {
