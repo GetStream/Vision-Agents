@@ -451,7 +451,13 @@ said, of all of the audio, with no agent, decision or policy:
 
 The turn's fields are `speaking`, `said` (the agent's reply so far), `unfinished`,
 `speaker` (`caller` or `another_voice`; a participant's name never leaves the router) and
-`conversation`. The router sends what a prompt shows: the reply's last 800 characters, the
+`conversation`. They are what the model's rows were written with: `conversation` is what was
+said on the call before the reply being spoken, the caller's words and the agent's, without
+turns typed or handed in by the app or tools' results, and `said` is the reply as far as the
+caller has heard it. The router has no word timing, so that is the time since the edge's track
+took the reply's first audible frame at the voice's speaking rate on the call, from the
+syntheses it finished whole, cut back to a whole word; before one has finished it sends the
+reply as written. The router sends what a prompt shows: the reply's last 800 characters, the
 lines of the last six turns, and each line's last 40 words. The turn goes in the body
 because the longest, 800 characters of reply and six lines of 40 words, escapes to 10,285
 bytes in Hindi and 12,035 in Russian as JSON in a header, past the 8 KiB a proxy allows one
