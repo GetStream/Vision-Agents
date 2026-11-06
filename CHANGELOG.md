@@ -2,6 +2,10 @@
 
 ## Features
 
+### Go: a refusal says how long to wait
+
+`stream.RouterError.RetryAfter` is the wait the router's `Retry-After` asked for, as seconds or a date, on a 429 `user_limit_reached` or `concurrency_limited` and a 503 `spend_check_unavailable`, and zero when it sent none. The SDK still retries nothing itself (AI-1892).
+
 ### The link says how much of the number's past the user reads
 
 `PUT /v1/agents/users/{user_id}` takes `include_phone_history` and `phone_history_since`. `true` gives the user everything the number ever said. `false` gives what it says from the request on. A time gives what it said from then on. With neither field, a new link starts at the link, and the same number again keeps what was stored. The boundary covers the user's episode cards and the history a session on the number's SMS, WhatsApp or iMessage thread is handed, which until now held the whole thread. A conversation that started before it is left out whole. `true` with a time, or a time in the future, is a 400. `GET /v1/agents/users/{user_id}` answers the number and the boundary as stored. A thread whose number is linked to nobody is handed all of it, as before (AI-2861, #1790).
@@ -345,6 +349,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### The Go SDK's helpers take a Backend, not the generated client
+
+`agents.DefineAgent`, `agents.DefineSkills`, `agents.IngestKnowledge`, `agents.SubscribeKnowledgeURLs` and `stream.NewPhone` take a `stream.Backend` where they took the generated `*acceleration.ClientWithResponses`, so using them no longer means building the generated client first. `stream.NewPhone` now returns an error too, for a backend that does not resolve. `agents.Harness.VM` is `agents.Harness.Sandbox`, the name every other SDK and the docs use. Pass `stream.Backend{}` for the environment's router, or `api.Backend()` for a client's. `stream.Backend.Client()` and `agents.Agent.Client()` still hand out the generated client, for operations the SDK has no method for yet; its operation methods carry no compatibility promise (AI-1892).
+
 ### `episode_cards` is `off`, `record` or `on`
 
 An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #1791).
@@ -398,6 +406,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### Go: leaving a session the router already ended succeeds
+
+`stream.Pipeline.Leave`, and so `Session.Close`, failed with `websocket: close sent` for a session whose socket the router had closed, because the closed socket still read as open. The pipeline now closes its socket when watching ends, and a close that finds the socket already closed, by the router ending the session at that moment, stops the session over HTTP instead. Either way leaving returns nil (AI-1892).
+
+### Go: a client made on another client's Backend reads each answer once
+
+`client.New(api.Backend())`, which `agents` and dispatch workers do with the backend they are given, wrapped the first client's money watcher in a second one. A balance warning the first client handed to `WithBalanceWarning` was then logged as well. A client given no callback of its own (no options, or only `WithLogger`) on a backend another client already reads now shares that client's watcher, so an agent or worker built on `api.Backend()` reports what its requests cost to `api`'s callbacks, once (AI-1892).
 
 ### A phone operation that fails on the router's side is a 500
 

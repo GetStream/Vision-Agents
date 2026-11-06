@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -26,10 +27,10 @@ const events = 64
 // close. The backend closes the socket once the session has ended, well inside this.
 const hangupWithin = 5 * time.Second
 
-// resumeFor is how long a dropped text session's socket is reconnected for. It is how long
-// the router keeps a text session nobody watches, after which a reconnect still reopens the
-// conversation but has nothing left to send again.
-const resumeFor = 5 * time.Minute
+// resumeWindow is how long a dropped text session's socket is reconnected for. It is how
+// long the router keeps a text session nobody watches, after which a reconnect still reopens
+// the conversation but has nothing left to send again.
+const resumeWindow = 5 * time.Minute
 
 // ErrNotOnCall is returned by an action on a pipeline that has not joined anything, or has
 // already left.
@@ -228,6 +229,9 @@ type Pipeline struct {
 	awaiting atomic.Value
 	// firstRetry is the first wait before reconnecting a dropped text session.
 	firstRetry time.Duration
+	// resumeFor is how long a dropped text session's socket is reconnected for:
+	// resumeWindow, which tests shorten.
+	resumeFor time.Duration
 }
 
 // Accelerated configures a pipeline to run remotely.
@@ -248,6 +252,7 @@ func Accelerated(config Config) *Pipeline {
 		logger:     logger,
 		functions:  functions,
 		firstRetry: firstRetry,
+		resumeFor:  resumeWindow,
 	}
 }
 
@@ -470,19 +475,43 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 		return nil
 	}
 
-	var failure error
+	failure := ErrSocketClosed
 	if socket != nil && socket.IsOpen() {
-		if failure = socket.Send(Frame{"type": "close"}); failure == nil {
-			p.awaitHangup(ctx)
-		}
-	} else if backend, err := p.backend.Resolve(); err == nil {
-		if client, err := backend.Client(); err == nil {
-			_, failure = client.StopSessionWithResponse(ctx, session.Id)
-		}
+		failure = socket.Send(Frame{"type": "close"})
+	}
+	switch {
+	case failure == nil:
+		p.awaitHangup(ctx)
+	case closedUnder(failure):
+		// No socket, or one the router closed between IsOpen and Send because it ended the
+		// session itself: nothing more goes over it, so the session is stopped over HTTP.
+		failure = p.stopOverHTTP(ctx, session.Id)
 	}
 
 	p.stopWatching()
 	return failure
+}
+
+// stopOverHTTP asks the router to stop a session whose socket is gone. Only a request that
+// never reached the router fails it: a session the router already ended is refused, and
+// leaving that one is done.
+func (p *Pipeline) stopOverHTTP(ctx context.Context, id string) error {
+	backend, err := p.backend.Resolve()
+	if err != nil {
+		return nil
+	}
+	client, err := backend.Client()
+	if err != nil {
+		return nil
+	}
+	_, err = client.StopSessionWithResponse(ctx, id)
+	return err
+}
+
+// closedUnder reports whether err is a socket that can carry nothing more: closed here, a
+// close frame already sent, or the connection gone.
+func closedUnder(err error) bool {
+	return errors.Is(err, ErrSocketClosed) || errors.Is(err, websocket.ErrCloseSent) || errors.Is(err, net.ErrClosed)
 }
 
 // request renders the agent's configuration as a session to create.
@@ -622,6 +651,13 @@ func (p *Pipeline) command(frame Frame) error {
 func (p *Pipeline) watch(ctx context.Context, socket *Socket, out chan<- Event, resumable bool) {
 	defer p.watcher.Done()
 	defer close(out)
+	// Closed before the channel is, so a socket the router ended no longer reads as open:
+	// Leave then stops the session over HTTP rather than writing to a closed socket.
+	defer func() {
+		if socket != nil {
+			_ = socket.Close()
+		}
+	}()
 
 	cursor := ""
 	for reconnected := false; ; reconnected = true {
@@ -709,8 +745,8 @@ func dropped(err error) bool {
 }
 
 // reconnect opens the session's socket again after cursor, waiting longer between each
-// attempt, until it opens, the pipeline stops, the router refuses it for good, or resumeFor
-// runs out. It returns nil when it gave up.
+// attempt, until it opens, the pipeline stops, the router refuses it for good, or
+// p.resumeFor runs out. It returns nil when it gave up.
 func (p *Pipeline) reconnect(ctx context.Context, cursor string) *Socket {
 	session := p.Session()
 	if session == nil {
@@ -725,7 +761,7 @@ func (p *Pipeline) reconnect(ctx context.Context, cursor string) *Socket {
 		asked.Set("request_id", id)
 	}
 
-	giveUp := time.Now().Add(resumeFor)
+	giveUp := time.Now().Add(p.resumeFor)
 	for retry := p.firstRetry; ; retry = min(retry*2, lastRetry) {
 		select {
 		case <-ctx.Done():
@@ -751,7 +787,7 @@ func (p *Pipeline) reconnect(ctx context.Context, cursor string) *Socket {
 			return nil
 		}
 		if time.Now().After(giveUp) {
-			p.logger.Warn("could not reconnect the session socket", "error", err, "for", resumeFor)
+			p.logger.Warn("could not reconnect the session socket", "error", err, "for", p.resumeFor)
 			return nil
 		}
 		p.logger.Debug("could not reconnect the session socket", "error", err, "retrying in", retry)
