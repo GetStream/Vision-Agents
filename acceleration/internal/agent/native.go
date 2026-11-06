@@ -342,12 +342,13 @@ func (a *Agent) consumeSTS(p *pipeline, speech *stsrouter.Session, events <-chan
 			if typed.Fatal {
 				retry = true
 				retryErr = typed.Err
-				a.logger.Warn("the speech-to-speech session failed", "error", typed.Err)
+				a.logger.Warn("the speech-to-speech session failed",
+					"provider", typed.Provider, "model", typed.Model, "error", typed.Err)
 				if speech != nil {
 					_ = speech.Close()
 				}
 			} else {
-				a.fail(typed.Err, "sts")
+				a.fail(typed.Err, "sts", "provider", typed.Provider, "model", typed.Model)
 			}
 		}
 	}

@@ -1352,7 +1352,7 @@ func (a *Agent) Greet(ctx context.Context, greeting string, vary bool) error {
 	if vary {
 		line, err := a.compose(ctx, fmt.Sprintf(greetPurpose, greeting))
 		if err != nil {
-			a.logger.Warn("could not vary the greeting, saying it as written", "error", err)
+			a.logger.Warn("could not vary the greeting, saying it as written", append(a.replyModel(), "error", err)...)
 		} else if line != "" {
 			greeting = line
 		}
@@ -2543,7 +2543,7 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 		}()
 		line, err := a.compose(ctx, purpose)
 		if err != nil {
-			a.logger.Warn("could not write a line to say", "kind", kind, "error", err)
+			a.logger.Warn("could not write a line to say", append(a.replyModel(), "kind", kind, "error", err)...)
 			return
 		}
 		a.sayComposed(participant, line, purpose, asked)
@@ -4245,6 +4245,17 @@ func (a *Agent) fail(err error, context string, attrs ...any) {
 	}
 	a.logger.Error("agent failure", append(append([]any{"context", context}, attrs...), "error", err)...)
 	a.emitter.Send(Error{Err: err, Context: context})
+}
+
+// replyModel is the provider and model the reply model routes to, as log attributes, so a
+// search for either finds the line of a line the agent could not write.
+func (a *Agent) replyModel() []any {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.llm == nil {
+		return nil
+	}
+	return []any{"provider", a.llm.Provider(), "model", a.llm.Model()}
 }
 
 // createFailed is a reply whose request never started, sent on as a reply that failed
