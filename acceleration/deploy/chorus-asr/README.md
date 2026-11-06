@@ -216,12 +216,12 @@ last frame, and a pause costs one request:
   (`OverlapDecided`, then the interruption): the agent drops its own echoed voice from the
   check's words first, as from any chorus-asr transcript, and an echo alone or a murmur
   stops nothing. The checks go on every `interval_ms` for as long as the caller's line is
-  voiced over the agent, its own echo included (Limits). A check that stops the agent ends
-  the utterance on the words it was ruled on: a stop ruled while the caller talks on is no
-  turn, so they go out at once as the utterance's final and are heard, not answered, and
-  what the caller says after them is the next utterance, ended at its pauses with the floor
-  free. A check that answers once its utterance has ended, a pause check having ruled on it,
-  is not acted on. Shortened, the utterance goes on, its words shown as interims, and ends at
+  voiced over the agent, its own echo included (Limits). A stop ruled while the caller talks on
+  is no turn: the words it was ruled on are spent on it. The utterance runs on, uncut, and
+  at a pause whose words add nothing to them it ends at once, heard and not answered;
+  otherwise it ends at its pauses with the floor free, and the turn is what the caller said
+  after the stop's words. A check that answers once its utterance has ended, a pause check
+  having ruled on it, is not acted on. Shortened, the utterance goes on, its words shown as interims, and ends at
   a pause, where the item is answered. 350 ms is most of an "uh-huh", so the model rules on a
   murmur, which it was trained to let the agent talk through, rather than on the first
   syllable of anything, and a word that stops the agent, "no" or "stop", is said inside it.
