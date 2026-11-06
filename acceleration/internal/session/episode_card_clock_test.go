@@ -81,12 +81,12 @@ func (s *EpisodeReadingSuite) TestACardWrittenTenMinutesIntoACallKeepsTheCallsSt
 	s.cardsConfig()
 	number := "+15550100192"
 	postgres := s.postgresNow()
-	began := time.Now().Add(-10 * time.Minute)
+	began := time.Now().Add(-10*time.Minute - 500*time.Millisecond)
 
 	session := s.cardOfCall(number, began, began)
 
 	started, omni := s.callEpisode(session)
-	s.WithinDuration(postgres.Add(-10*time.Minute), started, 2*time.Second, "the call's start by Postgres's clock")
+	s.WithinDuration(postgres.Add(-10*time.Minute-500*time.Millisecond), started, 200*time.Millisecond, "the call's start by Postgres's clock")
 	var card []string
 	for _, message := range s.chat.Stored(strings.TrimPrefix(omni, "agent:")) {
 		custom, _ := message["custom"].(map[string]any)
