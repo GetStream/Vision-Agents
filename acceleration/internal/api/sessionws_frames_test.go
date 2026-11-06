@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -437,6 +438,21 @@ func TestAnErrorFrameForAnyOtherFailureIsTheFrameItAlwaysWas(t *testing.T) {
 	} {
 		sent, ok := frameOf(agent.Error{Err: err, Context: "llm"})
 		require.Equal(t, want, string(marshalled(t, sent, ok)))
+	}
+}
+
+func TestAFailureFrameNeverCarriesACredentialAProviderEchoed(t *testing.T) {
+	token := "sk-test-" + rand.Text()
+	echoed := errors.New("502 Bad Gateway: no route\nAuthorization: Bearer " + token)
+	for name, event := range map[string]session.Event{
+		"error":        agent.Error{Err: echoed, Context: "llm"},
+		"task settled": agent.TaskSettled{Err: echoed},
+		"tool ran":     agent.ToolRan{Err: echoed},
+	} {
+		sent, ok := frameOf(event)
+		raw := marshalled(t, sent, ok)
+		require.NotContains(t, string(raw), token, name)
+		require.Contains(t, string(raw), "502 Bad Gateway: no route", name)
 	}
 }
 
