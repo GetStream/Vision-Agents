@@ -71,6 +71,9 @@ type turnTracker struct {
 	// after it, but it is capped: a backchannel or a hold line is never measured, so nothing
 	// would otherwise say when its entry may go.
 	origins map[string]origin
+	// out is when the audio of each turn in origins first went out to the call, for the
+	// turns whose audio has.
+	out map[string]time.Time
 	// order is the turns in origins, oldest first.
 	order []string
 	// caller is the latest caller turn when a turn starts, which is the parent it names. A
@@ -162,7 +165,8 @@ func (m *turnMarks) FirstFrameQueued(at time.Time)   { m.tracker.queued(m.turn, 
 func (m *turnMarks) FirstAudiblePulled(at time.Time) { m.tracker.pulled(m.turn, m.id, at) }
 
 func newTurnTracker(owner routing.Owner, finished func(Turn)) *turnTracker {
-	return &turnTracker{open: map[string]*openTurn{}, finished: finished, owner: owner, grace: playoutGrace, origins: map[string]origin{}}
+	return &turnTracker{open: map[string]*openTurn{}, finished: finished, owner: owner, grace: playoutGrace, origins: map[string]origin{},
+		out: map[string]time.Time{}}
 }
 
 // started records what started a turn, before anything of it is measured or said.
@@ -185,6 +189,7 @@ func (t *turnTracker) remember(turnID string, started origin) {
 	t.origins[turnID] = started
 	if len(t.order) > originsKept {
 		delete(t.origins, t.order[0])
+		delete(t.out, t.order[0])
 		t.order = t.order[1:]
 	}
 }
@@ -194,6 +199,45 @@ func (t *turnTracker) originOf(turnID string) origin {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	return t.origins[turnID]
+}
+
+// wentOut records when a turn's first audio was sent to the call, the earliest the call can
+// have heard any of it. It outlives the turn's measurement, as its origin does, since the
+// audio may play on after the turn has closed.
+func (t *turnTracker) wentOut(turnID string, at time.Time) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if _, known := t.origins[turnID]; !known {
+		return
+	}
+	if _, already := t.out[turnID]; !already {
+		t.out[turnID] = at
+	}
+}
+
+// answerHeardBefore says whether any of the agent's answer to the caller turn turnID is part
+// of went out before at: the reply to that turn, or a line the agent said after it on its own,
+// such as what a tool came back with. ok is false for a turn that is part of no answer, a
+// murmur or a line said before the caller spoke.
+func (t *turnTracker) answerHeardBefore(turnID string, at time.Time) (heard, ok bool) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	started, known := t.origins[turnID]
+	caller := turnID
+	if started.kind != kindCaller {
+		caller = started.parent
+	}
+	if !known || started.kind == kindBackchannel || caller == "" {
+		return false, false
+	}
+	for id, out := range t.out {
+		o := t.origins[id]
+		answers := id == caller || o.parent == caller && o.kind != kindCaller && o.kind != kindBackchannel
+		if answers && out.Before(at) {
+			return true, true
+		}
+	}
+	return false, true
 }
 
 // begin opens a turn. The speech-to-text latency is the provider's own decode time for
