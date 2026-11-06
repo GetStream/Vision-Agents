@@ -284,3 +284,19 @@ func (s *RoutingSuite) TestCandidatesOnlyTheCustomersKeyFailedForAreNoVendorsFai
 	s.ErrorContains(err, "401 key revoked")
 	s.NotErrorIs(err, ErrVendorsFailed)
 }
+
+func (s *RoutingSuite) TestACandidateThatFailedOnceTheCallerGaveUpIsNoVendorsFailure() {
+	// Catches a caller hanging up mid-start counted as every vendor failing.
+	first, second := failoverVendors()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	router := s.failoverRouter(first, second, nil, func(_ string, spec Spec) (*stubProvider, error) {
+		cancel()
+		return &stubProvider{model: spec.Model, startErr: errors.New("dial: context canceled")}, nil
+	})
+
+	_, _, err := router.Select(ctx, Request{CustomerID: "acme", Providers: []string{first + "/m"}})
+
+	s.Require().ErrorContains(err, "dial: context canceled")
+	s.NotErrorIs(err, ErrVendorsFailed)
+}
