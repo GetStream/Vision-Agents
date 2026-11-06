@@ -1,12 +1,14 @@
+import { messageField } from "./message-field.js";
+
 /**
  * A reply's thinking, put back together from its live updates.
  *
  * The router stores only the opening of each round of reasoning, as its step's `preview`.
  * The whole of it reaches people watching the reply live: each update carries the next window
- * of the round being streamed, in the message's `reasoning` field. Read every update into one
- * of these, from the client's `message.updated` events rather than the channel's message
- * list, which can fold several updates into one, and show a step by its reply and its id:
- * every reply numbers its steps from `r1`.
+ * of the round being streamed, in the message's `reasoning` field (`custom.reasoning` in
+ * stream-chat 10). Read every update into one of these, from the client's `message.updated`
+ * events rather than the channel's message list, which can fold several updates into one, and
+ * show a step by its reply and its id: every reply numbers its steps from `r1`.
  *
  * ```ts
  * client.on("message.updated", (event) => event.message && reasoning.read(event.message));
@@ -24,9 +26,12 @@ export class LiveReasoning {
     return this.replies.get(messageId)?.get(stepId)?.text;
   }
 
-  /** Reads the window a live update carries, if it carries one. Takes a Stream Chat message. */
-  read(message: { id: string; reasoning?: unknown }): void {
-    const window = message.reasoning;
+  /**
+   * Reads the window a live update carries, if it carries one. Takes a Stream Chat message,
+   * whose window is `message.reasoning` in stream-chat 9 and `message.custom.reasoning` in 10.
+   */
+  read(message: { id: string; reasoning?: unknown; custom?: unknown }): void {
+    const window = messageField(message, "reasoning");
     if (typeof window !== "object" || window === null) {
       return;
     }
