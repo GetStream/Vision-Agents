@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 // The loop's contract (deploy/chorus-asr/README.md, "The loop's contract"), a check a line,
@@ -48,6 +50,9 @@ func TestAudioFloorContract(t *testing.T) {
 	for _, name := range []string{"stoponly", "wait", "holdon", "okaystop"} {
 		t.Run("C2 "+name+" stops the agent, which stays quiet", func(t *testing.T) { k.stopsAndQuiet(t, name) })
 	}
+	t.Run("C2 wait over a reply whose tool's follow-up has begun stops both, which stay quiet", func(t *testing.T) {
+		k.stopsReplyAndFollowUp(t, "wait")
+	})
 	t.Run("C3 and in Lisbon over a forecast is answered", func(t *testing.T) { k.stopsAndAnswered(t, "andlisbon", "lisbon", false) })
 	t.Run("C3 stop, what about Porto in one breath is answered once, about Porto", func(t *testing.T) {
 		k.stopsAndAnswered(t, "stopporto", "porto", true)
@@ -153,6 +158,58 @@ func (k *contract) stopsAndQuiet(t *testing.T, name string) {
 	assert.Empty(t, c.edge.heardBetween(quietFrom, quietFrom.Add(5*time.Second)), "the agent was heard after it stopped")
 	assert.Empty(t, c.decisionsAfter(over.began(), string(ActAnswer)), "nothing answered after the stop")
 	assert.Len(t, all[Responding](c), 1, "one reply, the question's")
+}
+
+// C2. "Wait" 2 s into the list, which called a tool: the agent took its next turn, to say what
+// the tool came back with, while the list was still playing. Both stop within stopWithin of the
+// first word, none of either is heard after, and nothing is answered for 5 s.
+func (k *contract) stopsReplyAndFollowUp(t *testing.T, name string) {
+	release := make(chan struct{})
+	tools := &stubToolRunner{result: "Lisbon: sunny all week", run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		<-release
+		return llm.TextParts("Lisbon: sunny all week"), nil
+	}}
+	c := k.startWith(t, callSetup{mode: audiofloor.Act, instructions: replayInstructions, languages: []string{"en"}, tools: tools})
+	c.model.mu.Lock()
+	c.model.reply = []string{listReply}
+	c.model.calls = []llm.ToolCall{{ID: "call-1", Name: "get_weather", Arguments: `{"city":"Lisbon"}`}}
+	// The follow-up is still being written when the caller talks over the list.
+	c.model.then = []string{}
+	c.model.mu.Unlock()
+	c.edge.pause(time.Second)
+	c.edge.say("weather", k.weather)
+	c.until(func() bool { return len(c.edge.replyStarts()) > 0 }, 20*time.Second, "the reply began")
+	close(release)
+	c.until(func() bool { return len(c.model.requests()) == 2 }, 5*time.Second, "the tool's follow-up began")
+	time.Sleep(2 * time.Second)
+	over := c.edge.say(name, k.clips[name])
+	c.edge.pause(6 * time.Second)
+	c.settle(2*time.Second, time.Minute)
+	defer c.report()
+
+	assert.Empty(t, all[Error](c), "no failure")
+	requests := c.model.requests()
+	if !assert.Len(t, requests, 2, "the question's reply, and the tool's follow-up") {
+		return
+	}
+	reply, followUp := requests[0].ID, requests[1].ID
+	stopped, ok := c.interrupted(over.began())
+	if !assert.True(t, ok, "the agent was stopped") {
+		return
+	}
+	took := stopped.At.Sub(over.began())
+	assert.LessOrEqual(t, took, stopWithin, "the agent stopped %s after the caller's first word", took.Round(time.Millisecond))
+	var cut []string
+	for _, i := range all[Interrupted](c) {
+		if !i.At.Before(over.began()) {
+			cut = append(cut, i.E.TurnID)
+		}
+	}
+	assert.ElementsMatch(t, []string{reply, followUp}, cut, "the list and the follow-up were each stopped once")
+	quietFrom := stopped.At.Add(frameSlack)
+	assert.Empty(t, c.edge.heardBetween(quietFrom, quietFrom.Add(5*time.Second)), "the agent was heard after it stopped")
+	assert.Empty(t, c.decisionsAfter(over.began(), string(ActAnswer)), "nothing answered after the stop")
+	assert.Len(t, all[Responding](c), 2, "the question's reply and the tool's follow-up, and no more")
 }
 
 // C3. A correction or a request over the forecast list: the agent gives way, and the caller is
