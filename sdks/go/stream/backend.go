@@ -239,6 +239,11 @@ func (b Backend) Credentials() (http.Header, error) {
 }
 
 // Client is an HTTP client for the generated API, already carrying the credentials.
+//
+// It reaches the operations this SDK has no method for yet. The generated package is
+// regenerated from the router's spec as it changes, so its operation methods carry no
+// compatibility promise: a minor release may rename or reshape them. Prefer a method of
+// client, agents or stream wherever one exists.
 func (b Backend) Client() (*acceleration.ClientWithResponses, error) {
 	resolved, err := b.Resolve()
 	if err != nil {
