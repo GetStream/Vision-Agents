@@ -342,6 +342,7 @@ func (s *VendorRateLimitSuite) TestAVariableWithNoKeyIsServedOneNoneSeriesAtZero
 			ServeRateLimited(keyVar)
 
 			s.Equal(tc.want, s.limited(keyVar))
+			s.Empty(s.remaining(keyVar), "serving a variable keeps no headroom")
 		})
 	}
 }
