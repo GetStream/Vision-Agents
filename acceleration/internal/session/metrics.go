@@ -161,18 +161,22 @@ func modelCallFault(call agent.ModelCall) Fault {
 }
 
 // observeTurn notes, for endLabel, a turn the session's model failed and a turn the agent
-// answered. lost is the last turn whose model request failed, which the agent still
-// reports as responded, saying that the reply was lost; one agent's events share it. A
-// greeting is said without the caller asking, and a turn the prompt injection screen
-// refused is the caller's doing, not the model's.
+// answered. lost is the last turn whose reply request failed, which the agent still
+// reports as responded, saying that the reply was lost; one agent's events share it. The
+// flow controller's and a subagent's requests share the turn's id, but neither writes its
+// reply, so neither loses nor answers it. A greeting is said without the caller asking, and
+// a turn the prompt injection screen refused is the caller's doing, not the model's.
 func (s *Session) observeTurn(event Event, lost *string) {
 	switch typed := event.(type) {
 	case agent.ModelCall:
+		reply := typed.Purpose == llm.PurposeReply
 		switch {
 		case !typed.Success && typed.ErrorCode != string(llm.StatusCancelled):
-			*lost = typed.TurnID
+			if reply {
+				*lost = typed.TurnID
+			}
 			s.failure.Store(modelCallFault(typed))
-		case typed.Success && typed.TurnID == *lost:
+		case typed.Success && reply && typed.TurnID == *lost:
 			// Another provider answered the request the first one failed.
 			*lost = ""
 		}
