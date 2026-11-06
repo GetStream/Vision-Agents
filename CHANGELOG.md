@@ -402,6 +402,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A phone operation that fails on the router's side is a 500
 
 A phone operation (search, buy, release, attach, detach, a call, a transfer, pressing digits) whose failure was the router's own, such as a database read of the 10DLC gate, answered 400 `invalid_request` with the database's words. It now answers 500 "something went wrong" and the log keeps the error with its stack. Work waiting on the deployment's own Stream app answers 503 with `Retry-After`. A request the client can change keeps its 400 `invalid_request` and its words: a search filter or a call term a vendor cannot take, a number that cannot be dialled, an unknown vendor, an app the customer cannot act in. A call or a transfer with an empty `from` says it needs one of the customer's numbers to dial from. A setting the deployment lacks is a 400 `not_configured`: a vendor's credentials or a setting it buys or calls with (such as a connection id, or the signalling addresses a trunk needs), a public url, sip trunks, and Stream credentials, which now answer "phone lines are not available: this deployment has no Stream app to make them in". A Bird, DIDWW, Plivo or Vonage request that failed is a vendor failure as for the other vendors: 503 `phone_vendor_failed` without the vendor's words, and a search skips that vendor with "The phone vendor could not complete the request." (AI-2056).
+### Importing an export no longer writes over edits made on the target
+
+`POST /v1/data/import` wrote every row of an export, so a second import of an older export undid what had been done to those rows on the target since. An export for an app the target already holds is now refused with a 409 before any row is written, as `router replicate` refuses it; `?full=true` writes it anyway, and a batch of changes is applied as before (AI-2889).
 
 ### A code run that prints a lot no longer fills the router's memory
 
@@ -413,6 +416,10 @@ Under the proxy broker, `git lfs push` in a sandbox is refused at its first requ
 ### A sandbox session cut while it opens leaves no Daytona secret
 
 When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
+
+### A follower whose next changes were pruned is told to copy again
+
+A follower that read nothing after the source's recording started again kept its cursor there, and one whose every change after its cursor had aged out had none of its own kept. Either was answered the later changes, or none, with no refusal once those changes were pruned. Pruning now notes the last change of each app it drops, and a cursor below it is answered 410, so `router replicate` says to run with `--full` (AI-2918, #1806).
 
 ### A move whose recording lapsed is told to copy again
 

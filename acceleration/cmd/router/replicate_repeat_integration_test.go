@@ -360,6 +360,28 @@ func (s *ReplicateRepeatSuite) TestACursorTheSourceNoLongerKeepsTheChangesOfName
 	s.Equal("before the copy", s.label(1))
 }
 
+// A copy made right after the source's recording started again carries on from that start. A
+// change there after it that aged out and was pruned names --full rather than being skipped.
+func (s *ReplicateRepeatSuite) TestACursorAtTheSourcesRestartWhoseNextChangeWasPrunedNamesFull() {
+	s.recorded(1)
+	s.recorded(2)
+	s.Require().NoError(s.once("acme", false))
+	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE data_change_capture SET expires_at = now() - interval '1 minute'")
+	s.Require().NoError(err)
+	s.Require().NoError(s.once("acme", true))
+	s.tagged(s.source, 2, "pruned")
+	_, err = s.source.DB().ExecContext(s.ctx, "UPDATE data_changes SET at = now() - interval '30 days'")
+	s.Require().NoError(err)
+	s.tagged(s.source, 1, "kept")
+	removed, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
+	s.Require().NoError(err)
+	s.Require().Positive(removed)
+
+	s.Require().ErrorContains(s.once("acme", false), "no longer keeps the changes since that cursor: run this again with --full")
+
+	s.Equal("", s.label(1), "nothing after the hole is applied")
+}
+
 func (s *ReplicateRepeatSuite) TestARunThatBringsNoChangesStillSavesWhenItReadTheSource() {
 	s.recorded(1)
 	s.Require().NoError(s.once("acme", false))
