@@ -704,10 +704,6 @@ func (s *SessionSuite) TestTheEndOfASessionWhoseTurnsAlsoAskedOtherModels() {
 		modelCall("flow", "turn-1", "deepseek", false, "create_failed"), answer("turn-1"),
 	}, lostTurn("turn-2")...)...), "the flow controller failing after the reply was written")
 	s.Equal(EndClosed, turnEnd(false, append([]Event{
-		modelCall("flow", "turn-1", "deepseek", false, "upstream_error"),
-		modelCall("reply", "turn-1", "openai", true, ""), answer("turn-1"),
-	}, lostTurn("turn-2")...)...), "the flow controller failing before the reply was written")
-	s.Equal(EndClosed, turnEnd(false, append([]Event{
 		modelCall("reply", "turn-1", "openai", true, ""),
 		modelCall("subagent", "turn-1", "openai", false, "create_failed"), answer("turn-1"),
 	}, lostTurn("turn-2")...)...), "a subagent failing in an answered turn")
@@ -729,6 +725,11 @@ func (s *SessionSuite) TestTheEndOfASessionTheOtherModelsCannotChange() {
 		modelCall("reply", "turn-1", "openai", false, "upstream_error"),
 		modelCall("reply", "turn-1", "anthropic", true, ""), answer("turn-1"),
 	), "a second provider answering the reply the first failed")
+	s.Equal(EndClosed, turnEnd(false,
+		modelCall("flow", "turn-1", "deepseek", false, "upstream_error"),
+		modelCall("reply", "turn-1", "openai", true, ""), answer("turn-1"),
+		modelCall("reply", "turn-2", "openai", false, "create_failed"), refused, apology("turn-2"),
+	), "the flow controller failing before the reply was written")
 	s.Equal(EndClosed, turnEnd(false,
 		modelCall("reply", "turn-1", "openai", false, "upstream_error"),
 		modelCall("reply", "turn-1", "anthropic", true, ""), answer("turn-1"),
