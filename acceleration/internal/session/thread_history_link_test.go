@@ -3,11 +3,14 @@
 package session
 
 import (
+	"os"
 	"time"
 
 	"github.com/google/uuid"
 
+	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/testenv"
 )
 
 // threadStory is the example of the link's history on a new SMS thread of number: the
@@ -81,4 +84,31 @@ func (s *EpisodeReadingSuite) TestAThreadSessionOfAnUnlinkedNumberIsHandedItsWho
 	for _, said := range []string{"penicillin", "15:00", "it is Bob"} {
 		s.Contains(told, said)
 	}
+}
+
+// Defect: a session on a thread whose link's boundary cannot be read is handed the whole thread,
+// what the number said before its link included. The session is refused instead: the boundary
+// is the linked user's word on what they may be told.
+func (s *EpisodeReadingSuite) TestAThreadSessionWhoseBoundaryCannotBeReadIsRefused() {
+	thread := s.thread("sms-author")
+	s.textFrom("+15550100117", thread, -60, "allergic to penicillin")
+	// A database of this test's own, whose boundaries cannot be read: no other suite reads it.
+	broken, err := store.Open(testenv.Database(os.Getenv("ROUTER_POSTGRES_DSN"), "episode_reading_broken"))
+	s.Require().NoError(err)
+	s.T().Cleanup(func() { s.Require().NoError(broken.Close()) })
+	s.Require().NoError(broken.Migrate(s.ctx))
+	_, err = broken.DB().ExecContext(s.ctx, "DROP TABLE IF EXISTS user_phone_history")
+	s.Require().NoError(err)
+	reachable := s.store
+	s.store = broken
+	s.T().Cleanup(func() { s.store = reachable })
+	manager := s.managerOver()
+
+	_, err = manager.Create(persistent.RouterOpensThread(s.ctx, thread), Spec{
+		CustomerID: s.customerID, ConfigID: s.configID, AgentName: "Athena",
+		Text: true, PersistConversation: true, ConversationID: thread, Thread: true,
+		LLMTarget: "en-low-latency", Instructions: "be brief",
+	})
+
+	s.ErrorContains(err, "thread history since")
 }
