@@ -75,7 +75,7 @@ class ConnectionLastValidation:
         d = dict(src_dict)
         checked_at = datetime.datetime.fromisoformat(d.pop("checked_at"))
 
-        status = ConnectionValidationStatus(d.pop("status"))
+        status = ConnectionValidationStatus._decode(d.pop("status"))
 
         code = d.pop("code", UNSET)
 

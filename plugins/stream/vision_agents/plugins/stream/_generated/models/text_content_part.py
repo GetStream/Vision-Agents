@@ -45,7 +45,7 @@ class TextContentPart:
         d = dict(src_dict)
         text = d.pop("text")
 
-        type_ = TextContentPartType(d.pop("type"))
+        type_ = TextContentPartType._decode(d.pop("type"))
 
         text_content_part = cls(
             text=text,

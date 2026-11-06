@@ -121,7 +121,7 @@ class IndexedKnowledgeDocument:
 
         source = d.pop("source")
 
-        state = KnowledgeDocumentState(d.pop("state"))
+        state = KnowledgeDocumentState._decode(d.pop("state"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

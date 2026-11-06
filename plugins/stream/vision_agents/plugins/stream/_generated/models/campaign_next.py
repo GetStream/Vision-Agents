@@ -50,7 +50,7 @@ class CampaignNext:
         if isinstance(_end, Unset):
             end = UNSET
         else:
-            end = CampaignNextEnd(_end)
+            end = CampaignNextEnd._decode(_end)
 
         step = d.pop("step", UNSET)
 

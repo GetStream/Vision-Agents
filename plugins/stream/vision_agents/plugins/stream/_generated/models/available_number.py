@@ -87,7 +87,7 @@ class AvailableNumber:
         capabilities = []
         _capabilities = d.pop("capabilities")
         for capabilities_item_data in _capabilities:
-            capabilities_item = PhoneCapability(capabilities_item_data)
+            capabilities_item = PhoneCapability._decode(capabilities_item_data)
 
             capabilities.append(capabilities_item)
 
@@ -106,7 +106,7 @@ class AvailableNumber:
         if isinstance(_number_type, Unset):
             number_type = UNSET
         else:
-            number_type = PhoneNumberType(_number_type)
+            number_type = PhoneNumberType._decode(_number_type)
 
         region = d.pop("region", UNSET)
 

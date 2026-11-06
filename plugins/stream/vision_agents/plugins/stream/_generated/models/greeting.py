@@ -57,7 +57,7 @@ class Greeting:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = GreetingMode(_mode)
+            mode = GreetingMode._decode(_mode)
 
         greeting = cls(
             text=text,

@@ -97,6 +97,7 @@ fn types(spec: &Value) -> String {
 
     let mut file = syn::parse2::<syn::File>(space.to_stream()).expect("typify emits Rust");
     defaults(&mut file);
+    unlisted(&mut file);
     format!(
         "{HEADER}//! Every schema in the spec, as a Rust type.\n#![allow(clippy::all, missing_docs)]\n\n{}",
         prettyplease::unparse(&file)
@@ -145,6 +146,87 @@ fn defaults(file: &mut syn::File) {
             });
         if defaultable {
             declared.attrs.push(derive.clone());
+        }
+    }
+}
+
+/// Gives every string enum an `Unlisted` variant holding a value the spec does not list, so an answer
+/// from a router that added a value still decodes, and the value reads and is written back as it came.
+///
+/// serde tries `#[serde(untagged)]` only after every named variant, so a listed value decodes as
+/// before. `FromStr` and `TryFrom` are left strict: a caller who parses a value gets an error for
+/// one the spec does not list rather than `Unlisted`. The variant holds a `String`, so these enums
+/// are no longer `Copy`.
+fn unlisted(file: &mut syn::File) {
+    let variant: syn::Variant = syn::parse_quote! {
+        /// A value this SDK's spec does not list, as the router sent it.
+        #[serde(untagged)]
+        Unlisted(::std::string::String)
+    };
+    let arm: syn::Arm = syn::parse_quote! { Self::Unlisted(ref value) => f.write_str(value), };
+    let mut names = Vec::new();
+    for item in &mut file.items {
+        let syn::Item::Enum(declared) = item else {
+            continue;
+        };
+        let strings = declared.variants.iter().all(|each| {
+            matches!(each.fields, syn::Fields::Unit)
+                && each
+                    .attrs
+                    .iter()
+                    .any(|attribute| attribute.path().is_ident("serde"))
+        });
+        if !strings {
+            continue;
+        }
+        assert!(
+            declared
+                .variants
+                .iter()
+                .all(|each| each.ident != "Unlisted"),
+            "{} lists a value named Unlisted",
+            declared.ident
+        );
+        for attribute in &mut declared.attrs {
+            if !attribute.path().is_ident("derive") {
+                continue;
+            }
+            let derived = attribute
+                .parse_args_with(
+                    syn::punctuated::Punctuated::<syn::Path, syn::Token![,]>::parse_terminated,
+                )
+                .expect("a derive list");
+            let kept = derived.into_iter().filter(|path| !path.is_ident("Copy"));
+            *attribute = syn::parse_quote! { #[derive(#(#kept),*)] };
+        }
+        declared.variants.push(variant.clone());
+        names.push(declared.ident.clone());
+    }
+    for item in &mut file.items {
+        let syn::Item::Impl(implemented) = item else {
+            continue;
+        };
+        let display = implemented.trait_.as_ref().is_some_and(|(path, _)| {
+            path.segments
+                .last()
+                .is_some_and(|last| last.ident == "Display")
+        });
+        let syn::Type::Path(target) = implemented.self_ty.as_ref() else {
+            continue;
+        };
+        if !display || !names.iter().any(|name| target.path.is_ident(name)) {
+            continue;
+        }
+        for member in &mut implemented.items {
+            let syn::ImplItem::Fn(function) = member else {
+                continue;
+            };
+            let Some(syn::Stmt::Expr(syn::Expr::Match(matched), _)) =
+                function.block.stmts.last_mut()
+            else {
+                panic!("Display for {} is not a match", target.to_token_stream());
+            };
+            matched.arms.push(arm.clone());
         }
     }
 }

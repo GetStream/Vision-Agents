@@ -464,7 +464,7 @@ class AgentConfigRequest:
         if isinstance(_episode_cards, Unset):
             episode_cards = UNSET
         else:
-            episode_cards = EpisodeCardsMode(_episode_cards)
+            episode_cards = EpisodeCardsMode._decode(_episode_cards)
 
         _floor_control = d.pop("floor_control", UNSET)
         floor_control: FloorControl | Unset
@@ -487,7 +487,7 @@ class AgentConfigRequest:
         if isinstance(_harness, Unset):
             harness = UNSET
         else:
-            harness = Harness(_harness)
+            harness = Harness._decode(_harness)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -513,7 +513,7 @@ class AgentConfigRequest:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = AgentMode(_mode)
+            mode = AgentMode._decode(_mode)
 
         _plugin_events = d.pop("plugin_events", UNSET)
         plugin_events: list[AgentConfigRequestPluginEventsItem] | Unset = UNSET
@@ -572,14 +572,14 @@ class AgentConfigRequest:
         if isinstance(_role, Unset):
             role = UNSET
         else:
-            role = AgentRole(_role)
+            role = AgentRole._decode(_role)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
             sandbox = UNSET
         else:
-            sandbox = Sandbox(_sandbox)
+            sandbox = Sandbox._decode(_sandbox)
 
         _sandbox_options = d.pop("sandbox_options", UNSET)
         sandbox_options: SandboxOptions | Unset

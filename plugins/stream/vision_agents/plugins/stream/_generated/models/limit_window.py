@@ -90,7 +90,7 @@ class LimitWindow:
         d = dict(src_dict)
         baseline_micros = d.pop("baseline_micros")
 
-        interval = LimitInterval(d.pop("interval"))
+        interval = LimitInterval._decode(d.pop("interval"))
 
         on_grant = d.pop("on_grant")
 

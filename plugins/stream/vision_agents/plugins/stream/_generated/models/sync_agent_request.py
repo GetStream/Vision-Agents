@@ -520,7 +520,7 @@ class SyncAgentRequest:
         if isinstance(_harness, Unset):
             harness = UNSET
         else:
-            harness = Harness(_harness)
+            harness = Harness._decode(_harness)
 
         instructions = d.pop("instructions", UNSET)
 
@@ -575,7 +575,7 @@ class SyncAgentRequest:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = AgentMode(_mode)
+            mode = AgentMode._decode(_mode)
 
         _plugin_events = d.pop("plugin_events", UNSET)
         plugin_events: list[SyncAgentRequestPluginEventsItem] | Unset = UNSET
@@ -627,14 +627,14 @@ class SyncAgentRequest:
         if isinstance(_role, Unset):
             role = UNSET
         else:
-            role = AgentRole(_role)
+            role = AgentRole._decode(_role)
 
         _sandbox = d.pop("sandbox", UNSET)
         sandbox: Sandbox | Unset
         if isinstance(_sandbox, Unset):
             sandbox = UNSET
         else:
-            sandbox = Sandbox(_sandbox)
+            sandbox = Sandbox._decode(_sandbox)
 
         _sandbox_options = d.pop("sandbox_options", UNSET)
         sandbox_options: SandboxOptions | Unset
