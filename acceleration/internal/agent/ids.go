@@ -311,7 +311,7 @@ func nameWasGiven(history []llm.Message, name string) bool {
 				if !strings.Contains(words(value), wanted) {
 					return false
 				}
-				rest := held.cut(value, given.wrote)
+				rest := held.cut(value, given.wrote, nil)
 				return strings.Contains(words(rest), wanted)
 			case []any:
 				return slices.ContainsFunc(value, contains)
@@ -335,10 +335,15 @@ func nameWasGiven(history []llm.Message, name string) bool {
 	return false
 }
 
-// ownLines are the lines the agent wrote, in its replies and in the arguments of its calls (asWritten),
-// each alphanumeric. A tool that reads back a channel, a thread or a message returns them too, and
-// what the agent wrote is no source of an ID, a number or a name in it.
-type ownLines []string
+// ownLines are the lines the agent wrote, in its replies and in the arguments of its calls (asWritten).
+// A tool that reads back a channel, a thread or a message returns them too, and what the agent wrote is
+// no source of an ID, a number or a name in it.
+type ownLines []writtenLine
+
+// writtenLine is a line the agent wrote, as it wrote it and alphanumeric.
+type writtenLine struct {
+	text, letters string
+}
 
 // write adds the lines of what an assistant message says and of the arguments of each call it makes.
 func (own *ownLines) write(message llm.Message) {
@@ -358,7 +363,7 @@ func (own *ownLines) send(message llm.Message) {
 // add adds the lines of text.
 func (own *ownLines) add(text string) {
 	for _, line := range strings.Split(text, "\n") {
-		*own = append(*own, alphanumeric(line))
+		*own = append(*own, writtenLine{line, alphanumeric(line)})
 	}
 }
 
@@ -378,11 +383,92 @@ type heldLine struct {
 func (own ownLines) holding(wanted ...string) heldLines {
 	var held heldLines
 	for at, line := range own {
-		if !slices.Contains(wanted, line) && slices.ContainsFunc(wanted, func(value string) bool { return strings.Contains(line, value) }) {
-			held = append(held, heldLine{line, at})
+		if !slices.Contains(wanted, line.letters) && slices.ContainsFunc(wanted, func(value string) bool { return strings.Contains(line.letters, value) }) {
+			held = append(held, heldLine{line.letters, at})
 		}
 	}
 	return held
+}
+
+// numberAt is where a number guard finds the number it checks in a text, from byte start to end, with the
+// digits it reads it as.
+type numberAt struct {
+	start, end int
+	digits     string
+}
+
+// holdingNumber returns the lines that hold a number where numbers, the guard's own reading of a text, finds
+// it, each spelled with the number in it as one word. "Booked at 10:56, 30 min" holds no 5630: its digits
+// only run together once its separators are dropped. Only a line with one of wanted in it, the number's
+// forms, is read. A line that is the number alone, an argument's, is in alone, not held: every line that
+// gives the number holds it.
+func (own ownLines) holdingNumber(numbers func(string) []numberAt, wanted ...string) (held, alone heldLines) {
+	for at, line := range own {
+		if !slices.ContainsFunc(wanted, func(value string) bool { return strings.Contains(line.letters, value) }) {
+			continue
+		}
+		found := numbers(line.text)
+		if len(found) == 0 {
+			continue
+		}
+		written, _, _ := spelled(line.text, found)
+		if written == numberWord(found[0].digits) {
+			alone = append(alone, heldLine{written, at})
+		} else {
+			held = append(held, heldLine{written, at})
+		}
+	}
+	return held, alone
+}
+
+// echoes reports whether content, a tool's result once the agent had sent upto lines, writes back only
+// what the agent sent: each value in it (true, false and null aside) is a line the agent sent, one with the
+// number in it among numbered (holdingNumber) and read as numbers reads it, in any of the number's forms. A
+// lookup that answers {"last4":"5630"} to last4=5630 gives no number; a record that writes it beside data
+// of its own, {"member":"Ana Lind","last4":"5630"}, does.
+func (own ownLines) echoes(content string, upto int, numbered heldLines, numbers func(string) []numberAt) bool {
+	var value any
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.UseNumber()
+	if !json.Valid([]byte(content)) || decoder.Decode(&value) != nil {
+		value = content
+	}
+	var values []string
+	var walk func(any)
+	walk = func(value any) {
+		switch typed := value.(type) {
+		case string:
+			values = append(values, typed)
+		case json.Number:
+			values = append(values, typed.String())
+		case []any:
+			for _, inner := range typed {
+				walk(inner)
+			}
+		case map[string]any:
+			for _, inner := range typed {
+				walk(inner)
+			}
+		}
+	}
+	walk(value)
+	echoed := false
+	for _, written := range values {
+		found := numbers(written)
+		if len(found) == 0 {
+			letters := alphanumeric(written)
+			if letters != "" && !slices.ContainsFunc(own[:upto], func(line writtenLine) bool { return line.letters == letters }) {
+				return false
+			}
+			continue
+		}
+		letters, _, _ := spelled(written, found)
+		if !slices.ContainsFunc(numbered, func(line heldLine) bool { return line.at < upto && line.line == letters }) {
+			return false
+		}
+		echoed = true
+	}
+	return echoed
 }
 
 // before returns the lines the agent had written once it had written upto lines.
@@ -405,28 +491,20 @@ func (held heldLines) readBack(text string, upto int) bool {
 // cut returns text, a tool's, without the lines held by the time the agent had written upto lines
 // that it reads back (readBack), each cut where it stands: what is left is what the tool wrote beside
 // them. A record that holds a note the agent saved, "Ana | phone +1 555 010 0199 | notes: Call Ana
-// back at +1 555 010 0199", still gives the phone.
-func (held heldLines) cut(text string, upto int) string {
+// back at +1 555 010 0199", still gives the phone. numbers, nil for none, finds the number the lines
+// were spelled with (holdingNumber), so that a line read back with the number in another form, "+1
+// 5550100199" for "5550100199", is cut too.
+func (held heldLines) cut(text string, upto int, numbers func(string) []numberAt) string {
 	held = held.before(upto)
 	if len(held) == 0 {
 		return text
 	}
 	text = html.UnescapeString(text)
-	// letters are text alphanumeric, as alphanumeric writes it, with the span of text each byte
-	// of it stands for.
-	var letters strings.Builder
-	var from, to []int
-	for at, r := range text {
-		if !unicode.IsLetter(r) && !unicode.IsDigit(r) {
-			continue
-		}
-		lower := string(unicode.ToLower(r))
-		for range len(lower) {
-			from, to = append(from, at), append(to, at+utf8.RuneLen(r))
-		}
-		letters.WriteString(lower)
+	var found []numberAt
+	if numbers != nil {
+		found = numbers(text)
 	}
-	written := letters.String()
+	written, from, to := spelled(text, found)
 	gone := make([]bool, len(text))
 	for _, own := range held {
 		for start := 0; ; {
@@ -451,6 +529,44 @@ func (held heldLines) cut(text string, upto int) string {
 		}
 	}
 	return kept.String()
+}
+
+// numberWord is how spelled writes a number: its digits between two marks no alphanumeric text holds.
+func numberWord(digits string) string {
+	return "#" + digits + "#"
+}
+
+// spelled returns text alphanumeric, as alphanumeric writes it, but for each of numbers in it, which is
+// written as one word (numberWord), with the span of text each byte of it stands for. numbers are in the
+// order they stand in text; those that overlap are one.
+func spelled(text string, numbers []numberAt) (written string, from, to []int) {
+	var letters strings.Builder
+	next := 0
+	for at := 0; at < len(text); {
+		if next < len(numbers) && numbers[next].start <= at {
+			number := numbers[next]
+			for next++; next < len(numbers) && numbers[next].start < number.end; next++ {
+				number.end = max(number.end, numbers[next].end)
+			}
+			word := numberWord(number.digits)
+			for range len(word) {
+				from, to = append(from, number.start), append(to, number.end)
+			}
+			letters.WriteString(word)
+			at = number.end
+			continue
+		}
+		r, size := utf8.DecodeRuneInString(text[at:])
+		if unicode.IsLetter(r) || unicode.IsDigit(r) {
+			lower := string(unicode.ToLower(r))
+			for range len(lower) {
+				from, to = append(from, at), append(to, at+size)
+			}
+			letters.WriteString(lower)
+		}
+		at += size
+	}
+	return letters.String(), from, to
 }
 
 // toolResult is a successful tool result, with how many lines the agent had sent by then (ownLines).
@@ -527,10 +643,20 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 		if given(digits) {
 			continue
 		}
-		held := sent.holding(text)
+		// numbers finds each number written (numberGroup) that holds text, as given reads a source.
+		numbers := func(source string) []numberAt {
+			var found []numberAt
+			for _, span := range numberGroup.FindAllStringIndex(source, -1) {
+				if digits := digitGroups(source[span[0]:span[1]]); given(digits) {
+					found = append(found, numberAt{span[0], span[1], digits[0]})
+				}
+			}
+			return found
+		}
+		held, alone := sent.holdingNumber(numbers, text)
 		returns := false
 		for i, result := range results {
-			if !given(groups[i]) {
+			if !given(groups[i]) || sent.echoes(result.content, result.wrote, slices.Concat(held, alone), numbers) {
 				continue
 			}
 			if len(held.before(result.wrote)) == 0 {
@@ -541,7 +667,7 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 				lines[i] = strings.Split(asWritten(result.content), "\n")
 			}
 			if slices.ContainsFunc(lines[i], func(line string) bool {
-				rest := held.cut(line, result.wrote)
+				rest := held.cut(line, result.wrote, numbers)
 				return given(digitGroups(rest))
 			}) {
 				returns = true
@@ -572,9 +698,11 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 	if local, ok := strings.CutPrefix(wanted, "1"); ok && len(local) == 10 {
 		forms = append(forms, local)
 	}
-	// gives reports whether source writes the number as its digits alone.
-	gives := func(source string) bool {
-		for _, run := range writtenNumber.FindAllString(source, -1) {
+	// written finds where source writes the number as its digits alone.
+	written := func(source string) []numberAt {
+		var found []numberAt
+		for _, at := range writtenNumber.FindAllStringIndex(source, -1) {
+			run := source[at[0]:at[1]]
 			groups := digitGroups(run)
 			spans := numberGroup.FindAllStringIndex(run, -1)
 			// Digits run on from a number unless a mark sets them off: before it only a closing
@@ -594,43 +722,46 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 			for start := range groups {
 				for end := start + 1; end <= len(groups); end++ {
 					digits := strings.Join(groups[start:end], "")
-					if digits == wanted && before(start) && after(end) {
-						return true
-					}
 					// A US number written without its country code is the same line, unless
 					// digits run on from it unmarked, as a country code or a second number do.
-					if len(digits) == 10 && "1"+digits == wanted &&
-						before(start) && after(end) {
-						return true
+					if (digits == wanted || len(digits) == 10 && "1"+digits == wanted) && before(start) && after(end) {
+						found = append(found, numberAt{at[0] + spans[start][0], at[0] + spans[end-1][1], wanted})
 					}
 				}
 			}
 		}
-		return false
+		return found
 	}
+	// gives reports whether source writes the number as its digits alone.
+	gives := func(source string) bool { return len(written(source)) > 0 }
 	if gives(told) {
 		return "", false
 	}
-	// held are the lines the agent sent with the number in them (ownLines.send), and sent how many it
-	// sent: read as the call goes, a source early in a long call is found without reading the rest.
-	var held heldLines
-	sent := 0
+	// sent are the lines the agent sent (ownLines.send), held those with the number in them and numbered
+	// those and the ones that are the number alone (holdingNumber): read as the call goes, a source early in
+	// a long call is found without reading the rest.
+	var sent ownLines
+	var held, numbered heldLines
 	for _, message := range history {
 		switch message.Role {
 		case llm.Assistant:
 			var own ownLines
 			own.send(message)
-			for _, line := range own.holding(forms...) {
-				held = append(held, heldLine{line.line, sent + line.at})
+			lines, alone := own.holdingNumber(written, forms...)
+			for _, line := range lines {
+				held = append(held, heldLine{line.line, len(sent) + line.at})
 			}
-			sent += len(own)
+			for _, line := range slices.Concat(lines, alone) {
+				numbered = append(numbered, heldLine{line.line, len(sent) + line.at})
+			}
+			sent = append(sent, own...)
 		case llm.ToolResult:
 			// A refusal quotes the value refused: "56305" refused let 5630 through.
-			if failedResult(message.Content) || !gives(message.Content) {
+			if failedResult(message.Content) || !gives(message.Content) || sent.echoes(message.Content, len(sent), numbered, written) {
 				continue
 			}
 			if len(held) == 0 || slices.ContainsFunc(strings.Split(asWritten(message.Content), "\n"), func(line string) bool {
-				rest := held.cut(line, sent)
+				rest := held.cut(line, len(sent), written)
 				return gives(rest)
 			}) {
 				return "", false
