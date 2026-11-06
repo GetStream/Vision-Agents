@@ -39,6 +39,7 @@ A table variable the deployment leaves unset is served too, as one series at 0 u
 ### The router's metrics show its own API requests
 
 `/metrics` has `router_http_requests_total{method,route,status}`, every request the API answered by route template and status class, and `router_http_request_seconds`, how long request/response answers took to begin. Sockets and streams are counted but not timed (#1786).
+
 ### Work is sold at its cost × 1.08
 
 `pricing.PriceFactorBps` is 10800, down from 12000. Every entry written without a price of its own is priced at its vendor's rates × 1.08: a price list's first load and the items a release adds that the list has never priced. An amount a vendor quotes outright, such as a number's monthly rental, is charged at it × 1.08 too. A million tokens that cost the vendor $1 are $1.08, and still $0.20 on the customer's own key (`pricing.BYOKFeeBps` is unchanged). No price already in a list moves with the factor: each deployment's stored prices are lowered through the management API, by a price change of their own (AI-2946).
@@ -447,6 +448,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A session whose every reply was lost no longer counts as closed when the flow controller answered
 
 A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
+
 ### A phone operation that fails on the router's side is a 500
 
 A phone operation (search, buy, release, attach, detach, a call, a transfer, pressing digits) whose failure was the router's own, such as a database read of the 10DLC gate, answered 400 `invalid_request` with the database's words. It now answers 500 "something went wrong" and the log keeps the error with its stack. Work waiting on the deployment's own Stream app answers 503 with `Retry-After`. A request the client can change keeps its 400 `invalid_request` and its words: a search filter or a call term a vendor cannot take, a number that cannot be dialled, an unknown vendor, an app the customer cannot act in. A call or a transfer with an empty `from` says it needs one of the customer's numbers to dial from. A setting the deployment lacks is a 400 `not_configured`: a vendor's credentials or a setting it buys or calls with (such as a connection id, or the signalling addresses a trunk needs), a public url, sip trunks, and Stream credentials, which now answer "phone lines are not available: this deployment has no Stream app to make them in". A Bird, DIDWW, Plivo or Vonage request that failed is a vendor failure as for the other vendors: 503 `phone_vendor_failed` without the vendor's words, and a search skips that vendor with "The phone vendor could not complete the request." (AI-2056).
