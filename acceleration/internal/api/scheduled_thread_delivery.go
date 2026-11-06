@@ -91,12 +91,12 @@ func (s *Server) deliverOnThread(ctx context.Context, delivery scheduledDelivery
 	// A retried occurrence whose turn the thread already holds is a duplicate follow-up, which
 	// runs nothing (Session.FollowUp); its reply is read back, and sent unless it went out.
 	_, _, retried := found.FollowUpReply(delivery.CommandID)
-	if err := followUpWithin(turn, found, delivery); err != nil {
+	if err := s.followUpWithin(turn, found, delivery); err != nil {
 		return "", "", err
 	}
 	// The reply as the conversation stored it, with its files: as it finished, or read back
 	// for a follow-up that finished on an earlier attempt.
-	reply, err := readBackReply(turn, found, delivery.CommandID)
+	reply, err := s.readBackReply(turn, found, delivery.CommandID)
 	if err != nil {
 		return "", "", err
 	}

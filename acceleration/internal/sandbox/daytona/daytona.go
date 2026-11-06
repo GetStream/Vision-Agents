@@ -34,6 +34,27 @@ const apiKeyEnvVar = "DAYTONA_API_KEY"
 const defaultTimeout = 60 * time.Second
 const defaultRunTimeout = 30 * time.Second
 
+// sdkTimeout is the SDK's own HTTP client timeout, which it uses when it is given no client (sdk-go
+// v0.211.2 pkg/daytona/client.go:87, :348).
+const sdkTimeout = 60 * time.Second
+
+// boundedClient is a client for the SDK that bounds what the router reads of the toolbox's
+// answers. Given none it has the SDK's own timeout; given one it is a copy of it, with its timeout
+// and whatever it carries, so the caller's client is not changed.
+func boundedClient(given *http.Client) *http.Client {
+	client := &http.Client{Timeout: sdkTimeout}
+	if given != nil {
+		copied := *given
+		client = &copied
+	}
+	next := client.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	client.Transport = bounded{next: next}
+	return client
+}
+
 // defaultIdleStop is Daytona's own: a sandbox nothing ran in for 15 minutes is stopped.
 const defaultIdleStop = 15 * time.Minute
 
@@ -204,7 +225,8 @@ func New(o Options) (*Sandbox, error) {
 	if o.Logger == nil {
 		o.Logger = slog.Default()
 	}
-	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, Target: o.Target, HTTPClient: o.HTTPClient})
+	httpClient := boundedClient(o.HTTPClient)
+	c, err := sdk.NewClientWithConfig(&types.DaytonaConfig{APIKey: o.APIKey, APIUrl: o.APIURL, Target: o.Target, HTTPClient: httpClient})
 	if err != nil {
 		return nil, stack.Wrap(err)
 	}
@@ -286,7 +308,7 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	// Daytona's default one, whose sandbox's timeout is defaultTimeout.
 	fetch, cancel := context.WithTimeout(ctx, s.check)
 	defer cancel()
-	result := sandbox.Result{Output: ran.Result, ExitCode: ran.ExitCode}
+	result := sandbox.Result{Output: cutText(ran.Result), ExitCode: ran.ExitCode}
 	outputs = distinct(outputs)
 	for i, wanted := range outputs {
 		if i == sandbox.MaxFiles {

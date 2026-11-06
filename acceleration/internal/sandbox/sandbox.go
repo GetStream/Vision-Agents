@@ -25,6 +25,17 @@ const MaxFiles = 4
 // MaxFileBytes is the largest file a run may hand back.
 const MaxFileBytes = 20 << 20
 
+// MaxOutputBytes is the most of what a run printed that comes back: a longer output is cut to fit
+// and ends with OutputCut, within the same bound. It protects the router's memory, not the model's
+// context: on base a run's output reached the model whole (internal/agent/telephony.go,
+// internal/harness/manager.go), so the bound is far above what code prints for a person to read
+// and below what one run can print in a loop. The router holds about 6 MiB of one output at a time,
+// a few times that while cutting, and never more as the answer grows (maxHeldBytes in daytona/bounded.go).
+const MaxOutputBytes = 1 << 20
+
+// OutputCut ends an output cut at MaxOutputBytes, so the model knows it read only the start.
+const OutputCut = "\n[output cut: the code printed more than 1 MiB; print less, or only the part you need]"
+
 // MaxTimeout is the longest one run of code may be allowed.
 const MaxTimeout = 30 * time.Minute
 
@@ -32,7 +43,7 @@ const MaxTimeout = 30 * time.Minute
 type Result struct {
 	// Output is everything the code printed. A sandbox runs it the way a shell would, so
 	// what went to output and what went to errors arrive interleaved, as a person reading
-	// a terminal would see them.
+	// a terminal would see them. Past MaxOutputBytes it is cut and ends with OutputCut.
 	Output string
 	// ExitCode is what the process returned. Zero is success.
 	ExitCode int

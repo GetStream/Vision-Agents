@@ -428,6 +428,16 @@ type Server struct {
 	imageHTTP *http.Client
 	// callbackHTTP posts a finished recording to its callback.
 	callbackHTTP *http.Client
+	// scheduledPoll is how often a delivery waiting on the holding session looks again: a call
+	// ending, a peer's directory entry lapsing (a Redis round trip). A reply finishing, or a
+	// person's reply a follow-up waits out, is looked for every replyPoll.
+	scheduledPoll time.Duration
+	// replyPoll is how often a delivery reading back a follow-up's reply looks at it again. A
+	// look reads the conversation held in memory (conversation.Conversation.FollowUpReply,
+	// Session.FollowUp: a lock and a map), so it costs next to nothing; at scheduledPoll a reply
+	// that finished just after a look waited up to 2 s to leave, and every thread task took 2 s
+	// at least. 100 ms is not a delay a person waiting for a text notices.
+	replyPoll time.Duration
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -564,6 +574,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		authMode:           authMode,
 		dataRetention:      retention,
 		exportWritesWait:   exportWritesWait,
+		scheduledPoll:      2 * time.Second,
+		replyPoll:          100 * time.Millisecond,
 		quota:              options.Quota,
 		policies:           options.Policies,
 		connectors:         options.Connectors,
