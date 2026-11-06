@@ -594,10 +594,12 @@ type Agent struct {
 	// history: a request for help was written to the harness, not said, so remembering
 	// it would have the model reading its own instructions back on the next turn.
 	spoken strings.Builder
-	// voicedChars and voicedMs are the characters and the audio of the syntheses the voice
+	// voicedChars and voicedMs are the characters and the audio of the syntheses ratedVoice
 	// finished whole on the call: its speaking rate, by which how long the caller has heard
-	// an utterance says how much of it they have heard (replyHeardLocked).
+	// an utterance says how much of it they have heard (replyHeardLocked). A voice that
+	// replaces another speaks at a rate of its own, measured afresh.
 	voicedChars, voicedMs float64
+	ratedVoice            *ttsrouter.Session
 	// pausesAsked says chorus-asr transcribes a caller of this agent and asks the model about
 	// their pauses for it (actsOnChorusASR).
 	pausesAsked atomic.Bool
@@ -3370,6 +3372,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				// Cut short, a synthesis was billed all of its text and made only part of its
 				// audio, so only whole ones say how fast the voice speaks.
 				a.mu.Lock()
+				if a.ratedVoice != voice {
+					a.ratedVoice, a.voicedChars, a.voicedMs = voice, 0, 0
+				}
 				a.voicedChars += float64(typed.Characters)
 				a.voicedMs += typed.AudioDurationMs
 				a.mu.Unlock()

@@ -5454,6 +5454,41 @@ func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
 		"the reply was not spoken in the voice that replaced the lost one")
 }
 
+// How much of a reply the caller has heard is told by the speaking rate of the voice saying it:
+// a voice that replaces a lost one has a rate of its own, which the agent can't tell until it
+// has said something whole. Told by the lost voice's, a faster or slower one was taken to have
+// said more or less than it had.
+func (s *AgentSuite) TestAVoiceThatReplacesALostOneIsHeardAtItsOwnRate() {
+	s.join(false)
+	s.replacement = newStubTTS(false)
+	heard := func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		turnID, voiced := s.agent.speakingTurn, s.agent.voiced
+		s.agent.speakingTurn, s.agent.voiced = "turn-measured", "turn-measured"
+		_, measured := s.agent.replyHeardLocked("Sunny and warm.", time.Now())
+		s.agent.speakingTurn, s.agent.voiced = turnID, voiced
+		return measured
+	}
+	_, err := s.agent.RespondTo(s.ctx, "what's the weather like", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) >= 1 }, "the first voice never said a reply whole")
+	s.eventually(heard, "the first voice's rate was never measured")
+
+	lost := s.agent.voice()
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+	s.eventually(func() bool { return s.agent.voice() != lost }, "the lost voice was never replaced")
+	s.False(heard(), "the lost voice's rate told how much of the next voice's reply was heard")
+
+	spoke := countOf[Spoke](s.reported())
+	_, err = s.agent.RespondTo(s.ctx, "and tomorrow?", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) > spoke }, "the new voice never said a reply whole")
+	s.eventually(heard, "the new voice's own rate was never measured")
+}
+
 func (s *AgentSuite) TestAnAgentWithNoVoiceOpensItsVoiceWithNone() {
 	s.join(true)
 
