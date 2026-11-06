@@ -145,8 +145,15 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = w.Write([]byte(`{"transcript_error":"busy"}` + "\n"))
 			return
 		}
-		raw, _ := io.ReadAll(r.Body)
-		f.audio, f.types = append(f.audio, raw), append(f.types, r.Header.Get("Content-Type"))
+		// The audio comes as a decision's does, in a part of its own, which a gateway that
+		// changes a raw body's type passes as it was sent.
+		parts, types, ok := formParts(r, "audio")
+		if !ok {
+			w.WriteHeader(http.StatusUnsupportedMediaType)
+			_, _ = w.Write([]byte(`{"error":"not a multipart body of one audio part"}`))
+			return
+		}
+		f.audio, f.types = append(f.audio, parts[0]), append(f.types, types[0])
 		f.languages = append(f.languages, r.URL.Query().Get("languages"))
 		if gate := f.transcribeGate; gate != nil {
 			f.held++
@@ -174,23 +181,14 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			w.WriteHeader(http.StatusNotFound)
 			return
 		}
-		_, params, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-		parts := multipart.NewReader(r.Body, params["boundary"])
-		var turn Turn
-		for _, name := range []string{"turn", "audio"} {
-			part, err := parts.NextPart()
-			if err != nil || part.FormName() != name {
-				w.WriteHeader(http.StatusBadRequest)
-				return
-			}
-			raw, _ := io.ReadAll(part)
-			if name == "turn" {
-				_ = json.Unmarshal(raw, &turn)
-				continue
-			}
-			f.audio = append(f.audio, raw)
-			f.types = append(f.types, part.Header.Get("Content-Type"))
+		parts, types, ok := formParts(r, "turn", "audio")
+		if !ok {
+			w.WriteHeader(http.StatusBadRequest)
+			return
 		}
+		var turn Turn
+		_ = json.Unmarshal(parts[0], &turn)
+		f.audio, f.types = append(f.audio, parts[1]), append(f.types, types[1])
 		f.turns = append(f.turns, turn)
 		f.agents = append(f.agents, r.URL.Query().Get("agent"))
 		if f.decideAfter > 0 {
@@ -210,6 +208,33 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q},"transcript_ms":3}`+"\n", f.words, f.spoken())
 		}
 	}
+}
+
+// formParts reads r's multipart/form-data body, which must be the parts names, in that order
+// and no others: each one's bytes and type.
+func formParts(r *http.Request, names ...string) ([][]byte, []string, bool) {
+	media, params, err := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if err != nil || media != "multipart/form-data" {
+		return nil, nil, false
+	}
+	reader := multipart.NewReader(r.Body, params["boundary"])
+	var parts [][]byte
+	var types []string
+	for _, name := range names {
+		part, err := reader.NextPart()
+		if err != nil || part.FormName() != name {
+			return nil, nil, false
+		}
+		raw, err := io.ReadAll(part)
+		if err != nil {
+			return nil, nil, false
+		}
+		parts, types = append(parts, raw), append(types, part.Header.Get("Content-Type"))
+	}
+	if _, err := reader.NextPart(); err != io.EOF {
+		return nil, nil, false
+	}
+	return parts, types, true
 }
 
 // spoken is the language the server says it heard. The caller holds the lock.
@@ -475,7 +500,8 @@ func (s *ClientSuite) TestAServerWithoutAPolicyIsUnsupported() {
 	}
 }
 
-// The words alone need no agent and no policy, and name the callers' languages.
+// The words alone need no agent and no policy, and name the callers' languages. The audio goes
+// in a part of its own, as a decision's does: a gateway may change a raw body's type.
 func (s *ClientSuite) TestTheWordsAloneAreAskedForAlone() {
 	s.server.words = "What time is the last ferry?"
 	got, err := s.client.Transcribe(context.Background(), some, []string{"en", "pt-BR"})
