@@ -326,6 +326,8 @@ func (k *contract) oneWait(t *testing.T, name string) {
 	assert.Empty(t, again, "a ruling put again after the caller spoke over the agent")
 	if answered.ok {
 		assert.LessOrEqual(t, answered.decided.Sub(answered.speechEnd), k.soon(), "answered %s after the voice", answered.decided.Sub(answered.speechEnd).Round(time.Millisecond))
+		assert.Contains(t, wordsOfText(answered.text), map[string]string{"noporto": "porto", "dontstop": "stop"}[name],
+			"the answer is to what the caller said")
 		k.measured(t, "C5 "+name, answered)
 	}
 	assert.LessOrEqual(t, len(c.decisionsAfter(over.began(), string(ActAnswer))), 1, "answered at most once")

@@ -221,8 +221,9 @@ last frame, and a pause costs one request:
   stops nothing. The checks go on every `interval_ms` for as long as the caller's line is
   voiced over the agent, its own echo included (Limits). A stop ruled while the caller talks on
   is no turn: the words it was ruled on are spent on it. The utterance runs on, uncut, and
-  at a pause whose words add nothing to them it ends at once, heard and not answered;
-  otherwise it ends at its pauses with the floor free, and is the caller's turn. A check that answers once its utterance has ended, a pause check
+  ends at its pauses with the floor free, by the agent's point, as the caller may go on
+  after a pause; its final is heard and not answered if it says nothing more than the stop's
+  words, and is the caller's turn if it does. A check that answers once its utterance has ended, a pause check
   having ruled on it, is not acted on. Shortened, the utterance goes on, its words shown as interims, and ends at
   a pause, where the item is answered. 350 ms is most of an "uh-huh", so the model rules on a
   murmur, which it was trained to let the agent talk through, rather than on the first

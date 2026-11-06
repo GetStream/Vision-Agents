@@ -458,18 +458,6 @@ func (c *converse) Overheard(ruling harness.Decided, participant stt.Participant
 	return actions
 }
 
-// Spent says whether words, all of a participant's utterance so far, add nothing to those a
-// stop over the agent was ruled on in it (Overheard).
-func (c *converse) Spent(participant stt.Participant, utterance int64, words string) bool {
-	c.mu.Lock()
-	stop, ok := c.stops[participant.ID]
-	c.mu.Unlock()
-	if !ok || stop.utterance != utterance {
-		return false
-	}
-	return !saysMore(words, stop.words)
-}
-
 // saysMore reports whether text, all of an utterance's words, says more than stop, the words
 // so far a stop was ruled on in it. Text opens with them, the last of them perhaps cut off by
 // the check's window mid-word ("wh" for "what"), when that word is the caller's next. Text that

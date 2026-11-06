@@ -3864,9 +3864,8 @@ func (s *AgentSuite) TestAskingWhetherAnythingElseIsNeededIsSomethingTheAgentSai
 	s.Empty(s.model.requests(), "asking for a line is not a turn")
 }
 
-// A stop a check over the agent ruled while the caller talked on is no turn: the agent says
-// it stopped, and the utterance's final, the words the stop was ruled on, is heard and not
-// answered. What the caller says after, the next utterance, is answered. Answered, the stop's
+// A stop a check over the agent ruled while the caller talked on is no turn: the utterance's
+// final, if it is the words the stop was ruled on and no more, is heard and not answered. What the caller says after, the next utterance, is answered. Answered, the stop's
 // words had the agent talk again after every "stop".
 func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.join(true)
@@ -3880,11 +3879,9 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	asker := pauseAsker{s.agent}
 	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
 		Words: "Stop.", Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2}
-	s.True(asker.Overheard(participant, stop), "the agent stopped")
+	asker.Overheard(participant, stop)
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
 
-	stop.Stopped = true
-	asker.Ruled(participant, stop)
 	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "Stop.",
 		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
 	s.eventually(func() bool {
@@ -3919,10 +3916,8 @@ func (s *AgentSuite) TestWhatIsSaidAfterTheStopMakesATurnOfItAll() {
 	asker := pauseAsker{s.agent}
 	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
 		Words: "No.", Speaking: true, Overheard: true, AudioMs: 600, WordsMs: 100, Utterance: 2}
-	s.True(asker.Overheard(participant, stop), "the agent stopped")
+	asker.Overheard(participant, stop)
 	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
-	s.False(asker.Spent(participant, audiofloor.Ruled{Words: "No, Porto.", Utterance: 2}), "\"Porto\" adds to the stop")
-	s.True(asker.Spent(participant, audiofloor.Ruled{Words: "No.", Utterance: 2}), "the stop's words alone")
 
 	s.model.reply = []string{"Porto will be cloudy."}
 	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "No, Porto.",

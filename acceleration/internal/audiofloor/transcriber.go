@@ -164,9 +164,6 @@ type Transcriber struct {
 	pauses  int
 	over    overChecks
 	running sync.WaitGroup
-	// stoppedOn is the utterance a check over the agent stopped it on (Asker.Overheard),
-	// whose pauses end at once on words that add nothing to the stop's (Asker.Spent).
-	stoppedOn int64
 }
 
 // request is an utterance's words to write, or with no audio its end on the words last
