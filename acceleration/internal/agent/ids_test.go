@@ -1016,6 +1016,12 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "l1", Name: "find_member", Arguments: `{"last4":"5630"}`}}},
 		{Role: llm.ToolResult, ToolCallID: "l1", Content: `{"member":"Ana Lind","last4":"5630"}`},
 	}
+	called := func(name, arguments, result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: name, Arguments: arguments}}},
+			{Role: llm.ToolResult, ToolCallID: "c1", Content: result},
+		}
+	}
 	cases := []struct {
 		name    string
 		history [][]llm.Message
@@ -1038,6 +1044,25 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 		{"letters that lowercase to a longer form, before the agent's line", [][]llm.Message{posted("Note 5630"), read("\u023A\u023A Note 5630")}, "", true},
 		{"a number the operator gave", [][]llm.Message{posted("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "Test members end in 5630.", false},
 		{"a number the agent sent alone, returned", [][]llm.Message{lookup}, "", false},
+		// AI-2925: a line holds the number only where the guard reads it as one, not where digits run
+		// together once the separators between them are dropped.
+		{"a number of the tool's where the agent's line wrote a time and a length", [][]llm.Message{posted("Booked at 10:56, 30 min"), read("Booked at 10 5630 min")}, "", false},
+		{"a number of the tool's where the agent's line wrote two numbers with a slash", [][]llm.Message{posted("Seats 56/30 left"), read(`{"text":"Seats 5630 left"}`)}, "", false},
+		{"a number of the tool's where the agent's line wrote two numbers with a space", [][]llm.Message{posted("Rooms 56 30 free"), read("Rooms 5630 free")}, "", false},
+		{"a number of the tool's beside an agent's line with digits apart", [][]llm.Message{posted("Booked at 10:56, 30 min"), read("Booked at 10:56, 30 min; card ends 5630")}, "", false},
+		{"a number the agent saved beside a time, read back", [][]llm.Message{posted("Card 5630, booked at 10:56"), read("Ana | Card 5630, booked at 10:56")}, "", true},
+		{"a number the agent saved in dashed groups, read back", [][]llm.Message{posted("Card 56-30 on file"), read("Card 56-30 on file")}, "", true},
+		// AI-2927: a result that writes back only values the agent sent gives none of them.
+		{"a number the agent sent alone, echoed alone", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"last4":"5630"}`)}, "", true},
+		{"a number the agent sent alone, echoed as a JSON number beside a status", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"ok":true,"query":{"last4":5630},"results":[]}`)}, "", true},
+		{"a number the agent sent alone, echoed as text", [][]llm.Message{called("find_member", `{"last4":"5630"}`, "5630")}, "", true},
+		{"a number the agent sent with a name, echoed with it", [][]llm.Message{called("find_member", `{"name":"Ana","last4":"5630"}`, `{"name":"Ana","last4":"5630"}`)}, "", true},
+		// Only the call a result answers is echoed: a later call's record may hold a value the agent sent before.
+		{"a number the agent saved, read back alone by another call", [][]llm.Message{called("save_member", `{"last4":"5630"}`, `{"ok":true}`), read(`{"last4":"5630"}`)}, "", false},
+		{"a number the agent sent alone, in a listing of the tool's", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `[{"name":"Ana Lind","last4":"5630"},{"name":"Bo Berg","last4":"1111"}]`)}, "", false},
+		{"a number the agent sent alone, in a record found by name", [][]llm.Message{called("find_member", `{"name":"Ana","last4":"5630"}`, `{"name":"Ana","member_id":"M-17","last4":"5630"}`)}, "", false},
+		{"a number a tool returned alone before the agent sent it", [][]llm.Message{called("get_member", `{"id":"9"}`, `{"last4":"5630"}`), called("find_member", `{"last4":"5630"}`, `{"last4":"5630"}`)}, "", false},
+		{"a number the agent sent alone, echoed, then given by a record", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"last4":"5630"}`), lookup}, "", false},
 	}
 	for _, c := range cases {
 		history := []llm.Message{{Role: llm.User, Content: "My last four are six three zero five."}}
@@ -1100,6 +1125,12 @@ func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "check_line", Arguments: `{"number":"(555) 010-0199"}`}}},
 		{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"status":"Sales +1 555 010 0199 is open"}`},
 	}
+	called := func(name, arguments, result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c3", Name: name, Arguments: arguments}}},
+			{Role: llm.ToolResult, ToolCallID: "c3", Content: result},
+		}
+	}
 	cases := []struct {
 		name      string
 		history   [][]llm.Message
@@ -1127,6 +1158,21 @@ func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
 		{"a number the agent sent alone without its country code, returned", [][]llm.Message{checkedLocal}, "+1 (555) 010-0199", "", false},
 		{"an extension on a line with an agent's line holding its last digits", [][]llm.Message{posted("Room 234 is ready."), read(`{"messages":"Bot: Room 234 is ready. Front desk is 1234"}`)}, "1234", "", false},
 		{"a number the agent posted, read back with its digits split by a space and a line break", [][]llm.Message{posted("Put them through to 5550100199"), read("Put them through to 555 010 0199\nRef 555Put them through to 5550100199 0100199")}, "+15550100199", "", true},
+		{"a number the agent posted, read back with half a number either side of it", [][]llm.Message{posted("Call 5550100199 now"), read("Ref 555Call 5550100199 now0100199")}, "+15550100199", "", true},
+		// AI-2925: a line holds the number only where the guard reads it as one.
+		{"a number of the tool's where the agent's line wrote three numbers apart", [][]llm.Message{posted("Slots 555, 010, 0199"), read("Slots 555 010 0199 (sales)")}, "+15550100199", "", false},
+		// AI-2926: a line read back with the number in another of its forms is still the agent's.
+		{"a number the agent posted without its country code, read back with it", [][]llm.Message{posted("Sales: 5550100199"), read("Sales: +1 5550100199")}, "+15550100199", "", true},
+		{"a number the agent posted with its country code, read back without it", [][]llm.Message{posted("Sales: +1 555 010 0199"), read(`{"messages":[{"text":"Sales: 555-010-0199"}]}`)}, "+15550100199", "", true},
+		{"a number the agent saved in a note in brackets, read back with a country code", [][]llm.Message{noted, read("Ana | notes: Call Ana back at 1 (555) 010-0199")}, "+15550100199", "", true},
+		{"a number the agent posted, read back in another form beside a tool's", [][]llm.Message{posted("Sales: 5550100199"), read("Sales: +1 5550100199 | Desk: 555-010-0199")}, "+15550100199", "", false},
+		{"a number the agent posted, written by a tool in other words", [][]llm.Message{posted("Sales: 5550100199"), read("Sales desk: +1 555 010 0199")}, "+15550100199", "", false},
+		// AI-2927: a result that writes back only values the agent sent gives none of them.
+		{"a number the agent sent alone, echoed alone", [][]llm.Message{called("check_line", `{"number":"+15550100199"}`, `{"number":"+15550100199"}`)}, "+15550100199", "", true},
+		{"a number the agent sent alone, echoed in another form beside a status", [][]llm.Message{called("check_line", `{"number":"(555) 010-0199"}`, `{"ok":true,"line":{"number":"+1 555 010 0199"}}`)}, "+15550100199", "", true},
+		{"a number the agent sent alone, echoed as text", [][]llm.Message{called("check_line", `{"number":"+15550100199"}`, "+1 555 010 0199")}, "+15550100199", "", true},
+		{"a record found by a name the agent sent", [][]llm.Message{called("find_department", `{"name":"sales"}`, `{"name":"sales","phone":"+15550100199"}`)}, "+15550100199", "", false},
+		{"a number the agent sent alone, echoed, then given by a directory", [][]llm.Message{called("check_line", `{"number":"+15550100199"}`, `{"number":"+15550100199"}`), directory}, "+15550100199", "", false},
 	}
 	for _, c := range cases {
 		history := []llm.Message{{Role: llm.User, Content: "Can you put me through to sales?"}}
