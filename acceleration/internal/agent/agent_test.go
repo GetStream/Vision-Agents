@@ -4296,6 +4296,138 @@ func (s *AgentSuite) TestAShortenedCheckInStopsAtOnce() {
 	s.Less(time.Since(shortened), shortenTail, "a check-in answers no request, and is stopped at once")
 }
 
+// stopBound is how soon a stop over the agent has it quiet (README, "The loop's contract").
+const stopBound = 800 * time.Millisecond
+
+// replyPlayingBehindAToolFollowUp joins an agent whose reply called a tool, and has the agent
+// take its next turn, to say what the tool came back with, while the reply is still playing,
+// as on a call: the follow-up is written by then, as followUp says, or still being written,
+// with followUp empty. It returns the reply's turn and the follow-up's.
+func (s *AgentSuite) replyPlayingBehindAToolFollowUp(chorusASR bool, followUp []string) (string, string) {
+	if chorusASR {
+		s.actsOnChorusASR()
+	}
+	s.ownsTools("a high top for four on Saturday at seven thirty is free")
+	release := make(chan struct{})
+	s.runner.run = func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		<-release
+		return llm.TextParts(s.runner.result), nil
+	}
+	s.join(true)
+	// Silent, the voice never settles the reply: it is still playing.
+	s.voice.silent = true
+	s.model.reply = []string{"Patio, peanut allergy. Did you mean a high top table?"}
+	s.model.calls = []llm.ToolCall{{ID: "call-1", Name: "lookup_order", Arguments: `{"order":"1"}`}}
+	s.model.then = append([]string{}, followUp...)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	if chorusASR {
+		s.eventually(s.agent.actsOnChorusASR, "chorus-asr never heard the caller")
+	}
+	s.says(participant, "A high table for four, Saturday at seven thirty. Patio, peanut allergy.")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply was never written")
+	reply := s.model.requests()[0].ID
+	s.heardSomeOf(reply)
+	// The tool comes back once the reply is written, as on the call.
+	close(release)
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the tool's follow-up never started")
+	toolTurn := s.model.requests()[1].ID
+	if len(followUp) > 0 {
+		s.eventually(func() bool { return s.spokenText(followUp[0]) }, "the follow-up was never handed to the voice")
+	}
+	s.edge.holdSpeech(true)
+
+	s.agent.mu.Lock()
+	speaking, utterances := s.agent.speakingTurn, s.agent.utterances
+	playing := false
+	for _, heard := range s.agent.heard {
+		playing = playing || heard.turnID == reply
+	}
+	s.agent.mu.Unlock()
+	s.Require().True(strings.HasPrefix(toolTurn, toolPrefix), "the second turn is the tool's follow-up")
+	s.Require().Equal(toolTurn, speaking, "the agent is on the tool's follow-up")
+	s.Require().True(playing && utterances > 0, "the reply is still playing")
+	return reply, toolTurn
+}
+
+// A stop over the agent silences everything it is saying or about to say (README, "The loop's
+// contract"). On a call the reply to a booking called a tool, the agent took its next turn to
+// say what the tool came back with while the reply was still playing, and the caller was ruled
+// to stop: only the follow-up was abandoned, and the reply played on for 6 s over the caller.
+func (s *AgentSuite) TestAStopSilencesTheReplyPlayingAndTheToolFollowUpBehindIt() {
+	for name, followUp := range map[string][]string{
+		"the follow-up being written":           nil,
+		"the follow-up queued behind the reply": {"A high top for four at seven thirty is free."},
+	} {
+		s.Run(name, func() {
+			reply, toolTurn := s.replyPlayingBehindAToolFollowUp(true, followUp)
+			participant := stt.Participant{ID: "alice"}
+			stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+				Words: "Wait. Make.", Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2}
+			stopped := time.Now()
+			pauseAsker{s.agent}.Overheard(participant, stop)
+
+			s.eventually(func() bool { return s.agent.abandonedTurn(toolTurn) }, "the follow-up was not abandoned")
+			s.eventually(func() bool { return s.agent.abandonedTurn(reply) }, "the reply played on over the caller")
+			s.Less(time.Since(stopped), stopBound, "the agent was not quiet within the stop's bound")
+			s.eventually(func() bool { return countOf[Interrupted](s.reported()) >= 2 }, "the reply and its follow-up were not reported cut")
+			var cut []string
+			for _, event := range s.reported() {
+				if interrupted, ok := event.(Interrupted); ok {
+					cut = append(cut, interrupted.TurnID)
+				}
+			}
+			s.ElementsMatch([]string{reply, toolTurn}, cut, "the reply and its follow-up were reported cut, once each")
+			s.GreaterOrEqual(s.voice.interrupted(), 1, "the voice kept saying them")
+			if script := s.model.script(toolTurn); len(followUp) == 0 && s.NotNil(script) {
+				s.eventually(script.Abandoned, "the follow-up was still being written")
+			}
+
+			// What the voice still sends of either is not heard.
+			before := len(s.edge.heard())
+			s.synthesises(reply)
+			s.synthesises(toolTurn)
+			time.Sleep(50 * time.Millisecond)
+			s.Equal(before, len(s.edge.heard()), "the reply or its follow-up was heard after the stop")
+		})
+	}
+}
+
+// A shortening over the tool's follow-up stops the reply still playing with it, at its tail
+// (README, "The loop's contract": stopped within 250 ms of the ruling), not before.
+func (s *AgentSuite) TestAShortenedToolFollowUpStopsTheReplyPlayingAtItsTail() {
+	reply, toolTurn := s.replyPlayingBehindAToolFollowUp(true, nil)
+	participant := stt.Participant{ID: "alice"}
+	shorten := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Shorten}},
+		Words: "and a high chair", Speaking: true, Overheard: true, AudioMs: 900, WordsMs: 100}
+	shortened := time.Now()
+	pauseAsker{s.agent}.Overheard(participant, shorten)
+
+	s.eventually(func() bool { return s.agent.abandonedTurn(reply) && s.agent.abandonedTurn(toolTurn) },
+		"the reply played on after the shortening")
+	s.GreaterOrEqual(time.Since(shortened), shortenTail, "the reply was cut before its tail")
+	s.Less(time.Since(shortened), shortenTail+time.Second, "the reply was cut long after its tail")
+}
+
+// Not acting on chorus-asr, an agent does as it did: it takes the tool's follow-up while the
+// reply is still playing, and a stop abandons the follow-up, the turn it is on, alone.
+func (s *AgentSuite) TestAStopOverAToolFollowUpLeavesTheReplyPlayingUnlessActingOnChorusASR() {
+	reply, toolTurn := s.replyPlayingBehindAToolFollowUp(false, nil)
+	s.False(s.agent.actsOnChorusASR())
+	participant := stt.Participant{ID: "alice"}
+	s.agent.perform(Action{Kind: ActInterrupt, Participant: participant, TurnID: toolTurn,
+		Interruption: interruption{cause: causeSettled, words: "wait, make it six"}})
+
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the follow-up was not reported cut")
+	interrupted, _ := firstOf[Interrupted](s.reported())
+	s.Equal(toolTurn, interrupted.TurnID)
+	s.True(s.agent.abandonedTurn(toolTurn), "the follow-up was not abandoned")
+	s.False(s.agent.abandonedTurn(reply), "the reply was cut")
+	before := len(s.edge.heard())
+	s.synthesises(reply)
+	s.eventually(func() bool { return len(s.edge.heard()) > before }, "the rest of the reply was not heard")
+}
+
 func (s *AgentSuite) TestALineWrittenAfterTheCallerSpokeIsNotSaid() {
 	s.join(true)
 	written := make(chan struct{})

@@ -43,6 +43,10 @@ check fails and the failure is the model's, reported as such, not worked around 
   caller's first word, none of what it was saying is heard after, and it says nothing more.
   A stop ruled while the caller is still talking is not a turn (its disposition is `wait`):
   the words it was ruled on are spent on it. [C2]
+- **Stopped, all of it.** A stop silences everything the agent is saying or about to say. The
+  agent takes a turn of its own, to say what a tool came back with, while the reply that called
+  the tool is still playing: a stop over either stops both, the reply where the caller is in it
+  and the turn behind it unsaid. A shortening stops both at its tail. [C2]
 - **Stopped, then answered.** A correction or a new request ("no, Porto", "and in Lisbon?",
   "stop, what about Porto?" in one breath, or "stop" and then a question): the agent stops
   within 800 ms of the first word, and words the caller says after those the stop was ruled
