@@ -475,7 +475,10 @@ func (s *Sandbox) create(ctx context.Context) error {
 		prepare, end := context.WithTimeout(create, s.check)
 		defer end()
 		if s.generation > 0 {
-			if err := s.broker.Close(prepare); err != nil {
+			// The last secrets are deleted though ctx was cut: their tokens are live until then.
+			stale, end := context.WithTimeout(context.WithoutCancel(ctx), s.check)
+			defer end()
+			if err := s.broker.Close(stale); err != nil {
 				s.letGo()
 				return err
 			}
@@ -491,8 +494,9 @@ func (s *Sandbox) create(ctx context.Context) error {
 	if err != nil {
 		s.letGo()
 		if s.broker != nil {
-			// On ctx rather than create, which may be what ran out; bounded, as it holds the gate.
-			release, end := context.WithTimeout(ctx, s.check)
+			// Not on create, which may be what ran out, nor on ctx's cancellation, which cuts a
+			// session while Daytona builds the sandbox; bounded, as it holds the gate.
+			release, end := context.WithTimeout(context.WithoutCancel(ctx), s.check)
 			defer end()
 			return errors.Join(err, s.broker.Close(release))
 		}

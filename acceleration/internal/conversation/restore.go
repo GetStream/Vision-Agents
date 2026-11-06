@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"context"
 	"slices"
+	"time"
 	"unicode/utf8"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -21,6 +22,10 @@ type Restore struct {
 	// returned. Over MaxRunes, the oldest results are cut to ResultTrimmed before any turn
 	// is left out, and the conversation's first message is kept.
 	Recorded Recorded
+	// Since, when set, leaves out every message started before it: what a thread's number said
+	// before its link's boundary is not the linked user's. Nor is the conversation's first
+	// message pinned (Recorded) when it was said before Since.
+	Since time.Time
 }
 
 // Recorded is what a conversation's sessions recorded about the replies in it.
@@ -30,8 +35,9 @@ type Recorded interface {
 	// reply with nothing recorded, or with records since removed, is left out and handed
 	// back as text.
 	Rounds(ctx context.Context, cid string, turns []string) map[string][]llm.Message
-	// Opening is the first thing said in the conversation, empty when nothing recorded it.
-	Opening(ctx context.Context, cid string) string
+	// Opening is the first thing said in the conversation and when, empty when nothing
+	// recorded it.
+	Opening(ctx context.Context, cid string) (string, time.Time)
 }
 
 // ResultTrimmed stands in for a tool result cut to keep a restored history within its size.
@@ -47,6 +53,9 @@ func WithRestore(ctx context.Context, r Restore) context.Context {
 // restored is the history of a page as ctx asks for it.
 func restored(ctx context.Context, cid string, p Page) ([]llm.Message, bool) {
 	r, _ := ctx.Value(restoreKey{}).(Restore)
+	if !r.Since.IsZero() {
+		p.Messages = slices.DeleteFunc(slices.Clone(p.Messages), func(m Message) bool { return m.StartedAt.Before(r.Since) })
+	}
 	if r.Recorded == nil {
 		return r.history(p, nil, "")
 	}
@@ -61,9 +70,12 @@ func restored(ctx context.Context, cid string, p Page) ([]llm.Message, bool) {
 		rounds = r.Recorded.Rounds(ctx, cid, turns)
 	}
 	opening := ""
-	// A page that reached the start of the conversation holds its first message already.
+	// A page that reached the start of the conversation holds its first message already. One
+	// said before the boundary is not pinned.
 	if p.Truncated {
-		opening = r.Recorded.Opening(ctx, cid)
+		if said, at := r.Recorded.Opening(ctx, cid); !at.Before(r.Since) {
+			opening = said
+		}
 	}
 	return r.history(p, rounds, opening)
 }
