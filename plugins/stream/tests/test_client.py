@@ -1,5 +1,6 @@
 import asyncio
 import json
+import pickle
 from typing import Any, AsyncIterator, Awaitable, Callable
 
 import pytest
@@ -701,6 +702,8 @@ class TestSessions:
         assert row.end_reason in {end_reason}
         written = row.to_dict()
         assert (written["end_reason"], written["state"]) == (end_reason, state)
+        # A session cached or sent to a worker process survives pickling.
+        assert pickle.loads(pickle.dumps(row)).end_reason == end_reason
 
     async def test_a_page_of_sessions_reads_a_value_this_client_does_not_list(
         self, api: stream.Client, router: Router
