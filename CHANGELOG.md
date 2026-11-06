@@ -131,6 +131,10 @@ The `instructions` a custom connector's MCP server (`custom_…`) sends when a s
 
 A page that reaches a router by `customerId` and names its user with `setUser` is now that user: it says `stream-auth-type=jwt`, so the router lists only that user's conversations rather than every user's, and `serverSide` is false. A client given `userId` instead stays the app's backend acting for that user.
 
+### The JavaScript SDK works with stream-chat 9 and 10
+
+`@stream-io/calypso` takes `stream-chat` `^9.0.0 || ^10.0.0-0` as its optional peer, release candidates of 10 included, where `>=9.0.0` refused them with `ERESOLVE`. One build reads a Chat message by its shape, never by version: `LiveReasoning`, `session.speech.heard` and the check for a reply still being written read `reasoning`, `turn_id`, `generating`, `source` and `ai_generated` at the top level as 9 has them or under `custom` as 10 does, so on 10 a reply's thinking is whole again rather than its opening alone. `client.use({ chat })` takes 10's `StreamChat`, which names its user `userId`, and a client the SDK connects itself on 10 carries the user's own fields from `setUser` under `custom`, as 10 takes them.
+
 ### A session sets how many tool rounds a reply may chain
 
 `max_tool_rounds` on a new session (`POST /v1/agents/sessions`, or `stream.Config.MaxToolRounds` in Go) is the reply to a tool result, counted since the user last spoke, that is offered no more tools and told to answer from what the tools returned. Left out or zero it is eight, on a call and in text alike. A negative number never withdraws them, for a written conversation that runs a long chain of lookups. An agent config and `POST /v1/agents/runs` do not take it yet.

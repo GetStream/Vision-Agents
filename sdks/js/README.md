@@ -12,7 +12,8 @@ npm install @stream-io/calypso
 ```
 
 Node 22 or newer, or any browser. No runtime dependencies: `fetch`, `WebSocket` and Web
-Crypto are all taken from the runtime.
+Crypto are all taken from the runtime. `session.chat()` works with `stream-chat` 9 or 10
+(10 needs Node 22.18 or newer).
 
 ## The three ways to say who is calling
 
@@ -491,7 +492,7 @@ does not say is counted in the voice's characters. A cut freezes the turn at wha
 before the track got to it, behind speech still queued, starts when that has played
 (`delay_ms` on `speaking`). A voice that takes a sentence at a time can still start another
 after a pause, so show a reply in full once `done` is true and its message is no longer
-`generating`.
+`generating` (`message.generating` in stream-chat 9, `message.custom.generating` in 10).
 
 A reply's message usually arrives before its audio starts, and Chat can even be faster than the
 session socket. While the agent is on the call, a turn is `{ chars: 0, done: false }` until its
@@ -575,7 +576,9 @@ client — see [acceleration/README.md](../../acceleration/README.md).
 The tests run against a real HTTP server and a real WebSocket upgrade rather than a stubbed
 `fetch`, so what they exercise is the request this SDK actually puts on the wire.
 
-`npm test` is hermetic and is what CI runs. The two live suites are not part of it and are
+`npm test` is hermetic and is what CI runs, once with the `stream-chat` 9 the lockfile has
+and once with 10. To run it against 10 here: `npm install --no-save stream-chat@^10.0.0-0`,
+then `npm test`, then `npm ci` to go back. The two live suites are not part of it and are
 not in CI: they talk to a deployment, and they skip rather than fail when there is none to
 talk to — a laptop with no router up, or a checkout with no credentials, is not a broken
 build. `test:local` wants a router on `LOCAL_ACCELERATION_URL`, default
