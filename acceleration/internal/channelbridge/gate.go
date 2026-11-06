@@ -68,28 +68,39 @@ func pastWindow(connectorID string, reply core.ReplyRule, since time.Duration) b
 // an opt-out channel (SMS, WhatsApp, iMessage), passes the gate; Slack is no texting line and
 // internal/channels has no Slack line. A refusal is false; an error is the store failing.
 func (b *Bridge) allowed(ctx context.Context, customerID, connectorID, to string) (bool, error) {
+	refused, err := b.gateRefusal(ctx, customerID, connectorID, to)
+	return refused == nil && err == nil, err
+}
+
+// gateRefusal is why dlc.Gate refuses the bridge a text to on a connector, as allowed asks it,
+// or nil when it lets it through: ErrHeldBack for the sandbox or a channel limit, or the gate's
+// dlc.ErrUnpaid when the customer's organization may not pay for it. An error is the store
+// failing.
+func (b *Bridge) gateRefusal(ctx context.Context, customerID, connectorID, to string) (refused, err error) {
 	channel := episodeSources[connectorID].optOuts
 	if channel == "" {
-		return true, nil
+		return nil, nil
 	}
-	err := b.gate.Allow(ctx, customerID, channel, to)
+	err = b.gate.Allow(ctx, customerID, channel, to)
 	if errors.Is(err, dlc.ErrRefused) {
 		// The refusal names the number, which stays out of the logs.
 		b.logger.Info("the sandbox gate held a channel message back", "connector", connectorID, "customer", customerID)
-		return false, nil
+		return stack.Wrap(ErrHeldBack), nil
 	}
 	if errors.Is(err, dlc.ErrUnpaid) {
-		b.logger.Info("held a channel message back: the organization may not pay for it", "connector", connectorID,
+		// The customer loses the message until it pays, so it is a warning; the refusal says
+		// why and names no number.
+		b.logger.Warn("held a channel message back: the organization may not pay for it", "connector", connectorID,
 			"customer", customerID, "reason", err)
-		return false, nil
+		return err, nil
 	}
-	return err == nil, err
+	return nil, err
 }
 
 // refusesReply is why a reply may not go to the person a thread's replies reach, or nil when
 // it may: ErrOptedOut when they opted out of the connector's opt-out channel (keywords.go), or,
 // in a chat, when anyone it reaches did (silenced); ErrHeldBack when the gate refuses it, such
-// as past a sandbox's daily limit.
+// as past a sandbox's daily limit; dlc.ErrUnpaid when the organization may not pay for it.
 func (b *Bridge) refusesReply(ctx context.Context, thread store.ChannelThread) error {
 	source := episodeSources[thread.ConnectorID]
 	if source.optOuts == "" {
@@ -112,14 +123,11 @@ func (b *Bridge) refusesReply(ctx context.Context, thread store.ChannelThread) e
 	if optedOut {
 		return stack.Wrap(ErrOptedOut)
 	}
-	allowed, err := b.allowed(ctx, thread.CustomerID, thread.ConnectorID, to)
+	refused, err := b.gateRefusal(ctx, thread.CustomerID, thread.ConnectorID, to)
 	if err != nil {
 		return err
 	}
-	if !allowed {
-		return stack.Wrap(ErrHeldBack)
-	}
-	return nil
+	return refused
 }
 
 // silenced is whether a chat thread reaches a person, one of the authors seen in it

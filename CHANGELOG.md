@@ -399,6 +399,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A scheduled text the organization may not pay for is not tried again
+
+A task due on SMS, WhatsApp or iMessage, or in the thread it was made in, whose organization is suspended, out of credit or past a spend limit, was tried up to three more times. A thread task's run also said `channel_unreachable`. The run now fails at once, under the refusal's code (`account_suspended`, `insufficient_credits`, `system_limit_reached` or `spend_limit_reached`), and the router logs a warning that names the customer. A refusal because the router could not check the money is still tried again.
 ### Importing an export no longer writes over edits made on the target
 
 `POST /v1/data/import` wrote every row of an export, so a second import of an older export undid what had been done to those rows on the target since. An export for an app the target already holds is now refused with a 409 before any row is written, as `router replicate` refuses it; `?full=true` writes it anyway, and a batch of changes is applied as before (AI-2889).
