@@ -399,6 +399,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### Importing an export no longer writes over edits made on the target
+
+`POST /v1/data/import` wrote every row of an export, so a second import of an older export undid what had been done to those rows on the target since. An export for an app the target already holds is now refused with a 409 before any row is written, as `router replicate` refuses it; `?full=true` writes it anyway, and a batch of changes is applied as before (AI-2889).
+
 ### A code run that prints a lot no longer fills the router's memory
 
 The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 1 MiB and ends it with a line telling the model the output was cut. The rest is dropped as it is read, so the router holds about 6 MiB of one output, a few times that while cutting, and never more as the answer grows. An output under 1 MiB reaches the model as before. A command's, a download's and an upload's answer from the sandbox are bounded too. (#1804)

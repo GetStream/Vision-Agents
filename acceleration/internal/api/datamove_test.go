@@ -145,8 +145,20 @@ func (s *DataMoveSuite) TestMoreChangesThanEitherEndCanHoldAreRefused() {
 }
 
 func (s *DataMoveSuite) TestImportingAnExportWritesTheRowsItCarried() {
+	// Two rows, so a second row of an app the first one just gave data here is written too.
+	s.data.createAgentConfig()
 	s.data.createAgentConfig()
 	exported := s.export()
+	// Under ids of their own: the source's ids are another app's rows on this deployment.
+	var copied []string
+	for i, line := range exported {
+		if line.Table == "agent_configs" {
+			id := store.NewID()
+			exported[i].Row = s.withID(line.Row, id)
+			copied = append(copied, id)
+		}
+	}
+	s.useApp(s.data.createApp())
 
 	var written struct {
 		Rows   int64            `json:"rows"`
@@ -156,9 +168,76 @@ func (s *DataMoveSuite) TestImportingAnExportWritesTheRowsItCarried() {
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodPost, "/v1/data/import", ndjson(exported), &written))
 
-	s.Equal(int64(1), written.Tables["agent_configs"])
+	s.Equal(int64(2), written.Tables["agent_configs"])
 	s.Equal(int64(len(exported)-1), written.Rows, "every line but the cursor was a row")
 	s.Require().NotNil(written.Cursor)
+	for _, id := range copied {
+		s.Equal("be brief", s.instructionsOf(id), "the copy is the app's")
+	}
+}
+
+func (s *DataMoveSuite) TestAnExportIsNotWrittenOverAnAppThatHoldsData() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import", ndjson(exported))
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "full=true")
+	s.Equal("edited here", s.instructionsOf(agent.Id), "the edit made here since the export is kept")
+}
+
+func (s *DataMoveSuite) TestAnExportIsNotWrittenOverAnAppThatHoldsDataWhenFullIsFalse() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/data/import?full=false", ndjson(exported))
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal("edited here", s.instructionsOf(agent.Id))
+}
+
+func (s *DataMoveSuite) TestFullWritesAnExportOverAnAppThatHoldsData() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodPost, "/v1/data/import?full=true", ndjson(exported), nil))
+
+	s.Equal("be brief", s.instructionsOf(agent.Id), "the export's row is written over the edit")
+}
+
+func (s *DataMoveSuite) TestAFullThatIsNeitherTrueNorFalseIsRefused() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import?full=yes", ndjson(exported))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "full")
+	s.Equal("edited here", s.instructionsOf(agent.Id))
+}
+
+func (s *DataMoveSuite) TestChangesAreAppliedToAnAppThatHoldsData() {
+	// Changes are the incremental path: each carries the row as the source has it now.
+	agent := s.data.createAgentConfig()
+	s.export()
+	s.instruct(agent.Id, "edited at the source")
+	changed := s.changesSince(0)
+	s.instruct(agent.Id, "edited here")
+
+	lines := make([]dataLine, 0, len(changed.Changes))
+	for i := range changed.Changes {
+		lines = append(lines, dataLine{Change: &changed.Changes[i]})
+	}
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodPost, "/v1/data/import", ndjson(lines), nil))
+
+	s.Equal("edited at the source", s.instructionsOf(agent.Id))
 }
 
 func (s *DataMoveSuite) TestAnImportCannotClaimAnotherAppsNumberInAnotherForm() {
@@ -591,6 +670,29 @@ func (s *DataMoveSuite) rendered(changes []store.DataChange) string {
 	encoded, err := json.Marshal(changes)
 	s.Require().NoError(err)
 	return string(encoded)
+}
+
+// instruct changes an agent config's instructions as the app.
+func (s *DataMoveSuite) instruct(id, instructions string) {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+id,
+		map[string]any{"instructions": instructions}, nil))
+}
+
+// instructionsOf reads an agent config's instructions as the app.
+func (s *DataMoveSuite) instructionsOf(id string) string {
+	var stored AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+id, nil, &stored))
+	return value(stored.Instructions)
+}
+
+// withID is an exported row under another id.
+func (s *DataMoveSuite) withID(row json.RawMessage, id string) json.RawMessage {
+	fields := map[string]any{}
+	s.Require().NoError(json.Unmarshal(row, &fields))
+	fields["id"] = id
+	encoded, err := json.Marshal(fields)
+	s.Require().NoError(err)
+	return encoded
 }
 
 // ndjson is an export as the body an import takes.

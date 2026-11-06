@@ -10436,6 +10436,12 @@ type ListDataChangesParams struct {
 	Limit *int   `form:"limit,omitempty" json:"limit,omitempty"`
 }
 
+// ImportDataParams defines parameters for ImportData.
+type ImportDataParams struct {
+	// Full Write an export's rows over what an app that already has data here holds.
+	Full *bool `form:"full,omitempty" json:"full,omitempty"`
+}
+
 // ListPhoneNumbersParams defines parameters for ListPhoneNumbers.
 type ListPhoneNumbersParams struct {
 	// IncludeReleased Include numbers that have been given back. A released number keeps its row, because what it cost while it was held is still part of that month's bill.
@@ -13425,13 +13431,13 @@ type ClientInterface interface {
 	// ImportDataWithBody Write an export, or a batch of changes, into this deployment
 	//
 	// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-	// Importing is idempotent: the same export applied twice leaves what applying it once would.
+	// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds.
 	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 	//
 	// Takes any type of body and a specified content type.
 	//
 	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
-	ImportDataWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+	ImportDataWithBody(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// DetectWithBody Find objects in one image, and return their boxes
 	//
@@ -18594,14 +18600,14 @@ func (c *Client) ExportData(ctx context.Context, reqEditors ...RequestEditorFn) 
 // ImportDataWithBody Write an export, or a batch of changes, into this deployment
 //
 // Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-// Importing is idempotent: the same export applied twice leaves what applying it once would.
+// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds.
 // Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 //
 // Takes any type of body and a specified content type.
 //
 // Corresponds with POST /v1/data/import (the `ImportData` operationId).
-func (c *Client) ImportDataWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewImportDataRequestWithBody(c.Server, contentType, body)
+func (c *Client) ImportDataWithBody(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewImportDataRequestWithBody(c.Server, params, contentType, body)
 	if err != nil {
 		return nil, err
 	}
@@ -28297,7 +28303,7 @@ func NewExportDataRequest(server string) (*http.Request, error) {
 }
 
 // NewImportDataRequestWithBody constructs an http.Request for the ImportData method, with any body, and a specified content type
-func NewImportDataRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+func NewImportDataRequestWithBody(server string, params *ImportDataParams, contentType string, body io.Reader) (*http.Request, error) {
 	var err error
 
 	serverURL, err := url.Parse(server)
@@ -28313,6 +28319,33 @@ func NewImportDataRequestWithBody(server string, contentType string, body io.Rea
 	queryURL, err := serverURL.Parse(operationPath)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Full != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "full", *params.Full, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
 	}
 
 	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
@@ -34769,13 +34802,13 @@ type ClientWithResponsesInterface interface {
 	// ImportDataWithBodyWithResponse Write an export, or a batch of changes, into this deployment
 	//
 	// Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-	// Importing is idempotent: the same export applied twice leaves what applying it once would.
+	// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds.
 	// Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 	//
 	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 	//
 	// Corresponds with POST /v1/data/import (the `ImportData` operationId).
-	ImportDataWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error)
+	ImportDataWithBodyWithResponse(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error)
 
 	// DetectWithBodyWithResponse Find objects in one image, and return their boxes
 	//
@@ -52703,6 +52736,8 @@ type ImportDataResponse struct {
 	JSON402 *PaymentRequired
 	// JSON403 the response for an HTTP 403 `application/json` response
 	JSON403 *Forbidden
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorResponse
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *InternalError
 	// JSON503 the response for an HTTP 503 `application/json` response
@@ -52736,6 +52771,11 @@ func (r ImportDataResponse) GetJSON402() *PaymentRequired {
 // GetJSON403 returns the response for an HTTP 403 `application/json` response
 func (r ImportDataResponse) GetJSON403() *Forbidden {
 	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ImportDataResponse) GetJSON409() *ErrorResponse {
+	return r.JSON409
 }
 
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
@@ -64726,14 +64766,14 @@ func (c *ClientWithResponses) ExportDataWithResponse(ctx context.Context, reqEdi
 // ImportDataWithBodyWithResponse Write an export, or a batch of changes, into this deployment
 //
 // Takes what `exportData` produced, and the same lines with a `change` in place of a `row` for what `listDataChanges` returned. Every row is written under the calling app whatever the file says, so an export from one app cannot be imported into another's rows, and rows belonging to a customer through a parent are only written where that parent is the caller's.
-// Importing is idempotent: the same export applied twice leaves what applying it once would.
+// An export's rows are written as the source had them, so an export is refused with 409 `conflict`, before any of its rows is written, for an app that already has a row here in a table of the shared database: it would undo what was done here since. `full=true` writes it over them anyway, and importing the same export twice that way leaves what importing it once would. Changes are applied whatever the app holds.
 // Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 //
 // Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
 //
 // Corresponds with POST /v1/data/import (the `ImportData` operationId).
-func (c *ClientWithResponses) ImportDataWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error) {
-	rsp, err := c.ImportDataWithBody(ctx, contentType, body, reqEditors...)
+func (c *ClientWithResponses) ImportDataWithBodyWithResponse(ctx context.Context, params *ImportDataParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ImportDataResponse, error) {
+	rsp, err := c.ImportDataWithBody(ctx, params, contentType, body, reqEditors...)
 	if err != nil {
 		return nil, err
 	}
@@ -86172,6 +86212,13 @@ func ParseImportDataResponse(rsp *http.Response) (*ImportDataResponse, error) {
 			return nil, err
 		}
 		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
 		var dest InternalError
