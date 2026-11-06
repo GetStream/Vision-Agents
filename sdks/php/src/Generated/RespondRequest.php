@@ -11,12 +11,15 @@ use GetStream\VisionAgents\Json;
 final readonly class RespondRequest
 {
     public function __construct(
-        // What to answer, as though it had been said. May be empty when audio carries the question.
+        // What to answer, as though it had been said. May be empty when photos or audio carry the question.
         public string $text,
         // A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after te...
         public ?AudioSource $audio = null,
         // The install the command came from. It is written on the person's message as client_id, and a client tool ca...
         public ?string $clientId = null,
+        // Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Strea...
+        /** @var list<ImageSource>|null */
+        public ?array $images = null,
         // Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persis...
         public ?string $requestId = null,
     ) {
@@ -31,6 +34,7 @@ final readonly class RespondRequest
             text: Json::string($data, 'text'),
             audio: array_key_exists('audio', $data) && $data['audio'] !== null ? AudioSource::fromArray(Json::object($data, 'audio')) : null,
             clientId: array_key_exists('client_id', $data) && $data['client_id'] !== null ? Json::string($data, 'client_id') : null,
+            images: array_key_exists('images', $data) && $data['images'] !== null ? array_map(ImageSource::fromArray(...), Json::objects($data, 'images')) : null,
             requestId: array_key_exists('request_id', $data) && $data['request_id'] !== null ? Json::string($data, 'request_id') : null,
         );
     }
@@ -49,6 +53,9 @@ final readonly class RespondRequest
         }
         if ($this->clientId !== null) {
             $out['client_id'] = $this->clientId;
+        }
+        if ($this->images !== null) {
+            $out['images'] = array_map(static fn (ImageSource $each): array => $each->toArray(), $this->images);
         }
         if ($this->requestId !== null) {
             $out['request_id'] = $this->requestId;

@@ -11093,13 +11093,19 @@ namespace GetStream.VisionAgents.Models
         public string? ClientId { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
+        /// Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("images")]
+        public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
+
+        /// <summary>
+        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;
 
         /// <summary>
-        /// What to answer, as though it had been said. May be empty when audio carries the question.
+        /// What to answer, as though it had been said. May be empty when photos or audio carry the question.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("text")]
         public string Text { get; set; } = default!;
@@ -12627,7 +12633,7 @@ namespace GetStream.VisionAgents.Models
         public System.Collections.Generic.List<ImageSource>? Images { get; set; } = default!;
 
         /// <summary>
-        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+        /// Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("request_id")]
         public string? RequestId { get; set; } = default!;

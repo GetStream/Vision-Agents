@@ -8662,9 +8662,11 @@ export type components = {
             readonly audio?: components["schemas"]["AudioSource"];
             /** @description The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it. */
             readonly client_id?: string;
-            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference. */
+            /** @description Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images. */
+            readonly images?: readonly components["schemas"]["ImageSource"][];
+            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference. */
             readonly request_id?: string;
-            /** @description What to answer, as though it had been said. May be empty when audio carries the question. */
+            /** @description What to answer, as though it had been said. May be empty when photos or audio carry the question. */
             readonly text: string;
         };
         /** @description How a conversation is handed back to the model when a session carries it on. */
@@ -9236,7 +9238,7 @@ export type components = {
         };
         readonly SessionRespondCommand: {
             readonly images?: readonly components["schemas"]["ImageSource"][];
-            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present. */
+            /** @description Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. */
             readonly request_id?: string;
             readonly text: string;
             /** @enum {string} */
