@@ -136,6 +136,17 @@ func (s *GateSuite) TestAReplyIsCountedAgainstTheNumberItWentTo() {
 	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.SMS, first), "a number replied to is reached already")
 }
 
+// Catches a guard dropped from countChannel: a reply to nobody would put the empty recipient in
+// the day's reached set, and spend one of the organization's recipients on it.
+func (s *GateSuite) TestAReplyToNobodyIsCountedButReachesNobody() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {RecipientsPerDay: new(2)}})
+
+	s.gate.Sent(s.ctx, s.app(), dlc.SMS, "")
+
+	s.Equal(int64(1), s.sent(dlc.SMS), "the reply is a message sent")
+	s.Empty(s.reached(dlc.SMS), "to nobody")
+}
+
 func (s *GateSuite) TestATextToACountryTheTierDoesNotAllowIsRefused() {
 	s.money.Usage.SetTier(s.T(), usage.Tier{Name: usage.DefaultTier, FailMode: usage.FailClosed, Limits: usage.Limits{
 		Channels: map[string]usage.ChannelLimits{dlc.SMS: {Countries: []string{"US", "CA"}}},
