@@ -51,6 +51,12 @@ check fails and the failure is the model's, reported as such, not worked around 
   greeting), which the words after it alone would cut ("like in Lisbon tomorrow?"). Where the
   model rules a request one more item ("and in Lisbon?" over a forecast), it is shortened, as
   below, and answered. [11, S2, S3, S10b, C3]
+- **Stopped on its first words, then answered on all of them.** A correction that goes on
+  after the stop ("wait, make it six, and one of us is gluten free instead" in one breath):
+  the stop is ruled on its first words ("wait, make"), and once the agent has stopped, the
+  checks that go on while the caller talks have no reply to stop, so they act on nothing and
+  spend none of what they hear. The whole correction is answered once, the stop's words with
+  it. A bare "stop" said and ended is still spent on the stop and not answered. [C3]
 - **Shortened.** One more item for the request being answered ("and in Porto?" over a
   forecast): the agent gives way within 800 ms of the first word, as it would to a stop, the
   model ruling on the same checks: it adds nothing more to the reply, stops speaking within

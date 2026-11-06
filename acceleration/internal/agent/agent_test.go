@@ -4057,6 +4057,80 @@ func (s *AgentSuite) TestWhatIsSaidAfterTheStopMakesATurnOfItAll() {
 	s.Equal("No, Porto.", harness.WithoutNotes(s.model.requests()[1].Input)[len(harness.WithoutNotes(s.model.requests()[1].Input))-1].Content)
 }
 
+// A stop over the agent is spent on the words it was ruled on, and what the caller says after
+// them is answered on all its words, the stop's too: a bare "Stop." stops the agent and nothing
+// is asked of the model, and "Wait. Make it six people, gluten allergy.", stopped on "Wait.
+// Make.", stops it and the model is asked about all of it. Each is said while the voice has
+// not settled the reply it stopped (on the call, the reply before a tool's follow-up played
+// on), so the agent is not yet quiet and the checks over it go on ruling stop, 300 ms apart,
+// with no reply left to stop. Each of those was taken for the stop's words until they were all
+// the caller said: "Wait. Make it six, and one of us is gluten free instead." was set aside as
+// a stop's words, and a table for four with a peanut allergy was booked.
+func (s *AgentSuite) TestAStopIsSpentOnItsWordsAndACorrectionAfterThemIsAnswered() {
+	cases := map[string]struct {
+		checks   []string
+		answered bool
+	}{
+		"Stop.":         {checks: []string{"Stop."}},
+		"Can you stop?": {checks: []string{"Can you stop?"}},
+		"No, stop.":     {checks: []string{"No, stop."}},
+		"Wait. Make it six people, gluten allergy.": {checks: []string{"Wait. Make.", "Wait. Make it six", "Wait. Make it six people,",
+			"Wait. Make it six people, gluten", "Wait. Make it six people, gluten allergy."}, answered: true},
+		"Wait. Make it six, and one of us is gluten free instead.": {checks: []string{"Wait. Make.", "Wait. Make it six,",
+			"Wait. Make it six, and one of", "Wait. Make it six, and one of us is", "Wait. Make it six, and one of us is gluten free",
+			"Wait. Make it six, and one of us is gluten free instead."}, answered: true},
+	}
+	for said, c := range cases {
+		s.Run(said, func() {
+			s.join(true)
+			participant := stt.Participant{ID: "alice"}
+			s.voice.silent = true
+			s.model.reply = []string{"I have a table for four on Saturday at seven thirty, on the patio. "}
+			s.speak(participant)
+			s.says(participant, "A table for four, Saturday at seven thirty. Patio, peanut allergy.")
+			s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
+			s.heardSomeOf(s.model.requests()[0].ID)
+			s.replyWentOut()
+
+			asker := pauseAsker{s.agent}
+			for i, words := range c.checks {
+				if i > 0 {
+					time.Sleep(300 * time.Millisecond)
+				}
+				asker.Overheard(participant, audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+					Words: words, Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2})
+				if i == 0 {
+					s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
+					s.Require().False(s.agent.floor().Quiet, "the voice is still on the reply it stopped")
+				}
+			}
+			stops := slices.DeleteFunc(s.reported(), func(event Event) bool {
+				d, ok := event.(Decided)
+				return !ok || d.Kind != string(ActInterrupt)
+			})
+			s.Len(stops, 1, "with the reply stopped, the checks after it had nothing to stop")
+
+			s.model.reply = []string{"Six, and gluten free."}
+			s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: said,
+				Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+			s.eventually(func() bool {
+				return slices.ContainsFunc(s.reported(), func(event Event) bool {
+					d, ok := event.(Decided)
+					return ok && d.Text == said && (d.Kind == string(ActIgnore) || d.Kind == string(ActAnswer))
+				})
+			}, "what the caller said was not ruled on")
+			if !c.answered {
+				time.Sleep(3 * defaultCadenceGap)
+				s.Len(s.model.requests(), 1, "the stop's words were answered")
+				return
+			}
+			s.eventually(func() bool { return len(s.model.requests()) == 2 }, "the correction was not answered")
+			input := harness.WithoutNotes(s.model.requests()[1].Input)
+			s.Equal(said, input[len(input)-1].Content, "the correction is answered on all its words, the stop's too")
+		})
+	}
+}
+
 // A check-in is a turn the agent took, not a murmur: a caller who talks over it and is ruled
 // to have the floor stops it, as they would a reply. Said as a murmur, it played to its end
 // over a caller the model had ruled should have the floor.

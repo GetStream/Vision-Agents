@@ -31,7 +31,7 @@ func TestAudioFloorContract(t *testing.T) {
 	h.warm(t)
 	k := &contract{floorHarness: h, clips: map[string][]int16{}}
 	for _, name := range []string{"mmhmm", "hmhm", "okay", "right", "yeah", "laugh", "stoponly", "wait", "holdon", "okaystop", "andlisbon",
-		"stopporto", "weatherporto", "dontstop", "memberid", "andporto", "noporto"} {
+		"stopporto", "weatherporto", "dontstop", "memberid", "andporto", "noporto", "makeitsix"} {
 		k.clips[name] = fixture(t, name)
 	}
 	h.lines = map[string][]int16{listReply: fixture(t, "list"), questionReply: fixture(t, "question")}
@@ -53,6 +53,9 @@ func TestAudioFloorContract(t *testing.T) {
 		k.stopsAndAnswered(t, "stopporto", "porto", true)
 	})
 	t.Run("C3 stop, then a question 1 s later, the question answered", k.stopThenQuestion)
+	t.Run("C3 wait, make it six… in one breath, stopped on its first words, is answered on all of them", func(t *testing.T) {
+		k.correctedAtLength(t, "makeitsix")
+	})
 	t.Run("C4 a shortened reply stops within 250 ms of the ruling", func(t *testing.T) { k.shortened(t, "andporto") })
 	t.Run("C4 a check-in talked over stops", k.checkInTalkedOver)
 	t.Run("C5 don't stop over the agent: one ruling acted on, no second wait", func(t *testing.T) { k.oneWait(t, "dontstop") })
@@ -207,6 +210,41 @@ func (c *call) gaveWay(t *testing.T, said *cue) {
 		return
 	}
 	assert.LessOrEqual(t, stopped.At.Sub(said.began()), stopWithin, "the agent stopped %s after the caller's first word", stopped.At.Sub(said.began()).Round(time.Millisecond))
+}
+
+// C3. "Wait. Make it six, and one of us is gluten free instead." over the list, in one breath:
+// the stop is ruled on its first words, and the checks that go on for as long as the caller
+// does stop nothing more and spend none of what they hear. The correction is answered once, on
+// all its words, the stop's with them.
+func (k *contract) correctedAtLength(t *testing.T, name string) {
+	c := k.overTheList(t, 4*time.Second)
+	over := c.edge.say(name, withGapsUnder(k.clips[name], 150*time.Millisecond))
+	c.until(func() bool { return c.answered(over).ok }, 30*time.Second, "the correction was answered")
+	c.settle(4*time.Second, time.Minute)
+	defer c.report()
+
+	assert.Empty(t, all[Error](c), "no failure")
+	c.gaveWay(t, over)
+	var stops int
+	for _, d := range c.decisionsAfter(over.began(), string(ActInterrupt)) {
+		if strings.HasPrefix(d.E.Reason, "the caller is still talking") {
+			stops++
+		}
+	}
+	assert.LessOrEqual(t, stops, 1, "the checks after the stop ruled as if the agent were still talking")
+	assert.Empty(t, c.decisionsAfter(over.began(), string(ActIgnore)), "the correction was set aside as the stop's words")
+	answers := c.decisionsAfter(over.began(), string(ActAnswer))
+	if assert.Len(t, answers, 1, "answered once") {
+		assert.Contains(t, wordsOfText(answers[0].E.Text), "gluten", "the correction's end")
+		assert.Contains(t, wordsOfText(answers[0].E.Text), "wait", "the stop's words")
+	}
+	replies := all[Responding](c)
+	if assert.Len(t, replies, 2, "the question's reply, and one to the correction") {
+		assert.Contains(t, wordsOfText(replies[1].E.Prompt), "gluten")
+		assert.Contains(t, wordsOfText(replies[1].E.Prompt), "wait")
+	}
+	assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
+	k.measured(t, "C3 "+name, c.answered(over))
 }
 
 // C3. "Stop." over the list, then 1 s later "What's the weather in Porto?": the agent stops,
