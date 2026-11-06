@@ -239,7 +239,7 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 		return err
 	}
 	if p.connectionID == "" {
-		return stack.Wrap(errors.New("telnyx: a connection id is required to route calls to the bridge"))
+		return stack.Wrap(phone.NotConfigured(errors.New("telnyx: a connection id is required to route calls to the bridge")))
 	}
 	id, err := p.idFor(ctx, inbound.E164)
 	if err != nil {
@@ -260,7 +260,7 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: %w", err))
 	}
 	if p.connectionID == "" {
-		return phone.Dialed{}, stack.Wrap(errors.New("telnyx: a connection id is required to place a call"))
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(errors.New("telnyx: a connection id is required to place a call")))
 	}
 
 	// Unsupported is not consulted on every path here, so a term Telnyx would drop is

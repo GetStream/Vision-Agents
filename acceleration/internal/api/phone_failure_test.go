@@ -79,7 +79,6 @@ func clientPhoneErrors() map[string]error {
 		"digits a keypad cannot press":      phone.ValidateDigits("one"),
 		"a number that is not E.164":        phone.Dialable("911"),
 		"a number stored in another form":   stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, "5125551234")),
-		"sip trunks off on this deployment": stack.Wrap(phone.ErrSIPTrunksDisabled),
 		"no app for the customer":           stack.Wrap(streamapp.ErrNoIdentity),
 		"an app the customer moved from":    stack.Wrap(streamapp.ErrStreamAppMoved),
 		"a disconnected app":                stack.Wrap(streamapp.ErrStreamAppDisconnected),
@@ -102,7 +101,8 @@ func TestAPhoneFailureTheClientCanFixSaysWhatToFix(t *testing.T) {
 	}
 }
 
-// A deployment without Stream credentials, or without a vendor's, is a feature it lacks:
+// A deployment without Stream credentials, a vendor's credentials or settings, or sip trunks
+// is a feature it lacks:
 // still a 400, with the code that says so.
 func TestAPhoneFailureOfTheDeploymentsMissingSettingsIsNotConfigured(t *testing.T) {
 	missing := map[string]struct {
@@ -115,6 +115,10 @@ func TestAPhoneFailureOfTheDeploymentsMissingSettingsIsNotConfigured(t *testing.
 			"phone: twilio needs TWILIO_SID"},
 		"every vendor without credentials": {stack.Wrap(phone.NotConfigured(errors.New("phone: no vendor has the credentials to be searched"))),
 			"phone: no vendor has the credentials to be searched"},
+		"a vendor without a setting it dials with": {stack.Wrap(fmt.Errorf("phone: dial: %w",
+			phone.NotConfigured(errors.New("telnyx: a connection id is required to place a call")))),
+			"phone: dial: telnyx: a connection id is required to place a call"},
+		"sip trunks off on this deployment": {stack.Wrap(phone.ErrSIPTrunksDisabled), phone.ErrSIPTrunksDisabled.Error()},
 	}
 	for name, want := range missing {
 		for answer, failed := range map[string]func(*slog.Logger, error) error{"phone": phoneFailure, "call": callFailure} {

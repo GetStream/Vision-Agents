@@ -76,8 +76,8 @@ var ErrInvalid = errors.New("phone: invalid request")
 // Invalid marks err as ErrInvalid without changing its message.
 func Invalid(err error) error { return marked{err, ErrInvalid} }
 
-// ErrNotConfigured is a vendor, or every vendor, this deployment has no credentials for: the
-// operator's setting to fix, not the request's.
+// ErrNotConfigured is a vendor, or every vendor, this deployment has no credentials for, or a
+// setting a vendor needs that the deployment lacks: the operator's to fix, not the request's.
 var ErrNotConfigured = errors.New("phone: not configured")
 
 // NotConfigured marks err as ErrNotConfigured without changing its message.

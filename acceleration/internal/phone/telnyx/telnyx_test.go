@@ -199,6 +199,7 @@ func (s *TelnyxSuite) TestWithoutAConnectionThereIsNowhereToRouteACallTo() {
 	})
 
 	s.ErrorContains(err, "connection id is required")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 }
 
 func (s *TelnyxSuite) TestDiallingOutStartsATeXMLCallThatDialsTheTrunk() {
@@ -521,6 +522,7 @@ func (s *TelnyxSuite) TestDiallingWithoutAConnectionIDIsRefused() {
 	})
 
 	s.EqualError(err, "telnyx: a connection id is required to place a call")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 

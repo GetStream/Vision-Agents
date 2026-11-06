@@ -281,6 +281,7 @@ func (s *VonageSuite) TestDiallingWithoutTheVoiceCredentialsSaysWhichAreMissing(
 
 	s.ErrorContains(err, "VONAGE_APPLICATION_ID")
 	s.ErrorContains(err, "VONAGE_PRIVATE_KEY")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 }
 
 func (s *VonageSuite) TestAPrivateKeyThatIsNeitherAPemNorAFileIsRejectedOnOpening() {

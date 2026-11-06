@@ -651,11 +651,11 @@ var (
 
 // clientPhoneFailures are the failures of a phone operation answered in their own words, as
 // the client asked for something it can change: a request the phone cannot carry out as
-// asked, a number that cannot be dialled or stored, an app the customer cannot act in, and
-// sip trunks this deployment is without. A deployment without Stream credentials or a vendor's
-// credentials is notConfigured, answered by phoneFailure.
+// asked, a number that cannot be dialled or stored, and an app the customer cannot act in. A
+// deployment without Stream credentials, a vendor's credentials or settings, or sip trunks is
+// notConfigured, answered by phoneFailure.
 var clientPhoneFailures = []error{
-	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164, phone.ErrSIPTrunksDisabled,
+	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164,
 	streamapp.ErrNoIdentity, streamapp.ErrStreamAppMoved, streamapp.ErrStreamAppDisconnected, streamapp.ErrReadOnly,
 }
 
@@ -693,7 +693,7 @@ func phoneFailure(logger *slog.Logger, err error) error {
 	if errors.Is(err, phone.ErrNoStream) {
 		return errPhoneNoStream
 	}
-	if errors.Is(err, phone.ErrNotConfigured) {
+	if errors.Is(err, phone.ErrNotConfigured) || errors.Is(err, phone.ErrSIPTrunksDisabled) {
 		// A vendor name and the settings it lacks: the operator's to set, the client's to know.
 		return notConfigured(err.Error())
 	}

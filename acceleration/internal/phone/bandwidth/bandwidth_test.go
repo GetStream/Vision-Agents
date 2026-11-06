@@ -195,6 +195,7 @@ func (s *BandwidthSuite) TestOrderingWithoutASiteSaysWhatIsMissing() {
 	_, err = provider.BuyNumber(s.ctx, phone.Order{E164: "+17195551234"})
 
 	s.ErrorContains(err, "BANDWIDTH_SITE_ID")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 
@@ -260,6 +261,7 @@ func (s *BandwidthSuite) TestDiallingWithoutTheVoiceApplicationSaysWhichCredenti
 	})
 
 	s.ErrorContains(err, applicationIDEnvVar)
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 

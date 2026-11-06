@@ -1340,9 +1340,9 @@ func (s *Service) park(
 	outbound Outbound,
 ) (string, error) {
 	if s.publicURL == "" {
-		return "", stack.Wrap(fmt.Errorf(
+		return "", stack.Wrap(NotConfigured(fmt.Errorf(
 			"phone: %s fetches its call plan when the person answers, so it needs a "+
-				"public url to fetch it from, and none is configured", vendor))
+				"public url to fetch it from, and none is configured", vendor)))
 	}
 
 	token := uuid.NewString()
@@ -1600,10 +1600,10 @@ func trunkAllowlist(vendor Vendor) ([]string, error) {
 		return nil, nil
 	}
 	if len(vendor.Signalling) == 0 {
-		return nil, stack.Wrap(fmt.Errorf(
+		return nil, stack.Wrap(NotConfigured(fmt.Errorf(
 			"phone: %s cannot send a password to a trunk, so the trunk has to know its "+
 				"signalling addresses, and none are declared for it",
-			vendor.Vendor))
+			vendor.Vendor)))
 	}
 	return vendor.Signalling, nil
 }

@@ -214,6 +214,31 @@ func (s *AppsSuite) TestACallOnAVendorThatCannotSendAPasswordHasItsAddressesAndN
 	s.Empty(password, "Stream would challenge a vendor that has no way to answer")
 }
 
+// A vendor that fetches its call plan on answer needs the router reachable, which is the
+// deployment's setting, not the caller's.
+func (s *AppsSuite) TestACallOnAVendorThatFetchesItsPlanNeedsAPublicURL() {
+	plivo := &planStub{stub: stub{vendor: "plivo"}}
+	registry := NewRegistry(s.config())
+	registry.Register(plivo.vendor, func() (Provider, error) { return plivo, nil })
+	for _, name := range s.credentials(plivo.vendor) {
+		s.T().Setenv(name, "set")
+	}
+	service, err := NewService(ServiceOptions{Registry: registry, Store: s.store, Apps: s.apps})
+	s.Require().NoError(err)
+	e164 := aNumber()
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &store.PhoneNumber{
+		E164: e164, Vendor: plivo.vendor, Country: "US", CustomerID: s.customer, PurchasedAt: time.Now().UTC(),
+	}))
+
+	_, err = service.Call(s.ctx, CallRequest{
+		Owner: routing.Owner{CustomerID: s.customer}, From: e164, To: "+15550001111",
+	})
+
+	s.ErrorContains(err, "public url")
+	s.ErrorIs(err, ErrNotConfigured)
+	s.Empty(plivo.dialed.To, "a call nobody could fetch the plan of is not dialled")
+}
+
 func (s *AppsSuite) TestACallPlanFetchedOnAnswerCarriesTheTrunksPassword() {
 	plivo := &planStub{stub: stub{vendor: "plivo"}}
 	registry := NewRegistry(s.config())
@@ -1229,6 +1254,7 @@ func (s *AppsSuite) TestATransferOnAVendorWithNoAddressesAndNoPasswordIsRefusedB
 		Owner: routing.Owner{CustomerID: s.customer}, From: sinch, To: "+15550002222", CallID: "call-1",
 	})
 	s.Require().ErrorContains(err, "signalling addresses")
+	s.ErrorIs(err, ErrNotConfigured, "the addresses are the deployment's to declare")
 	s.Empty(s.deployment.Trunks())
 }
 

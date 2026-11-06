@@ -224,8 +224,8 @@ func (p *Provider) BuyNumber(ctx context.Context, order phone.Order) (phone.Numb
 		return phone.Number{}, stack.Wrap(errors.New("bandwidth: a number is required"))
 	}
 	if p.siteID == "" {
-		return phone.Number{}, stack.Wrap(errors.New("bandwidth: " + siteIDEnvVar +
-			" is required to order a number, since an order is billed to a site"))
+		return phone.Number{}, stack.Wrap(phone.NotConfigured(errors.New("bandwidth: " + siteIDEnvVar +
+			" is required to order a number, since an order is billed to a site")))
 	}
 
 	request := orderRequest{
@@ -295,9 +295,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 			"bandwidth: fetches its call plan when the person answers, so it needs somewhere to fetch it from"))
 	}
 	if p.applicationID == "" {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(fmt.Errorf(
 			"bandwidth: placing a call needs %s, which buying a number does not",
-			applicationIDEnvVar))
+			applicationIDEnvVar)))
 	}
 
 	request := callRequest{

@@ -272,9 +272,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("sinch: %w", err))
 	}
 	if p.applicationKey == "" || p.applicationSecret == "" {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(fmt.Errorf(
 			"sinch: placing a call needs %s and %s, which buying a number does not",
-			applicationKeyEnvVar, applicationSecretEnvVar))
+			applicationKeyEnvVar, applicationSecretEnvVar)))
 	}
 
 	answered, err := json.Marshal(svaml{Action: connectSip{

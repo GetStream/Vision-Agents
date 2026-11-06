@@ -292,9 +292,9 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("vonage: %w", err))
 	}
 	if p.applicationID == "" || p.privateKey == nil {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf(
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(fmt.Errorf(
 			"vonage: placing a call needs %s and %s, which buying a number does not",
-			applicationIDEnvVar, privateKeyEnvVar))
+			applicationIDEnvVar, privateKeyEnvVar)))
 	}
 
 	request := callRequest{
