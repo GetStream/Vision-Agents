@@ -129,11 +129,12 @@ type Transcriber struct {
 	windows  int
 	heard    *Stream
 	// The utterance being heard: its audio is heard's from frame start on, and no earlier
-	// than the frame ended, where the last one ended. voiced says it has had speech, fresh
-	// that speech has come since its words were last asked for, and quiet how long the
-	// pause going on has lasted.
+	// than the frame ended, where the last one ended. voiced says it has had speech, from
+	// frame voicedFrom, fresh that speech has come since its words were last asked for, and
+	// quiet how long the pause going on has lasted.
 	start, ended  int64
 	voiced, fresh bool
+	voicedFrom    int64
 	quiet         time.Duration
 	utterance     int64
 	// interims says the words so far are written while the caller talks (interim), the
@@ -239,6 +240,9 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked = at, at, false, false, 0, 0, 0
 	}
 	if speech {
+		if !t.voiced {
+			t.voicedFrom = t.heard.Frames()
+		}
 		t.voiced, t.fresh, t.quiet = true, true, 0
 		t.spoken++
 		t.talked++
