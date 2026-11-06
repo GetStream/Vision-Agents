@@ -4136,6 +4136,32 @@ func (s *AgentSuite) TestAReplyThatEndsWithinItsShortenedTailIsNotCut() {
 	s.Zero(s.voice.interrupted(), "the voice was stopped")
 }
 
+// The loop's contract is kept while chorus-asr hears the callers, and no longer once another
+// transcriber does, as when a session's transcriber is changed mid-call: kept, a check-in said
+// over another transcriber's line was stopped by its own echo.
+func (s *AgentSuite) TestTheContractIsKeptWhileChorusASRHearsTheCaller() {
+	s.actsOnChorusASR()
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	listening := func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		_, ok := s.agent.listeners[participant.ID]
+		return ok
+	}
+	s.speak(participant)
+	s.eventually(s.agent.actsOnChorusASR, "chorus-asr never heard the caller")
+
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+	s.eventually(func() bool { return !listening() }, "the caller who left is still listened to")
+	s.ears, s.earsPause = newStubSTT(), false
+	s.edge.attending <- Attendance{Participant: participant, Joined: true}
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 }, "the caller never came back")
+	s.speak(participant)
+	s.eventually(listening, "the caller who came back is not listened to")
+	s.False(s.agent.actsOnChorusASR(), "the contract was kept with another transcriber hearing the caller")
+}
+
 // Acting on chorus-asr while another transcriber hears the callers, the loop's contract, which
 // is that of chorus-asr transcribing, isn't kept: a shortened reply plays on what the voice was
 // sent, as with every transcriber but chorus-asr.

@@ -600,8 +600,8 @@ type Agent struct {
 	// replaces another speaks at a rate of its own, measured afresh.
 	voicedChars, voicedMs float64
 	ratedVoice            *ttsrouter.Session
-	// pausesAsked says chorus-asr transcribes a caller of this agent and asks the model about
-	// their pauses for it (actsOnChorusASR).
+	// pausesAsked says chorus-asr transcribes the callers of this agent and asks the model
+	// about their pauses for it (actsOnChorusASR), as the last transcriber opened for one does.
 	pausesAsked atomic.Bool
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
@@ -1657,11 +1657,15 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	// in one of the last one's is spent, and is forgotten before this one can rule another.
 	a.converse.forgetStop(participant.ID)
 	// Acting on chorus-asr, which transcribes as well, the transcriber times the caller's
-	// pauses from the audio and asks about each, the decision and its words in one pass.
+	// pauses from the audio and asks about each, the decision and its words in one pass. The
+	// contract is kept while it does (actsOnChorusASR): every participant is heard on the
+	// session's one target, and a target changed mid-call to another transcriber leaves it.
+	asks := false
 	if pauses, ok := session.Serving().(audiofloor.Pauses); ok && a.audioFloor.asksOnPauses() {
 		pauses.AskOnPauses(pauseAsker{a})
-		a.pausesAsked.Store(true)
+		asks = true
 	}
+	a.pausesAsked.Store(asks)
 
 	a.mu.Lock()
 	if a.closed {
