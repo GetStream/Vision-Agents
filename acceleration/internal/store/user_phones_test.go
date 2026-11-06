@@ -45,9 +45,11 @@ func (s *StoreSuite) chatEpisode(row *ContactMapEntry) string {
 	return episode.ID
 }
 
-// smsEpisode opens an SMS episode on a number's row, the history the number brings to a link.
+// smsEpisode opens an SMS episode on a number's row, the history the number brings to a link. It
+// starts an hour back: a link is dated by Postgres's clock, and the router's must not read after it.
 func (s *StoreSuite) smsEpisode(row *ContactMapEntry) string {
-	episode := &Episode{CustomerID: row.CustomerID, ContactID: row.ID, Source: EpisodeSMS, ThreadChannel: "agent:sms-" + newID()}
+	episode := &Episode{CustomerID: row.CustomerID, ContactID: row.ID, Source: EpisodeSMS, ThreadChannel: "agent:sms-" + newID(),
+		StartedAt: time.Now().Add(-time.Hour)}
 	_, err := s.store.OpenEpisode(s.ctx, episode)
 	s.Require().NoError(err)
 	return episode.ID
