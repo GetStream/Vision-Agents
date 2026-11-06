@@ -3682,10 +3682,16 @@ type AgentTools struct {
 
 // AgentUser defines model for AgentUser.
 type AgentUser struct {
+	// IncludePhoneHistory true when the user reads all of what the number ever said. Left out otherwise.
+	IncludePhoneHistory *bool `json:"include_phone_history,omitempty"`
+
 	// Phone The number linked to the user, in E.164; null when none is.
 	//
 	// Example: +15551234567
 	Phone *string `json:"phone"`
+
+	// PhoneHistorySince From when on the user reads what the number said: the link's time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.
+	PhoneHistorySince *time.Time `json:"phone_history_since,omitempty"`
 
 	// UserId The Stream user id, as the app's own token signs it.
 	UserId string `json:"user_id"`
@@ -3693,10 +3699,16 @@ type AgentUser struct {
 
 // AgentUserRequest Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
 type AgentUserRequest struct {
-	// Phone The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+	// IncludePhoneHistory How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies.
+	IncludePhoneHistory *bool `json:"include_phone_history,omitempty"`
+
+	// Phone The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number's SMS, WhatsApp or iMessage thread is handed none of the thread's earlier messages. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
 	//
 	// Example: +15551234567
 	Phone *string `json:"phone"`
+
+	// PhoneHistorySince The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).
+	PhoneHistorySince *time.Time `json:"phone_history_since,omitempty"`
 }
 
 // AnalyzeReviewsRequest defines model for AnalyzeReviewsRequest.
@@ -13205,9 +13217,18 @@ type ClientInterface interface {
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetUser Get a user's phone link
+	//
+	// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
+	GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// UpdateUserWithBody Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -13218,7 +13239,7 @@ type ClientInterface interface {
 
 	// UpdateUser Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -18055,9 +18076,28 @@ func (c *Client) SyncAgent(ctx context.Context, body SyncAgentJSONRequestBody, r
 	return c.Client.Do(req)
 }
 
+// GetUser Get a user's phone link
+//
+// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
+func (c *Client) GetUser(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetUserRequest(c.Server, userId)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // UpdateUserWithBody Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -18078,7 +18118,7 @@ func (c *Client) UpdateUserWithBody(ctx context.Context, userId string, contentT
 
 // UpdateUser Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -27376,6 +27416,40 @@ func NewSyncAgentRequestWithBody(server string, contentType string, body io.Read
 	return req, nil
 }
 
+// NewGetUserRequest constructs an http.Request for the GetUser method
+func NewGetUserRequest(server string, userId string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "user_id", userId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/v1/agents/users/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewUpdateUserRequest calls the generic UpdateUser builder with application/json body
 func NewUpdateUserRequest(server string, userId string, body UpdateUserJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -34457,9 +34531,20 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /v1/agents/sync (the `SyncAgent` operationId).
 	SyncAgentWithResponse(ctx context.Context, body SyncAgentJSONRequestBody, reqEditors ...RequestEditorFn) (*SyncAgentResponse, error)
 
+	// GetUserWithResponse Get a user's phone link
+	//
+	// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
+	//
+	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
+	GetUserWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*GetUserResponse, error)
+
 	// UpdateUserWithBodyWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -34470,7 +34555,7 @@ type ClientWithResponsesInterface interface {
 
 	// UpdateUserWithResponse Link a user to a phone number
 	//
-	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+	// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 	//
 	// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 	//
@@ -50533,6 +50618,107 @@ func (r SyncAgentResponse) ContentType() string {
 	return ""
 }
 
+// GetUserResponse200Headers the declared response headers of an HTTP 200 response for GetUser
+type GetUserResponse200Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+	XStreamCostEstimated  *string
+	XStreamCostMicros     *int64
+}
+
+// GetUserResponse402Headers the declared response headers of an HTTP 402 response for GetUser
+type GetUserResponse402Headers struct {
+	XStreamBalanceMicros  *int64
+	XStreamBalanceWarning *string
+}
+
+type GetUserResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *AgentUser
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *BadRequest
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthorized
+	// JSON402 the response for an HTTP 402 `application/json` response
+	JSON402 *PaymentRequired
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *InternalError
+	// JSON503 the response for an HTTP 503 `application/json` response
+	JSON503 *Unavailable
+	// Headers200 the parsed response headers for an HTTP 200 response
+	Headers200 *GetUserResponse200Headers
+	// Headers402 the parsed response headers for an HTTP 402 response
+	Headers402 *GetUserResponse402Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetUserResponse) GetJSON200() *AgentUser {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r GetUserResponse) GetJSON400() *BadRequest {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetUserResponse) GetJSON401() *Unauthorized {
+	return r.JSON401
+}
+
+// GetJSON402 returns the response for an HTTP 402 `application/json` response
+func (r GetUserResponse) GetJSON402() *PaymentRequired {
+	return r.JSON402
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetUserResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r GetUserResponse) GetJSON500() *InternalError {
+	return r.JSON500
+}
+
+// GetJSON503 returns the response for an HTTP 503 `application/json` response
+func (r GetUserResponse) GetJSON503() *Unavailable {
+	return r.JSON503
+}
+
+// GetBody returns the raw response body bytes
+func (r GetUserResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetUserResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetUserResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetUserResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // UpdateUserResponse200Headers the declared response headers of an HTTP 200 response for UpdateUser
 type UpdateUserResponse200Headers struct {
 	XStreamBalanceMicros  *int64
@@ -64116,9 +64302,26 @@ func (c *ClientWithResponses) SyncAgentWithResponse(ctx context.Context, body Sy
 	return ParseSyncAgentResponse(rsp)
 }
 
+// GetUserWithResponse Get a user's phone link
+//
+// The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
+//
+// Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /v1/agents/users/{user_id} (the `GetUser` operationId).
+func (c *ClientWithResponses) GetUserWithResponse(ctx context.Context, userId string, reqEditors ...RequestEditorFn) (*GetUserResponse, error) {
+	rsp, err := c.GetUser(ctx, userId, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetUserResponse(rsp)
+}
+
 // UpdateUserWithBodyWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -64135,7 +64338,7 @@ func (c *ClientWithResponses) UpdateUserWithBodyWithResponse(ctx context.Context
 
 // UpdateUserWithResponse Link a user to a phone number
 //
-// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+// Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
 //
 // Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 //
@@ -83501,6 +83704,125 @@ func ParseSyncAgentResponse(rsp *http.Response) (*SyncAgentResponse, error) {
 		response.Headers200 = &headers
 	case rsp.StatusCode == 402:
 		var headers SyncAgentResponse402Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		response.Headers402 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetUserResponse parses an HTTP response from a GetUserWithResponse call
+func ParseGetUserResponse(rsp *http.Response) (*GetUserResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetUserResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentUser
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest BadRequest
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthorized
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 402:
+		var dest PaymentRequired
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON402 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest InternalError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 503:
+		var dest Unavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON503 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 200:
+		var headers GetUserResponse200Headers
+		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceMicros = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Balance-Warning"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Warning", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamBalanceWarning = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Estimated"); len(values) > 0 {
+			var value string
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Estimated", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostEstimated = &value
+		}
+		if values := rsp.Header.Values("X-Stream-Cost-Micros"); len(values) > 0 {
+			var value int64
+			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Cost-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			}
+			headers.XStreamCostMicros = &value
+		}
+		response.Headers200 = &headers
+	case rsp.StatusCode == 402:
+		var headers GetUserResponse402Headers
 		if values := rsp.Header.Values("X-Stream-Balance-Micros"); len(values) > 0 {
 			var value int64
 			if err := runtime.BindStyledParameterWithOptions("simple", "X-Stream-Balance-Micros", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: "int64"}); err != nil {

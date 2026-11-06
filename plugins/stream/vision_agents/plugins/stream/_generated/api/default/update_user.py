@@ -108,9 +108,11 @@ def sync_detailed(
     when the link is made, the number's earlier conversations, and one still going on, keep the omni-
     channel they had, and the user's app chat reads none of their cards. Otherwise, where the person
     already had one of each, both point at the older one, and the user still reads none of the number's
-    cards from before the link once the agent turns episode_cards on. No message moves. One number for
-    each user, and one user for each number, within the app: the same user id in another Stream app is
-    another person. Sending the same number again changes nothing; null unlinks.
+    cards from before the link once the agent turns episode_cards on. include_phone_history and
+    phone_history_since say how much of the number's past the user reads instead: all of it, or what it
+    said from a time on, in its cards and in the sessions on its threads. No message moves. One number
+    for each user, and one user for each number, within the app: the same user id in another Stream app
+    is another person. Sending the same number again with neither field changes nothing; null unlinks.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -154,9 +156,11 @@ def sync(
     when the link is made, the number's earlier conversations, and one still going on, keep the omni-
     channel they had, and the user's app chat reads none of their cards. Otherwise, where the person
     already had one of each, both point at the older one, and the user still reads none of the number's
-    cards from before the link once the agent turns episode_cards on. No message moves. One number for
-    each user, and one user for each number, within the app: the same user id in another Stream app is
-    another person. Sending the same number again changes nothing; null unlinks.
+    cards from before the link once the agent turns episode_cards on. include_phone_history and
+    phone_history_since say how much of the number's past the user reads instead: all of it, or what it
+    said from a time on, in its cards and in the sessions on its threads. No message moves. One number
+    for each user, and one user for each number, within the app: the same user id in another Stream app
+    is another person. Sending the same number again with neither field changes nothing; null unlinks.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -195,9 +199,11 @@ async def asyncio_detailed(
     when the link is made, the number's earlier conversations, and one still going on, keep the omni-
     channel they had, and the user's app chat reads none of their cards. Otherwise, where the person
     already had one of each, both point at the older one, and the user still reads none of the number's
-    cards from before the link once the agent turns episode_cards on. No message moves. One number for
-    each user, and one user for each number, within the app: the same user id in another Stream app is
-    another person. Sending the same number again changes nothing; null unlinks.
+    cards from before the link once the agent turns episode_cards on. include_phone_history and
+    phone_history_since say how much of the number's past the user reads instead: all of it, or what it
+    said from a time on, in its cards and in the sessions on its threads. No message moves. One number
+    for each user, and one user for each number, within the app: the same user id in another Stream app
+    is another person. Sending the same number again with neither field changes nothing; null unlinks.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
@@ -239,9 +245,11 @@ async def asyncio(
     when the link is made, the number's earlier conversations, and one still going on, keep the omni-
     channel they had, and the user's app chat reads none of their cards. Otherwise, where the person
     already had one of each, both point at the older one, and the user still reads none of the number's
-    cards from before the link once the agent turns episode_cards on. No message moves. One number for
-    each user, and one user for each number, within the app: the same user id in another Stream app is
-    another person. Sending the same number again changes nothing; null unlinks.
+    cards from before the link once the agent turns episode_cards on. include_phone_history and
+    phone_history_since say how much of the number's past the user reads instead: all of it, or what it
+    said from a time on, in its cards and in the sessions on its threads. No message moves. One number
+    for each user, and one user for each number, within the app: the same user id in another Stream app
+    is another person. Sending the same number again with neither field changes nothing; null unlinks.
 
     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 

@@ -1915,6 +1915,8 @@ type Exchange struct {
 	Answer     string
 	// Refused is a turn the prompt injection screen refused, whose Said is not to be replayed.
 	Refused bool
+	// At is when the response was started, set by Opening only.
+	At time.Time
 }
 
 // Reply is what one reply a conversation's transcript wrote did: its answer and tool_result

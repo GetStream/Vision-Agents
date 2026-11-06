@@ -490,7 +490,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	if m.options.ResumeHistories != nil {
 		spec.ResumeHistory = spec.ResumeHistory.Over(m.options.ResumeHistories.ResumeHistory(ctx, spec.CustomerID))
 	}
-	reading := m.restoring(ctx, spec)
+	reading, err := m.restoring(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
 	if spec.PersistConversation {
 		service, err := m.Conversations()
 		if err != nil {

@@ -1197,18 +1197,30 @@ pub struct AgentTools {
 ///`AgentUser`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentUser {
+    ///true when the user reads all of what the number ever said. Left out otherwise.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub include_phone_history: ::std::option::Option<bool>,
     ///The number linked to the user, in E.164; null when none is.
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub phone: ::std::option::Option<::std::string::String>,
+    ///From when on the user reads what the number said: the link's time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub phone_history_since: ::std::option::Option<::std::string::String>,
     ///The Stream user id, as the app's own token signs it.
     pub user_id: ::std::string::String,
 }
 ///Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]
 pub struct AgentUserRequest {
-    ///The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+    ///How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub include_phone_history: ::std::option::Option<bool>,
+    ///The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number's SMS, WhatsApp or iMessage thread is handed none of the thread's earlier messages. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub phone: ::std::option::Option<::std::string::String>,
+    ///The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub phone_history_since: ::std::option::Option<::std::string::String>,
 }
 ///`AnalyzeReviewsRequest`
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq, Default)]

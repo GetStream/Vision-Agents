@@ -37,6 +37,9 @@
 ### The router's metrics show its own API requests
 
 `/metrics` has `router_http_requests_total{method,route,status}`, every request the API answered by route template and status class, and `router_http_request_seconds`, how long request/response answers took to begin. Sockets and streams are counted but not timed (#1786).
+### The link says how much of the number's past the user reads
+
+`PUT /v1/agents/users/{user_id}` takes `include_phone_history` and `phone_history_since`. `true` gives the user everything the number ever said. `false` gives what it says from the request on. A time gives what it said from then on. With neither field, a new link starts at the link, and the same number again keeps what was stored. The boundary covers the user's episode cards and the history a session on the number's SMS, WhatsApp or iMessage thread is handed, which until now held the whole thread. A conversation that started before it is left out whole. `true` with a time, or a time in the future, is a 400. `GET /v1/agents/users/{user_id}` answers the number and the boundary as stored. A thread whose number is linked to nobody is handed all of it, as before (AI-2861, #1790).
 
 ### Usage reads name who started the work `origin`
 
@@ -430,6 +433,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A sandbox session cut while it opens leaves no Daytona secret
+
+When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
 
 ### A move whose recording lapsed is told to copy again
 

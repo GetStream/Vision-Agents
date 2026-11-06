@@ -2467,10 +2467,16 @@ export type paths = {
             readonly path?: never;
             readonly cookie?: never;
         };
-        readonly get?: never;
+        /**
+         * Get a user's phone link
+         * @description The number linked to a user of the app, and how much of what it said before the link the user reads. A user with no number linked has a null phone.
+         *
+         *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
+         */
+        readonly get: operations["getUser"];
         /**
          * Link a user to a phone number
-         * @description Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+         * @description Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. include_phone_history and phone_history_since say how much of the number's past the user reads instead: all of it, or what it said from a time on, in its cards and in the sessions on its threads. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again with neither field changes nothing; null unlinks.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4650,21 +4656,35 @@ export type components = {
             readonly progressive?: boolean;
         };
         readonly AgentUser: {
+            /** @description true when the user reads all of what the number ever said. Left out otherwise. */
+            readonly include_phone_history?: boolean;
             /**
              * @description The number linked to the user, in E.164; null when none is.
              * @example +15551234567
              */
             readonly phone: string | null;
+            /**
+             * Format: date-time
+             * @description From when on the user reads what the number said: the link's time, the time of a request with include_phone_history false, or the phone_history_since sent. Left out with include_phone_history true, or with no number.
+             */
+            readonly phone_history_since?: string;
             /** @description The Stream user id, as the app's own token signs it. */
             readonly user_id: string;
         };
         /** @description Who one of the app's users is, as the app's backend knows it. phone is required: a number, or null for none. */
         readonly AgentUserRequest: {
+            /** @description How much of what the number said before this request the user reads. true: all of it, ever. false: none of it, from this request on. Left out with phone_history_since left out too: from the link on for a number new to the user, and what was stored for the number the user has. true with phone_history_since is refused (400); false with it, phone_history_since applies. */
+            readonly include_phone_history?: boolean;
             /**
-             * @description The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
+             * @description The user's phone number in E.164, with its plus. From then on, their SMS, WhatsApp messages, iMessages and calls from it share one omni-channel with their app chat, under each agent of the app: the agent's episode cards of one are read by the other. What the number said before the link is not the user's, unless include_phone_history or phone_history_since says otherwise: the user reads none of its earlier cards, whether the agent had episode_cards on at the link or turns them on later, and a session on the number's SMS, WhatsApp or iMessage thread is handed none of the thread's earlier messages. null unlinks the number the user had, and that number then reads none of the user's cards. A new number takes the place of the old one, which reads none of the user's cards from then on. A number linked to another user of the app is refused (409 phone_taken).
              * @example +15551234567
              */
             readonly phone: string | null;
+            /**
+             * Format: date-time
+             * @description The user reads what the number said from this time on, in RFC 3339, such as 2026-11-02T00:00:00Z: a conversation that started before it is left out whole. A time in the future is refused (400).
+             */
+            readonly phone_history_since?: string;
         };
         readonly AnalyzeReviewsRequest: {
             /**
@@ -16393,6 +16413,39 @@ export interface operations {
                     readonly "application/json": components["schemas"]["ErrorResponse"];
                 };
             };
+            readonly 500: components["responses"]["InternalError"];
+            readonly 503: components["responses"]["Unavailable"];
+        };
+    };
+    readonly getUser: {
+        readonly parameters: {
+            readonly query?: never;
+            readonly header?: never;
+            readonly path: {
+                /** @description The Stream user id the app chat knows the user by: the id the app's own token signs. */
+                readonly user_id: string;
+            };
+            readonly cookie?: never;
+        };
+        readonly requestBody?: never;
+        readonly responses: {
+            /** @description The user as the router holds it */
+            readonly 200: {
+                headers: {
+                    readonly "X-Stream-Balance-Micros": components["headers"]["X-Stream-Balance-Micros"];
+                    readonly "X-Stream-Balance-Warning": components["headers"]["X-Stream-Balance-Warning"];
+                    readonly "X-Stream-Cost-Estimated": components["headers"]["X-Stream-Cost-Estimated"];
+                    readonly "X-Stream-Cost-Micros": components["headers"]["X-Stream-Cost-Micros"];
+                    readonly [name: string]: unknown;
+                };
+                content: {
+                    readonly "application/json": components["schemas"]["AgentUser"];
+                };
+            };
+            readonly 400: components["responses"]["BadRequest"];
+            readonly 401: components["responses"]["Unauthorized"];
+            readonly 402: components["responses"]["PaymentRequired"];
+            readonly 403: components["responses"]["Forbidden"];
             readonly 500: components["responses"]["InternalError"];
             readonly 503: components["responses"]["Unavailable"];
         };
