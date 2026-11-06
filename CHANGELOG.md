@@ -341,6 +341,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### `episode_cards` is `off`, `record` or `on`
+
+An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #1791).
+
 ### Usage reads drop the old names of `origin`
 
 `listUsageEvents` and `getSpend` refuse `api_key_id` with a 400 that names `origin`, rather than ignoring it and answering every key's events or spend; `getSpend` refuses `group_by=who:api_key` the same way, naming `who:origin`. Each `UsageEvent` answers `origin` alone, no longer `api_key`. On the usage service, `listUsage` and `readAccountUsage` no longer read `api_key_id` or `api_key` (ignored, as any undeclared parameter) and their events answer `origin` alone. `api_key` in the query is still the caller's credential, and limits and grants keep `api_key_id`. The generated clients lose those parameters and the field; `plugins/stream`'s `usage.spend(api_key=...)` now sends it as `origin` (AI-2851).
@@ -390,6 +394,14 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### A move whose recording lapsed is told to copy again
+
+A move nobody followed for longer than the source's retention stopped recording the app's changes, and a follower back after that was answered the changes recorded since as if they were all: the writes made while nothing was recorded never reached the target. The source now answers 410 for a cursor from before its recording started again, so `router replicate` says to run with `--full`; the export it copies then carries on (AI-2815).
+
+### A repeatable read write is not lost by a move
+
+A repeatable read or serializable transaction that took its snapshot before an export started recording, and wrote after, was in neither the export nor its changes. Its write is now refused with a serialization failure, the error those levels are retried on, and the retry is recorded. An export waits up to 30 seconds for such a transaction that wrote before it started, then answers 503, as it does for any open write; a transaction that only reads holds no export (AI-2814).
 
 ### A repeat `router replicate --once` brings only what changed since the last run
 

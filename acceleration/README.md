@@ -2391,7 +2391,8 @@ An export starts recording the app's changes, then waits until every write trans
 the source's shared database when recording started has ended, and only then reads its snapshot.
 So every write of the app to a table the export carries is in the export or in the changes after its cursor,
 including one that was in progress when the export started. A transaction still open after 30 seconds makes the
-export answer 503: run it again.
+export answer 503: run it again. A repeatable read or serializable transaction whose snapshot is older than the
+start of recording is refused with a serialization failure when it next writes, so its retry is recorded.
 
 The source must be a router without shards. A shard's tables (calls, call bridges, recordings,
 sessions, responses, requests and their stats) record no changes, so a router with a shard database
@@ -2417,9 +2418,10 @@ A run refuses, before it writes anything, an app this deployment already holds t
 saved a cursor for, such as one copied before runs saved them. It counts an app as held when a
 table in the shared database holds a row of it; a table kept in the shards does not count. It also refuses a cursor read
 longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION`, and a cursor the source answers
-410 for. The source records an app's changes only for its own retention after a read; the check
-assumes the source's retention is this deployment's, so set the two alike. Writes since may be
-missing. `--full` copies the whole export again, writing the source's rows over the ones here,
+410 for. The source records an app's changes only for its own retention after a read, and answers
+410 for a cursor from before its recording started again; the check here also covers a source
+older than that, and assumes the source's retention is this deployment's, so set the two alike.
+Writes since may be missing. `--full` copies the whole export again, writing the source's rows over the ones here,
 and then saves the cursor.
 
 The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
@@ -2508,7 +2510,9 @@ Changes are captured by a trigger per table writing into `data_changes`, gated o
 `data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
 starts the capture and reading a page refreshes it, so an abandoned move stops recording by
 itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
-rather than silently missing writes. A change is numbered when it is written and seen when
+rather than silently missing writes. A start after the capture expired takes a change number of
+its own, kept in `data_change_capture.recorded_since`, which pruning keeps: a cursor below it is
+answered 410, and the export after it carries on from it. A change is numbered when it is written and seen when
 its transaction commits, so a transaction that commits late can hold a lower number than
 one already seen. Each transaction that records a change holds a shared advisory lock
 naming the highest number handed out before its first one, until it ends, and the cursor

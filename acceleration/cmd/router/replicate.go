@@ -286,8 +286,8 @@ func carryOn(ctx context.Context, pgStore *store.Store, customerID, source strin
 		switch {
 		case saved != nil && saved.Cursor != nil:
 			// The source records the app's changes only until its retention after the last read
-			// (StartDataCapture), and answers a cursor from before that gap with the changes
-			// after it as if they were all.
+			// (StartDataCapture). It answers 410 for a cursor from before that gap, but a source
+			// older than recorded_since answers it with the changes after it as if they were all.
 			if age := time.Since(saved.ReadAt); age >= retention {
 				return nil, fmt.Errorf("the last run here read %s %s ago, longer than this deployment's ROUTER_DATA_MOVE_RETENTION (%s), "+
 					"which this check takes to be the source's own: the source records %s's changes only that long after a read, so writes "+

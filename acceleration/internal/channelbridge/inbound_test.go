@@ -51,6 +51,8 @@ type InboundSuite struct {
 	stream     *streamapp.Clients
 	logs       *syncBuffer
 	customer   string
+	// config is the agent config that answers the suite's threads, with episode_cards on.
+	config store.AgentConfig
 }
 
 func TestInboundSuite(t *testing.T) {
@@ -96,6 +98,8 @@ func (s *InboundSuite) SetupTest() {
 	}), streamapp.ClientsOptions{})
 	s.logs = &syncBuffer{}
 	s.customer = "customer-" + uuid.NewString()
+	s.config = store.AgentConfig{CustomerID: s.customer, Name: "Support", EpisodeCards: true}
+	s.Require().NoError(s.store.CreateAgentConfig(s.ctx, &s.config))
 }
 
 func (s *InboundSuite) TestAQueuedMessageIsWrittenOnceUnderItsOwnID() {
@@ -176,6 +180,94 @@ func (s *InboundSuite) TestACardAStoppedRouterLeftIsWrittenByTheNextAttempt() {
 	s.Equal([]string{card}, messageIDs(s.chat.Stored(omni)))
 }
 
+// A thread under a config with episode_cards off opens no episode: no contact map row, no
+// card and so no summary, and its message is written and handed to the agent all the same
+// (AI-2856). Base 518ac7e9f opened one whatever the config said. Catches the bridge opening a
+// thread's episode without asking the config's mode.
+func (s *InboundSuite) TestAThreadUnderAConfigWithTheCardsOffOpensNoEpisodeAndIsAnswered() {
+	s.cardsMode(false, false)
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+	handed := s.handedTo(nil)
+
+	s.Equal(inboundMessageID(thread.ChannelID, "1793125611.816139"), s.handed(handed).ID)
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.816139").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Equal([]string{"hello"}, s.chat.Messages(thread.ChannelID))
+	s.Zero(s.episodes(), "no episode")
+	s.Zero(s.omniRequests(), "nothing asked of an omni-channel")
+	s.NotContains(s.logs.String(), "could not open the episode")
+	starter, err := s.store.ChannelThreadStarter(s.ctx, thread.ChannelID)
+	s.Require().NoError(err)
+	s.Empty(starter, "a Slack thread is no chat, and has no starter")
+}
+
+// A Linq chat with no episode, under a config with episode_cards off, still names the person
+// who started it, the one its first message's episode would have: the first author the bridge
+// admitted whom the contact map keys, in E.164. A later author does not take the chat over, and
+// an email handle starts none (AI-2856 R1.1). Catches a chat with no starter, whose replies
+// reach nobody the sandbox lists, one the latest author takes over, and a starter written as
+// the author wrote their number rather than as the contact map keys it.
+func (s *InboundSuite) TestAChatWithNoEpisodeNamesThePersonWhoStartedIt() {
+	s.cardsMode(false, false)
+	thread := s.thread("linq")
+	s.queueLinqBy(thread, "m0", "pat@example.com", true)
+	s.queueLinqBy(thread, "m1", "+1 650-555-0100", true)
+	s.queueLinqBy(thread, "m2", "+16505550199", true)
+
+	s.bridge(nil)
+
+	for _, id := range []string{"m0", "m1", "m2"} {
+		s.Require().Eventually(func() bool { return s.row(thread, id).State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond, id)
+	}
+	s.Zero(s.episodes())
+	starter, err := s.store.ChannelThreadStarter(s.ctx, thread.ChannelID)
+	s.Require().NoError(err)
+	s.Equal("+16505550100", starter)
+}
+
+// record writes the thread's card as on does, though no session reads it (AI-2856). Catches
+// record taken as off by the bridge.
+func (s *InboundSuite) TestAThreadUnderAConfigThatRecordsTheCardsWritesItsCard() {
+	s.cardsMode(false, true)
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+
+	s.bridge(nil)
+
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.816139").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	omni, card := s.card(thread)
+	s.Equal([]string{card}, messageIDs(s.chat.Stored(omni)))
+}
+
+// The worker asks the config's mode when it writes the message, not when it was queued: a
+// config turned off meanwhile opens no episode. Catches the mode read from anything but the
+// stored config.
+func (s *InboundSuite) TestAMessageQueuedBeforeItsConfigTurnedTheCardsOffOpensNoEpisode() {
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+	s.cardsMode(false, false)
+
+	s.bridge(nil)
+
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.816139").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Zero(s.episodes())
+}
+
+// A config deleted after its message was queued opens no episode, and that is no failure: the
+// message is written and handed on as any other. Catches a deleted config logged as a store
+// failure, or one whose episode opens all the same.
+func (s *InboundSuite) TestAMessageWhoseConfigWasDeletedOpensNoEpisodeAndLogsNoError() {
+	thread := s.thread("slack_bot")
+	s.queue(thread, "1793125611.816139", "hello", nil)
+	s.Require().NoError(s.store.DeleteAgentConfig(s.ctx, s.customer, s.config.ID))
+	handed := s.handedTo(nil)
+
+	s.Equal(inboundMessageID(thread.ChannelID, "1793125611.816139"), s.handed(handed).ID)
+	s.Require().Eventually(func() bool { return s.row(thread, "1793125611.816139").State == store.ChannelInboundDone }, 5*time.Second, 10*time.Millisecond)
+	s.Zero(s.episodes())
+	s.NotContains(s.logs.String(), "level=ERROR")
+}
+
 // A message whose card is in the omni-channel already, written by an attempt whose answer was
 // lost or whose lease ran out, is written; the card stays one.
 func (s *InboundSuite) TestACardStreamChatAlreadyHoldsCountsAsWritten() {
@@ -223,7 +315,7 @@ func (s *InboundSuite) TestAMessageOfAnEpisodeOpenedAfterItWasQueuedWritesNoCard
 	s.Require().NoError(err)
 	message := s.row(thread, "1793125611.000002")
 	bridge := s.newBridge(nil)
-	opened, err := bridge.episode(s.ctx, thread, store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}, message.Message(), time.Time{})
+	opened, err := bridge.episode(s.ctx, thread, s.config, message.Message(), time.Time{})
 	s.Require().NoError(err)
 	s.Require().NoError(bridge.cards.Write(s.ctx, opened))
 	omni, card := s.card(thread)
@@ -705,7 +797,7 @@ func (s *InboundSuite) TestAWrittenMessageIsHandedToTheAgentAsStreamChatStoredIt
 	thread := s.thread("fake_line")
 	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: "m-1", CustomerID: thread.CustomerID, ConnectorID: thread.ConnectorID,
-		ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey, ConfigID: "config-1", ConfigName: "Support",
+		ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey, ConfigID: s.config.ID, ConfigName: s.config.Name,
 		AuthorID: "U0000ALICE", Text: "what is this?", Media: []core.Media{{URL: "https://cdn.example/a.jpg", MIMEType: "image/jpeg"}},
 		Raw: []byte(`{}`), NextAttemptAt: time.Now(),
 	}, nil)
@@ -738,7 +830,7 @@ func (s *InboundSuite) TestAMessageStreamChatAlreadyHoldsIsHandedToTheAgentFromI
 	s.writeAhead(thread, id, "hello")
 	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: "m-1", CustomerID: thread.CustomerID, ConnectorID: thread.ConnectorID,
-		ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey, ConfigID: "config-1", ConfigName: "Support",
+		ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey, ConfigID: s.config.ID, ConfigName: s.config.Name,
 		AuthorID: "U0000ALICE", Text: "hello", Media: []core.Media{{URL: "https://cdn.example/a.jpg", MIMEType: "image/jpeg"}},
 		Raw: []byte(`{}`), NextAttemptAt: time.Now(),
 	}, nil)
@@ -1014,7 +1106,7 @@ func (s *InboundSuite) answerWhere(matches func(path string) bool, status int, b
 // openEpisode opens the episode of a queued message as a worker does before it writes the
 // message, and returns what Open returned.
 func (s *InboundSuite) openEpisode(thread store.ChannelThread, message store.ChannelInbound) omnichannel.Opened {
-	opened, err := s.newBridge(nil).episode(s.ctx, thread, store.AgentConfig{ID: message.ConfigID, Name: message.ConfigName}, message.Message(), message.CreatedAt)
+	opened, err := s.newBridge(nil).episode(s.ctx, thread, s.config, message.Message(), message.CreatedAt)
 	s.Require().NoError(err)
 	s.Require().True(opened.New)
 	return opened
@@ -1059,7 +1151,7 @@ func (s *InboundSuite) queueAt(thread store.ChannelThread, providerMessageID, te
 	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
 		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
-		ConfigID: "config-1", ConfigName: "Support", AuthorID: "U0000ALICE", Text: text,
+		ConfigID: s.config.ID, ConfigName: s.config.Name, AuthorID: "U0000ALICE", Text: text,
 		Raw: []byte(`{"text":"` + text + `"}`), Forward: forward, NextAttemptAt: due,
 	}, nil)
 	s.Require().NoError(err)
@@ -1106,6 +1198,30 @@ func (s *InboundSuite) writeAhead(thread store.ChannelThread, id, text string) {
 		Message: getstream.MessageRequest{ID: &id, Text: &text, UserID: &author},
 	})
 	s.Require().NoError(err)
+}
+
+// cardsMode stores the suite's config with episode_cards and episode_cards_record as given.
+func (s *InboundSuite) cardsMode(on, record bool) {
+	s.config.EpisodeCards, s.config.EpisodeCardsRecord = on, record
+	s.Require().NoError(s.store.UpdateAgentConfig(s.ctx, &s.config))
+}
+
+// episodes is how many episodes the test's customer has.
+func (s *InboundSuite) episodes() int {
+	var count int
+	s.Require().NoError(s.store.DB().QueryRowContext(s.ctx, "SELECT count(*) FROM episodes WHERE customer_id = ?", s.customer).Scan(&count))
+	return count
+}
+
+// omniRequests is how many requests the suite's Stream Chat had for an omni-channel.
+func (s *InboundSuite) omniRequests() int {
+	count := 0
+	for _, request := range s.chat.Requests(s.chat.Key) {
+		if strings.Contains(request.Path, "/omni-") {
+			count++
+		}
+	}
+	return count
 }
 
 // card is the omni-channel id and the card message id of thread's episode.
@@ -1195,10 +1311,15 @@ func (s *InboundSuite) TestAdmitDecidesTheChatPersonFromTheMessageAlone() {
 
 // queueLinq queues a Linq message of U0000ALICE in thread, whose raw event says whether the chat is a group.
 func (s *InboundSuite) queueLinq(thread store.ChannelThread, providerMessageID string, isGroup bool) {
+	s.queueLinqBy(thread, providerMessageID, "U0000ALICE", isGroup)
+}
+
+// queueLinqBy queues a Linq message of author in thread, whose raw event says whether the chat is a group.
+func (s *InboundSuite) queueLinqBy(thread store.ChannelThread, providerMessageID, author string, isGroup bool) {
 	queued, err := s.store.AcceptChannelInbound(s.ctx, store.ChannelInbound{
 		ChannelID: thread.ChannelID, ProviderMessageID: providerMessageID, CustomerID: thread.CustomerID,
 		ConnectorID: thread.ConnectorID, ProviderUnitID: thread.ProviderUnitID, ThreadKey: thread.ThreadKey,
-		ConfigID: "config-1", ConfigName: "Support", AuthorID: "U0000ALICE", Text: "hi",
+		ConfigID: s.config.ID, ConfigName: s.config.Name, AuthorID: author, Text: "hi",
 		Raw: []byte(fmt.Sprintf(`{"data":{"chat":{"is_group":%t}}}`, isGroup)), NextAttemptAt: time.Now(),
 	}, nil)
 	s.Require().NoError(err)

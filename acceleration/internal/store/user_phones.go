@@ -280,20 +280,23 @@ const retiredPrefix = "retired:"
 const reachedAt = `regexp_replace(cm.address, '^` + retiredPrefix + `[^:]*:', '')`
 
 // retireHistory sets aside each row of a number newly linked to a user that holds an episode,
-// under each agent config of the customer with episode_cards on, in the link's app: whoever
+// under each agent config of the customer that writes episode cards, on or record
+// (AgentConfig.WritesCards), in the link's app: whoever
 // texted or called from the number before (a former holder, or the user before the customer
 // vouched for them) is not proven to be the user. The row keeps its omni-channel and its
 // episodes, so their cards stay where they were written and are closed there, but its address
 // becomes retired:<row id>:<number>, which no lookup by the number matches; what talks to the
 // person on its thread, call or cards still reads the number (reachedAt). The number's next
 // episode makes a row of its own, which joins the user (joinPartner). A row with no episode has nothing
-// to set aside and joins as it is (joinLinked); a config without episode_cards reads no card,
-// and its rows are left as they were. In tx, under the link's lock.
+// to set aside and joins as it is (joinLinked); a config with episode_cards off keeps its rows
+// as they were, and EpisodeCards' link filter keeps their episodes from the user. Record
+// counts as on: it writes the same episodes, which a session reads once the config turns on.
+// In tx, under the link's lock.
 func (s *Store) retireHistory(ctx context.Context, tx bun.Tx, link UserPhone) error {
 	_, err := tx.NewRaw(`UPDATE contact_map AS cm
 SET address = ?4 || cm.id || ':' || cm.address, updated_at = ?5
 WHERE cm.customer_id = ?0
-	AND cm.agent_config_id IN (SELECT ac.id FROM agent_configs AS ac WHERE ac.customer_id = ?0 AND ac.episode_cards)
+	AND cm.agent_config_id IN (SELECT ac.id FROM agent_configs AS ac WHERE ac.customer_id = ?0 AND (ac.episode_cards OR ac.episode_cards_record))
 	AND cm.kind = ?1 AND cm.address = ?2
 	AND COALESCE(NULLIF(cm.stream_app_pk, ?3), 0) = ?6
 	AND EXISTS (SELECT 1 FROM episodes AS ep WHERE ep.contact_id = cm.id)`,

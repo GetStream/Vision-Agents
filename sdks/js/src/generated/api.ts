@@ -2470,7 +2470,7 @@ export type paths = {
         readonly get?: never;
         /**
          * Link a user to a phone number
-         * @description Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
+         * @description Says that a user of the app and a phone number are one person, so the person's app chat and what they text and call from that number from then on share one omni-channel with each agent of the app. What the number said before the link stays apart: under an agent with episode_cards record or on when the link is made, the number's earlier conversations, and one still going on, keep the omni-channel they had, and the user's app chat reads none of their cards. Otherwise, where the person already had one of each, both point at the older one, and the user still reads none of the number's cards from before the link once the agent turns episode_cards on. No message moves. One number for each user, and one user for each number, within the app: the same user id in another Stream app is another person. Sending the same number again changes nothing; null unlinks.
          *
          *     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
          */
@@ -4280,8 +4280,8 @@ export type components = {
             /** Format: date-time */
             readonly created_at: string;
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off. */
-            readonly episode_cards?: boolean;
+            /** @description What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. */
+            readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
             readonly greeting?: components["schemas"]["Greeting"];
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
@@ -4333,7 +4333,7 @@ export type components = {
             /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            readonly episode_cards?: boolean;
+            readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
             /** @description Replaces the greeting whole. An empty text removes it. */
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
@@ -4401,8 +4401,8 @@ export type components = {
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays. */
-            readonly episode_cards?: boolean;
+            /** @description What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays. */
+            readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
@@ -6429,6 +6429,11 @@ export type components = {
          * @enum {string}
          */
         readonly Endpointing: "silence" | "semantic";
+        /**
+         * @description What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
+         * @enum {string}
+         */
+        readonly EpisodeCardsMode: "off" | "record" | "on";
         /** @description Matches one value exactly: "value" is short for {"$eq": "value"}. */
         readonly Equals: string | {
             readonly $eq: string;
