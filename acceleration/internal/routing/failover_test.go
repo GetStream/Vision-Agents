@@ -256,3 +256,47 @@ func (s *RoutingSuite) TestAFailoverIsCountedByProviderNotModel() {
 	}
 	s.ElementsMatch([]string{"modality", "provider", "stage", "reason"}, labels, "a model label grows the series with the catalog")
 }
+
+func (s *RoutingSuite) TestEveryCandidateFailingAtItsVendorIsMarkedAsTheVendorsFailure() {
+	// Catches a session that no vendor would start counted as the router's own failure, and the
+	// mark changing what the error says.
+	first, second := failoverVendors()
+	router := s.failoverRouter(first, second, nil, starting(map[string]error{
+		first: errors.New("503 upstream is down"), second: errors.New("503 upstream is down"),
+	}))
+
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{first + "/m", second + "/m"}})
+
+	s.ErrorIs(err, ErrVendorsFailed)
+	s.EqualError(err, `routing: every candidate for "" failed: `+first+`/m: 503 upstream is down
+`+second+`/m: 503 upstream is down`)
+}
+
+func (s *RoutingSuite) TestCandidatesOnlyTheCustomersKeyFailedForAreNoVendorsFailure() {
+	// Catches a customer's revoked key counted as the vendor failing.
+	first, second := failoverVendors()
+	keys := keptKeys{"acme/" + first + "/" + pricing.DefaultRegion: "theirs"}
+	router := s.failoverRouter(first, second, keys, starting(map[string]error{first: errors.New("401 key revoked")}))
+	own := true
+
+	_, _, err := router.Select(s.ctx, Request{CustomerID: "acme", Providers: []string{first + "/m"}, BYOK: &own})
+
+	s.ErrorContains(err, "401 key revoked")
+	s.NotErrorIs(err, ErrVendorsFailed)
+}
+
+func (s *RoutingSuite) TestACandidateThatFailedOnceTheCallerGaveUpIsNoVendorsFailure() {
+	// Catches a caller hanging up mid-start counted as every vendor failing.
+	first, second := failoverVendors()
+	ctx, cancel := context.WithCancel(s.ctx)
+	defer cancel()
+	router := s.failoverRouter(first, second, nil, func(_ string, spec Spec) (*stubProvider, error) {
+		cancel()
+		return &stubProvider{model: spec.Model, startErr: errors.New("dial: context canceled")}, nil
+	})
+
+	_, _, err := router.Select(ctx, Request{CustomerID: "acme", Providers: []string{first + "/m"}})
+
+	s.Require().ErrorContains(err, "dial: context canceled")
+	s.NotErrorIs(err, ErrVendorsFailed)
+}

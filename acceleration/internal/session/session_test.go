@@ -479,8 +479,10 @@ type SessionSuite struct {
 	present    []stt.Participant
 	unattended bool
 	// speech opens the speech-to-speech model a native session converses with, when a test
-	// wants one. Nil routes none.
-	speech func() (sts.STS, error)
+	// wants one. Nil routes none. speechGate is what the speech-to-speech router asks before it
+	// opens one, nil for nothing.
+	speech     func() (sts.STS, error)
+	speechGate routing.Gate
 	// opens is the edge the manager opens for the next voice session, when a test hands one
 	// in: unlike Spec.Edge, it is a call the manager opened.
 	opens agent.Edge
@@ -506,6 +508,7 @@ func (s *SessionSuite) SetupTest() {
 	s.present = nil
 	s.unattended = false
 	s.speech = nil
+	s.speechGate = nil
 	s.opens = nil
 	s.shortensPhoneTimeouts()
 }
@@ -588,7 +591,7 @@ func (s *SessionSuite) manages() {
 		// A native session asks its model to write down what was said.
 		speaking := stubConfig()
 		speaking.Providers[0].Terms = []options.Term{options.InputTranscript, options.OutputTranscript}
-		conversing, err = stsrouter.New(stsrouter.Options{Config: speaking, Registry: native, Logger: logger})
+		conversing, err = stsrouter.New(stsrouter.Options{Config: speaking, Registry: native, Logger: logger, Gate: s.speechGate})
 		s.Require().NoError(err)
 		s.T().Cleanup(conversing.Close)
 	}

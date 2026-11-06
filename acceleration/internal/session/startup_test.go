@@ -140,7 +140,7 @@ func (s *SessionSuite) TestASessionWhoseModelWouldNotOpenFailsInTheCreate() {
 	s.Require().Error(err)
 
 	s.startedUp(before, "web", nil, "create/web/error")
-	s.endedOnce(ends, "create_failed")
+	s.endedOnce(ends, EndCreateVendorFailed)
 }
 
 func (s *SessionSuite) TestAPhoneSessionsStartUpIsCountedAsPhone() {

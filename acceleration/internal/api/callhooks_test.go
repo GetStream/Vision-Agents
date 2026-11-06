@@ -522,6 +522,29 @@ func (s *CallHooksSuite) TestASessionShowsWhyItEnded() {
 	s.Require().True(s.router.sessions.EndUnanswered(s.customerID(), found.ID()))
 
 	s.endedFor(found.ID(), "unanswered")
+	shown := s.shown(found.ID())
+	s.Require().NotNil(shown.EndFault)
+	s.Require().NotNil(shown.EndStage)
+	s.Equal(SessionEndFault("caller"), *shown.EndFault)
+	s.Equal(SessionEndStage("ringing"), *shown.EndStage)
+}
+
+func (s *CallHooksSuite) TestASessionStoppedThroughTheAPIShowsItWasClosedByNobodyInConversation() {
+	// Catches a session the API stopped kept with no reason, as before reasons said whose
+	// fault an end was, or shown with another reason's fault or stage.
+	found := s.answeredOn("echo/local-model", nil)
+	running := s.shown(found.ID())
+	s.Nil(running.EndFault, "a running session gave whose fault its end was")
+	s.Nil(running.EndStage, "a running session gave the stage it ended at")
+
+	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+found.ID()+"/stop", nil, nil))
+
+	s.endedFor(found.ID(), "closed")
+	shown := s.shown(found.ID())
+	s.Require().NotNil(shown.EndFault)
+	s.Require().NotNil(shown.EndStage)
+	s.Equal(SessionEndFault("none"), *shown.EndFault)
+	s.Equal(SessionEndStage("conversation"), *shown.EndStage)
 }
 
 func (s *CallHooksSuite) TestAnArrivingCallDeliveredTwiceKeepsItsAgentOnTheLine() {

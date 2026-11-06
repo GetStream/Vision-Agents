@@ -18,6 +18,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
+// ErrPlaybackFull is a speech-to-speech model's audio arriving faster than the call plays it,
+// which the agent leaves the call for: a failure of the router's own, not the model's.
+var ErrPlaybackFull = errors.New("agent: speech-to-speech playback queue is full")
+
 const (
 	maxNativeRetries        = 3
 	nativeRetrySetupTimeout = 5 * time.Second
@@ -249,7 +253,7 @@ func (a *Agent) receiveSTS(p *pipeline, source <-chan sts.Event, events chan<- s
 		case <-p.ctx.Done():
 			return
 		default:
-			a.fail(errors.New("agent: speech-to-speech playback queue is full"), "sts")
+			a.fail(ErrPlaybackFull, "sts")
 			go a.Close()
 			return
 		}

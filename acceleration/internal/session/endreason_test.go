@@ -15,10 +15,19 @@ type EndReasonSuite struct{ suite.Suite }
 func TestEndReasonSuite(t *testing.T) { suite.Run(t, new(EndReasonSuite)) }
 
 func (s *EndReasonSuite) TestTheReasonsThatEndACallAreTheOnesTheOutcomeCounterKnows() {
-	for _, reason := range []EndReason{EndAgentHangup, EndTransferred, EndVoicemail, TimeoutHangup} {
-		s.True(outcome.EndsTheCall(string(reason)), reason)
+	// Whether each reason ends its call, for every reason in EndReasons: a reason added there
+	// fails here until it is decided, rather than counting its calls as dropped unseen.
+	endsTheCall := map[EndReason]bool{
+		EndAgentHangup: true, EndTransferred: true, EndVoicemail: true, TimeoutHangup: true,
+		TimeoutStart: false, TimeoutUnanswered: false, EndClosed: false, EndShutdown: false,
+		EndCreateFailed: false, EndCreateVendorFailed: false, EndCreateConfigRefused: false, EndCreateNoCredit: false,
+		EndAgentFailed: false, EndModelFailed: false, EndModelConfigRefused: false, EndModelNoCredit: false,
 	}
-	for _, reason := range []EndReason{TimeoutStart, TimeoutUnanswered, ""} {
-		s.False(outcome.EndsTheCall(string(reason)), reason)
+	for _, info := range EndReasons {
+		ends, decided := endsTheCall[info.Reason]
+		s.True(decided, "%s is not decided here", info.Reason)
+		s.Equal(ends, outcome.EndsTheCall(string(info.Reason)), info.Reason)
 	}
+	s.Len(endsTheCall, len(EndReasons), "a reason decided here that EndReasons does not have")
+	s.False(outcome.EndsTheCall(""), "a session that ended before its reason was kept")
 }

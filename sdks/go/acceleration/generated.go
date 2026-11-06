@@ -2173,22 +2173,73 @@ func (e SearchOptionsContents) Valid() bool {
 	}
 }
 
+// Defines values for SessionEndFault.
+const (
+	SessionEndFaultCaller         SessionEndFault = "caller"
+	SessionEndFaultCarrier        SessionEndFault = "carrier"
+	SessionEndFaultCustomerConfig SessionEndFault = "customer_config"
+	SessionEndFaultCustomerCredit SessionEndFault = "customer_credit"
+	SessionEndFaultNone           SessionEndFault = "none"
+	SessionEndFaultRouter         SessionEndFault = "router"
+	SessionEndFaultVendor         SessionEndFault = "vendor"
+)
+
+// Valid indicates whether the value is a known member of the SessionEndFault enum.
+func (e SessionEndFault) Valid() bool {
+	switch e {
+	case SessionEndFaultCaller:
+		return true
+	case SessionEndFaultCarrier:
+		return true
+	case SessionEndFaultCustomerConfig:
+		return true
+	case SessionEndFaultCustomerCredit:
+		return true
+	case SessionEndFaultNone:
+		return true
+	case SessionEndFaultRouter:
+		return true
+	case SessionEndFaultVendor:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for SessionEndReason.
 const (
-	AgentHangup SessionEndReason = "agent_hangup"
-	Hangup      SessionEndReason = "hangup"
-	Start       SessionEndReason = "start"
-	Transferred SessionEndReason = "transferred"
-	Unanswered  SessionEndReason = "unanswered"
-	Voicemail   SessionEndReason = "voicemail"
+	AgentFailed        SessionEndReason = "agent_failed"
+	AgentHangup        SessionEndReason = "agent_hangup"
+	Closed             SessionEndReason = "closed"
+	Hangup             SessionEndReason = "hangup"
+	ModelConfigRefused SessionEndReason = "model_config_refused"
+	ModelFailed        SessionEndReason = "model_failed"
+	ModelNoCredit      SessionEndReason = "model_no_credit"
+	Shutdown           SessionEndReason = "shutdown"
+	Start              SessionEndReason = "start"
+	Transferred        SessionEndReason = "transferred"
+	Unanswered         SessionEndReason = "unanswered"
+	Voicemail          SessionEndReason = "voicemail"
 )
 
 // Valid indicates whether the value is a known member of the SessionEndReason enum.
 func (e SessionEndReason) Valid() bool {
 	switch e {
+	case AgentFailed:
+		return true
 	case AgentHangup:
 		return true
+	case Closed:
+		return true
 	case Hangup:
+		return true
+	case ModelConfigRefused:
+		return true
+	case ModelFailed:
+		return true
+	case ModelNoCredit:
+		return true
+	case Shutdown:
 		return true
 	case Start:
 		return true
@@ -2197,6 +2248,24 @@ func (e SessionEndReason) Valid() bool {
 	case Unanswered:
 		return true
 	case Voicemail:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for SessionEndStage.
+const (
+	Conversation SessionEndStage = "conversation"
+	Ringing      SessionEndStage = "ringing"
+)
+
+// Valid indicates whether the value is a known member of the SessionEndStage enum.
+func (e SessionEndStage) Valid() bool {
+	switch e {
+	case Conversation:
+		return true
+	case Ringing:
 		return true
 	default:
 		return false
@@ -7960,8 +8029,14 @@ type Session struct {
 	Custom         *map[string]interface{} `json:"custom,omitempty"`
 	Description    *string                 `json:"description,omitempty"`
 
-	// EndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+	// EndFault Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
+	EndFault *SessionEndFault `json:"end_fault,omitempty"`
+
+	// EndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
 	EndReason *SessionEndReason `json:"end_reason,omitempty"`
+
+	// EndStage How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+	EndStage *SessionEndStage `json:"end_stage,omitempty"`
 
 	// ForkedFrom The session this one continued from, empty for one opened fresh.
 	ForkedFrom *string `json:"forked_from,omitempty"`
@@ -8065,8 +8140,14 @@ type SessionConnectorBinding struct {
 	Name string `json:"name"`
 }
 
-// SessionEndReason Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+// SessionEndFault Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
+type SessionEndFault string
+
+// SessionEndReason Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
 type SessionEndReason string
+
+// SessionEndStage How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+type SessionEndStage string
 
 // SessionFilter Which sessions to list. A field not listed here is refused rather than ignored.
 type SessionFilter struct {

@@ -8,7 +8,9 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
+from ..models.session_end_fault import SessionEndFault
 from ..models.session_end_reason import SessionEndReason
+from ..models.session_end_stage import SessionEndStage
 from ..models.session_modality import SessionModality
 from ..models.session_mode import SessionMode
 from ..models.session_state import SessionState
@@ -49,10 +51,25 @@ class Session:
             an incognito session.
         custom (SessionCustom | Unset):
         description (str | Unset):
-        end_reason (SessionEndReason | Unset): Why the session ended: agent_hangup, the agent hung up; transferred, the
-            agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered,
-            the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent
-            left its message or hung up.
+        end_fault (SessionEndFault | Unset): Whose doing a session's end was: none, the agent or the app ended it;
+            caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier;
+            customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend
+            limits.
+        end_reason (SessionEndReason | Unset): Why the session ended, with whose fault it was and the stage it came at:
+            agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a
+            person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start,
+            nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never
+            answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent
+            left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or
+            replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down
+            (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of
+            the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the
+            call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the
+            customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage
+            conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no
+            turn (fault customer_credit, stage conversation).
+        end_stage (SessionEndStage | Unset): How far a session had got when it ended: ringing, before a person was on
+            the line of a phone call; conversation, once the session was open.
         forked_from (str | Unset): The session this one continued from, empty for one opened fresh.
         incognito (bool | Unset): Nothing about this session was recorded. It is reported so a caller can see that what
             they asked for is what they got, but it is never read back from storage: an incognito session has no row to read
@@ -107,7 +124,9 @@ class Session:
     conversation_id: str | Unset = UNSET
     custom: SessionCustom | Unset = UNSET
     description: str | Unset = UNSET
+    end_fault: SessionEndFault | Unset = UNSET
     end_reason: SessionEndReason | Unset = UNSET
+    end_stage: SessionEndStage | Unset = UNSET
     forked_from: str | Unset = UNSET
     incognito: bool | Unset = UNSET
     instructions: str | Unset = UNSET
@@ -169,9 +188,17 @@ class Session:
 
         description = self.description
 
+        end_fault: str | Unset = UNSET
+        if not isinstance(self.end_fault, Unset):
+            end_fault = self.end_fault.value
+
         end_reason: str | Unset = UNSET
         if not isinstance(self.end_reason, Unset):
             end_reason = self.end_reason.value
+
+        end_stage: str | Unset = UNSET
+        if not isinstance(self.end_stage, Unset):
+            end_stage = self.end_stage.value
 
         forked_from = self.forked_from
 
@@ -253,8 +280,12 @@ class Session:
             field_dict["custom"] = custom
         if description is not UNSET:
             field_dict["description"] = description
+        if end_fault is not UNSET:
+            field_dict["end_fault"] = end_fault
         if end_reason is not UNSET:
             field_dict["end_reason"] = end_reason
+        if end_stage is not UNSET:
+            field_dict["end_stage"] = end_stage
         if forked_from is not UNSET:
             field_dict["forked_from"] = forked_from
         if incognito is not UNSET:
@@ -354,12 +385,26 @@ class Session:
 
         description = d.pop("description", UNSET)
 
+        _end_fault = d.pop("end_fault", UNSET)
+        end_fault: SessionEndFault | Unset
+        if isinstance(_end_fault, Unset):
+            end_fault = UNSET
+        else:
+            end_fault = SessionEndFault(_end_fault)
+
         _end_reason = d.pop("end_reason", UNSET)
         end_reason: SessionEndReason | Unset
         if isinstance(_end_reason, Unset):
             end_reason = UNSET
         else:
             end_reason = SessionEndReason(_end_reason)
+
+        _end_stage = d.pop("end_stage", UNSET)
+        end_stage: SessionEndStage | Unset
+        if isinstance(_end_stage, Unset):
+            end_stage = UNSET
+        else:
+            end_stage = SessionEndStage(_end_stage)
 
         forked_from = d.pop("forked_from", UNSET)
 
@@ -443,7 +488,9 @@ class Session:
             conversation_id=conversation_id,
             custom=custom,
             description=description,
+            end_fault=end_fault,
             end_reason=end_reason,
+            end_stage=end_stage,
             forked_from=forked_from,
             incognito=incognito,
             instructions=instructions,

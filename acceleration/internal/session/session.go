@@ -324,11 +324,13 @@ type Session struct {
 	// active is set while router_sessions_active counts the session: from the manager
 	// holding it until it has closed. agentLeft is set once its agent left the call by itself
 	// (consume). modelErred and replied are whether its model failed a turn and whether
-	// the agent answered one (observeTurn).
+	// the agent answered one (observeTurn), and failure the Fault of the last model failure
+	// since its last answer.
 	active     atomic.Bool
 	agentLeft  atomic.Bool
 	modelErred atomic.Bool
 	replied    atomic.Bool
+	failure    atomic.Value
 }
 
 // recordedTurn is one turn being written down as it happens.

@@ -160,9 +160,8 @@ func (s *TransferSuite) answers() *Session {
 }
 
 func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
-	transferred := sessionEnds.WithLabelValues("transferred", "false")
-	dropped := sessionEnds.WithLabelValues("agent_failed", "true")
-	before, droppedBefore := testutil.ToFloat64(transferred), testutil.ToFloat64(dropped)
+	transferred, dropped, failed := endCounter(EndTransferred), endCounter(EndAgentFailed), endCounter(EndModelFailed)
+	before, droppedBefore, failedBefore := testutil.ToFloat64(transferred), testutil.ToFloat64(dropped), testutil.ToFloat64(failed)
 	created := s.answers()
 	events, detach := created.Watch()
 	defer detach()
@@ -193,6 +192,7 @@ func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
 	// The agent leaves the call by itself on a transfer, which is no agent dropping out.
 	s.Equal(before+1, testutil.ToFloat64(transferred), "the transfer was not counted")
 	s.Equal(droppedBefore, testutil.ToFloat64(dropped), "the transfer was counted as the agent dropping out")
+	s.Equal(failedBefore, testutil.ToFloat64(failed), "the transfer was counted as the model failing")
 	s.NotEmpty(s.asked("/sip/inbound_trunks"), "the transfer made no line at the suite's Stream")
 	s.Empty(s.asked("/mark_ended"), "the call the caller was handed over on was ended")
 }
