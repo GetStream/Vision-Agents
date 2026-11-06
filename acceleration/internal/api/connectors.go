@@ -43,21 +43,22 @@ const mcpSource = "mcp"
 // rate limits, sources, hooks and the operator's client variables. A custom connector's
 // endpoint is left out too: an MCP URL can carry a secret in its path (AI-837).
 type Connector struct {
-	ID          string            `json:"id" doc:"Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does."`
-	Revision    int               `json:"revision" readOnly:"true" doc:"The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected."`
-	Name        string            `json:"name"`
-	Category    string            `json:"category,omitempty"`
-	Description string            `json:"description,omitempty"`
-	Custom      bool              `json:"custom" readOnly:"true" doc:"The app's own definition rather than a built-in."`
-	Schemes     []string          `json:"schemes" doc:"How a connection may authenticate, such as oauth2_code."`
-	Inputs      []ConnectorInput  `json:"inputs" doc:"What a connection is created with, such as a region or a shop."`
-	Scopes      []string          `json:"scopes" doc:"The scopes a consent asks for."`
-	Client      ConnectorClient   `json:"client"`
-	Setup       *ConnectorSetup   `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
-	RedirectURI string            `json:"redirect_uri,omitempty" readOnly:"true" format:"uri" doc:"The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then."`
-	Channel     bool              `json:"channel" readOnly:"true" doc:"The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies."`
-	Sandbox     *ConnectorSandbox `json:"sandbox,omitempty" readOnly:"true" doc:"How code in an agent's sandbox calls the provider's API with a connection's credential without holding it. Absent when the connector offers no such access."`
-	CreatedAt   time.Time         `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
+	ID          string                      `json:"id" doc:"Unique among the built-ins and the app's own. A custom definition's starts with custom_, and a built-in's never does."`
+	Revision    int                         `json:"revision" readOnly:"true" doc:"The manifest's revision. A connection is created from the newest one and keeps reading it until it is reconnected."`
+	Name        string                      `json:"name"`
+	Category    string                      `json:"category,omitempty"`
+	Description string                      `json:"description,omitempty"`
+	Custom      bool                        `json:"custom" readOnly:"true" doc:"The app's own definition rather than a built-in."`
+	Schemes     []string                    `json:"schemes" doc:"How a connection may authenticate, such as oauth2_code."`
+	Inputs      []ConnectorInput            `json:"inputs" doc:"What a connection is created with, such as a region or a shop."`
+	Scopes      []string                    `json:"scopes" doc:"The scopes a consent asks for."`
+	Client      ConnectorClient             `json:"client"`
+	Setup       *ConnectorSetup             `json:"setup,omitempty" doc:"What a person does at the provider before the first consent, such as registering an OAuth client. Absent when the manifest says nothing."`
+	RedirectURI string                      `json:"redirect_uri,omitempty" readOnly:"true" format:"uri" doc:"The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then."`
+	Channel     bool                        `json:"channel" readOnly:"true" doc:"The connector is an inbound channel: its manifest reads messages a provider delivers to the router, which agents answer. A block that reads only signals, such as Slack with a user token, is not one. A dashboard warns on it before a delete that would end those replies."`
+	Sandbox     *ConnectorSandbox           `json:"sandbox,omitempty" readOnly:"true" doc:"How code in an agent's sandbox calls the provider's API with a connection's credential without holding it. Absent when the connector offers no such access."`
+	ProviderApp *ConnectorProviderAppFields `json:"provider_app,omitempty" readOnly:"true" doc:"The customer's own provider app the channel's events are verified with: its id and signing secret go on the connector's OAuth client record (provider_app_id and signing_secret), and the provider delivers to the app's events URL. Absent when the connector is no channel or its channel is verified with the operator's secret, as Slack's is."`
+	CreatedAt   time.Time                   `json:"created_at" readOnly:"true" doc:"When this revision was stored."`
 }
 
 // ConnectorSandbox is the manifest's sandbox block as the catalog shows it.
@@ -68,6 +69,28 @@ type ConnectorSandbox struct {
 
 func (*ConnectorSandbox) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "How code in an agent's sandbox reaches the provider's API with a connection's credential."
+	schema.AdditionalProperties = false
+	return schema
+}
+
+// ConnectorProviderAppFields is what a dashboard shows beside the provider app's two fields:
+// where the provider is to deliver, and how the manifest names the fields.
+//
+// The events URL is given as a prefix rather than a template with a {provider_app_id}
+// placeholder: a client appends the id the person typed and needs no template grammar. The id
+// is one path segment of RFC 3986 unreserved characters (ConnectorOAuthClientRequest's
+// pattern), so it is appended as it is, with no escaping.
+type ConnectorProviderAppFields struct {
+	EventsURLPrefix   string `json:"events_url_prefix,omitempty" format:"uri" doc:"The app's events URL without the app's id at its end: ROUTER_PUBLIC_URL followed by /v1/connectors/events/{id}/. Followed by the provider_app_id, it is the URL the provider app delivers its events to, such as a Meta app's WhatsApp webhook Callback URL. Absent when ROUTER_PUBLIC_URL is not set."`
+	VerifyToken       bool   `json:"verify_token" doc:"The provider checks the events URL with a verify token before it delivers, as Meta does for a webhook: the token is the provider_app_id."`
+	IDLabel           string `json:"id_label,omitempty" doc:"How the provider names the app's id, such as Meta App ID. Absent when the manifest says nothing."`
+	IDDescription     string `json:"id_description,omitempty" doc:"Where a person finds the app's id at the provider. Absent when the manifest says nothing."`
+	SecretLabel       string `json:"secret_label,omitempty" doc:"How the provider names the secret it signs the app's events with, such as Meta App Secret. Absent when the manifest says nothing."`
+	SecretDescription string `json:"secret_description,omitempty" doc:"Where a person finds that secret at the provider. Absent when the manifest says nothing."`
+}
+
+func (*ConnectorProviderAppFields) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
+	schema.Description = "The customer's own provider app a channel's events are verified with."
 	schema.AdditionalProperties = false
 	return schema
 }
@@ -106,10 +129,12 @@ func (*Connector) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Sc
 
 // ConnectorInput is one value a connection is created with.
 type ConnectorInput struct {
-	Name    string   `json:"name"`
-	Enum    []string `json:"enum,omitempty" doc:"The values it may take. Absent when a pattern decides."`
-	Pattern string   `json:"pattern,omitempty" doc:"A regular expression the whole value must match."`
-	Default string   `json:"default,omitempty" doc:"Used when the connection gives no value. An input without one is required."`
+	Name        string   `json:"name"`
+	Label       string   `json:"label,omitempty" doc:"How a form names the input, such as Phone number ID. Absent when the manifest says nothing: then name is shown."`
+	Description string   `json:"description,omitempty" doc:"Where a person finds the value at the provider. Absent when the manifest says nothing."`
+	Enum        []string `json:"enum,omitempty" doc:"The values it may take. Absent when a pattern decides."`
+	Pattern     string   `json:"pattern,omitempty" doc:"A regular expression the whole value must match."`
+	Default     string   `json:"default,omitempty" doc:"Used when the connection gives no value. An input without one is required."`
 }
 
 // ConnectorClient is how the OAuth client a connection uses is registered, and how that client
@@ -480,7 +505,8 @@ func connectorOf(definition store.ConnectorDefinition, publicURL string) Connect
 	manifest := definition.Manifest
 	inputs := make([]ConnectorInput, 0, len(manifest.Inputs))
 	for _, in := range manifest.Inputs {
-		inputs = append(inputs, ConnectorInput{Name: in.Name, Enum: in.Enum, Pattern: in.Pattern, Default: in.Default})
+		inputs = append(inputs, ConnectorInput{Name: in.Name, Label: in.Label, Description: in.Description,
+			Enum: in.Enum, Pattern: in.Pattern, Default: in.Default})
 	}
 	registrations := make([]ConnectorClientRegistrationMethod, 0, len(manifest.Client.Registration))
 	for _, registration := range manifest.Client.Registration {
@@ -502,8 +528,21 @@ func connectorOf(definition store.ConnectorDefinition, publicURL string) Connect
 	if manifest.Sandbox != nil {
 		sandbox = &ConnectorSandbox{Env: manifest.Sandbox.Env, Hosts: slices.Clone(manifest.Sandbox.Hosts)}
 	}
+	var providerApp *ConnectorProviderAppFields
+	if manifest.Channel != nil && manifest.Channel.Verifier.Secret == core.SecretProviderApp {
+		text := manifest.ProviderApp
+		providerApp = &ConnectorProviderAppFields{
+			VerifyToken: manifest.Channel.Handshake == core.HandshakeHubChallenge,
+			IDLabel:     text.IDLabel, IDDescription: text.IDDescription,
+			SecretLabel: text.SecretLabel, SecretDescription: text.SecretDescription,
+		}
+		if public := strings.TrimRight(publicURL, "/"); public != "" {
+			providerApp.EventsURLPrefix = public + providerAppEventsPath + definition.ID + "/"
+		}
+	}
 	return Connector{
 		Sandbox:     sandbox,
+		ProviderApp: providerApp,
 		Setup:       setup,
 		RedirectURI: redirectURI,
 		ID:          definition.ID,

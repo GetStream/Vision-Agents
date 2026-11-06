@@ -62,6 +62,10 @@ Start from the closest existing file:
    A source's `headers` are fixed request headers sent on every request, such as GitHub's
    `X-MCP-Toolsets` (`github.yaml`); a header the credential, the connection or MCP writes
    is refused.
+   What a dashboard shows a person: `setup` (a provider page and the steps taken there), each
+   input's `label` and `description`, and, for a channel verified with the customer's own app
+   (`channel.verifier.secret: provider_app`), `provider_app` with `id_label`, `id_description`,
+   `secret_label` and `secret_description` (`whatsapp.yaml` revision 4).
 2. **Cite every vendor fact.** Put a comment beside each value with the vendor page and the
    date you opened it. A value with no source gets `# unverified`, and the PR lists it.
 3. **Stream's own OAuth client** (only if `client.registration` lists `operator`): set
@@ -92,7 +96,9 @@ Start from the closest existing file:
   consent (OAuth) or token save. So a new field, such as `api_base`, reaches old connections
   only then. The API shows them `outdated` only when the new revision changes what they read
   (`core.Manifest.ReadsAsConnection`): a revision that changes only `sensitive`, `outbound` or
-  `read_only_tools` leaves them `current`, since the config check reads those from the latest.
+  `read_only_tools` leaves them `current`, since the config check reads those from the latest,
+  as does one that changes only what the catalog shows (`category`, `description`, `setup`,
+  `provider_app`, an input's `label` and `description`).
 - **To retire a broken revision**, the new revision lists it in `broken_revisions` with a
   reason. Connections on it are asked to sign in again.
 - **Never delete a file to remove a connector.** Its revisions stay for the connections that

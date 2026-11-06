@@ -39,6 +39,8 @@ final readonly class Connector
         public array $scopes,
         public ?string $category = null,
         public ?string $description = null,
+        // The customer's own provider app the channel's events are verified with: its id and signing secret go on the...
+        public ?ConnectorProviderAppFields $providerApp = null,
         // The redirect URI an OAuth client registered for this connector has to list: where every consent of this dep...
         public ?string $redirectUri = null,
         // How code in an agent's sandbox calls the provider's API with a connection's credential without holding it....
@@ -66,6 +68,7 @@ final readonly class Connector
             scopes: Json::strings($data, 'scopes'),
             category: array_key_exists('category', $data) && $data['category'] !== null ? Json::string($data, 'category') : null,
             description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
+            providerApp: array_key_exists('provider_app', $data) && $data['provider_app'] !== null ? ConnectorProviderAppFields::fromArray(Json::object($data, 'provider_app')) : null,
             redirectUri: array_key_exists('redirect_uri', $data) && $data['redirect_uri'] !== null ? Json::string($data, 'redirect_uri') : null,
             sandbox: array_key_exists('sandbox', $data) && $data['sandbox'] !== null ? ConnectorSandbox::fromArray(Json::object($data, 'sandbox')) : null,
             setup: array_key_exists('setup', $data) && $data['setup'] !== null ? ConnectorSetup::fromArray(Json::object($data, 'setup')) : null,
@@ -95,6 +98,9 @@ final readonly class Connector
         }
         if ($this->description !== null) {
             $out['description'] = $this->description;
+        }
+        if ($this->providerApp !== null) {
+            $out['provider_app'] = $this->providerApp->toArray();
         }
         if ($this->redirectUri !== null) {
             $out['redirect_uri'] = $this->redirectUri;

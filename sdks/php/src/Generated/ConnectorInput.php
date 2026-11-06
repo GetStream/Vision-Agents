@@ -14,9 +14,13 @@ final readonly class ConnectorInput
         public string $name,
         // Used when the connection gives no value. An input without one is required.
         public ?string $default = null,
+        // Where a person finds the value at the provider. Absent when the manifest says nothing.
+        public ?string $description = null,
         // The values it may take. Absent when a pattern decides.
         /** @var list<string>|null */
         public ?array $enum = null,
+        // How a form names the input, such as Phone number ID. Absent when the manifest says nothing: then name is sh...
+        public ?string $label = null,
         // A regular expression the whole value must match.
         public ?string $pattern = null,
     ) {
@@ -30,7 +34,9 @@ final readonly class ConnectorInput
         return new self(
             name: Json::string($data, 'name'),
             default: array_key_exists('default', $data) && $data['default'] !== null ? Json::string($data, 'default') : null,
+            description: array_key_exists('description', $data) && $data['description'] !== null ? Json::string($data, 'description') : null,
             enum: array_key_exists('enum', $data) && $data['enum'] !== null ? Json::strings($data, 'enum') : null,
+            label: array_key_exists('label', $data) && $data['label'] !== null ? Json::string($data, 'label') : null,
             pattern: array_key_exists('pattern', $data) && $data['pattern'] !== null ? Json::string($data, 'pattern') : null,
         );
     }
@@ -47,8 +53,14 @@ final readonly class ConnectorInput
         if ($this->default !== null) {
             $out['default'] = $this->default;
         }
+        if ($this->description !== null) {
+            $out['description'] = $this->description;
+        }
         if ($this->enum !== null) {
             $out['enum'] = $this->enum;
+        }
+        if ($this->label !== null) {
+            $out['label'] = $this->label;
         }
         if ($this->pattern !== null) {
             $out['pattern'] = $this->pattern;

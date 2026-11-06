@@ -2,6 +2,10 @@
 
 ## Features
 
+### A connector names its form fields, and WhatsApp says what to paste where in Meta
+
+A connector's manifest can name each input (`label`, `description`) and the two values of the customer's own provider app (`provider_app`: `id_label`, `id_description`, `secret_label`, `secret_description`), and `getConnector` and `listConnectors` answer them. A connector whose channel is verified with the customer's own app (slack_bot, Linq, Telnyx, WhatsApp) answers `provider_app` with `events_url_prefix`, `ROUTER_PUBLIC_URL` and `/v1/connectors/events/<id>/`, which the app's id completes into the URL the provider delivers to, and `verify_token`, true when the provider checks that URL with the app id as its verify token, as Meta does. WhatsApp's revision 4 names the phone number ID and the Meta App ID and App Secret, and gives the six setup steps at Meta. A revision that changes only these leaves a connection on the one before `current` (AI-2915).
+
 ### Usage reads name who started the work `origin`
 
 A usage row's "who started it" is a public API key or, for work no key started, an origin such as `hook:chat`, `phone:inbound` or `job:<name>`. The API called it `api_key` and `api_key_id`, so `api_key_id=hook:chat` read as a key that is not one. Its public name is now `origin`: `listUsageEvents` and `getSpend` take `origin` in the query, each `UsageEvent` answers `origin`, and `getSpend` groups by it with `group_by=who:origin`. The usage service's `listUsage` and `readAccountUsage` take `origin` and answer it on each event. The old names are gone (see Breaking Changes). Limits and grants keep `api_key_id`, since they only ever name a key (AI-2811). A query parameter tagged deprecated is marked `deprecated` on the parameter itself in both specs, so the generated JavaScript and Go clients flag it (AI-2812).

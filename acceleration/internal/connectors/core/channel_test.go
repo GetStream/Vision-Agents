@@ -281,6 +281,23 @@ func (s *ChannelSuite) TestAHandshakeNeedsAProviderAppSecret() {
 	s.ErrorContains(err, "channel.handshake: needs a provider_app secret")
 }
 
+// AI-2915: provider_app names the fields of the customer's own provider app, which only a
+// channel verified with a provider_app secret has: each of its four fields is refused on a
+// manifest with no channel and on one verified with the operator's secret.
+func (s *ChannelSuite) TestProviderAppTextNeedsAProviderAppSecret() {
+	s.Require().NoError(s.variant("channel:\n", "provider_app:\n  id_label: App ID\n  secret_label: App Secret\nchannel:\n"))
+	operator := "client:\n  env: EXAMPLE\n" + strings.Replace(baseChannel, "secret: provider_app", "secret: operator", 1)
+	s.Require().NoError(func() error { _, err := ParseManifest(minimal(operator)); return err }())
+
+	for _, field := range []string{"id_label", "id_description", "secret_label", "secret_description"} {
+		text := "provider_app:\n  " + field + ": Some text\n"
+		for name, rest := range map[string]string{"no channel": "", "an operator's secret": operator} {
+			_, err := ParseManifest(minimal(text + rest))
+			s.ErrorContains(err, "provider_app: names a provider app, which only a channel.verifier.secret provider_app has", field+", "+name)
+		}
+	}
+}
+
 // hubQuery is a hub_challenge handshake's query (PubSubHubbub 0.3, 6.2.1; Meta's webhooks).
 func hubQuery(mode, token, challenge string) url.Values {
 	return url.Values{"hub.mode": {mode}, "hub.verify_token": {token}, "hub.challenge": {challenge}}

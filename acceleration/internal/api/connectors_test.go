@@ -135,6 +135,81 @@ func (s *ConnectorsSuite) TestAMovedPluginShowsItsSetupSteps() {
 	s.Nil(calcom.Setup)
 }
 
+// TestWhatsAppShowsItsFieldsLabelsAndSetupSteps (AI-2915): whatsapp.yaml revision 4 names its
+// input and its Meta app's two fields, and gives the six steps a person takes at Meta; its
+// channel is verified with the Meta app's App Secret and Meta checks the URL with the app id as
+// the Verify token. This suite's router has no ROUTER_PUBLIC_URL, so no events URL is shown.
+func (s *ConnectorsSuite) TestWhatsAppShowsItsFieldsLabelsAndSetupSteps() {
+	whatsapp := s.get("whatsapp")
+
+	s.Equal(4, whatsapp.Revision)
+	s.Require().Len(whatsapp.Inputs, 1)
+	s.Equal("phone_number_id", whatsapp.Inputs[0].Name)
+	s.Equal("Phone number ID", whatsapp.Inputs[0].Label)
+	s.Contains(whatsapp.Inputs[0].Description, "WhatsApp > API Setup")
+	s.Require().NotNil(whatsapp.ProviderApp)
+	s.True(whatsapp.ProviderApp.VerifyToken)
+	s.Empty(whatsapp.ProviderApp.EventsURLPrefix)
+	s.Equal("Meta App ID", whatsapp.ProviderApp.IDLabel)
+	s.Contains(whatsapp.ProviderApp.IDDescription, "Verify token")
+	s.Equal("Meta App Secret", whatsapp.ProviderApp.SecretLabel)
+	s.Contains(whatsapp.ProviderApp.SecretDescription, "X-Hub-Signature-256")
+	s.Require().NotNil(whatsapp.Setup)
+	s.Equal("https://developers.facebook.com/apps", whatsapp.Setup.URL)
+	var titles []string
+	for _, step := range whatsapp.Setup.Steps {
+		titles = append(titles, step.Title)
+	}
+	s.Equal([]string{"Copy the app's ID and secret", "Point the webhook at the router", "Subscribe to messages",
+		"Copy the phone number ID", "Make a system user token", "Connect the number"}, titles)
+}
+
+// TestOnlyAChannelVerifiedWithAProviderAppShowsOne (AI-2915): the four connectors whose channel
+// is verified with the customer's own app's secret show provider_app, in a read and in the list,
+// and only whatsapp's has a verify token or names its fields. Slack's channel is verified with
+// the operator's secret, and a connector with no channel or a custom one shows none. On the
+// base, d3a1dbeb1, no connector was answered with a provider_app key (AI-2915/author-1.md,
+// «Base probe»).
+func (s *ConnectorsSuite) TestOnlyAChannelVerifiedWithAProviderAppShowsOne() {
+	s.create(s.customConnector(s.customID()))
+	status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors?limit=200", nil)
+	s.Require().Equal(http.StatusOK, status)
+	var page struct {
+		Items []map[string]any `json:"items"`
+	}
+	s.Require().NoError(json.Unmarshal(raw, &page))
+	shown := map[string]any{}
+	for _, item := range page.Items {
+		if app, ok := item["provider_app"]; ok {
+			shown[item["id"].(string)] = app
+		}
+	}
+	unnamed := map[string]any{"verify_token": false}
+	s.Equal(map[string]any{"slack_bot": unnamed, "linq": unnamed, "telnyx": unnamed}, func() map[string]any {
+		others := maps.Clone(shown)
+		delete(others, "whatsapp")
+		return others
+	}())
+	s.Require().Contains(shown, "whatsapp")
+	s.Equal(true, shown["whatsapp"].(map[string]any)["verify_token"])
+	s.Equal(s.get("whatsapp").ProviderApp.IDLabel, shown["whatsapp"].(map[string]any)["id_label"], "the list shows what the read does")
+	s.Nil(s.get("slack").ProviderApp)
+}
+
+// TestTheEventsURLPrefixIsROUTER_PUBLIC_URLsProviderAppRoute (AI-2915): with ROUTER_PUBLIC_URL
+// set, a provider-app channel's events URL is it, the provider app route and the connector's
+// id, to which the app's id is appended; a trailing slash on ROUTER_PUBLIC_URL is not doubled.
+func (s *ConnectorsSuite) TestTheEventsURLPrefixIsROUTER_PUBLIC_URLsProviderAppRoute() {
+	public := s.router.publicURL
+	s.T().Cleanup(func() { s.router.publicURL = public })
+
+	for _, set := range []string{"https://router.example", "https://router.example/"} {
+		s.router.publicURL = set
+		s.Equal("https://router.example/v1/connectors/events/whatsapp/", s.get("whatsapp").ProviderApp.EventsURLPrefix, set)
+		s.Equal("https://router.example/v1/connectors/events/telnyx/", s.get("telnyx").ProviderApp.EventsURLPrefix, set)
+	}
+}
+
 // nessy is internal (nessy.yaml): an app Stream marks internal lists and reads it with the
 // client and setup its staff need.
 func (s *ConnectorsSuite) TestAnAppMarkedInternalListsAndReadsNessy() {
@@ -204,16 +279,29 @@ func (s *ConnectorsSuite) TestACustomConnectorsEndpointIsNeverShown() {
 
 // TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL is the control for AI-1046 and AI-1047:
 // the keys a built-in is answered with are the ones accelerate at 26051062 answered with,
-// probed there with this suite (pr-w7/author-1.md), plus channel (AI-1053). Without ROUTER_PUBLIC_URL there is no
-// redirect URI.
+// probed there with this suite (pr-w7/author-1.md), plus channel (AI-1053), and telnyx's
+// provider_app (AI-2915). Without ROUTER_PUBLIC_URL there is no redirect URI. An input whose
+// manifest names no label or description is answered with the keys the base, d3a1dbeb1,
+// answered it with (AI-2915/author-1.md, «Base probe»).
 func (s *ConnectorsSuite) TestABuiltInReadsAsBeforeOnARouterWithoutAPublicURL() {
-	for _, id := range []string{"slack", "linear", "telnyx"} {
+	keys := []string{"category", "channel", "client", "created_at", "custom", "description", "duration", "id", "inputs",
+		"name", "revision", "schemes", "scopes"}
+	for id, want := range map[string][]string{"slack": keys, "linear": keys, "telnyx": slices.Sorted(slices.Values(append(slices.Clone(keys), "provider_app")))} {
 		status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors/"+id, nil)
 		s.Require().Equal(http.StatusOK, status)
 		var shown map[string]any
 		s.Require().NoError(json.Unmarshal(raw, &shown))
-		s.Equal([]string{"category", "channel", "client", "created_at", "custom", "description", "duration", "id", "inputs",
-			"name", "revision", "schemes", "scopes"}, slices.Sorted(maps.Keys(shown)), id)
+		s.Equal(want, slices.Sorted(maps.Keys(shown)), id)
+	}
+	for id, want := range map[string][]string{"telnyx": {"name", "pattern"}, "salesforce": {"default", "enum", "name"}, "metabase": {"name", "pattern"}} {
+		status, raw := s.serverClient.call(http.MethodGet, "/v1/agents/connectors/"+id, nil)
+		s.Require().Equal(http.StatusOK, status)
+		var shown struct {
+			Inputs []map[string]any `json:"inputs"`
+		}
+		s.Require().NoError(json.Unmarshal(raw, &shown))
+		s.Require().Len(shown.Inputs, 1, id)
+		s.Equal(want, slices.Sorted(maps.Keys(shown.Inputs[0])), id)
 	}
 }
 
