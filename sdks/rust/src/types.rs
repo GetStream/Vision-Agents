@@ -341,15 +341,12 @@ pub struct AgentConfig {
     pub created_at: ::std::string::String,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Absent when chorus-asr ends the agent's turns by the server's default.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     ///What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
-    ///The model that controls the floor in this agent's sessions: stream/chorus-asr. Absent for the default flow controller.
+    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub floor_control: ::std::option::Option<::std::string::String>,
+    pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -430,14 +427,11 @@ pub struct AgentConfigPatch {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///Replaces the choice whole. An empty object is the server's default.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
-    ///The model that controls the floor: stream/chorus-asr, or empty for the default flow controller again. stream/chorus-asr on a router without a chorus-asr server is refused (400).
+    ///Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub floor_control: ::std::option::Option<::std::string::String>,
+    pub floor_control: ::std::option::Option<FloorControl>,
     ///Replaces the greeting whole. An empty text removes it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
@@ -544,15 +538,12 @@ pub struct AgentConfigRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///When chorus-asr has a caller's turn ended in this agent's sessions, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars. A session request's wins over this. Left out on a create, the server's default; left out on an update, the stored choice stays, and an empty object is the server's default again. A preset or wait the server does not publish is refused (400) when the floor control asks it.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub end_of_turn: ::std::option::Option<EndOfTurn>,
     ///What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub episode_cards: ::std::option::Option<EpisodeCardsMode>,
-    ///The model that controls the floor in this agent's sessions, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr, the one there is, or empty for the default flow controller. A session request's wins over this. Left out on a create, the default flow controller; left out on an update, the stored choice stays. stream/chorus-asr on a router without a chorus-asr server is refused (400).
+    ///The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub floor_control: ::std::option::Option<::std::string::String>,
+    pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     ///A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered.
@@ -4800,12 +4791,9 @@ pub struct CreateSessionRequest {
     ///A longer note about the conversation, searched alongside the title.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
-    ///When chorus-asr has the caller's turn ended in this session, over the agent config's, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars, and an empty object for the server's default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because how eager the agent is to answer is the app's to decide.
+    ///The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub end_of_turn: ::std::option::Option<EndOfTurn>,
-    ///The model that controls the floor in this session, over the agent config's: stream/chorus-asr, or empty for the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400). The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub floor_control: ::std::option::Option<::std::string::String>,
+    pub floor_control: ::std::option::Option<FloorControl>,
     ///What the agent opens the call with, over what the config says.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
@@ -5675,30 +5663,6 @@ pub struct EndCallSettings {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub when: ::std::option::Option<::std::string::String>,
 }
-///When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
-#[serde(deny_unknown_fields)]
-pub struct EndOfTurn {
-    ///Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub bars: ::std::option::Option<::std::vec::Vec<EndOfTurnBar>>,
-    ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub max_wait_ms: ::std::option::Option<i64>,
-    ///One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub preset: ::std::option::Option<::std::string::String>,
-}
-///What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on.
-#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
-#[serde(deny_unknown_fields)]
-#[derive(Default)]
-pub struct EndOfTurnBar {
-    ///What p_eot, chorus-asr's probability that the caller has finished, must reach for the turn to have ended: strictly between 0 and 1.
-    pub bar: f64,
-    ///How far into the pause, in milliseconds, the bar begins.
-    pub from_ms: i64,
-}
 ///What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 #[derive(
     ::serde::Deserialize,
@@ -5934,6 +5898,17 @@ impl ::std::convert::TryFrom<::std::string::String> for ErrorType {
     ) -> ::std::result::Result<Self, self::error::ConversionError> {
         value.parse()
     }
+}
+///The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct FloorControl {
+    ///The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub max_wait_ms: ::std::option::Option<i64>,
+    ///The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub model: ::std::option::Option<::std::string::String>,
 }
 ///Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, Default, PartialEq)]
@@ -12862,12 +12837,9 @@ pub struct SyncAgentRequest {
     pub connectors: ::std::option::Option<::std::vec::Vec<AgentConnectorBinding>>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub dispatch: ::std::option::Option<AgentDispatch>,
-    ///agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. It is held to the server where floor_control asks chorus-asr about turns. When the server cannot be asked, or floor_control is off, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard.
+    ///agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub end_of_turn: ::std::option::Option<EndOfTurn>,
-    ///agent.yaml's floor_control: the model that controls the agent's floor, stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400) before anything is written.
-    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
-    pub floor_control: ::std::option::Option<::std::string::String>,
+    pub floor_control: ::std::option::Option<FloorControl>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub greeting: ::std::option::Option<Greeting>,
     ///The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered.

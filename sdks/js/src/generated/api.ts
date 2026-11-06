@@ -4448,12 +4448,10 @@ export type components = {
             /** Format: date-time */
             readonly created_at: string;
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Absent when chorus-asr ends the agent's turns by the server's default. */
-            readonly end_of_turn?: components["schemas"]["EndOfTurn"];
             /** @description What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. */
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
-            /** @description The model that controls the floor in this agent's sessions: stream/chorus-asr. Absent for the default flow controller. */
-            readonly floor_control?: string;
+            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             readonly guardrail?: string;
             readonly harness?: components["schemas"]["Harness"];
@@ -4505,11 +4503,9 @@ export type components = {
             /** @description The connectors whose tools the agent may call, each under an alias unique within the config. Sent, they replace the bindings stored, and an empty list removes them all. Null is the same as leaving them out. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description Replaces the choice whole. An empty object is the server's default. */
-            readonly end_of_turn?: components["schemas"]["EndOfTurn"];
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
-            /** @description The model that controls the floor: stream/chorus-asr, or empty for the default flow controller again. stream/chorus-asr on a router without a chorus-asr server is refused (400). */
-            readonly floor_control?: string;
+            /** @description Replaces the choice whole. Left out or null, the stored choice stays; an empty object is the default flow controller again. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description Replaces the greeting whole. An empty text removes it. */
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened, then the policy in prose. An empty string removes the guardrail. */
@@ -4577,12 +4573,10 @@ export type components = {
             /** @description The connectors whose tools this agent may call, each under an alias unique within the config. Omitted or null on an update, the bindings stored stay as they are, so a client that does not know this field cannot clear it by saving; an empty list removes them all. A binding to a connector the app cannot see, or a fixed binding to a connection that is not the app's own or is to another connector, is refused. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description When chorus-asr has a caller's turn ended in this agent's sessions, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars. A session request's wins over this. Left out on a create, the server's default; left out on an update, the stored choice stays, and an empty object is the server's default again. A preset or wait the server does not publish is refused (400) when the floor control asks it. */
-            readonly end_of_turn?: components["schemas"]["EndOfTurn"];
             /** @description What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays. */
             readonly episode_cards?: components["schemas"]["EpisodeCardsMode"];
-            /** @description The model that controls the floor in this agent's sessions, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr, the one there is, or empty for the default flow controller. A session request's wins over this. Left out on a create, the default flow controller; left out on an update, the stored choice stays. stream/chorus-asr on a router without a chorus-asr server is refused (400). */
-            readonly floor_control?: string;
+            /** @description The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered. */
             readonly guardrail?: string;
@@ -6486,10 +6480,8 @@ export type components = {
             };
             /** @description A longer note about the conversation, searched alongside the title. */
             readonly description?: string;
-            /** @description When chorus-asr has the caller's turn ended in this session, over the agent config's, where its floor_control asks chorus-asr about turns: one of max_wait_ms, preset and bars, and an empty object for the server's default. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because how eager the agent is to answer is the app's to decide. */
-            readonly end_of_turn?: components["schemas"]["EndOfTurn"];
-            /** @description The model that controls the floor in this session, over the agent config's: stream/chorus-asr, or empty for the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400). The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide. */
-            readonly floor_control?: string;
+            /** @description The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             /** @description What the agent opens the call with, over what the config says. */
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth. */
@@ -6896,37 +6888,6 @@ export type components = {
             /** @description When the agent should end the call, in the caller's terms. */
             readonly when?: string;
         };
-        /** @description When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default. */
-        readonly EndOfTurn: {
-            /** @description Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers. */
-            readonly bars?: readonly components["schemas"]["EndOfTurnBar"][];
-            /**
-             * Format: int64
-             * @description The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
-             * @example 900
-             */
-            readonly max_wait_ms?: number;
-            /**
-             * @description One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name.
-             * @example safe
-             */
-            readonly preset?: string;
-        };
-        /** @description What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on. */
-        readonly EndOfTurnBar: {
-            /**
-             * Format: double
-             * @description What p_eot, chorus-asr's probability that the caller has finished, must reach for the turn to have ended: strictly between 0 and 1.
-             * @example 0.9
-             */
-            readonly bar: number;
-            /**
-             * Format: int64
-             * @description How far into the pause, in milliseconds, the bar begins.
-             * @example 0
-             */
-            readonly from_ms: number;
-        };
         /**
          * @description What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
          * @enum {string}
@@ -6962,6 +6923,20 @@ export type components = {
          * @enum {string}
          */
         readonly ErrorType: "invalid_request" | "authentication" | "permission" | "payment_required" | "not_found" | "method_not_allowed" | "not_acceptable" | "conflict" | "gone" | "payload_too_large" | "unsupported_media_type" | "rate_limited" | "internal" | "unavailable" | "timeout";
+        /** @description The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole. */
+        readonly FloorControl: {
+            /**
+             * Format: int64
+             * @description The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+             * @example 800
+             */
+            readonly max_wait_ms?: number;
+            /**
+             * @description The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+             * @example stream/chorus-asr
+             */
+            readonly model?: string;
+        };
         /** @description Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model. */
         readonly ForkSessionRequest: {
             readonly agent?: string;
@@ -9952,10 +9927,8 @@ export type components = {
             /** @description The connectors agent.yaml binds. Sent, they are the whole of the agent's bindings and replace the ones stored, an empty list removing them all. Left out, the stored ones are left alone. */
             readonly connectors?: readonly components["schemas"]["AgentConnectorBinding"][];
             readonly dispatch?: components["schemas"]["AgentDispatch"];
-            /** @description agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. It is held to the server where floor_control asks chorus-asr about turns. When the server cannot be asked, or floor_control is off, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard. */
-            readonly end_of_turn?: components["schemas"]["EndOfTurn"];
-            /** @description agent.yaml's floor_control: the model that controls the agent's floor, stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400) before anything is written. */
-            readonly floor_control?: string;
+            /** @description agent.yaml's floor_control: the model that controls the agent's floor, and how long a caller may wait once they stop. Sent, it replaces the stored choice whole, and an empty object is the default flow controller again; left out or null, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400), and so is a max_wait_ms shorter than every point the chorus-asr server publishes, before anything is written. When the server cannot be asked the wait is kept and a warning says so, as it does of a point that fails the server's dictation guard. */
+            readonly floor_control?: components["schemas"]["FloorControl"];
             readonly greeting?: components["schemas"]["Greeting"];
             /** @description The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the policy in prose. Empty means every turn is answered. */
             readonly guardrail?: string;

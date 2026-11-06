@@ -3280,14 +3280,11 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
-
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
-	// FloorControl The model that controls the floor in this agent's sessions: stream/chorus-asr. Absent for the default flow controller.
-	FloorControl *string `json:"floor_control,omitempty"`
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting  *Greeting `json:"greeting,omitempty"`
@@ -3367,14 +3364,11 @@ type AgentConfigPatch struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
-
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
-	// FloorControl The model that controls the floor: stream/chorus-asr, or empty for the default flow controller again. stream/chorus-asr on a router without a chorus-asr server is refused (400).
-	FloorControl *string `json:"floor_control,omitempty"`
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -3475,14 +3469,11 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
-
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
 
-	// FloorControl The model that controls the floor in this agent's sessions, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr, the one there is, or empty for the default flow controller. A session request's wins over this. Left out on a create, the default flow controller; left out on an update, the stored choice stays. stream/chorus-asr on a router without a chorus-asr server is refused (400).
-	FloorControl *string `json:"floor_control,omitempty"`
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -5659,11 +5650,8 @@ type CreateSessionRequest struct {
 	// Description A longer note about the conversation, searched alongside the title.
 	Description *string `json:"description,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
-
-	// FloorControl The model that controls the floor in this session, over the agent config's: stream/chorus-asr, or empty for the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400). The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide.
-	FloorControl *string `json:"floor_control,omitempty"`
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -6096,35 +6084,6 @@ type EndCallSettings struct {
 	When *string `json:"when,omitempty"`
 }
 
-// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-type EndOfTurn struct {
-	// Bars Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers.
-	Bars *[]EndOfTurnBar `json:"bars,omitempty"`
-
-	// MaxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of chorus-asr's measured trade-off with the fewest cut-ins whose measured p90 wait is within it. Refused when it is shorter than every point's.
-	//
-	// Example: 900
-	MaxWaitMs *int64 `json:"max_wait_ms,omitempty"`
-
-	// Preset One of the presets the chorus-asr server publishes, by name, such as safe or fast, each naming one of its measured points. Refused when the server publishes none by that name.
-	//
-	// Example: safe
-	Preset *string `json:"preset,omitempty"`
-}
-
-// EndOfTurnBar What chorus-asr's p_eot must reach for a turn to have ended, at a check from from_ms into the pause on.
-type EndOfTurnBar struct {
-	// Bar What p_eot, chorus-asr's probability that the caller has finished, must reach for the turn to have ended: strictly between 0 and 1.
-	//
-	// Example: 0.9
-	Bar float64 `json:"bar"`
-
-	// FromMs How far into the pause, in milliseconds, the bar begins.
-	//
-	// Example: 0
-	FromMs int64 `json:"from_ms"`
-}
-
 // Endpointing What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 type Endpointing string
 
@@ -6166,6 +6125,19 @@ type ErrorResponse struct {
 
 // ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 type ErrorType string
+
+// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+type FloorControl struct {
+	// MaxWaitMs The most a caller who has finished may wait for the answer, in milliseconds. It chooses the point of the model's measured trade-off with the fewest cut-ins whose measured p90 wait is within it, and is refused (400) when it is shorter than every point's. Left out, the server's default point.
+	//
+	// Example: 800
+	MaxWaitMs *int64 `json:"max_wait_ms,omitempty"`
+
+	// Model The model that controls the floor, hearing the caller's audio: when they have finished, and what to do about speech over the agent. stream/chorus-asr is the one there is. Required, unless floor_control is empty. stream/chorus-asr on a router without a chorus-asr server is refused (400 not_configured).
+	//
+	// Example: stream/chorus-asr
+	Model *string `json:"model,omitempty"`
+}
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
 type ForkSessionRequest struct {
@@ -9478,11 +9450,8 @@ type SyncAgentRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
-
-	// FloorControl agent.yaml's floor_control: the model that controls the agent's floor, stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router without a chorus-asr server is refused (400) before anything is written.
-	FloorControl *string `json:"floor_control,omitempty"`
+	// FloorControl The model that controls an agent's floor, and how long a caller may wait once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again; anything else replaces the stored choice whole.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`

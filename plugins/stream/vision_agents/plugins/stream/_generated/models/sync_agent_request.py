@@ -20,7 +20,7 @@ if TYPE_CHECKING:
     from ..models.agent_dispatch import AgentDispatch
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
-    from ..models.end_of_turn import EndOfTurn
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.knowledge_document import KnowledgeDocument
     from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -70,16 +70,9 @@ class SyncAgentRequest:
                 left alone.
             dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
                 /v1/dispatch. Omitted settings are disabled.
-            end_of_turn (EndOfTurn | Unset): When chorus-asr has a caller's turn ended, where the agent's floor_control asks
-                it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or
-                a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must
-                reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn
-                whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server
-                runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
-            floor_control (str | Unset): agent.yaml's floor_control: the model that controls the agent's floor,
-                stream/chorus-asr, or empty for the default flow controller. Sent, it replaces the stored choice; left out, the
-                stored one stays, and an agent that never chose has the default flow controller. stream/chorus-asr on a router
-                without a chorus-asr server is refused (400) before anything is written.
+            floor_control (FloorControl | Unset): The model that controls an agent's floor, and how long a caller may wait
+                once they stop. Left out or null, the stored choice stays; an empty object is the default flow controller again;
+                anything else replaces the stored choice whole.
             greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
             guardrail (str | Unset): The directory's guardrail.md, whole: frontmatter saying how to screen a turn, then the
                 policy in prose. Empty means every turn is answered.
@@ -156,8 +149,7 @@ class SyncAgentRequest:
     check_changes: bool | Unset = UNSET
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
-    end_of_turn: EndOfTurn | Unset = UNSET
-    floor_control: str | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -222,11 +214,9 @@ class SyncAgentRequest:
         if not isinstance(self.dispatch, Unset):
             dispatch = self.dispatch.to_dict()
 
-        end_of_turn: dict[str, Any] | Unset = UNSET
-        if not isinstance(self.end_of_turn, Unset):
-            end_of_turn = self.end_of_turn.to_dict()
-
-        floor_control = self.floor_control
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -376,8 +366,6 @@ class SyncAgentRequest:
             field_dict["connectors"] = connectors
         if dispatch is not UNSET:
             field_dict["dispatch"] = dispatch
-        if end_of_turn is not UNSET:
-            field_dict["end_of_turn"] = end_of_turn
         if floor_control is not UNSET:
             field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
@@ -451,7 +439,7 @@ class SyncAgentRequest:
         from ..models.agent_dispatch import AgentDispatch
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
-        from ..models.end_of_turn import EndOfTurn
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.knowledge_document import KnowledgeDocument
         from ..models.knowledge_url_declaration import KnowledgeUrlDeclaration
@@ -511,14 +499,12 @@ class SyncAgentRequest:
         else:
             dispatch = AgentDispatch.from_dict(_dispatch)
 
-        _end_of_turn = d.pop("end_of_turn", UNSET)
-        end_of_turn: EndOfTurn | Unset
-        if isinstance(_end_of_turn, Unset):
-            end_of_turn = UNSET
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
         else:
-            end_of_turn = EndOfTurn.from_dict(_end_of_turn)
-
-        floor_control = d.pop("floor_control", UNSET)
+            floor_control = FloorControl.from_dict(_floor_control)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -726,7 +712,6 @@ class SyncAgentRequest:
             check_changes=check_changes,
             connectors=connectors,
             dispatch=dispatch,
-            end_of_turn=end_of_turn,
             floor_control=floor_control,
             greeting=greeting,
             guardrail=guardrail,
