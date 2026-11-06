@@ -184,6 +184,9 @@ type Episode struct {
 	CallID    string
 	SessionID string
 	StartedAt time.Time
+	// Began is when a call began by this process's monotonic clock, which dates its episode by
+	// Postgres's clock in place of StartedAt (store.Episode.Began).
+	Began time.Time
 	// StreamAppPK is the app a new omni-channel is made in: the thread's or the call's.
 	StreamAppPK int64
 }
@@ -220,6 +223,7 @@ func (c *Cards) Open(ctx context.Context, episode Episode) (Opened, error) {
 		CallID:        episode.CallID,
 		SessionID:     episode.SessionID,
 		StartedAt:     episode.StartedAt,
+		Began:         episode.Began,
 		StreamAppPK:   contact.StreamAppPK,
 	}
 	opened, err := c.store.OpenEpisode(ctx, &row)
