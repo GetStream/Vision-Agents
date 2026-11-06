@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -474,19 +475,43 @@ func (p *Pipeline) Leave(ctx context.Context) error {
 		return nil
 	}
 
-	var failure error
+	failure := ErrSocketClosed
 	if socket != nil && socket.IsOpen() {
-		if failure = socket.Send(Frame{"type": "close"}); failure == nil {
-			p.awaitHangup(ctx)
-		}
-	} else if backend, err := p.backend.Resolve(); err == nil {
-		if client, err := backend.Client(); err == nil {
-			_, failure = client.StopSessionWithResponse(ctx, session.Id)
-		}
+		failure = socket.Send(Frame{"type": "close"})
+	}
+	switch {
+	case failure == nil:
+		p.awaitHangup(ctx)
+	case closedUnder(failure):
+		// No socket, or one the router closed between IsOpen and Send because it ended the
+		// session itself: nothing more goes over it, so the session is stopped over HTTP.
+		failure = p.stopOverHTTP(ctx, session.Id)
 	}
 
 	p.stopWatching()
 	return failure
+}
+
+// stopOverHTTP asks the router to stop a session whose socket is gone. Only a request that
+// never reached the router fails it: a session the router already ended is refused, and
+// leaving that one is done.
+func (p *Pipeline) stopOverHTTP(ctx context.Context, id string) error {
+	backend, err := p.backend.Resolve()
+	if err != nil {
+		return nil
+	}
+	client, err := backend.Client()
+	if err != nil {
+		return nil
+	}
+	_, err = client.StopSessionWithResponse(ctx, id)
+	return err
+}
+
+// closedUnder reports whether err is a socket that can carry nothing more: closed here, a
+// close frame already sent, or the connection gone.
+func closedUnder(err error) bool {
+	return errors.Is(err, ErrSocketClosed) || errors.Is(err, websocket.ErrCloseSent) || errors.Is(err, net.ErrClosed)
 }
 
 // request renders the agent's configuration as a session to create.

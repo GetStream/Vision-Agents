@@ -205,6 +205,7 @@ func TestAClientOnAnotherClientsBackendIsHeardOnlyByTheFirst(t *testing.T) {
 		t.Fatal(err)
 	}
 	var logged bytes.Buffer
+	// The default logger is the process's; no test in this module runs in parallel.
 	previous := slog.Default()
 	slog.SetDefault(slog.New(slog.NewTextHandler(&logged, nil)))
 	t.Cleanup(func() { slog.SetDefault(previous) })
@@ -220,5 +221,29 @@ func TestAClientOnAnotherClientsBackendIsHeardOnlyByTheFirst(t *testing.T) {
 	}
 	if strings.Contains(logged.String(), "level=WARN") {
 		t.Errorf("a warning the callback was handed was logged as well:\n%s", logged.String())
+	}
+}
+
+func TestAClientGivenOnlyALoggerOnAnotherClientsBackendLogsNothingTwice(t *testing.T) {
+	server := moneyRouter(t, money("3", "4000000", BalanceLow))
+	var warned []BalanceWarning
+	first, err := New(stream.Backend{URL: server.URL, CustomerID: "acme"},
+		WithBalanceWarning(func(warning BalanceWarning) { warned = append(warned, warning) }))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var logged bytes.Buffer
+	second, err := New(first.Backend(), WithLogger(slog.New(slog.NewTextHandler(&logged, nil))))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	lookUp(t, second, 1)
+
+	if len(warned) != 1 {
+		t.Fatalf("the first client's callback heard %+v", warned)
+	}
+	if strings.Contains(logged.String(), "level=WARN") {
+		t.Errorf("a warning the first client's callback was handed was logged as well:\n%s", logged.String())
 	}
 }

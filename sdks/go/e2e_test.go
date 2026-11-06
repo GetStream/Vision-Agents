@@ -21,8 +21,10 @@
 //
 //	SMOKE='TestTheRouterIsReachable|TestAConversationInWriting|TestAFunctionRegisteredHere|TestASessionIsRecorded|TestSyncStores|TestTheUsageCallbackSeesEveryResponse'
 //
-// The models are real, so a run costs money. The configs, skills and knowledge a test
-// stores are deleted when it ends.
+// It leaves out the tests that need a router to bill (TestTheBalanceWarningFiresOncePerCrossing),
+// to delegate to a second model, or to hold knowledge, which a required run against a
+// router that cannot would fail. The models are real, so a run costs money. The configs,
+// skills and knowledge a test stores are deleted when it ends.
 package agentscorego
 
 import (
@@ -88,8 +90,12 @@ func forget(t *testing.T, backend stream.Backend, configs, skills, namespaces []
 		}
 		for _, name := range configs {
 			listed, err := api.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
-			if err != nil || listed.JSON200 == nil {
+			if err != nil {
 				t.Logf("could not find the config %s to delete: %v", name, err)
+				continue
+			}
+			if listed.JSON200 == nil {
+				t.Logf("could not find the config %s to delete: the router answered %s", name, listed.Status())
 				continue
 			}
 			for _, config := range *listed.JSON200 {
@@ -102,9 +108,12 @@ func forget(t *testing.T, backend stream.Backend, configs, skills, namespaces []
 		}
 		if len(skills) > 0 {
 			listed, err := api.ListSkillsWithResponse(ctx, nil)
-			if err != nil || listed.JSON200 == nil {
+			switch {
+			case err != nil:
 				t.Logf("could not list the skills to delete: %v", err)
-			} else {
+			case listed.JSON200 == nil:
+				t.Logf("could not list the skills to delete: the router answered %s", listed.Status())
+			default:
 				for _, stored := range *listed.JSON200 {
 					for _, name := range skills {
 						if stored.Name == name {
