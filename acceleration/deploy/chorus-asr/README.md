@@ -311,20 +311,20 @@ the first check often is, stops nothing.
 | --- | --- |
 | S1a. Two pauses of 800 ms inside a turn | One final, one answer, no cut-in: ruled 271 ms, answered 420 ms |
 | S1b. Two pauses of 1,300 ms inside a turn | Cut in at both, three turns: past 1,100 ms the `safe` point's bar is 0.2, as measured (4.5% of mid-turn pauses) |
-| S2a. "No, Porto." 500 ms into the reply | The model ruled `stop` 541 ms after the first word, on the check at 350 ms voiced, and the agent stopped at 565 ms; answered 1.39 s after the voice, p_eot 0.85 to 0.96 until the 1,100 ms bar |
-| S2b. "No, I meant Porto." with a 300 ms pause, 500 ms into the reply | Ruled `stop` 544 ms after the first word, stopped at 566 ms; one turn, answered 532 ms |
-| S3. "Sorry, what was the second one?" 4 s into a list | Ruled `stop` 380 ms after the first word, stopped at 403 ms; answered 1.4 s after the voice |
-| S4a. A second question 20 ms into the reply | The model ruled `shorten`; answered once the reply ended, 7.5 s on, the replay's voice saying a reply as one sentence that a shortening cannot cut |
-| S4b. "And in Porto?" 2 s into the reply | Heard as "and in Porto" out of the echo; the model ruled `shorten` 581 ms after the first word and the agent gave way at 643 ms |
+| S2a. "No, Porto." 500 ms into the reply | The model ruled `stop` 544 ms after the first word, on the check at 350 ms voiced, and the agent stopped at 568 ms; the utterance ran on uncut, and "No, Porto." was answered 1.19 s after the voice, at the 1,100 ms bar |
+| S2b. "No, I meant Porto." with a 300 ms pause, 500 ms into the reply | Ruled `stop` 543 ms after the first word, stopped at 567 ms; one turn, answered 320 ms |
+| S3. "Sorry, what was the second one?" 4 s into a list | Ruled `stop` 383 ms after the first word, stopped at 405 ms; answered 1.19 s after the voice |
+| S4a. A second question 420 ms after the first, as the reply begins | The first reply cut, and the second question answered 1.75 s after its voice |
+| S4b. "And in Porto?" 2 s into the reply | Heard as "and in Porto" out of the echo; the model ruled `shorten` 588 ms after the first word, the agent gave way at 652 ms and stopped speaking 250 ms on; answered 2.73 s after the voice, the free floor's bars waiting on "and in Porto" |
 | S5. Silence after the agent asks a question | One answer; nothing written and no request made of the silence |
 | S6. "So I was thinking [1.2 s] hmm [0.9 s] maybe Friday…" | One turn, no cut-in: ruled 264 ms, answered 402 ms |
 | S7. A cough 2 s into the reply | The reply heard whole, nothing answered |
-| S8. "And also, should I bring an umbrella…" 1 s into the reply | The model's first `shorten` with the caller's words in it came 580 ms after the first word, and the agent gave way at 665 ms; the words heard whole, without the echo |
+| S8. "And also, should I bring an umbrella…" 1 s into the reply | The model's first `shorten` with the caller's words in it came 642 ms after the first word, the agent gave way at 669 ms and stopped speaking 250 ms on; the words heard whole, without the echo, and answered 323 ms after the voice |
 | S9a. Every decision 400 ms late | Ruled 662 ms, answered 766 ms, every turn the model's |
 | S9b. 503 to the first two decisions | The first turn answered by the flow controller 726 ms after the voice; the next ruled by the model, 265 ms |
 | S9c. 503 to every `POST /v1/transcribe` | 15 interims refused and the pauses' words shown instead; one final with the turn's beginning, answered 968 ms |
 | S10a. The agent greets first, the caller waits | Answered 391 ms; the greeting's echo nothing heard |
-| S10b. The caller asks 1 s into the greeting | The greeting stopped 1.34 s after the first word, on the model's ruling; answered 528 ms after the voice |
+| S10b. The caller asks 1 s into the greeting | The greeting stopped 1.34 s after the first word, on the model's ruling; the question answered whole, 322 ms after the voice |
 | S11. An 80 s monologue | Three finals, 60.0 s of 210 words, 2.6 s and 17.9 s: the utterance ends at 60 s as it is and is answered then, 62 s in, while the caller talks on; the caller's next words stop that reply, and the rest is answered 81 s in |
 | S12a. Portuguese after English, callers speak `en` | Nothing written, nothing answered: a language the callers don't speak is noise to the server |
 | S12b. Portuguese after English, no languages | Written in Portuguese, live words and final, answered 383 ms |
