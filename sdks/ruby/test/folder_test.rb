@@ -283,6 +283,45 @@ class TestFolder < Minitest::Test
     end
   end
 
+  # floor_control is read as written: a bare off, which YAML 1.1 reads as false, is the mode
+  # off, and which models and modes there are is the router's to say.
+  def test_the_floor_control_is_read_as_written
+    { "floor_control:\n  model: chorus-asr\n  mode: act\n" => { "model" => "chorus-asr", "mode" => "act" },
+      "floor_control: {model: chorus-asr, mode: shadow}\n" => { "model" => "chorus-asr", "mode" => "shadow" },
+      "floor_control:\n  model: chorus-asr\n  mode: off\n" => { "model" => "chorus-asr", "mode" => "off" },
+      "floor_control:\n  model: chorus-asr\n  mode: \"off\"\n" => { "model" => "chorus-asr", "mode" => "off" },
+      "floor_control:\n  model: other\n  mode: loud\n" => { "model" => "other", "mode" => "loud" } }.each do |yaml, want|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      assert_equal want, VA::Folder.load(@root).settings["floor_control"], yaml
+    end
+    ["floor_control:\n", "floor_control: ~\n"].each do |yaml|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      assert_nil VA::Folder.load(@root).settings["floor_control"], yaml
+    end
+  end
+
+  def test_a_floor_control_that_cannot_be_read_is_refused_naming_why
+    { "floor_control: act\n" => "floor_control is a mapping of model and mode",
+      "floor_control: [chorus-asr, act]\n" => "floor_control is a mapping of model and mode",
+      "floor_control: {}\n" => "floor_control names both model and mode",
+      "floor_control:\n  mode: act\n" => "floor_control names both model and mode",
+      "floor_control:\n  model: chorus-asr\n" => "floor_control names both model and mode",
+      "floor_control:\n  model: chorus-asr\n  mode: ~\n" => "floor_control names both model and mode",
+      "floor_control:\n  model: chorus-asr\n  mode: act\n  eager: true\n" => "floor_control has no eager",
+      "floor_control:\n  model: chorus-asr\n  mode: [act]\n" => "floor_control.mode must be a string",
+      "floor_control:\n  model: {name: chorus-asr}\n  mode: act\n" => "floor_control.model must be a string",
+      "floor_control:\n  model: chorus-asr\n  mode: 1\n" => "floor_control.mode must be a string",
+      "floor_control:\n  model: chorus-asr\n  mode: on\n" => "floor_control.mode must be a string" }.each do |yaml, message|
+      write("agent.yaml", "name: jean\n#{yaml}")
+
+      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+
+      assert_includes error.message, message
+    end
+  end
+
   def test_the_fingerprint_hashes_agent_yaml_as_written_connectors_included
     write("agent.yaml", "name: jean\n")
     plain = VA::Folder.load(@root).fingerprint

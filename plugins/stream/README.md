@@ -182,6 +182,7 @@ connectors:
 keyterms:
   - Vision Agents
 end_of_turn: {max_wait_ms: 900}  # chorus-asr's turn-taking: or a preset, or bars; {} is its default
+floor_control: {model: chorus-asr, mode: act}  # whether chorus-asr rules the floor: off, shadow or act
 tags:
   project: support
 ```

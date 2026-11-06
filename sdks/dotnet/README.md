@@ -208,6 +208,11 @@ a directory with the folder replaces the agent's simulations, and no directory l
 or `{bars: [{from_ms: 0, bar: 0.97}, ...]}`. `{}` is the server's default; left out, the stored
 choice stays.
 
+`floor_control:` is whether chorus-asr rules the agent's floor: `{model: chorus-asr, mode: act}`,
+with `mode` one of `off`, `shadow` and `act`, both named and sent as written. Left out, the stored
+choice stays, and an agent that never chose is off; the router refuses `shadow` or `act` without a
+chorus-asr server.
+
 ## Simulations
 
 ```csharp

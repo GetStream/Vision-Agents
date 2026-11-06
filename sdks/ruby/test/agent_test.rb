@@ -626,6 +626,21 @@ class TestAgent < LocalRouterTest
     end
   end
 
+  # agent.yaml's floor_control goes as written, a bare off as "off" and a pair the router does
+  # not know as it is, and a file that names none sends none, so the stored choice stays.
+  def test_sync_sends_the_floor_control_the_agent_declared
+    { "floor_control:\n  model: chorus-asr\n  mode: act\n" => { "model" => "chorus-asr", "mode" => "act" },
+      "floor_control: {model: chorus-asr, mode: shadow}\n" => { "model" => "chorus-asr", "mode" => "shadow" },
+      "floor_control:\n  model: chorus-asr\n  mode: off\n" => { "model" => "chorus-asr", "mode" => "off" },
+      "floor_control:\n  model: chorus-asr\n  mode: \"off\"\n" => { "model" => "chorus-asr", "mode" => "off" },
+      "floor_control:\n  model: other\n  mode: loud\n" => { "model" => "other", "mode" => "loud" } }.each do |declared, want|
+      assert_equal want, sync_declaring(declared)["floor_control"], declared
+    end
+    ["floor_control:\n", "llm: openai/gpt-5.6\n"].each do |declared|
+      refute sync_declaring(declared).key?("floor_control"), declared
+    end
+  end
+
   def test_sync_without_connectors_sends_none_and_leaves_the_fingerprint_alone
     request = sync_declaring("")
 

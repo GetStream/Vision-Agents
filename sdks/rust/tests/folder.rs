@@ -419,6 +419,110 @@ fn a_declaration_key_nobody_knows_is_refused() {
     }
 }
 
+/// floor_control is read as written: a bare off is the word it is, and which models and modes
+/// there are is the router's to say.
+#[test]
+fn the_floor_control_is_read_as_written() {
+    let chosen = |model: &str, mode: &str| {
+        Some(vision_agents::folder::FloorControl {
+            model: model.into(),
+            mode: mode.into(),
+        })
+    };
+    for (declaration, want) in [
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: act\n",
+            chosen("chorus-asr", "act"),
+        ),
+        (
+            "floor_control: {model: chorus-asr, mode: shadow}\n",
+            chosen("chorus-asr", "shadow"),
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: off\n",
+            chosen("chorus-asr", "off"),
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: \"off\"\n",
+            chosen("chorus-asr", "off"),
+        ),
+        (
+            "floor_control:\n  model: other\n  mode: loud\n",
+            chosen("other", "loud"),
+        ),
+        ("floor_control:\n", None),
+        ("floor_control: ~\n", None),
+        ("llm: openai/gpt-5.6\n", None),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+
+        let folder = Folder::load(&root).unwrap_or_else(|error| panic!("{declaration:?}: {error}"));
+
+        assert_eq!(folder.settings.floor_control, want, "{declaration:?}");
+    }
+}
+
+#[test]
+fn a_floor_control_that_cannot_be_read_is_refused_naming_why() {
+    for (declaration, reason) in [
+        (
+            "floor_control: act\n",
+            "floor_control is a mapping of model and mode",
+        ),
+        (
+            "floor_control: [chorus-asr, act]\n",
+            "floor_control is a mapping of model and mode",
+        ),
+        (
+            "floor_control: {}\n",
+            "floor_control names both model and mode",
+        ),
+        (
+            "floor_control:\n  mode: act\n",
+            "floor_control names both model and mode",
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n",
+            "floor_control names both model and mode",
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: ~\n",
+            "floor_control names both model and mode",
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: act\n  eager: true\n",
+            "\"eager\" is not a floor_control setting",
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: [act]\n",
+            "floor_control.mode must be a string",
+        ),
+        (
+            "floor_control:\n  model: {name: chorus-asr}\n  mode: act\n",
+            "floor_control.model must be a string",
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: 1\n",
+            "floor_control.mode must be a string",
+        ),
+        (
+            "floor_control:\n  model: chorus-asr\n  mode: true\n",
+            "floor_control.mode must be a string",
+        ),
+    ] {
+        let (_temporary, root) = directory("jean");
+        write(&root, "agent.yaml", declaration);
+
+        let error = Folder::load(&root).unwrap_err().to_string();
+
+        assert!(
+            error.contains(reason),
+            "{declaration:?} was refused as {error:?}"
+        );
+    }
+}
+
 #[test]
 fn plugins_and_plugin_events_are_refused_unless_they_declare_nothing() {
     let wording = |key: &str| {
