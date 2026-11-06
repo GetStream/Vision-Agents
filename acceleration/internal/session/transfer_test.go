@@ -185,7 +185,7 @@ func (s *TransferSuite) TestACallTransferredColdEndsItsSessionAsTransferred() {
 	s.Require().Eventually(func() bool {
 		return created.State() == Ended && !s.manager.Running(created.ID())
 	}, settleFor, 20*time.Millisecond, "the session outlived the agent that left on the transfer")
-	s.Equal(EndTransferred, created.endReason())
+	s.Equal(EndTransferred, created.EndReason())
 	s.NotEmpty(s.asked("/sip/inbound_trunks"), "the transfer made no line at the suite's Stream")
 	s.Empty(s.asked("/mark_ended"), "the call the caller was handed over on was ended")
 }

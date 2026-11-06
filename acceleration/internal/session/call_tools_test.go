@@ -140,7 +140,7 @@ func (s *SessionSuite) hangsUp(created *Session) {
 	s.eventually(func() bool {
 		return created.State() == Ended && !s.manager.Running(created.ID())
 	}, "the agent hung up and the session was not closed")
-	s.Equal(EndAgentHangup, created.endReason())
+	s.Equal(EndAgentHangup, created.EndReason())
 }
 
 // endedCalls is every call the server was asked to end for everybody.
@@ -256,7 +256,7 @@ func (s *SessionSuite) TestTheFirstEndReasonWins() {
 	created.SetTimeout(0, TimeoutHangup)
 
 	s.timedOut(created)
-	s.Equal(EndTransferred, created.endReason())
+	s.Equal(EndTransferred, created.EndReason())
 }
 
 func (s *SessionSuite) TestATimeoutKeepsItsReason() {
@@ -266,5 +266,5 @@ func (s *SessionSuite) TestATimeoutKeepsItsReason() {
 	created.SetTimeout(0, TimeoutHangup)
 
 	s.timedOut(created)
-	s.Equal(TimeoutHangup, created.endReason())
+	s.Equal(TimeoutHangup, created.EndReason())
 }

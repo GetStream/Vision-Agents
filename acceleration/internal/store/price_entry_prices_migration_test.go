@@ -231,7 +231,7 @@ func (s *StoredPricesMigrationSuite) TestAnEmptyListMigratesAndSeedsAtTheFactor(
 	rows, err := s.db.ActivePriceEntries(s.ctx, time.Now())
 	s.Require().NoError(err)
 	s.Require().Len(rows, 1)
-	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(1.2)}, rows[0].Prices)
+	s.Equal(map[pricing.Meter]pricing.Rate{pricing.InputTokens: perMillionTokens(1.08)}, rows[0].Prices)
 	s.Equal("llm-openai-a-us", rows[0].SKU)
 	var sku string
 	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,

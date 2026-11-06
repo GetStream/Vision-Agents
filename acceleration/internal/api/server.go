@@ -37,7 +37,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/campaign"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/chat"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/concurrency"
@@ -174,9 +173,6 @@ type Options struct {
 	// caller it verified. The server tokens it forwards are trusted only with it, since
 	// without it every caller passes as a backend.
 	ProxyDeclaresKind bool
-	// Campaigns rings lists of people. Absent without telephony or sessions, in which
-	// case a campaign can be written down but not run.
-	Campaigns *campaign.Runner
 	// Simulations puts an agent through a conversation somebody wrote down and rules on
 	// how it went. Absent without sessions or model routing, in which case a simulation
 	// can be written down but not run.
@@ -361,7 +357,6 @@ type Server struct {
 	telnyxPublicKey    ed25519.PublicKey
 	chatInboundKeys    []ed25519.PublicKey
 	telnyxConnectionID string
-	campaigns          *campaign.Runner
 	simulations        *simulation.Runner
 	knowledge          *metered.Knowledge
 	knowledgeLimits    ingest.Limits
@@ -565,7 +560,6 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		telnyxPublicKey:    options.TelnyxPublicKey,
 		chatInboundKeys:    options.ChatInboundKeys,
 		telnyxConnectionID: options.TelnyxConnectionID,
-		campaigns:          options.Campaigns,
 		simulations:        options.Simulations,
 		knowledge:          options.Knowledge,
 		knowledgeLimits:    options.KnowledgeLimits,

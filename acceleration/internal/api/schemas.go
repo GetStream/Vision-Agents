@@ -972,6 +972,22 @@ func (VoicemailAction) Schema(registry huma.Registry) *huma.Schema {
 		"hang_up", "leave_message")
 }
 
+// CampaignVoicemailAction is what a campaign's agent does on reaching an answering machine.
+type CampaignVoicemailAction string
+
+const (
+	CampaignVoicemailActionOff          CampaignVoicemailAction = "off"
+	CampaignVoicemailActionHangUp       CampaignVoicemailAction = "hang_up"
+	CampaignVoicemailActionLeaveMessage CampaignVoicemailAction = "leave_message"
+)
+
+func (CampaignVoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CampaignVoicemailAction", "off: the agent talks to a machine as to a person. The default.\n"+
+		"hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
+		"off", "hang_up", "leave_message")
+}
+
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The number the session acts from, which is what turns transferring on."
 	return schema

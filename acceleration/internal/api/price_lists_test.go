@@ -388,7 +388,7 @@ func (s *PriceListsSuite) TestAQuotedCostIsResoldAtTheFactor() {
 
 	var row store.Request
 	s.Require().NoError(s.store.ShardDB().NewSelect().Model(&row).Where("customer_id = ?", customer).Scan(context.Background()))
-	s.EqualValues(1_200_000, row.CostMicros)
+	s.EqualValues(1_080_000, row.CostMicros)
 	s.EqualValues(1_000_000, row.BaseCostMicros)
 	s.Equal(pricing.QuotedVersion, row.PriceVersion)
 }

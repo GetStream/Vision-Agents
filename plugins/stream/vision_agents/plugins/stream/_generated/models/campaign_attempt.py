@@ -7,54 +7,43 @@ from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..types import UNSET, Unset
-
-T = TypeVar("T", bound="ContactsRequestContactsItem")
+T = TypeVar("T", bound="CampaignAttempt")
 
 
 @_attrs_define
-class ContactsRequestContactsItem:
+class CampaignAttempt:
     """
     Attributes:
-        to_number (str):
-        instructions (str | Unset): What to say to this person, added to whatever the config already says.
+        delay_minutes (int): Minutes after the previous attempt started, pushed into the calling hours.
     """
 
-    to_number: str
-    instructions: str | Unset = UNSET
+    delay_minutes: int
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        to_number = self.to_number
-
-        instructions = self.instructions
+        delay_minutes = self.delay_minutes
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "to_number": to_number,
+                "delay_minutes": delay_minutes,
             }
         )
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        to_number = d.pop("to_number")
+        delay_minutes = d.pop("delay_minutes")
 
-        instructions = d.pop("instructions", UNSET)
-
-        contacts_request_contacts_item = cls(
-            to_number=to_number,
-            instructions=instructions,
+        campaign_attempt = cls(
+            delay_minutes=delay_minutes,
         )
 
-        contacts_request_contacts_item.additional_properties = d
-        return contacts_request_contacts_item
+        campaign_attempt.additional_properties = d
+        return campaign_attempt
 
     @property
     def additional_keys(self) -> list[str]:

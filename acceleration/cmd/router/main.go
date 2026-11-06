@@ -1152,6 +1152,15 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
+	// Closed after sessions.Shutdown, which is deferred below it: a campaign call is held until
+	// its session ends, so the dialer waits for its calls only once the sessions are ended,
+	// and writes how each went while Postgres is still open.
+	var dialer *campaign.Runner
+	defer func() {
+		if dialer != nil {
+			dialer.Close()
+		}
+	}()
 	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
@@ -1160,22 +1169,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if sessions != nil {
 		defer sessions.Shutdown()
 	}
-	// A campaign is a phone call, a conversation and a row, so it runs only where all
-	// three are configured. Elsewhere the campaign paths say so.
-	var campaigns *campaign.Runner
-	if pgStore != nil && telephony != nil && sessions != nil {
-		campaigns, err = campaign.New(campaign.Options{
-			Store:    pgStore,
-			Phone:    telephony,
-			Sessions: sessions,
-			Logger:   logger,
-		})
-		if err != nil {
-			return err
-		}
-		defer campaigns.Close()
-	}
-
 	// A simulation is a conversation, a model to judge it and a row, so it too runs only
 	// where all three are configured. Elsewhere a simulation can be written down but the
 	// path that runs it says why it cannot.
@@ -1382,7 +1375,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		TelnyxPublicKey:       telnyxPublicKey,
 		ChatInboundKeys:       chatInboundKeys,
 		TelnyxConnectionID:    settings.Telnyx.ConnectionID,
-		Campaigns:             campaigns,
 		Simulations:           simulations,
 		DLC:                   registrations,
 		Gate:                  dlcGate,
@@ -1566,6 +1558,28 @@ func run(settings config.Config, logger *slog.Logger) error {
 		scheduler.Start(ctx)
 		defer scheduler.Close()
 	}
+	// Every router runs the campaign dialer: running campaigns are in Postgres, and each
+	// contact's next call is claimed by one router at a time. It claims until the stop signal
+	// ends ctx; the drain then waits for its calls, as for the sessions.
+	if pgStore != nil && sessions != nil && streams.LLM != nil {
+		dialer, err = campaign.New(campaign.Options{
+			Store:       pgStore,
+			Dialer:      campaign.NewPhoneDialer(telephony, sessions, pgStore, logger),
+			Transcripts: server,
+			Classifier:  campaign.NewClassifier(streams.LLM),
+			Logger:      logger,
+		})
+		if err != nil {
+			return err
+		}
+		if err := dialer.Start(ctx); err != nil {
+			return err
+		}
+		logger.Info("campaign dialer started", "owner", dialer.Owner())
+	} else {
+		logger.Warn("campaigns will not dial: the dialer needs postgres, sessions and an llm",
+			"postgres", pgStore != nil, "sessions", sessions != nil, "llm", streams.LLM != nil)
+	}
 	// Every router answers the Stream Chat messages queued for it, whichever one queued them,
 	// where Stream Chat deliveries are set up (chat.inbound_keys): nothing else queues one.
 	var deliveries *chatinbound.Worker
@@ -1631,7 +1645,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 			public:          httpServer,
 			peers:           peerServer,
 			drainWork:       server.Drain,
-			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server) },
+			held:            func() int { return running(sessions, scheduler, bridge, deliveries, server, dialer) },
 			telephony:       telephony,
 			handOverMetrics: handOverMetrics,
 			handOverProxy:   handOverSandboxProxy,
@@ -1664,7 +1678,7 @@ type stopping struct {
 	// drainWork sends away the work that reconnects, the dispatch workers.
 	drainWork func()
 	// held is how many sessions, scheduled deliveries, inbound writes and
-	// turns, and chat answers the process is still running.
+	// turns, chat answers and campaign calls the process is still running.
 	held      func() int
 	telephony *phone.Service
 	// handOverMetrics stops the metrics listener when a drain starts, so the router taking
@@ -1746,12 +1760,15 @@ func stopServing(s stopping) error {
 }
 
 // running is how many sessions, scheduled deliveries, inbound writes and the turns they handed
-// over, chat answers and the app chat's episode cards a router holds; one without one of them
-// holds none of its work. A turn counts until it ends, also before the session it opens is
-// counted.
+// over, chat answers, the app chat's episode cards and campaign calls a router holds; one
+// without one of them holds none of its work. A turn counts until it ends, also before the
+// session it opens is counted, and so does a campaign call placed before its session exists.
 func running(sessions *session.Manager, scheduler *scheduling.Scheduler, bridge *channelbridge.Bridge,
-	deliveries *chatinbound.Worker, server *api.Server) int {
+	deliveries *chatinbound.Worker, server *api.Server, dialer *campaign.Runner) int {
 	held := 0
+	if dialer != nil {
+		held += dialer.Running()
+	}
 	if sessions != nil {
 		held += sessions.Len()
 	}

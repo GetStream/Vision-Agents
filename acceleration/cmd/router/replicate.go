@@ -40,16 +40,17 @@ const replicateUsage = `usage: router replicate --from <url> --api-key <key> --a
                 ROUTER_DATA_MOVE_RETENTION
   --resume      the cut-over, once the deployment copied from no longer delivers: resume
                 the scheduled tasks the copy paused because they were active there, each
-                at its first occurrence after now, and name the campaigns still running
-                there at the last --once, which it leaves paused. Do not run --once again
-                after --resume: every run makes the deployment copied from the truth again
+                at its first occurrence after now, and name the campaigns still running or
+                scheduled there at the last --once, which it leaves paused. Do not run
+                --once again after --resume: every run makes the deployment copied from
+                the truth again
 
 Until the last --once the deployment copied from is the truth: a change it makes to a
 row overwrites what was done to that row here, a delete included, and --full overwrites
 every row. Once SDKs point here, stop writing there.
 
 Before the last --once, pause the campaigns there and wait for their calls to end. The
-copy then holds every call made there, and a campaign rings here only once it is started
+copy then holds every call made there, and a campaign rings here only once it is resumed
 here.
 
 Copy an app here from one deployment only. A copied agent log is known here by the id it
@@ -379,9 +380,9 @@ func caughtUpMessage(cursor int64, customerID string) string {
 		cursor, customerID, customerID)
 }
 
-// resumeMove is the cut-over: it resumes what the copy paused and names the campaigns the source
-// was still running at the last catch-up. It starts none: one the source rang from after that
-// would ring those contacts again here.
+// resumeMove is the cut-over: it resumes the scheduled tasks the copy paused and names the
+// campaigns the source was still running at the last catch-up. It resumes none: one the source
+// rang from after that would ring those contacts again here.
 func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, out io.Writer) error {
 	cutOver := time.Now()
 	if err := pgStore.SkipOccurrencesBeforeCutOver(ctx, customerID, cutOver, nextAfter(cutOver)); err != nil {
@@ -400,20 +401,11 @@ func resumeMove(ctx context.Context, pgStore *store.Store, customerID string, ou
 			"Run --resume again once the user has made room; the oldest are resumed first\n", overLimit)
 	}
 	for _, id := range campaigns {
-		fmt.Fprintf(out, "campaign %s was still running where it came from at the last --once, so it stays paused here: "+
-			"contacts rung there since then are still pending here, and starting it here rings them again. "+
-			"Read its contacts there (GET /v1/agents/campaigns/%s/contacts) before you start it here. "+
-			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n", id, id)
-	}
-	calling, err := pgStore.PausedCampaignsCalling(ctx, customerID)
-	if err != nil {
-		return err
-	}
-	for _, campaign := range calling {
-		fmt.Fprintf(out, "campaign %s is paused here with %d contacts in a call where it came from at the last --once: "+
-			"starting it here rings them again. Check them there (GET /v1/agents/campaigns/%s/contacts) before you start it here. "+
-			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n",
-			campaign.ID, campaign.Calls, campaign.ID)
+		fmt.Fprintf(out, "campaign %s was still running or scheduled where it came from at the last --once, so it stays paused here: "+
+			"contacts rung there since then are still enrolled here, and resuming it here rings them again. "+
+			"Read its contacts there (GET /v1/agents/campaigns/%s/contacts) before you resume it here "+
+			"(POST /v1/agents/campaigns/%s/resume). "+
+			"Do not run --once again after --resume: every run reads the source and makes it the truth again\n", id, id, id)
 	}
 	return nil
 }
