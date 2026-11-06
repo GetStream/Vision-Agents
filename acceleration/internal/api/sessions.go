@@ -578,9 +578,6 @@ func (s *Server) reopenedFromRow(ctx context.Context, id string) (session.Spec, 
 	if row.ResumeHistory != (store.ResumeHistory{}) {
 		spec.ResumeHistory = row.ResumeHistory
 	}
-	if !row.EndOfTurn.IsZero() {
-		spec.EndOfTurn = row.EndOfTurn
-	}
 	if !row.FloorControl.IsZero() {
 		spec.FloorControl = row.FloorControl
 	}
@@ -695,7 +692,6 @@ func specOf(request CreateSessionRequest, customerID string, config *store.Agent
 		spec.Custom = *request.Custom
 	}
 	spec.ResumeHistory = resumeHistoryOr(spec.ResumeHistory, request.ResumeHistory)
-	spec.EndOfTurn = endOfTurnOr(spec.EndOfTurn, request.EndOfTurn)
 	spec.FloorControl = floorControlOr(spec.FloorControl, request.FloorControl)
 	if request.ModelOverwrites != nil {
 		spec.ModelOverwrites = modelOverwritesOf(*request.ModelOverwrites)

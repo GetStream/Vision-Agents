@@ -99,7 +99,7 @@ func (e EndOfTurn) Check() error {
 		return stack.Wrap(fmt.Errorf("end_of_turn names %s: it takes one of max_wait_ms, preset and bars", strings.Join(named, " and ")))
 	}
 	if e.MaxWaitMs < 0 {
-		return stack.Wrap(fmt.Errorf("end_of_turn.max_wait_ms is %d: a wait is a number of milliseconds above 0", e.MaxWaitMs))
+		return stack.Wrap(fmt.Errorf("floor_control.max_wait_ms is %d: a wait is a number of milliseconds above 0", e.MaxWaitMs))
 	}
 	if e.Bars != nil {
 		if err := checkBars(e.Bars); err != nil {
@@ -187,7 +187,7 @@ func (p Policy) point(wait int) (*FrontierPoint, bool) {
 // maxWait. A tie goes to the shorter wait, then to fewer dictation pauses cut.
 func (p Policy) within(maxWait int) (Ending, error) {
 	if len(p.Frontier) == 0 {
-		return Ending{}, stack.Wrap(fmt.Errorf("end_of_turn.max_wait_ms: the model was measured at no waits to choose from; name a preset (%s) or bars", p.presetNames()))
+		return Ending{}, stack.Wrap(errors.New("floor_control.max_wait_ms: the model was measured at no waits to choose from; leave it out for the server's default"))
 	}
 	var best *FrontierPoint
 	quickest := p.Frontier[0].Measured.AnswerMsP90
@@ -202,7 +202,7 @@ func (p Policy) within(maxWait int) (Ending, error) {
 		}
 	}
 	if best == nil {
-		return Ending{}, stack.Wrap(fmt.Errorf("end_of_turn.max_wait_ms is %d, under every wait the model was measured at: the quickest has a caller wait %d ms at p90", maxWait, quickest))
+		return Ending{}, stack.Wrap(fmt.Errorf("floor_control.max_wait_ms is %d, under every wait the model was measured at: the quickest has a caller wait %d ms at p90", maxWait, quickest))
 	}
 	return best.ending("max_wait_ms:" + strconv.Itoa(best.MaxWaitMs)), nil
 }

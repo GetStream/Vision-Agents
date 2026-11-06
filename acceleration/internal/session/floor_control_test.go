@@ -178,8 +178,8 @@ func (s *SessionSuite) TestEachSessionOnARouterRunsByItsOwnFloorControl() {
 	server, client := newChorusASR(s)
 	manager, opened := s.floorManager(client)
 
-	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControlChorusASR)
-	unset := s.floorSession(manager, "You book clinic visits.", "")
+	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR, MaxWaitMs: 1400})
+	unset := s.floorSession(manager, "You book clinic visits.", store.FloorControl{})
 
 	s.callerAsks(acting, opened, "Two tickets to Bilbao, please.")
 	s.callerAsks(unset, opened, "Can I see a doctor on Friday?")
@@ -195,7 +195,7 @@ func (s *SessionSuite) TestEachSessionOnARouterRunsByItsOwnFloorControl() {
 // on another router may have, asks nothing, and is answered by its flow controller.
 func (s *SessionSuite) TestAFloorControlWithNoServerIsTheFlowControllers() {
 	manager, opened := s.floorManager(nil)
-	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControlChorusASR)
+	acting := s.floorSession(manager, "You sell ferry tickets.", store.FloorControl{Model: store.FloorControlChorusASR})
 	s.callerAsks(acting, opened, "Two tickets to Bilbao, please.")
 	s.False(acting.ears.asked.Load())
 }

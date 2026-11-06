@@ -159,11 +159,9 @@ type Options struct {
 	// Streams serves the per-modality sockets, for callers running their own pipeline.
 	// Absent when the deployment routes nothing itself.
 	Streams *Streams
-	// AudioFloor is the router's chorus-asr server, which an agent's floor control opts in to
-	// in shadow or acting. Absent, such a floor control is refused, and an agent's end_of_turn
-	// is checked only for what it says. Present, end_of_turn is checked against what the
-	// server publishes when the agent's floor control asks it about turns, and a sync is
-	// warned that it does nothing when it asks nothing.
+	// AudioFloor is the router's chorus-asr server, which an agent's floor control opts in to.
+	// Absent, such a floor control is refused. Present, a floor control's max_wait_ms is
+	// checked against what the server publishes.
 	AudioFloor *audiofloor.Client
 	// Stream resolves which Stream app, and which credential, the router acts in for each
 	// customer: tokens, guests and the transcripts read back. Absent when the deployment
