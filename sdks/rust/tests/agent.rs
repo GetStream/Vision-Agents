@@ -601,31 +601,17 @@ async fn the_end_of_turn_a_directory_declares_is_synced_as_written() {
     }
 }
 
-/// agent.yaml's floor_control goes as written, a bare off as "off" and a pair the router does
-/// not know as it is, and a file that names none sends none, so the stored choice stays.
+/// agent.yaml's floor_control goes as written, "" and a model the router does not know included,
+/// and a file that names none sends none, so the stored choice stays.
 #[tokio::test]
 async fn the_floor_control_a_directory_declares_is_synced_as_written() {
     for (declared, want) in [
         (
-            "floor_control:\n  model: chorus-asr\n  mode: act\n",
-            Some(json!({"model": "chorus-asr", "mode": "act"})),
+            "floor_control: stream/chorus-asr\n",
+            Some(json!("stream/chorus-asr")),
         ),
-        (
-            "floor_control: {model: chorus-asr, mode: shadow}\n",
-            Some(json!({"model": "chorus-asr", "mode": "shadow"})),
-        ),
-        (
-            "floor_control:\n  model: chorus-asr\n  mode: off\n",
-            Some(json!({"model": "chorus-asr", "mode": "off"})),
-        ),
-        (
-            "floor_control:\n  model: chorus-asr\n  mode: \"off\"\n",
-            Some(json!({"model": "chorus-asr", "mode": "off"})),
-        ),
-        (
-            "floor_control:\n  model: other\n  mode: loud\n",
-            Some(json!({"model": "other", "mode": "loud"})),
-        ),
+        ("floor_control: \"\"\n", Some(json!(""))),
+        ("floor_control: other\n", Some(json!("other"))),
         ("floor_control:\n", None),
         ("llm: openai/gpt-5.6\n", None),
     ] {
@@ -645,7 +631,6 @@ async fn the_floor_control_a_directory_declares_is_synced_as_written() {
 
         let body = server.request(Method::POST, "/v1/agents/sync").body;
         assert_eq!(body.get("floor_control"), want.as_ref(), "{declared:?}");
-        assert_eq!(body["name"], "jean", "{declared:?}");
     }
 }
 

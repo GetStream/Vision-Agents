@@ -644,22 +644,16 @@ func TestSyncSendsTheEndOfTurnTheAgentDeclared(t *testing.T) {
 	}
 }
 
-// agent.yaml's floor_control goes as written, a bare off as "off" and a pair the router does not
-// know as it is, and a file that names none sends none, so the stored choice stays.
+// agent.yaml's floor_control goes as written, "" and a model the router does not know included,
+// and a file that names none sends none, so the stored choice stays.
 func TestSyncSendsTheFloorControlTheAgentDeclared(t *testing.T) {
 	for _, c := range []struct {
 		declared string
-		want     *acceleration.FloorControl
+		want     *string
 	}{
-		{"floor_control:\n  model: chorus-asr\n  mode: act\n",
-			&acceleration.FloorControl{Model: acceleration.ChorusAsr, Mode: acceleration.FloorControlModeAct}},
-		{"floor_control: {model: chorus-asr, mode: shadow}\n",
-			&acceleration.FloorControl{Model: acceleration.ChorusAsr, Mode: acceleration.FloorControlModeShadow}},
-		{"floor_control:\n  model: chorus-asr\n  mode: off\n",
-			&acceleration.FloorControl{Model: acceleration.ChorusAsr, Mode: acceleration.FloorControlModeOff}},
-		{"floor_control:\n  model: chorus-asr\n  mode: \"off\"\n",
-			&acceleration.FloorControl{Model: acceleration.ChorusAsr, Mode: acceleration.FloorControlModeOff}},
-		{"floor_control:\n  model: other\n  mode: loud\n", &acceleration.FloorControl{Model: "other", Mode: "loud"}},
+		{"floor_control: stream/chorus-asr\n", pointer("stream/chorus-asr")},
+		{"floor_control: \"\"\n", pointer("")},
+		{"floor_control: other\n", pointer("other")},
 		{"floor_control:\n", nil},
 		{"llm: openai/gpt-5.6\n", nil},
 	} {
@@ -676,7 +670,7 @@ func TestSyncSendsTheFloorControlTheAgentDeclared(t *testing.T) {
 		got := router.syncs[0].FloorControl
 		router.mu.Unlock()
 		if !reflect.DeepEqual(got, c.want) {
-			t.Errorf("%q: floor_control went as %+v, not %+v", c.declared, got, c.want)
+			t.Errorf("%q: floor_control went as %v, not %v", c.declared, got, c.want)
 		}
 	}
 }

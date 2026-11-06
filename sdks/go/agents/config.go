@@ -351,14 +351,12 @@ func declareEndOfTurn(settings *EndOfTurnSettings) *acceleration.EndOfTurn {
 
 // declareFloorControl is what the file says of floor_control for the wire, as written, or nil
 // when it says nothing, which leaves the stored choice.
-func declareFloorControl(settings *FloorControlSettings) *acceleration.FloorControl {
-	if settings == nil {
+func declareFloorControl(setting *FloorControlSetting) *string {
+	if setting == nil {
 		return nil
 	}
-	return &acceleration.FloorControl{
-		Model: acceleration.FloorControlModel(settings.Model),
-		Mode:  acceleration.FloorControlMode(settings.Mode),
-	}
+	declared := string(*setting)
+	return &declared
 }
 
 func enabledOr(enabled *bool, fallback bool) *bool {

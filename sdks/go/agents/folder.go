@@ -210,13 +210,14 @@ type Settings struct {
 	// EndOfTurn is how eager chorus-asr's turn-taking is, where the router asks it about
 	// turns. Nil leaves the stored choice; an empty mapping ({}) is the server's default.
 	EndOfTurn *EndOfTurnSettings `yaml:"end_of_turn"`
-	// FloorControl is whether chorus-asr rules the agent's floor, and in which mode. Nil
-	// leaves the stored choice; an agent that never chose is off.
-	FloorControl *FloorControlSettings `yaml:"floor_control"`
-	Keyterms     []string              `yaml:"keyterms"`
-	Tags         map[string]string     `yaml:"tags"`
-	Video        *VideoSettings        `yaml:"video"`
-	Dispatch     *DispatchSettings     `yaml:"dispatch"`
+	// FloorControl is the model that controls the agent's floor, stream/chorus-asr, or "" for
+	// the default flow controller. Nil leaves the stored choice; an agent that never chose has
+	// the default flow controller.
+	FloorControl *FloorControlSetting `yaml:"floor_control"`
+	Keyterms     []string             `yaml:"keyterms"`
+	Tags         map[string]string    `yaml:"tags"`
+	Video        *VideoSettings       `yaml:"video"`
+	Dispatch     *DispatchSettings    `yaml:"dispatch"`
 	// App is the application's own section of the declaration, which this SDK never reads
 	// and the backend is never sent. It is the one place an unknown key is not refused.
 	App map[string]any `yaml:"app"`
@@ -422,55 +423,23 @@ type EndOfTurnBar struct {
 	Bar    *float64 `yaml:"bar"`
 }
 
-// FloorControlSettings is whether a model that hears the caller rules the agent's floor: when
-// the caller has finished, and what to do about speech over the agent. A file that names it
-// names both.
+// FloorControlSetting is the model that controls the agent's floor, as written: when the
+// caller has finished, and what to do about speech over the agent.
 //
-//	floor_control:
-//	    model: chorus-asr
-//	    mode: act
+//	floor_control: stream/chorus-asr
 //
-// Both are sent as written: which models and modes there are is the router's to say, and it
-// refuses shadow or act when it has no chorus-asr server.
-type FloorControlSettings struct {
-	// Model is the model that rules the floor; chorus-asr is the one there is.
-	Model string
-	// Mode is off, shadow or act.
-	Mode string
-}
+// It is sent as written, "" included, which is the default flow controller again: which models
+// there are is the router's to say, and it refuses stream/chorus-asr when it has no chorus-asr
+// server.
+type FloorControlSetting string
 
-// UnmarshalYAML reads floor_control by hand, so that each refusal names what is wrong: a key
-// nobody knows, model or mode missing, or one that is not a string. A bare off is the string
-// it is written as.
-func (settings *FloorControlSettings) UnmarshalYAML(node *yaml.Node) error {
-	if node.Kind != yaml.MappingNode {
-		return errors.New("floor_control is a mapping of model and mode")
+// UnmarshalYAML refuses a floor_control that is not a string, naming it, rather than sending a
+// mapping, a list, a boolean or a number as text.
+func (setting *FloorControlSetting) UnmarshalYAML(node *yaml.Node) error {
+	if node.Kind != yaml.ScalarNode || node.ShortTag() != "!!str" {
+		return errors.New("floor_control must be a string, such as stream/chorus-asr")
 	}
-	var model, mode *string
-	for i := 0; i+1 < len(node.Content); i += 2 {
-		key, value := node.Content[i].Value, node.Content[i+1]
-		var into **string
-		switch key {
-		case "model":
-			into = &model
-		case "mode":
-			into = &mode
-		default:
-			return fmt.Errorf("%q is not a floor_control setting; model and mode are", key)
-		}
-		if value.ShortTag() == "!!null" {
-			continue
-		}
-		if value.Kind != yaml.ScalarNode || value.ShortTag() != "!!str" {
-			return fmt.Errorf("floor_control.%s must be a string", key)
-		}
-		written := value.Value
-		*into = &written
-	}
-	if model == nil || mode == nil {
-		return errors.New("floor_control names both model and mode")
-	}
-	settings.Model, settings.Mode = *model, *mode
+	*setting = FloorControlSetting(node.Value)
 	return nil
 }
 

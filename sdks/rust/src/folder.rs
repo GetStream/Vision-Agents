@@ -165,23 +165,10 @@ pub struct Settings {
     /// as written. `None` leaves the stored choice; an empty mapping (`{}`) is the server's
     /// default. The router checks the choice itself.
     pub end_of_turn: Option<types::EndOfTurn>,
-    /// Whether chorus-asr rules the agent's floor, and in which mode, as written. `None`
-    /// leaves the stored choice; an agent that never chose is off.
-    pub floor_control: Option<FloorControl>,
-}
-
-/// Whether a model that hears the caller rules the agent's floor: when the caller has
-/// finished, and what to do about speech over the agent. A file that names it names both.
-///
-/// Both are sent as written, which is why this is not `types::FloorControl`, whose enums hold
-/// only the models and modes this build was generated with: which there are is the router's
-/// to say, and it refuses shadow or act when it has no chorus-asr server.
-#[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize)]
-pub struct FloorControl {
-    /// The model that rules the floor; chorus-asr is the one there is.
-    pub model: String,
-    /// off, shadow or act.
-    pub mode: String,
+    /// The model that controls the agent's floor, `stream/chorus-asr`, or `""` for the default
+    /// flow controller, sent as written. `None` leaves the stored choice. Which models there are
+    /// is the router's to say.
+    pub floor_control: Option<String>,
 }
 
 /// An agent written down as a directory.
@@ -801,37 +788,12 @@ fn end_of_turn_bar(index: usize, item: &Yaml) -> std::result::Result<types::EndO
     }
 }
 
-/// The floor_control mapping as written: model and mode, each a string. A bare off is the
-/// string it is written as.
-fn floor_control(value: &Yaml) -> std::result::Result<Option<FloorControl>, String> {
-    let Yaml::Hash(fields) = value else {
-        return if value.is_null() {
-            Ok(None)
-        } else {
-            Err("floor_control is a mapping of model and mode".into())
-        };
-    };
-    let (mut model, mut mode) = (None, None);
-    for (key, value) in fields {
-        let key = scalar(key).unwrap_or_default();
-        let chosen = match key.as_str() {
-            "model" => &mut model,
-            "mode" => &mut mode,
-            _ => {
-                return Err(format!(
-                    "{key:?} is not a floor_control setting; model and mode are"
-                ));
-            }
-        };
-        *chosen = match value {
-            Yaml::String(written) => Some(written.clone()),
-            Yaml::Null => None,
-            _ => return Err(format!("floor_control.{key} must be a string")),
-        };
-    }
-    match (model, mode) {
-        (Some(model), Some(mode)) => Ok(Some(FloorControl { model, mode })),
-        _ => Err("floor_control names both model and mode".into()),
+/// floor_control as written, "" included; one that is not a string is refused by name.
+fn floor_control(value: &Yaml) -> std::result::Result<Option<String>, String> {
+    match value {
+        Yaml::String(written) => Ok(Some(written.clone())),
+        Yaml::Null => Ok(None),
+        _ => Err("floor_control must be a string, such as stream/chorus-asr".into()),
     }
 }
 

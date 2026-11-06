@@ -398,24 +398,20 @@ final class AgentTest extends TestCase
     }
 
     /**
-     * @return iterable<string, array{string, array{mode: string, model: string}}>
+     * @return iterable<string, array{string, string}>
      */
     public static function floorControls(): iterable
     {
-        yield 'act' => ["floor_control:\n  model: chorus-asr\n  mode: act\n", ['mode' => 'act', 'model' => 'chorus-asr']];
-        yield 'on one line' => ["floor_control: {model: chorus-asr, mode: shadow}\n", ['mode' => 'shadow', 'model' => 'chorus-asr']];
-        yield 'a bare off' => ["floor_control:\n  model: chorus-asr\n  mode: off\n", ['mode' => 'off', 'model' => 'chorus-asr']];
-        yield 'a quoted off' => ["floor_control:\n  model: chorus-asr\n  mode: \"off\"\n", ['mode' => 'off', 'model' => 'chorus-asr']];
-        yield 'a pair for the router to refuse' => ["floor_control:\n  model: other\n  mode: loud\n", ['mode' => 'loud', 'model' => 'other']];
+        yield 'chorus-asr' => ["floor_control: stream/chorus-asr\n", 'stream/chorus-asr'];
+        yield 'empty, the default flow controller again' => ["floor_control: \"\"\n", ''];
+        yield 'a model for the router to refuse' => ["floor_control: other\n", 'other'];
     }
 
     /**
      * agent.yaml's floor_control goes as written.
-     *
-     * @param array{mode: string, model: string} $sent
      */
     #[DataProvider('floorControls')]
-    public function testSyncSendsTheFloorControlTheAgentDeclared(string $declared, array $sent): void
+    public function testSyncSendsTheFloorControlTheAgentDeclared(string $declared, string $sent): void
     {
         $this->folder();
         file_put_contents($this->dir . '/agent.yaml', "name: jean\n" . $declared);

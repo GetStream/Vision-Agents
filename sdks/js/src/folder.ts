@@ -600,9 +600,7 @@ const REPLACED = new Map([
  *   mode: variation
  * end_of_turn:
  *   max_wait_ms: 900
- * floor_control:
- *   model: chorus-asr
- *   mode: act
+ * floor_control: stream/chorus-asr
  * ```
  *
  * Parsed by hand for the same reason urls.yaml is: the declaration is flat but for one list
@@ -681,9 +679,13 @@ export function parseDeclaration(content: string, where = AGENT_FILE): Declarati
         declared.endOfTurn = chosen;
       }
     } else if (key === "floor_control") {
-      const chosen = floorControl(indented, inline, where);
-      if (chosen) {
-        declared.floorControl = chosen;
+      // One value, sent as written, "" included: which models there are is the router's to say.
+      const value = scalar(inline);
+      if (nested.some((one) => !one.startsWith("#")) || /^[[{]/.test(inline) || NOT_A_STRING.test(inline)) {
+        throw new ConfigurationError(`${where}: floor_control must be a string, such as stream/chorus-asr`);
+      }
+      if (value !== undefined) {
+        declared.floorControl = value;
       }
     } else {
       throw new ConfigurationError(
@@ -1156,92 +1158,9 @@ function barOf(declared: Tree, index: number, where: string): Schemas["EndOfTurn
   return { from_ms: whole(from, `${name}.from_ms`, where), bar: Number(bar) };
 }
 
-const FLOOR_CONTROL_KEYS = new Set(["model", "mode"]);
-
-/**
- * Reads `floor_control:`, whether chorus-asr rules the agent's floor, as a block or on one line:
- *
- * ```yaml
- * floor_control:
- *   model: chorus-asr
- *   mode: act
- * floor_control: {model: chorus-asr, mode: shadow}
- * ```
- *
- * Undefined when the key says nothing, which leaves the stored choice. A file that names it
- * names both, each one value, and both are sent as written: which models and modes there are is
- * the router's to say, and it refuses shadow or act when it has no chorus-asr server.
- */
-function floorControl(
-  lines: string[],
-  inline: string,
-  where: string,
-): Schemas["FloorControl"] | undefined {
-  const notMapping = (): ConfigurationError =>
-    new ConfigurationError(`${where}: floor_control is a mapping of model and mode`);
-  let declared: Tree;
-  if (scalar(inline) !== undefined) {
-    if (lines.some((line) => !line.trim().startsWith("#"))) {
-      throw notMapping();
-    }
-    declared = flow(inline, "floor_control", where);
-  } else {
-    declared = floorControlBlock(lines, where);
-  }
-  if (declared === undefined) {
-    return undefined;
-  }
-  if (!(declared instanceof Map)) {
-    throw notMapping();
-  }
-  refuseUnknown(declared.keys(), FLOOR_CONTROL_KEYS, "floor_control", where);
-  const model = declared.get("model");
-  const mode = declared.get("mode");
-  for (const [key, value] of [
-    ["model", model],
-    ["mode", mode],
-  ] as const) {
-    if (value !== undefined && typeof value !== "string") {
-      throw new ConfigurationError(`${where}: floor_control.${key} must be a string`);
-    }
-  }
-  if (typeof model !== "string" || typeof mode !== "string") {
-    throw new ConfigurationError(`${where}: floor_control names both model and mode`);
-  }
-  return { model, mode } as Schemas["FloorControl"];
-}
-
-/** The block under `floor_control:`, each key's value read as written. */
-function floorControlBlock(lines: string[], where: string): Map<string, Tree> | undefined {
-  const declared = new Map<string, Tree>();
-  let keyColumn = -1;
-  let last: string | undefined;
-  for (const line of lines) {
-    const trimmed = line.replace(/\s+#.*$/, "").trim();
-    if (!trimmed || trimmed.startsWith("#")) {
-      continue;
-    }
-    const column = line.length - line.trimStart().length;
-    if (keyColumn < 0) {
-      if (trimmed.startsWith("-")) {
-        throw new ConfigurationError(`${where}: floor_control is a mapping of model and mode`);
-      }
-      keyColumn = column;
-    }
-    // A list or a mapping under model or mode is not the one value either one is.
-    if (last !== undefined && (column > keyColumn || trimmed.startsWith("-"))) {
-      throw new ConfigurationError(`${where}: floor_control.${last} must be a string`);
-    }
-    const entry = /^([A-Za-z_][\w-]*):(?:\s+(.*))?$/.exec(trimmed);
-    if (column !== keyColumn || !entry) {
-      throw new ConfigurationError(`${where}: ${JSON.stringify(trimmed)} belongs to no floor_control setting`);
-    }
-    last = entry[1] as string;
-    refuseUnknown([last], FLOOR_CONTROL_KEYS, "floor_control", where);
-    declared.set(last, flow((entry[2] ?? "").trim(), `floor_control.${last}`, where));
-  }
-  return keyColumn < 0 ? undefined : declared;
-}
+/** A plain scalar YAML 1.2's core schema reads as a boolean or a number, not a string. */
+const NOT_A_STRING =
+  /^(?:true|True|TRUE|false|False|FALSE|[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+|[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$/;
 
 /**
  * Reads a value written in YAML's flow style, `{from_ms: 0, bar: 0.97}` or `[one, two]`,

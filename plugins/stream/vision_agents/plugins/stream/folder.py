@@ -215,19 +215,6 @@ class EndOfTurnSettings:
 
 
 @dataclass
-class FloorControlSettings:
-    """Whether a model that hears the caller rules the agent's floor: when the caller has
-    finished, and what to do about speech over the agent. A file that names it names both,
-    and both are sent as written: which models and modes there are is the router's to say,
-    and it refuses shadow or act when it has no chorus-asr server."""
-
-    model: str
-    """The model that rules the floor; chorus-asr is the one there is."""
-    mode: str
-    """off, shadow or act."""
-
-
-@dataclass
 class Settings:
     """What `agent.yaml` declares.
 
@@ -275,10 +262,10 @@ class Settings:
     end_of_turn: EndOfTurnSettings | None = None
     """How eager chorus-asr's turn-taking is. None when the file says nothing about it,
     which leaves the stored choice; an empty one is the server's default."""
-    floor_control: FloorControlSettings | None = None
-    """Whether chorus-asr rules the agent's floor, and in which mode. None when the file
-    says nothing about it, which leaves the stored choice; an agent that never chose is
-    off."""
+    floor_control: str | None = None
+    """The model that controls the agent's floor, `stream/chorus-asr`, or "" for the default
+    flow controller, as written. None when the file says nothing about it, which leaves the
+    stored choice."""
     keyterms: list[str] = field(default_factory=list)
     tags: dict[str, str] = field(default_factory=dict)
     video_source: str = ""
@@ -851,38 +838,13 @@ def _end_of_turn_bar(path: Path, index: int, value: object) -> EndOfTurnBar:
     return EndOfTurnBar(from_ms=from_ms, bar=float(bar))
 
 
-def _floor_control(path: Path, value: object) -> FloorControlSettings | None:
-    """Only the shape is read: which models and modes there are is the router's to say."""
-    if value is None:
-        return None
-    if not isinstance(value, dict):
-        raise ValueError(
-            f"{path} should give floor_control as a mapping of model and mode"
-        )
-    extra = set(value) - {"model", "mode"}
-    if extra:
-        raise ValueError(f"{path} unknown floor_control setting: {sorted(extra)[0]}")
-    model = _floor_control_word(path, "model", value.get("model"))
-    mode = _floor_control_word(path, "mode", value.get("mode"))
-    if model is None or mode is None:
-        raise ValueError(f"{path} floor_control names both model and mode")
-    return FloorControlSettings(model=model, mode=mode)
-
-
-def _floor_control_word(path: Path, key: str, value: object) -> str | None:
-    """model or mode as written. YAML 1.1, which this reads, takes a bare `off` for false,
-    so false is the mode off, as every other SDK reads it. A bare true, on or yes is refused
-    rather than guessed at."""
+def _floor_control(path: Path, value: object) -> str | None:
+    """As written, "" included: which models there are is the router's to say."""
     if value is None or isinstance(value, str):
         return value
-    if value is False:
-        return "off"
-    if value is True:
-        raise ValueError(
-            f"{path} floor_control.{key} must be a string; quote it, since YAML reads "
-            "a bare on, yes or true as true"
-        )
-    raise ValueError(f"{path} floor_control.{key} must be a string")
+    raise ValueError(
+        f"{path} floor_control must be a string, such as stream/chorus-asr"
+    )
 
 
 def _channel(path: Path, kind: str, value: object) -> ChannelSettings | None:

@@ -10,7 +10,6 @@ use GetStream\VisionAgents\Generated\AgentDispatch;
 use GetStream\VisionAgents\Generated\DispatchSetting;
 use GetStream\VisionAgents\Generated\EndOfTurn;
 use GetStream\VisionAgents\Generated\EndOfTurnBar;
-use GetStream\VisionAgents\Generated\FloorControl;
 use GetStream\VisionAgents\Generated\Greeting;
 use GetStream\VisionAgents\Generated\GreetingMode;
 use GetStream\VisionAgents\Generated\SandboxOptions;
@@ -40,9 +39,9 @@ final readonly class Declaration
      *     reach; outbound network is blocked unless network or an allow list opens it
      * @param ?EndOfTurn $endOfTurn how eager chorus-asr's turn-taking is: null when the
      *     declaration says nothing, which leaves the stored choice; empty for the server's default
-     * @param ?FloorControl $floorControl whether chorus-asr rules the agent's floor, model and
-     *     mode as written: null when the declaration says nothing, which leaves the stored
-     *     choice; an agent that never chose is off
+     * @param ?string $floorControl the model that controls the agent's floor, stream/chorus-asr,
+     *     or empty for the default flow controller, as written: null when the declaration says
+     *     nothing, which leaves the stored choice
      */
     public function __construct(
         public string $name = '',
@@ -65,7 +64,7 @@ final readonly class Declaration
         public ?array $connectors = null,
         public ?SandboxOptions $sandboxOptions = null,
         public ?EndOfTurn $endOfTurn = null,
-        public ?FloorControl $floorControl = null,
+        public ?string $floorControl = null,
     ) {
     }
 
@@ -76,8 +75,7 @@ final readonly class Declaration
      * @param mixed $mapped the same file parsed with Yaml::PARSE_OBJECT_FOR_MAP, which
      *     `connectors` is read from: there `{}` is an object and not an empty list, so it is
      *     refused rather than sent as [] and wiping the stored bindings. `end_of_turn` is read
-     *     from it too, where `{}` is the server's default and `[]` is not a mapping, and so is
-     *     `floor_control`, where `{}` names neither model nor mode and `[]` is not a mapping
+     *     from it too, where `{}` is the server's default and `[]` is not a mapping
      */
     public static function fromYaml(mixed $parsed, mixed $mapped): self
     {
@@ -117,7 +115,7 @@ final readonly class Declaration
             } elseif ($key === 'end_of_turn') {
                 $endOfTurn = self::endOfTurn($mapped instanceof \stdClass ? $mapped->end_of_turn : $value);
             } elseif ($key === 'floor_control') {
-                $floorControl = self::floorControl($mapped instanceof \stdClass ? $mapped->floor_control : $value);
+                $floorControl = self::floorControl($value);
             } else {
                 throw new ConfigurationException("\"{$key}\" is not something agent.yaml declares");
             }
@@ -353,31 +351,15 @@ final readonly class Declaration
     }
 
     /**
-     * `model` and `mode`, each a string, sent as written: which models and modes there are is
-     * the router's to say, and it refuses shadow or act when it has no chorus-asr server.
+     * As written, empty included, which is the default flow controller again: which models there
+     * are is the router's to say.
      */
-    private static function floorControl(mixed $value): ?FloorControl
+    private static function floorControl(mixed $value): ?string
     {
-        if ($value === null) {
-            return null;
+        if ($value === null || is_string($value)) {
+            return $value;
         }
-        if (!$value instanceof \stdClass) {
-            throw new ConfigurationException('floor_control is a mapping of model and mode');
-        }
-        $chosen = ['model' => null, 'mode' => null];
-        foreach (get_object_vars($value) as $key => $each) {
-            if (!array_key_exists($key, $chosen)) {
-                throw new ConfigurationException("\"floor_control.{$key}\" is not something agent.yaml declares");
-            }
-            if ($each !== null && !is_string($each)) {
-                throw new ConfigurationException("floor_control.{$key} must be a string");
-            }
-            $chosen[$key] = $each;
-        }
-        if ($chosen['model'] === null || $chosen['mode'] === null) {
-            throw new ConfigurationException('floor_control names both model and mode');
-        }
-        return new FloorControl(mode: $chosen['mode'], model: $chosen['model']);
+        throw new ConfigurationException('floor_control must be a string, such as stream/chorus-asr');
     }
 
     /**

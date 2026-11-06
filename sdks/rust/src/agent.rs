@@ -651,22 +651,11 @@ impl Agent {
             }),
             dispatch: settings.dispatch.clone(),
             end_of_turn: settings.end_of_turn.clone(),
+            floor_control: settings.floor_control.clone(),
             connectors,
             ..Default::default()
         };
-        let sent = SyncBody {
-            request: &body,
-            floor_control: settings.floor_control.as_ref(),
-        };
-        let synced: types::SyncAgentResult = client
-            .send(
-                reqwest::Method::POST,
-                "/v1/agents/sync",
-                None::<&()>,
-                Some(&sent),
-                "syncAgent",
-            )
-            .await?;
+        let synced = client.sync_agent(&body).await?;
         folder::write_stamp(&folder.path, &hash)?;
         Ok(synced.config)
     }
@@ -880,17 +869,6 @@ async fn stored_config(client: &Client, name: &str) -> Result<Option<types::Agen
         })
         .await?;
     Ok(stored.into_iter().find(|config| config.name == name))
-}
-
-/// A sync's body with floor_control as agent.yaml wrote it, which `types::SyncAgentRequest`
-/// cannot carry for a model or mode its enums do not know: which there are is the router's
-/// to say.
-#[derive(serde::Serialize)]
-struct SyncBody<'a> {
-    #[serde(flatten)]
-    request: &'a types::SyncAgentRequest,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    floor_control: Option<&'a folder::FloorControl>,
 }
 
 fn text(value: &str) -> Option<String> {

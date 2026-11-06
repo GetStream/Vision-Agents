@@ -835,7 +835,7 @@ public sealed class Agent : IAsyncDisposable
             : null;
         // As written, an empty one ({}) included: that is the server's default.
         request.EndOfTurn = declared.EndOfTurn;
-        // As written: which models and modes there are is the router's to say.
+        // As written, empty included: which models there are is the router's to say.
         request.FloorControl = declared.FloorControl;
     }
 

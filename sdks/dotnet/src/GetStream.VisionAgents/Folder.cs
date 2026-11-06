@@ -195,11 +195,11 @@ public sealed record Declaration
     public EndOfTurn? EndOfTurn { get; init; }
 
     /// <summary>
-    /// Whether chorus-asr rules the agent's floor: its model and its mode (off, shadow or act), as
-    /// written. Null when agent.yaml says nothing, which leaves the stored choice; an agent that
-    /// never chose is off. Which models and modes there are is the router's to say.
+    /// The model that controls the agent's floor, stream/chorus-asr, or empty for the default flow
+    /// controller, as written. Null when agent.yaml says nothing, which leaves the stored choice.
+    /// Which models there are is the router's to say.
     /// </summary>
-    public FloorControl? FloorControl { get; init; }
+    public string? FloorControl { get; init; }
 }
 
 /// <summary>
@@ -613,7 +613,7 @@ public sealed class Folder
             Video = video,
             Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
             EndOfTurn = endOfTurn,
-            FloorControl = read.FloorControl is { Model: { } model, Mode: { } mode } ? new FloorControl { Model = model, Mode = mode } : null,
+            FloorControl = read.FloorControl?.Value,
         };
     }
 
@@ -1222,61 +1222,36 @@ public sealed class Folder
     }
 
     /// <summary>
-    /// The <c>floor_control:</c> mapping, read by hand so that each refusal names what is wrong:
-    /// not a mapping, a key nobody knows, model or mode missing, or one that is not a string. A
-    /// plain null is absent, and both stay null. A bare off is the string it is written as.
+    /// The <c>floor_control:</c> value, read by hand so that one that is not a string is refused by
+    /// name rather than sent as text: a mapping, a list, or a plain true, false or number. A plain
+    /// null is absent; anything else is sent as written, empty included.
     /// </summary>
     private sealed class WrittenFloorControl : IYamlConvertible
     {
-        public string? Model { get; private set; }
-        public string? Mode { get; private set; }
+        public string? Value { get; private set; }
 
         void IYamlConvertible.Read(IParser parser, Type expectedType, ObjectDeserializer nestedObjectDeserializer)
         {
-            if (parser.Current is Scalar { Style: ScalarStyle.Plain } nothing && IsNull(nothing.Value))
+            if (!parser.TryConsume<Scalar>(out var scalar))
             {
-                parser.MoveNext();
-                return;
+                throw new YamlException("floor_control must be a string, such as stream/chorus-asr");
             }
-            if (!parser.TryConsume<MappingStart>(out _))
+            if (scalar.Style == ScalarStyle.Plain)
             {
-                throw new YamlException("floor_control is a mapping of model and mode");
-            }
-            string? model = null, mode = null;
-            while (!parser.TryConsume<MappingEnd>(out _))
-            {
-                var key = parser.Consume<Scalar>().Value;
-                if (key is not ("model" or "mode"))
+                if (scalar.Value is "" or "~" or "null" or "Null" or "NULL")
                 {
-                    throw new YamlException($"\"{key}\" is not a floor_control setting; model and mode are");
+                    return;
                 }
-                // YAML 1.2's core schema: a plain true, false or number is not a string.
-                if (!parser.TryConsume<Scalar>(out var value) ||
-                    value.Style == ScalarStyle.Plain && NotAString.IsMatch(value.Value))
+                if (NotAString.IsMatch(scalar.Value))
                 {
-                    throw new YamlException($"floor_control.{key} must be a string");
-                }
-                var written = value.Style == ScalarStyle.Plain && IsNull(value.Value) ? null : value.Value;
-                if (key == "model")
-                {
-                    model = written;
-                }
-                else
-                {
-                    mode = written;
+                    throw new YamlException("floor_control must be a string, such as stream/chorus-asr");
                 }
             }
-            if (model is null || mode is null)
-            {
-                throw new YamlException("floor_control names both model and mode");
-            }
-            (Model, Mode) = (model, mode);
+            Value = scalar.Value;
         }
 
         void IYamlConvertible.Write(IEmitter emitter, ObjectSerializer nestedObjectSerializer) =>
             throw new NotSupportedException();
-
-        private static bool IsNull(string plain) => plain is "" or "~" or "null" or "Null" or "NULL";
 
         /// <summary>A plain scalar YAML 1.2's core schema reads as a boolean or a number.</summary>
         private static readonly System.Text.RegularExpressions.Regex NotAString = new(

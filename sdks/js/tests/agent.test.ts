@@ -848,19 +848,17 @@ describe("Agent", () => {
 
       it("sends floor_control as written, and none when agent.yaml names none, so the stored choice stays", async () => {
         for (const [declared, chosen] of [
-          ["floor_control:\n  model: chorus-asr\n  mode: act\n", { model: "chorus-asr", mode: "act" }],
-          ["floor_control: {model: chorus-asr, mode: shadow}\n", { model: "chorus-asr", mode: "shadow" }],
-          ["floor_control:\n  model: chorus-asr\n  mode: off\n", { model: "chorus-asr", mode: "off" }],
-          ['floor_control:\n  model: chorus-asr\n  mode: "off"\n', { model: "chorus-asr", mode: "off" }],
+          ["floor_control: stream/chorus-asr\n", "stream/chorus-asr"],
+          ['floor_control: ""\n', ""],
           // The router refuses what it does not know, naming why.
-          ["floor_control:\n  model: other\n  mode: loud\n", { model: "other", mode: "loud" }],
+          ["floor_control: other\n", "other"],
           ["llm: llm-fast\n", undefined],
           ["floor_control:\n", undefined],
           ["floor_control: null\n", undefined],
         ] as const) {
           const body = await synced(`name: jean\n${declared}`);
 
-          assert.deepEqual(body["floor_control"], chosen, declared);
+          assert.equal(body["floor_control"], chosen, declared);
           assert.equal("floor_control" in body, chosen !== undefined, declared);
         }
       });

@@ -368,18 +368,17 @@ describe("loadFolder", () => {
     });
   });
 
-  it("reads floor_control as written, a bare off included, and nothing when it says nothing", async () => {
+  it("reads floor_control as written, an empty one included, and nothing when it says nothing", async () => {
     for (const [declared, chosen] of [
-      ["floor_control:\n  model: chorus-asr\n  mode: act # or shadow\n", { model: "chorus-asr", mode: "act" }],
-      ["floor_control: {model: chorus-asr, mode: shadow}\n", { model: "chorus-asr", mode: "shadow" }],
-      ["floor_control:\n  model: chorus-asr\n  mode: off\n", { model: "chorus-asr", mode: "off" }],
-      ['floor_control:\n  model: chorus-asr\n  mode: "off"\n', { model: "chorus-asr", mode: "off" }],
-      // Which models and modes there are is the router's to say.
-      ["floor_control:\n  model: other\n  mode: loud\n", { model: "other", mode: "loud" }],
+      ["floor_control: stream/chorus-asr # the one there is\n", "stream/chorus-asr"],
+      ['floor_control: "stream/chorus-asr"\n', "stream/chorus-asr"],
+      ['floor_control: ""\n', ""],
+      // Which models there are is the router's to say.
+      ["floor_control: other\n", "other"],
     ] as const) {
       const folder = await loadFolder(await agentDir({ "agent.yaml": `name: concierge\n${declared}` }));
 
-      assert.deepEqual(folder.settings?.floorControl, chosen, declared);
+      assert.equal(folder.settings?.floorControl, chosen, declared);
     }
     for (const declared of ["floor_control:\n", "floor_control: ~\n", "floor_control:\n  # later\n"]) {
       const folder = await loadFolder(await agentDir({ "agent.yaml": `name: concierge\n${declared}` }));
@@ -388,25 +387,18 @@ describe("loadFolder", () => {
     }
   });
 
-  it("refuses a floor_control that is not a mapping of model and mode, naming what is wrong", async () => {
-    for (const [declaration, reason] of [
-      ["floor_control: act\n", /floor_control is a mapping of model and mode/],
-      ["floor_control: [chorus-asr, act]\n", /floor_control is a mapping of model and mode/],
-      ["floor_control:\n  - chorus-asr\n", /floor_control is a mapping of model and mode/],
-      ["floor_control: {}\n", /floor_control names both model and mode/],
-      ["floor_control:\n  mode: act\n", /floor_control names both model and mode/],
-      ["floor_control: {model: chorus-asr}\n", /floor_control names both model and mode/],
-      ["floor_control:\n  model: chorus-asr\n  mode: ~\n", /floor_control names both model and mode/],
-      ["floor_control:\n  model: chorus-asr\n  mode: act\n  eager: true\n", /unknown floor_control setting "eager"/],
-      ["floor_control: {model: chorus-asr, mode: act, eager: true}\n", /unknown floor_control setting "eager"/],
-      ["floor_control:\n  model: chorus-asr\n  mode: [act]\n", /floor_control\.mode must be a string/],
-      ["floor_control:\n  model: chorus-asr\n  mode:\n    - act\n", /floor_control\.mode must be a string/],
-      ["floor_control:\n  model: {name: chorus-asr}\n  mode: act\n", /floor_control\.model must be a string/],
-      ["floor_control:\n  model:\n    name: chorus-asr\n  mode: act\n", /floor_control\.model must be a string/],
-    ] as const) {
+  it("refuses a floor_control that is not a string, naming it", async () => {
+    for (const declaration of [
+      "floor_control: {model: chorus-asr, mode: act}\n",
+      "floor_control:\n  model: chorus-asr\n",
+      "floor_control: [stream/chorus-asr]\n",
+      "floor_control:\n  - stream/chorus-asr\n",
+      "floor_control: true\n",
+      "floor_control: 1\n",
+    ]) {
       await assert.rejects(
         async () => loadFolder(await agentDir({ "agent.yaml": declaration })),
-        reason,
+        /floor_control must be a string/,
         declaration,
       );
     }

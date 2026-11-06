@@ -869,22 +869,20 @@ public sealed class AgentTests : IDisposable
     }
 
     /// <summary>
-    /// agent.yaml's floor_control goes as written, a bare off as "off" and a pair the router does
-    /// not know as it is, for the router to refuse.
+    /// agent.yaml's floor_control goes as written, empty and a model the router does not know
+    /// included, for the router to judge.
     /// </summary>
     [Theory]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: act\n", """{"mode":"act","model":"chorus-asr"}""")]
-    [InlineData("floor_control: {model: chorus-asr, mode: shadow}\n", """{"mode":"shadow","model":"chorus-asr"}""")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: off\n", """{"mode":"off","model":"chorus-asr"}""")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: \"off\"\n", """{"mode":"off","model":"chorus-asr"}""")]
-    [InlineData("floor_control:\n  model: other\n  mode: loud\n", """{"mode":"loud","model":"other"}""")]
+    [InlineData("floor_control: stream/chorus-asr\n", "stream/chorus-asr")]
+    [InlineData("floor_control: \"\"\n", "")]
+    [InlineData("floor_control: other\n", "other")]
     public async Task SyncSendsTheFloorControlTheAgentDeclared(string declaration, string sent)
     {
         await using var router = await TestRouter.StartAsync();
 
         var synced = await SyncDeclaringAsync(router, declaration);
 
-        Assert.Equal(sent, synced["floor_control"]!.ToJsonString());
+        Assert.Equal(sent, synced["floor_control"]!.GetValue<string>());
     }
 
     /// <summary>A file that names no floor_control sends none, so the stored choice stays.</summary>

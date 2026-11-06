@@ -273,10 +273,9 @@ fingerprint, so syncing on every startup sends nothing when nothing changed. A k
 `agent.yaml` does not know is refused; besides the models it takes `harness`, `subagent`,
 `greeting` (`{text, mode}`), `connectors`, `sandbox`, `dispatch`, `end_of_turn`, how eager
 chorus-asr's turn-taking is (`{max_wait_ms: 900}`, `{preset: fast}` or `{bars: [{from_ms, bar}, ...]}`,
-`{}` for the server's default; left out, the stored choice stays), and `floor_control`, whether
-chorus-asr rules the agent's floor (`{model: chorus-asr, mode: act}`, with `mode` one of `off`,
-`shadow` and `act`, sent as written; left out, the stored choice stays, and an agent that never
-chose is off). A
+`{}` for the server's default; left out, the stored choice stays), and `floor_control`, the model
+that controls the agent's floor (`stream/chorus-asr`, or `""` for the default flow controller,
+sent as written; left out, the stored choice stays). A
 connector is its alias (`- github`) or `{name, connector, tools, connection, required}`; `connection`
 is an app connection's id or its only label. Leaving `connectors` out keeps the stored bindings, and
 `connectors: []` removes them. With a `simulations/` directory the config's

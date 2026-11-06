@@ -292,22 +292,19 @@ public sealed class FolderTests : IDisposable
     }
 
     /// <summary>
-    /// floor_control is read as written, a bare off included; which models and modes there are is
-    /// the router's to say.
+    /// floor_control is read as written, empty included; which models there are is the router's to
+    /// say.
     /// </summary>
     [Theory]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: act\n", "chorus-asr", "act")]
-    [InlineData("floor_control: {model: chorus-asr, mode: shadow}\n", "chorus-asr", "shadow")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: off\n", "chorus-asr", "off")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: \"off\"\n", "chorus-asr", "off")]
-    [InlineData("floor_control:\n  model: other\n  mode: loud\n", "other", "loud")]
-    public void AFloorControlIsReadAsWritten(string declaration, string model, string mode)
+    [InlineData("floor_control: stream/chorus-asr\n", "stream/chorus-asr")]
+    [InlineData("floor_control: \"stream/chorus-asr\"\n", "stream/chorus-asr")]
+    [InlineData("floor_control: \"\"\n", "")]
+    [InlineData("floor_control: other\n", "other")]
+    public void AFloorControlIsReadAsWritten(string declaration, string chosen)
     {
         Write("agent.yaml", declaration);
 
-        var chosen = Folder.Load(_root).Declaration.FloorControl!;
-
-        Assert.Equal((model, mode), (chosen.Model, chosen.Mode));
+        Assert.Equal(chosen, Folder.Load(_root).Declaration.FloorControl);
     }
 
     [Theory]
@@ -322,24 +319,17 @@ public sealed class FolderTests : IDisposable
     }
 
     [Theory]
-    [InlineData("floor_control: act\n", "floor_control is a mapping of model and mode")]
-    [InlineData("floor_control: [chorus-asr, act]\n", "floor_control is a mapping of model and mode")]
-    [InlineData("floor_control: {}\n", "floor_control names both model and mode")]
-    [InlineData("floor_control:\n  mode: act\n", "floor_control names both model and mode")]
-    [InlineData("floor_control:\n  model: chorus-asr\n", "floor_control names both model and mode")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: ~\n", "floor_control names both model and mode")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: act\n  eager: true\n", "\"eager\" is not a floor_control setting; model and mode are")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: [act]\n", "floor_control.mode must be a string")]
-    [InlineData("floor_control:\n  model: {name: chorus-asr}\n  mode: act\n", "floor_control.model must be a string")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: 1\n", "floor_control.mode must be a string")]
-    [InlineData("floor_control:\n  model: chorus-asr\n  mode: true\n", "floor_control.mode must be a string")]
-    public void AFloorControlThatCannotBeReadIsRefusedNamingWhy(string declaration, string reason)
+    [InlineData("floor_control: {model: chorus-asr, mode: act}\n")]
+    [InlineData("floor_control: [stream/chorus-asr]\n")]
+    [InlineData("floor_control: true\n")]
+    [InlineData("floor_control: 1\n")]
+    public void AFloorControlThatIsNotAStringIsRefusedByName(string declaration)
     {
         Write("agent.yaml", declaration);
 
         var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
 
-        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": floor_control must be a string, such as stream/chorus-asr", refused.Message);
     }
 
     [Fact]
