@@ -1052,13 +1052,18 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 		{"a number of the tool's beside an agent's line with digits apart", [][]llm.Message{posted("Booked at 10:56, 30 min"), read("Booked at 10:56, 30 min; card ends 5630")}, "", false},
 		{"a number the agent saved beside a time, read back", [][]llm.Message{posted("Card 5630, booked at 10:56"), read("Ana | Card 5630, booked at 10:56")}, "", true},
 		{"a number the agent saved in dashed groups, read back", [][]llm.Message{posted("Card 56-30 on file"), read("Card 56-30 on file")}, "", true},
+		{"a number the agent saved beside a time, read back with the time in another form", [][]llm.Message{posted("Card 5630, booked 10:56"), read("Card 5630, booked 1056")}, "", true},
+		{"a longer number of the tool's that starts with the agent's", [][]llm.Message{posted("Code 5630"), read("Code 56301 for Ana")}, "", false},
+		{"a card number the agent saved, read back", [][]llm.Message{posted("Card 4111-1111-1111-5630 on file"), read("Ana | Card 4111-1111-1111-5630 on file")}, "", true},
 		// AI-2927: a result that writes back only values the agent sent gives none of them.
 		{"a number the agent sent alone, echoed alone", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"last4":"5630"}`)}, "", true},
-		{"a number the agent sent alone, echoed as a JSON number beside a status", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"ok":true,"query":{"last4":5630},"results":[]}`)}, "", true},
+		{"a number the agent sent alone, echoed as a JSON number beside a status", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"ok":true,"query":{"last4":5630},"next":"","results":[]}`)}, "", true},
 		{"a number the agent sent alone, echoed as text", [][]llm.Message{called("find_member", `{"last4":"5630"}`, "5630")}, "", true},
 		{"a number the agent sent with a name, echoed with it", [][]llm.Message{called("find_member", `{"name":"Ana","last4":"5630"}`, `{"name":"Ana","last4":"5630"}`)}, "", true},
 		// Only the call a result answers is echoed: a later call's record may hold a value the agent sent before.
 		{"a number the agent saved, read back alone by another call", [][]llm.Message{called("save_member", `{"last4":"5630"}`, `{"ok":true}`), read(`{"last4":"5630"}`)}, "", false},
+		{"a number the agent sent alone, written by the tool as a key", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"5630":{"active":true}}`)}, "", false},
+		{"a number the agent sent alone, echoed beside a listing of the tool's", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `{"last4":"5630","matches":["Ana Lind"]}`)}, "", false},
 		{"a number the agent sent alone, in a listing of the tool's", [][]llm.Message{called("find_member", `{"last4":"5630"}`, `[{"name":"Ana Lind","last4":"5630"},{"name":"Bo Berg","last4":"1111"}]`)}, "", false},
 		{"a number the agent sent alone, in a record found by name", [][]llm.Message{called("find_member", `{"name":"Ana","last4":"5630"}`, `{"name":"Ana","member_id":"M-17","last4":"5630"}`)}, "", false},
 		{"a number a tool returned alone before the agent sent it", [][]llm.Message{called("get_member", `{"id":"9"}`, `{"last4":"5630"}`), called("find_member", `{"last4":"5630"}`, `{"last4":"5630"}`)}, "", false},
@@ -1165,6 +1170,8 @@ func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
 		{"a number the agent posted without its country code, read back with it", [][]llm.Message{posted("Sales: 5550100199"), read("Sales: +1 5550100199")}, "+15550100199", "", true},
 		{"a number the agent posted with its country code, read back without it", [][]llm.Message{posted("Sales: +1 555 010 0199"), read(`{"messages":[{"text":"Sales: 555-010-0199"}]}`)}, "+15550100199", "", true},
 		{"a number the agent saved in a note in brackets, read back with a country code", [][]llm.Message{noted, read("Ana | notes: Call Ana back at 1 (555) 010-0199")}, "+15550100199", "", true},
+		{"a number the agent posted, read back after a number of the tool's", [][]llm.Message{posted("555-010-0199 sales line"), read("Main 555-010-0199. 555-010-0199 sales line")}, "+15550100199", "", false},
+		{"a number the agent posted after a list number, read back without it", [][]llm.Message{posted("Sales: 1. 555-010-0199 today"), read("Sales: 555-010-0199 today")}, "+15550100199", "", true},
 		{"a number the agent posted, read back in another form beside a tool's", [][]llm.Message{posted("Sales: 5550100199"), read("Sales: +1 5550100199 | Desk: 555-010-0199")}, "+15550100199", "", false},
 		{"a number the agent posted, written by a tool in other words", [][]llm.Message{posted("Sales: 5550100199"), read("Sales desk: +1 555 010 0199")}, "+15550100199", "", false},
 		// AI-2927: a result that writes back only values the agent sent gives none of them.

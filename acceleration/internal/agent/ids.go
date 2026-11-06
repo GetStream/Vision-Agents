@@ -436,7 +436,7 @@ func (asked ownLines) echoes(content string, numbers func(string) []numberAt) bo
 		switch typed := value.(type) {
 		case string:
 			written, _, _ := spelled(typed, numbers(typed))
-			echoed = echoed || written != ""
+			echoed = true
 			return written == "" || slices.ContainsFunc(asked, func(line writtenLine) bool {
 				sent, _, _ := spelled(line.text, numbers(line.text))
 				return sent == written
