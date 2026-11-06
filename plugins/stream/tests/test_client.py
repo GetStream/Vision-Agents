@@ -27,6 +27,9 @@ class Router:
 
         self.configs: list[dict[str, Any]] = []
         self.sessions: list[dict[str, Any]] = []
+        # answered is laid over every session the router describes, as fields a newer router
+        # may send.
+        self.answered: dict[str, Any] = {}
         # pages of response items, each found by the cursor it was handed out under.
         self.pages: list[list[dict[str, Any]]] = []
         # refusals answers a "METHOD /path" with a web.Response built from these keywords
@@ -282,6 +285,7 @@ class Router:
             "state": "live",
             "conversation_id": "agent:" + id,
             "created_at": WHEN,
+            **self.answered,
         }
 
     def body(self, method: str, path: str) -> dict[str, Any]:
@@ -671,6 +675,84 @@ class TestSessions:
     async def test_a_delete_the_router_refuses_is_raised(self, api: stream.Client):
         with pytest.raises(stream.RouterError, match="no such thing"):
             await api.agent("docs").sessions.delete("missing")
+
+    @pytest.mark.parametrize(
+        "end_reason, state",
+        [
+            ("closed", "paused"),
+            ("VOICEMAIL", "Ended"),
+            ("", "live "),
+        ],
+    )
+    async def test_a_value_this_client_does_not_list_reads_as_it_was_sent(
+        self, api: stream.Client, router: Router, end_reason: str, state: str
+    ):
+        # A newer router can end a session for a reason this client was not built with; the
+        # session still reads, and the reason is written back as it came. Close spellings of
+        # listed values are not folded into them.
+        router.answered = {"end_reason": end_reason, "state": state}
+
+        row = await api.agent("docs").sessions.get("session-1")
+
+        assert (row.end_reason.value, str(row.end_reason)) == (end_reason, end_reason)
+        assert row.state.value == state
+        assert row.end_reason not in list(type(row.end_reason))
+        assert row.state not in list(type(row.state))
+        written = row.to_dict()
+        assert (written["end_reason"], written["state"]) == (end_reason, state)
+
+    async def test_a_page_of_sessions_reads_a_value_this_client_does_not_list(
+        self, api: stream.Client, router: Router
+    ):
+        router.sessions = [
+            {**router._session("session-1"), "end_reason": "model_failed"},
+            {**router._session("session-2"), "end_reason": "hangup"},
+        ]
+
+        page = await api.agent("docs").sessions.query()
+
+        assert [str(session.end_reason) for session in page.items] == [
+            "model_failed",
+            "hangup",
+        ]
+
+    async def test_a_listed_value_reads_as_its_member_and_is_written_back_unchanged(
+        self, api: stream.Client, router: Router
+    ):
+        # What is written back is what the client before AI-2951 wrote for this answer, read
+        # from a run of it.
+        router.answered = {"end_reason": "voicemail", "state": "ended", "mode": "native"}
+
+        row = await api.agent("docs").sessions.get("session-1")
+
+        reasons = type(row.end_reason)
+        assert row.end_reason is reasons.VOICEMAIL
+        assert row.state is type(row.state).ENDED
+        assert row.mode is type(row.mode).NATIVE
+        assert row.to_dict() == {
+            "id": "session-1",
+            "agent_id": "agent-1",
+            "call_id": "",
+            "call_type": "",
+            "user_id": "jean",
+            "modality": "text",
+            "state": "ended",
+            "conversation_id": "agent:session-1",
+            "created_at": "2026-01-01T00:00:00+00:00",
+            "end_reason": "voicemail",
+            "mode": "native",
+        }
+        with pytest.raises(ValueError):
+            reasons("closed")
+
+    @pytest.mark.parametrize("end_reason", [5, None, {"value": "closed"}, ["closed"]])
+    async def test_a_reason_that_is_not_a_string_is_still_refused(
+        self, api: stream.Client, router: Router, end_reason: Any
+    ):
+        router.answered = {"end_reason": end_reason}
+
+        with pytest.raises(ValueError):
+            await api.agent("docs").sessions.get("session-1")
 
 
 class TestResponses:
