@@ -20,8 +20,8 @@ const chatCardTimeout = 30 * time.Second
 // chatEpisode opens the episode a person's message in an agent channel of the app chat is in,
 // in the person's omni-channel, and writes its card when the message opened it. answering is
 // the spec of the agent that answers the message: the running session's, or the config the
-// channel's owner holds (chatEpisodeUnopened). Only a config with episode_cards on has any:
-// off, nothing here reads or writes. A thread channel's episode is the channel bridge's, an
+// channel's owner holds (chatEpisodeUnopened). Only a config that writes cards, episode_cards
+// on or record (Spec.WritesCards), has any: off, nothing here reads or writes. A thread channel's episode is the channel bridge's, an
 // omni-channel is where cards are written and never where an episode starts, and a session on
 // a call has its call's card, whose lines a chat episode in the same channel would cut short
 // (store.EpisodeCards, until).
@@ -44,7 +44,7 @@ const chatCardTimeout = 30 * time.Second
 // writes no second card. An episode or a card that fails costs the card, not the answer: it
 // is logged and the message is answered all the same.
 func (s *Server) chatEpisode(ctx context.Context, origin hookOrigin, event messageEvent, answering session.Spec) {
-	if s.chatCards == nil || !answering.EpisodeCards || answering.Incognito || answering.CallID != "" ||
+	if s.chatCards == nil || !answering.WritesCards() || answering.Incognito || answering.CallID != "" ||
 		strings.HasPrefix(event.ChannelID, conversation.ThreadChannelPrefix) || omnichannel.IsOmniChannel(event.ChannelID) {
 		return
 	}

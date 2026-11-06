@@ -607,11 +607,15 @@ type AgentConfig struct {
 	// model, and the model only answers when the worker asks it to.
 	DispatchIncomingCall bool `bun:"dispatch_incoming_call,notnull"`
 	DispatchText         bool `bun:"dispatch_text,notnull"`
-	// EpisodeCards has each phone call under the config write an episode card into the
-	// caller's omni-channel (20261007042200_agent_config_episode_cards.sql), and each session
-	// on a thread channel or a phone call under it start with the person's other cards. Off
-	// unless a config turns it on.
+	// EpisodeCards has each session under the config start with the person's other episode
+	// cards (20261007042200_agent_config_episode_cards.sql), and the config write them as
+	// record does: the on mode. Off unless a config turns it on.
 	EpisodeCards bool `bun:"episode_cards,notnull"`
+	// EpisodeCardsRecord has each call, app chat and channel thread under the config write
+	// its episode card and summary into the person's omni-channel while no session reads them
+	// (20261217090000_agent_config_episode_cards_record.sql): the record mode. Read only beside
+	// EpisodeCards off; WritesCards is the two together.
+	EpisodeCardsRecord bool `bun:"episode_cards_record,notnull"`
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// sends a tool's full description the first time it is called instead of running it
 	// (20261008130000_agent_config_progressive_tools.sql). Off unless a config turns it on.
@@ -626,7 +630,7 @@ type AgentConfig struct {
 	// carry on. The zero value is the router's default.
 	ResumeHistory ResumeHistory `bun:"resume_history,type:jsonb,notnull"`
 	// EndOfTurn is when chorus-asr has a caller's turn ended in the config's sessions, as
-	// the config chose (20261216090000_end_of_turn.sql). The zero value is the server's
+	// the config chose (20261219090000_end_of_turn.sql). The zero value is the server's
 	// default.
 	EndOfTurn EndOfTurn `bun:"end_of_turn,type:jsonb,notnull"`
 	// SyncHash is a fingerprint of the last directory written onto this config. Empty
@@ -635,6 +639,12 @@ type AgentConfig struct {
 	CreatedAt time.Time  `bun:"created_at,notnull"`
 	UpdatedAt time.Time  `bun:"updated_at,notnull"`
 	DeletedAt *time.Time `bun:"deleted_at"`
+}
+
+// WritesCards is whether the config's calls, app chats and channel threads write episode
+// cards and their summaries: on (EpisodeCards) or record (EpisodeCardsRecord).
+func (c AgentConfig) WritesCards() bool {
+	return c.EpisodeCards || c.EpisodeCardsRecord
 }
 
 // ConnectorBinding is one connector an agent config may call tools of, as it is stored in
@@ -1936,6 +1946,8 @@ type Exchange struct {
 	Answer     string
 	// Refused is a turn the prompt injection screen refused, whose Said is not to be replayed.
 	Refused bool
+	// At is when the response was started, set by Opening only.
+	At time.Time
 }
 
 // Reply is what one reply a conversation's transcript wrote did: its answer and tool_result

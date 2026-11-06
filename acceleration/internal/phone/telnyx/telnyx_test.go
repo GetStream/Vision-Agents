@@ -151,6 +151,7 @@ func (s *TelnyxSuite) TestANumberNoLongerForSaleIsNotOrdered() {
 	_, err := s.provider.BuyNumber(s.ctx, phone.Order{E164: "+15125551234"})
 
 	s.ErrorContains(err, "not for sale")
+	s.ErrorIs(err, phone.ErrInvalid)
 	s.Equal(http.MethodGet, s.seen.method)
 }
 
@@ -198,6 +199,7 @@ func (s *TelnyxSuite) TestWithoutAConnectionThereIsNowhereToRouteACallTo() {
 	})
 
 	s.ErrorContains(err, "connection id is required")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 }
 
 func (s *TelnyxSuite) TestDiallingOutStartsATeXMLCallThatDialsTheTrunk() {
@@ -347,6 +349,7 @@ func (s *TelnyxSuite) TestDiallingRefusesTermsItCannotSend() {
 		_, err := s.provider.Dial(s.ctx, outbound)
 
 		s.EqualError(err, refusal)
+		s.ErrorIs(err, phone.ErrInvalid, refusal+" is the caller's to change")
 		s.Empty(s.seen.path, refusal+" is refused before anything is sent")
 	}
 }
@@ -519,6 +522,7 @@ func (s *TelnyxSuite) TestDiallingWithoutAConnectionIDIsRefused() {
 	})
 
 	s.EqualError(err, "telnyx: a connection id is required to place a call")
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 

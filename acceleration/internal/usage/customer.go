@@ -130,7 +130,6 @@ type CustomerUsageEvent struct {
 	OccurredAt      time.Time         `json:"occurred_at"`
 	AppID           string            `json:"app_id"`
 	Origin          string            `json:"origin" doc:"Who started the work: the public key it was started with, or the origin of work no key started, such as hook:chat."`
-	APIKey          string            `json:"api_key" deprecated:"true" doc:"The old name of origin, the same value, still answered for one release."`
 	UserID          string            `json:"user_id,omitempty"`
 	UsageCategories []string          `json:"usage_categories" doc:"The token's usage categories, its team among them as team:<name>."`
 	AgentID         string            `json:"agent_id,omitempty"`
@@ -164,7 +163,7 @@ func CustomerUsageEventOf(event Event) CustomerUsageEvent {
 	}
 	return CustomerUsageEvent{
 		UsageID: event.UsageID, OccurredAt: event.OccurredAt.UTC(), AppID: event.AppID, Origin: event.APIKey,
-		APIKey: event.APIKey, UserID: event.UserID, UsageCategories: categories, AgentID: event.AgentID, CallID: event.CallID,
+		UserID: event.UserID, UsageCategories: categories, AgentID: event.AgentID, CallID: event.CallID,
 		SessionID: event.SessionID, Meter: event.Meter, Provider: event.Provider, Model: event.Model,
 		Purpose: event.Purpose, Quantities: quantities, Attributes: event.Attributes, SKU: event.SKU, Region: event.Region, BYOK: event.BYOK, CostMicros: event.CostMicros,
 		Billable: event.Billable, Success: event.Success, ErrorCode: event.ErrorCode, Tags: event.Tags,
@@ -210,10 +209,8 @@ func (q UsageQuery) Values() url.Values {
 			values.Set(instant.name, instant.at.UTC().Format(time.RFC3339Nano))
 		}
 	}
-	// api_key is origin's old name, sent as well for a usage service of the release before,
-	// which reads no origin and would answer every key's events.
 	for name, value := range map[string]string{
-		"meter": q.Meter, "app_id": q.AppID, "origin": q.Origin, "api_key": q.Origin, "user_id": q.UserID,
+		"meter": q.Meter, "app_id": q.AppID, "origin": q.Origin, "user_id": q.UserID,
 		"team": q.Team, "category": q.Category, "cursor": q.Cursor,
 	} {
 		if value != "" {

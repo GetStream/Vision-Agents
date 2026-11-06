@@ -415,6 +415,17 @@ func (e AgentRole) Valid() bool {
 	}
 }
 
+// EpisodeCardsMode is what an agent config does with episode cards: write none, write them
+// and their summaries while no session reads them, or write them and read them.
+type EpisodeCardsMode string
+
+// Defines values for EpisodeCardsMode.
+const (
+	EpisodeCardsOff    EpisodeCardsMode = "off"
+	EpisodeCardsRecord EpisodeCardsMode = "record"
+	EpisodeCardsOn     EpisodeCardsMode = "on"
+)
+
 // HistoryMessage is one message of a conversation the caller kept itself. Its name, text
 // and created_at are what a TranscriptMessage calls them; a transcript line is not reused
 // whole because its speaker and created_at are required, and a caller's thread may know

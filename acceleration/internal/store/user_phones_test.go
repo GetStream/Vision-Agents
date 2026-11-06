@@ -45,9 +45,11 @@ func (s *StoreSuite) chatEpisode(row *ContactMapEntry) string {
 	return episode.ID
 }
 
-// smsEpisode opens an SMS episode on a number's row, the history the number brings to a link.
+// smsEpisode opens an SMS episode on a number's row, the history the number brings to a link. It
+// starts an hour back: a link is dated by Postgres's clock, and the router's must not read after it.
 func (s *StoreSuite) smsEpisode(row *ContactMapEntry) string {
-	episode := &Episode{CustomerID: row.CustomerID, ContactID: row.ID, Source: EpisodeSMS, ThreadChannel: "agent:sms-" + newID()}
+	episode := &Episode{CustomerID: row.CustomerID, ContactID: row.ID, Source: EpisodeSMS, ThreadChannel: "agent:sms-" + newID(),
+		StartedAt: time.Now().Add(-time.Hour)}
 	_, err := s.store.OpenEpisode(s.ctx, episode)
 	s.Require().NoError(err)
 	return episode.ID
@@ -130,7 +132,8 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.Require().NoError(s.store.db.NewSelect().Model(&aside).Where("id = ?", sms.ID).Scan(s.ctx))
 	s.Equal("agent:omni-sms", aside.ConversationID, "where its card is")
 	s.Equal(retiredPrefix+sms.ID+":+15550100", aside.Address)
-	s.Equal([]string{carls}, ids(s.cardsOf("agent:omni-sms", CardsQuery{})))
+	s.Equal(1, s.rows("SELECT count(*) FROM episodes WHERE id = '"+carls+"' AND contact_id = '"+sms.ID+"'"), "its episode stays with it")
+	s.Empty(s.cardsOf("agent:omni-sms", CardsQuery{}), "and no session reads it: it started before the link")
 	s.Equal("agent:omni-sms-7", s.omniOf(other), "a row of another app")
 	s.Equal("agent:omni-quiet", s.omniOf(quiet), "a row with no episode")
 	s.Equal("agent:omni-off", s.omniOf(off), "a row of a config without episode_cards")
@@ -139,10 +142,34 @@ func (s *StoreSuite) TestALinkSetsAsideTheNumbersRowsThatHoldEpisodes() {
 	s.Equal(s.omniOf(chat), s.made(next).ConversationID, "the number seen again joins anya")
 }
 
-// Catches a set-aside row whose thread, call and cards no longer name the number: a Linq
-// chat's replies would check opt-outs, the sandbox and the limits against retired:<id>
+// Catches a link that takes a config recording the cards as one with them off: record writes
+// the same episodes on does, which a session reads once the config turns on, so the number's
+// row that holds one is set aside as under on (AI-2856), and the user reads none of it.
+func (s *StoreSuite) TestALinkSetsAsideTheRowsOfAConfigThatRecordsTheCards() {
+	s.agentConfigs()
+	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards_record = true WHERE id = 'agent-one'")
+	s.Require().NoError(err)
+	chat := s.made(streamUser("anya", "agent:omni-chat"))
+	sms := s.made(contact("+15550100", "agent:omni-sms"))
+	s.smsEpisode(sms)
+
+	s.Require().NoError(s.link("anya", "+15550100"))
+
+	var aside ContactMapEntry
+	s.Require().NoError(s.store.db.NewSelect().Model(&aside).Where("id = ?", sms.ID).Scan(s.ctx))
+	s.Equal(retiredPrefix+sms.ID+":+15550100", aside.Address)
+	s.Equal("agent:omni-sms", aside.ConversationID, "where its card is")
+	_, err = s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true WHERE id = 'agent-one'")
+	s.Require().NoError(err)
+	s.Empty(s.cardsOf(s.omniOf(chat), CardsQuery{}), "turned on, anya reads none of the number's earlier SMS")
+}
+
+// Catches a set-aside row whose thread and call no longer name the number: a Linq chat's
+// replies would check opt-outs, the sandbox and the limits against retired:<id>
 // (ThreadContact, channelbridge.replyTo), and a call going on at the link would close with no
 // caller its lines are said by (the closed episodes' contact_address, omnichannel.callerOf).
+// Its cards started before the link, so no session reads them; the cards of a set-aside row a
+// link gives the user name the number (TestALinkWithAllOfTheHistoryReadsWhatTheNumberSaidBeforeIt).
 func (s *StoreSuite) TestASetAsideRowIsStillReachedAtItsNumber() {
 	s.agentConfigs()
 	_, err := s.store.db.ExecContext(s.ctx, "UPDATE agent_configs SET episode_cards = true")
@@ -155,7 +182,7 @@ func (s *StoreSuite) TestASetAsideRowIsStillReachedAtItsNumber() {
 	s.Require().NoError(err)
 	callID := newID()
 	call := &Episode{CustomerID: "acme-app", ContactID: sms.ID, Source: EpisodeCall, ThreadChannel: "agent:" + callID,
-		CallID: callID, SessionID: newID()}
+		CallID: callID, SessionID: newID(), StartedAt: time.Now().Add(-time.Hour)}
 	_, err = s.store.OpenEpisode(s.ctx, call)
 	s.Require().NoError(err)
 
@@ -167,11 +194,7 @@ func (s *StoreSuite) TestASetAsideRowIsStillReachedAtItsNumber() {
 	s.Require().NoError(err)
 	s.Equal(sms.ID, found.ID)
 	s.Equal("+15550100", found.Address, "a reply on the thread reaches the number")
-	cards := s.cardsOf("agent:omni-sms", CardsQuery{})
-	s.Require().Len(cards, 2)
-	for _, card := range cards {
-		s.Equal("+15550100", card.ContactAddress, card.Source)
-	}
+	s.Empty(s.cardsOf("agent:omni-sms", CardsQuery{}), "both started before the link")
 	now := time.Now()
 	ended, err := s.store.EndCallEpisodes(s.ctx, AppScope{Unpinned: true}, callID, now, now.Add(-time.Minute))
 	s.Require().NoError(err)
@@ -555,10 +578,16 @@ func (s *StoreSuite) smsAt(row *ContactMapEntry, at time.Time) string {
 	return episode.ID
 }
 
-// linkDated links a user to a number as LinkUserPhone does, dated at linkedAt.
+// linkDated links a user to a number as LinkUserPhone does, dated at linkedAt: the link's time its
+// history row was written for too, and its boundary when the link is bounded at its own time.
 func (s *StoreSuite) linkDated(link *UserPhone) {
 	s.Require().NoError(s.store.LinkUserPhone(s.ctx, link))
-	_, err := s.store.db.ExecContext(s.ctx, "UPDATE user_phones SET updated_at = ? WHERE customer_id = ? AND user_id = ?",
+	_, err := s.store.db.ExecContext(s.ctx, `UPDATE user_phone_history AS h
+SET since = CASE WHEN h.since = up.updated_at THEN ?0 ELSE h.since END, linked_at = ?0 FROM user_phones AS up
+WHERE up.customer_id = h.customer_id AND up.stream_app_pk = h.stream_app_pk AND up.user_id = h.user_id
+	AND h.linked_at = up.updated_at AND up.customer_id = ?1 AND up.user_id = ?2`, linkedAt, link.CustomerID, link.UserID)
+	s.Require().NoError(err)
+	_, err = s.store.db.ExecContext(s.ctx, "UPDATE user_phones SET updated_at = ? WHERE customer_id = ? AND user_id = ?",
 		linkedAt, link.CustomerID, link.UserID)
 	s.Require().NoError(err)
 }

@@ -436,6 +436,16 @@ type Server struct {
 	imageHTTP *http.Client
 	// callbackHTTP posts a finished recording to its callback.
 	callbackHTTP *http.Client
+	// scheduledPoll is how often a delivery waiting on the holding session looks again: a call
+	// ending, a peer's directory entry lapsing (a Redis round trip). A reply finishing, or a
+	// person's reply a follow-up waits out, is looked for every replyPoll.
+	scheduledPoll time.Duration
+	// replyPoll is how often a delivery reading back a follow-up's reply looks at it again. A
+	// look reads the conversation held in memory (conversation.Conversation.FollowUpReply,
+	// Session.FollowUp: a lock and a map), so it costs next to nothing; at scheduledPoll a reply
+	// that finished just after a look waited up to 2 s to leave, and every thread task took 2 s
+	// at least. 100 ms is not a delay a person waiting for a text notices.
+	replyPoll time.Duration
 
 	// serverSide matches the requests the spec marks server-side only. It holds no
 	// handlers: what is registered on it is the patterns, and matching one is the answer.
@@ -573,6 +583,8 @@ func NewServer(options Options, with ...Option) (*Server, error) {
 		authMode:           authMode,
 		dataRetention:      retention,
 		exportWritesWait:   exportWritesWait,
+		scheduledPoll:      2 * time.Second,
+		replyPoll:          100 * time.Millisecond,
 		quota:              options.Quota,
 		policies:           options.Policies,
 		connectors:         options.Connectors,
@@ -1780,6 +1792,9 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 	if request.GroupBy.ptr() != nil && *request.GroupBy.ptr() != "" {
 		groupBy = *request.GroupBy.ptr()
 	}
+	if groupBy == spendGroupByOldOrigin {
+		return nil, errGroupByOriginRenamed
+	}
 	limit := defaultSpendGroups
 	if request.Limit.ptr() != nil {
 		limit = *request.Limit.ptr()
@@ -1807,16 +1822,11 @@ func (s *Server) getSpend(ctx context.Context, request *getSpendRequest) (*getSp
 // team:<name>, which every row the team's users asked for carries.
 func usageFilterOf(request *getSpendRequest) (store.UsageFilter, error) {
 	var who store.UsageFilter
-	var origin, apiKeyID string
-	if given := request.Origin.ptr(); given != nil {
-		origin = *given
+	if request.APIKeyID != "" {
+		return store.UsageFilter{}, errOriginRenamed
 	}
-	if key := request.APIKeyID.ptr(); key != nil {
-		apiKeyID = *key
-	}
-	var err error
-	if who.APIKey, err = usageOrigin(origin, apiKeyID); err != nil {
-		return store.UsageFilter{}, err
+	if origin := request.Origin.ptr(); origin != nil {
+		who.APIKey = *origin
 	}
 	if user := request.UserID.ptr(); user != nil {
 		who.UserID = *user
@@ -2014,6 +2024,10 @@ const (
 	defaultSpendGroups  = 6
 )
 
+// spendGroupByOldOrigin is who:origin's old name, refused rather than read as a cost label:
+// no label key holds a ':', so it would answer the whole spend as one group.
+const spendGroupByOldOrigin = "who:api_key"
+
 // activityGranularityOf defaults to daily, matching the spec.
 func activityGranularityOf(requested *ActivityGranularity) store.ActivityGranularity {
 	if requested != nil && *requested == ActivityGranularityMonthly {
@@ -2182,8 +2196,7 @@ func (s *Server) registerServer(api huma.API) {
 			"series are: \"modality\" for where the money went, who asked for it (\"who:app\", " +
 			"\"who:origin\", \"who:user\", \"who:team\" or \"who:category\"), or a cost label for what it " +
 			"was spent on. \"who:origin\" groups by the key the work was started with, or the origin of work " +
-			"no key started, such as hook:chat; \"who:api_key\" is its old name, still read for one " +
-			"release. A label key holds no ':', so a label named app is still grouped by as " +
+			"no key started, such as hook:chat. A label key holds no ':', so a label named app is still grouped by as " +
 			"group_by=app. \"who:team\" groups by the team the user's token named, work with none under the " +
 			"empty value; \"who:category\" by the other usage categories, and a request carrying several " +
 			"counts once in each, so those rows add up to more than the total.\n" +
@@ -2353,10 +2366,13 @@ type getSpendRequest struct {
 	Limit       optionalParam[int]         `query:"limit" doc:"How many values keep a series of their own." minimum:"1" maximum:"50"`
 	Tag         optionalParam[[]string]    `query:"tag,explode" doc:"Only count requests carrying every one of these cost labels, each written \"key:value\". Repeat for several."`
 	Origin      optionalParam[string]      `query:"origin" doc:"Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat." maxLength:"255"`
-	APIKeyID    optionalParam[string]      `query:"api_key_id" deprecated:"true" doc:"The old name of origin, still read for one release. Given with origin, it must name the same key or origin." maxLength:"255"`
 	UserID      optionalParam[string]      `query:"user_id" doc:"Only count usage for this end user of the app." maxLength:"255"`
 	Team        optionalParam[string]      `query:"team" doc:"Only count usage for this team: its users' tokens name it in their team claim." pattern:"^[A-Za-z0-9_.-]{1,59}$"`
 	Category    optionalParam[[]string]    `query:"category,explode" doc:"Only count usage carrying every one of these usage categories, as the tokens name them. Repeat for several."`
+
+	// APIKeyID is origin's old name, refused rather than ignored: a caller still sending it
+	// would otherwise read every key's spend as if it were one key's.
+	APIKeyID string `query:"api_key_id" hidden:"true"`
 }
 
 type getSpendResponse struct {

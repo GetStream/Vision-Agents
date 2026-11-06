@@ -581,8 +581,11 @@ func (s *RouterSuite) SetupSuite() {
 	s.T().Cleanup(s.assertEveryRowNamesAKey)
 	if s.database != "" {
 		// Only a suite's own database is emptied, never the shared one. A run killed by
-		// -timeout skips its cleanups, and the database outlives it.
+		// -timeout skips its cleanups, and the database outlives it. A queued inbound row it
+		// left is claimed once its lease lapses, before SetupTest has made the channel fakes.
 		_, err := pgStore.DB().NewDelete().Model((*store.ScheduledTask)(nil)).Where("true").Exec(ctx)
+		s.Require().NoError(err)
+		_, err = pgStore.DB().NewDelete().Model((*store.ChannelInbound)(nil)).Where("true").Exec(ctx)
 		s.Require().NoError(err)
 	}
 

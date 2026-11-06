@@ -37,7 +37,7 @@ func (s *SlackChannelSuite) TestAMessageTheThreadsSessionRefusesLetsGoOfTheTurnA
 	// A scheduled task's follow-up gives such a refusal up as fast (followUpWithin).
 	delivered := make(chan error, 1)
 	go func() {
-		delivered <- followUpWithin(context.Background(), held, scheduledDelivery{CommandID: conversation.ReadBackPrefix + s.utils.uuid(), Text: "the task is due"})
+		delivered <- s.router.followUpWithin(context.Background(), held, scheduledDelivery{CommandID: conversation.ReadBackPrefix + s.utils.uuid(), Text: "the task is due"})
 	}()
 	select {
 	case err := <-delivered:
@@ -69,8 +69,8 @@ func (s *SlackChannelSuite) TestAMessageWhileTheThreadsSessionRepliesIsAnsweredA
 		return err == nil && thread.TurnHolder != ""
 	}, settleFor, 10*time.Millisecond, "the turn handed over never took the thread's turn")
 	// Some polls of the turn's follow-up land on the reply still running.
-	time.Sleep(5 * threadTurnPoll)
-	s.Len(s.holding.replies(), asked+1, "the message waits for the running reply")
+	s.Never(func() bool { return len(s.holding.replies()) != asked+1 }, 5*threadTurnPoll, threadTurnPoll/5,
+		"the message waits for the running reply")
 
 	s.holding.answers()
 
@@ -80,8 +80,10 @@ func (s *SlackChannelSuite) TestAMessageWhileTheThreadsSessionRepliesIsAnsweredA
 }
 
 // A scheduled task's follow-up delivered while the session is still writing another reply
-// waits for it the same way (followUpWithin), on the same refusal and no other.
+// waits for it the same way (followUpWithin), on the same refusal and no other, and starts at
+// its next look at the reply: the session is looked at only hourly here.
 func (s *SlackChannelSuite) TestAScheduledFollowUpWhileTheSessionRepliesWaitsForIt() {
+	s.sessionLookOutlastsTheTest()
 	s.config.LLM = "holding/holding-model"
 	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	s.holdHandOffs()
@@ -99,12 +101,12 @@ func (s *SlackChannelSuite) TestAScheduledFollowUpWhileTheSessionRepliesWaitsFor
 
 	delivered := make(chan error, 1)
 	go func() {
-		delivered <- followUpWithin(context.Background(), found, scheduledDelivery{CommandID: conversation.ReadBackPrefix + s.utils.uuid(), Text: "the task is due"})
+		delivered <- s.router.followUpWithin(context.Background(), found, scheduledDelivery{CommandID: conversation.ReadBackPrefix + s.utils.uuid(), Text: "the task is due"})
 	}()
 	select {
 	case err := <-delivered:
 		s.FailNow("the follow-up did not wait for the running reply", "%v", err)
-	case <-time.After(scheduledPoll / 2):
+	case <-time.After(10 * s.router.replyPoll):
 	}
 
 	s.holding.answers()
@@ -112,8 +114,8 @@ func (s *SlackChannelSuite) TestAScheduledFollowUpWhileTheSessionRepliesWaitsFor
 	select {
 	case err := <-delivered:
 		s.NoError(err)
-	case <-time.After(scheduledPoll / 4):
-		s.FailNow("the follow-up did not start within replyPoll of the reply finishing")
+	case <-time.After(deliveryWait):
+		s.FailNow("the follow-up waited for the delivery's next look at the session")
 	}
 	s.Require().Eventually(func() bool { return len(s.holding.replies()) == asked+2 }, settleFor, 10*time.Millisecond)
 }

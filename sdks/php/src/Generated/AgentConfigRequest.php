@@ -23,8 +23,8 @@ final readonly class AgentConfigRequest
         public ?AgentDispatch $dispatch = null,
         // When chorus-asr has a caller's turn ended in this agent's sessions, where the router asks it about turns: o...
         public ?EndOfTurn $endOfTurn = null,
-        // Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent c...
-        public ?bool $episodeCards = null,
+        // What this agent does with episode cards, for each phone call under it, each run of messages a Stream user w...
+        public EpisodeCardsMode|string|null $episodeCards = null,
         public ?Greeting $greeting = null,
         // A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the polic...
         public ?string $guardrail = null,
@@ -96,7 +96,7 @@ final readonly class AgentConfigRequest
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
             endOfTurn: array_key_exists('end_of_turn', $data) && $data['end_of_turn'] !== null ? EndOfTurn::fromArray(Json::object($data, 'end_of_turn')) : null,
-            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
+            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::enum($data, 'episode_cards', EpisodeCardsMode::class) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -154,7 +154,7 @@ final readonly class AgentConfigRequest
             $out['end_of_turn'] = $this->endOfTurn->toArray();
         }
         if ($this->episodeCards !== null) {
-            $out['episode_cards'] = $this->episodeCards;
+            $out['episode_cards'] = Json::enumValue($this->episodeCards);
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();

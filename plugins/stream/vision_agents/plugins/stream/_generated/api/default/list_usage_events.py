@@ -20,7 +20,6 @@ def _get_kwargs(
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
     origin: str | Unset = UNSET,
-    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -51,8 +50,6 @@ def _get_kwargs(
     params["meter"] = meter
 
     params["origin"] = origin
-
-    params["api_key_id"] = api_key_id
 
     params["user_id"] = user_id
 
@@ -144,7 +141,6 @@ def sync_detailed(
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
     origin: str | Unset = UNSET,
-    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -173,8 +169,6 @@ def sync_detailed(
         meter (str | Unset): Only this kind of work, such as llm or runtime.
         origin (str | Unset): Only work started with this public API key, or by this origin of
             work no key started, such as hook:chat.
-        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
-            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -199,7 +193,6 @@ def sync_detailed(
         to=to,
         meter=meter,
         origin=origin,
-        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -223,7 +216,6 @@ def sync(
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
     origin: str | Unset = UNSET,
-    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -252,8 +244,6 @@ def sync(
         meter (str | Unset): Only this kind of work, such as llm or runtime.
         origin (str | Unset): Only work started with this public API key, or by this origin of
             work no key started, such as hook:chat.
-        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
-            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -279,7 +269,6 @@ def sync(
         to=to,
         meter=meter,
         origin=origin,
-        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -297,7 +286,6 @@ async def asyncio_detailed(
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
     origin: str | Unset = UNSET,
-    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -326,8 +314,6 @@ async def asyncio_detailed(
         meter (str | Unset): Only this kind of work, such as llm or runtime.
         origin (str | Unset): Only work started with this public API key, or by this origin of
             work no key started, such as hook:chat.
-        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
-            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -352,7 +338,6 @@ async def asyncio_detailed(
         to=to,
         meter=meter,
         origin=origin,
-        api_key_id=api_key_id,
         user_id=user_id,
         team=team,
         category=category,
@@ -374,7 +359,6 @@ async def asyncio(
     to: datetime.datetime | Unset = UNSET,
     meter: str | Unset = UNSET,
     origin: str | Unset = UNSET,
-    api_key_id: str | Unset = UNSET,
     user_id: str | Unset = UNSET,
     team: str | Unset = UNSET,
     category: str | Unset = UNSET,
@@ -403,8 +387,6 @@ async def asyncio(
         meter (str | Unset): Only this kind of work, such as llm or runtime.
         origin (str | Unset): Only work started with this public API key, or by this origin of
             work no key started, such as hook:chat.
-        api_key_id (str | Unset): The old name of origin, still read for one release. Given with
-            origin, it must name the same key or origin.
         user_id (str | Unset): Only work for this end user of the app. With scope=organization it
             needs app_id, since a user id is only unique within its app.
         team (str | Unset): Only work for this team: its users' tokens name it in their team
@@ -431,7 +413,6 @@ async def asyncio(
             to=to,
             meter=meter,
             origin=origin,
-            api_key_id=api_key_id,
             user_id=user_id,
             team=team,
             category=category,

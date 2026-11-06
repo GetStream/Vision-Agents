@@ -151,26 +151,88 @@ func (s *ConfigsSuite) TestAConfigLeavesNothingToDispatchUnlessItSaysSo() {
 	s.Equal(Disabled, value(value(patched.Dispatch).IncomingCall), "a setting left out keeps what is stored")
 }
 
-// Episode cards are off unless a config turns them on, and an update that leaves the setting
-// out keeps it, so a client that does not know it cannot turn the cards off by saving.
+// Episode cards are off unless a config says otherwise, each mode is read back as it was sent,
+// and an update that leaves the setting out keeps it, so a client that does not know it cannot
+// turn the cards off by saving. Catches a mode stored as another: record as off or on, which
+// the two columns tell apart (store.AgentConfig.WritesCards), on stored without the column the
+// previous release reads.
 func (s *ConfigsSuite) TestAConfigWritesNoEpisodeCardsUnlessItSaysSo() {
 	unnamed := s.createConfig(map[string]any{"name": "support"})
-	s.False(value(unnamed.EpisodeCards))
+	s.Equal(EpisodeCardsOff, value(unnamed.EpisodeCards))
+	s.storedCards(unnamed.Id, false, false)
 
 	var patched AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
-		"/v1/agents/configs/"+unnamed.Id, map[string]any{"episode_cards": true}, &patched))
-	s.True(value(patched.EpisodeCards))
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"episode_cards": "record"}, &patched))
+	s.Equal(EpisodeCardsRecord, value(patched.EpisodeCards))
+	s.storedCards(unnamed.Id, false, true)
 
 	var saved AgentConfig
 	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
 		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support"}, &saved))
-	s.True(value(saved.EpisodeCards), "a setting left out on an update stays")
+	s.Equal(EpisodeCardsRecord, value(saved.EpisodeCards), "a setting left out on an update stays")
+	s.storedCards(unnamed.Id, false, true)
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPut,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"name": "support", "episode_cards": "on"}, &saved))
+	s.Equal(EpisodeCardsOn, value(saved.EpisodeCards))
+	s.storedCards(unnamed.Id, true, false)
 
 	var read AgentConfig
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+unnamed.Id, nil, &read))
-	s.True(value(read.EpisodeCards))
+	s.Equal(EpisodeCardsOn, value(read.EpisodeCards))
+
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch,
+		"/v1/agents/configs/"+unnamed.Id, map[string]any{"episode_cards": "off"}, &patched))
+	s.Equal(EpisodeCardsOff, value(patched.EpisodeCards))
+	s.storedCards(unnamed.Id, false, false)
+
+	created := s.createConfig(map[string]any{"name": "recorder", "episode_cards": "record"})
+	s.Equal(EpisodeCardsRecord, value(created.EpisodeCards))
+	s.storedCards(created.Id, false, true)
+}
+
+// A stored config with both columns on, which no write here makes, reads as on: the column the
+// previous release reads decides, so both releases take it the same way.
+func (s *ConfigsSuite) TestAConfigWithBothCardColumnsOnReadsAsOn() {
+	created := s.createConfig(map[string]any{"name": "support"})
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE agent_configs SET episode_cards = true, episode_cards_record = true WHERE id = ?", created.Id)
+	s.Require().NoError(err)
+
+	var read AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+created.Id, nil, &read))
+	s.Equal(EpisodeCardsOn, value(read.EpisodeCards))
+}
+
+// episode_cards takes off, record and on alone, on create, update and patch: the boolean it was
+// is refused (400), so a client written for it learns of the change rather than saving a mode
+// it did not mean, and so is any other value, cased otherwise or empty. Catches a value
+// accepted that the enum does not name, and stored as some mode.
+func (s *ConfigsSuite) TestEpisodeCardsTakesOnlyOffRecordOrOn() {
+	created := s.createConfig(map[string]any{"name": "support", "episode_cards": "record"})
+	for _, sent := range []any{true, false, "true", "On", "", "recorded", 1} {
+		for _, write := range []struct{ method, path string }{
+			{http.MethodPost, "/v1/agents/configs"},
+			{http.MethodPut, "/v1/agents/configs/" + created.Id},
+			{http.MethodPatch, "/v1/agents/configs/" + created.Id},
+		} {
+			status, body := s.serverClient.call(write.method, write.path, map[string]any{"name": "support-" + s.utils.uuid(), "episode_cards": sent})
+			s.Equal(http.StatusBadRequest, status, "%s %v", write.method, sent)
+			s.Contains(string(body), `"code":"validation_failed"`, "%s %v", write.method, sent)
+		}
+	}
+	s.storedCards(created.Id, false, true)
+}
+
+// storedCards checks the two columns a config's mode is stored in.
+func (s *ConfigsSuite) storedCards(id string, on, record bool) {
+	s.T().Helper()
+	stored, err := s.store.AgentConfig(context.Background(), s.customerID(), id)
+	s.Require().NoError(err)
+	s.Equal(on, stored.EpisodeCards, "episode_cards")
+	s.Equal(record, stored.EpisodeCardsRecord, "episode_cards_record")
 }
 
 // Tools are offered whole unless a config asks for them progressively, and an update that

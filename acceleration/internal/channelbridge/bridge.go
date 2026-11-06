@@ -412,11 +412,11 @@ func (b *Bridge) Deliver(ctx context.Context, app store.ConnectorOAuthClient, me
 		answered = true
 		b.logger.Info("accepted an inbound message", "connector", message.ConnectorID, "provider_app", app.ProviderAppID,
 			"customer", thread.CustomerID, "config", config.ID, "channel", thread.ChannelID)
-		var waited func(core.InboundMessage) (store.ChannelInbound, error)
+		var waited func(core.InboundMessage) (store.ChannelInbound, bool, error)
 		if waiting != nil {
-			waited = func(reply core.InboundMessage) (store.ChannelInbound, error) {
-				reply, err := waiting(reply)
-				return inboundRow(thread, config, reply, nil), err
+			waited = func(reply core.InboundMessage) (store.ChannelInbound, bool, error) {
+				reply, read, err := waiting(reply)
+				return inboundRow(thread, config, reply, nil), read, err
 			}
 		}
 		// Off the request, so a provider that hangs up meanwhile leaves the message queued, or
@@ -517,7 +517,7 @@ func (b *Bridge) Reply(reply conversation.FinishedReply) {
 		// A reply nobody may be sent (refusesReply), or one whose thread is gone, is no
 		// failure to log.
 		if err := b.reply(reply); err != nil && !errors.Is(err, ErrOptedOut) && !errors.Is(err, ErrHeldBack) &&
-			!errors.Is(err, store.ErrNoChannelThread) {
+			!errors.Is(err, dlc.ErrUnpaid) && !errors.Is(err, store.ErrNoChannelThread) {
 			b.logger.Error("could not send a reply to its external thread", "conversation", reply.CID, "error", err)
 		}
 	}()
@@ -547,7 +547,7 @@ func (b *Bridge) Hold(commandID string) (replies <-chan conversation.FinishedRep
 }
 
 // Send sends a reply as Reply does, on the caller, and answers why it did not go out:
-// ErrOptedOut or ErrHeldBack, store.ErrNoChannelThread for a thread no longer linked, the
+// ErrOptedOut, ErrHeldBack or dlc.ErrUnpaid, store.ErrNoChannelThread for a thread no longer linked, the
 // provider refusing it, or the store failing. A reply sent already is nil.
 func (b *Bridge) Send(reply conversation.FinishedReply) error {
 	return b.reply(reply)
@@ -635,8 +635,9 @@ func (r retryable) Unwrap() error { return r.err }
 // connection's account out of the message's text (MessageRule.WithoutMention). thread is the
 // zero one for a message nobody answers. waiting, for a message that starts its thread, reads
 // a reply that waited for the link (wait) as take reads this message, so its mention is left
-// out too; it is nil for any other message.
-func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message *core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, waiting func(core.InboundMessage) (core.InboundMessage, error), err error) {
+// out too; read is false for a reply the connection's revision does not read, which is
+// dropped. It is nil for any other message.
+func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, message *core.InboundMessage) (thread store.ChannelThread, config store.AgentConfig, waiting func(core.InboundMessage) (reply core.InboundMessage, read bool, err error), err error) {
 	if app.CustomerID == "" || message.ProviderUnitID == "" {
 		b.logger.Info("dropped an inbound message that names no provider app or no provider unit",
 			"connector", message.ConnectorID)
@@ -736,10 +737,22 @@ func (b *Bridge) take(ctx context.Context, app store.ConnectorOAuthClient, messa
 	// whether or not it made the link now and whether or not it was taken before, and each
 	// waiting reply is handed out once (store.AcceptChannelInbound).
 	if startsThread(read) {
-		waiting = func(reply core.InboundMessage) (core.InboundMessage, error) {
+		waiting = func(reply core.InboundMessage) (core.InboundMessage, bool, error) {
 			read, rule, err := b.read(connection, definition, reply)
+			if errors.Is(err, errNotRead) {
+				// As for the message itself: the connection was pinned to a revision that does
+				// not read the reply after it waited. Every retry of the message finds the same
+				// revision, so failing it would leave it unanswered for good (AI-2743).
+				b.logger.Warn("dropped a waiting reply the revision of its connection does not read",
+					"connector", reply.ConnectorID, "customer", app.CustomerID, "connection", connection.ID,
+					"revision", connection.DefinitionRevision, "channel", thread.ChannelID)
+				return reply, false, nil
+			}
+			if err != nil {
+				return reply, false, err
+			}
 			reply.Text, reply.Media = rule.WithoutMention(read.Text, connection.Metadata), read.Media
-			return reply, err
+			return reply, true, nil
 		}
 	}
 	return thread, configs[0], waiting, nil
@@ -777,12 +790,14 @@ func startsThread(message core.ChannelMessage) bool {
 
 // episode opens the episode a message is in, in the omni-channel of the person who wrote it:
 // the thread's first message opens it and the later ones find it open, so a thread has one
-// card, in the omni-channel of whoever started it. A connector with no episode source, or an
-// author the contact map cannot key, gets no card; the message is answered all the same.
-// started is when an episode the message opens starts; zero is now.
+// card, in the omni-channel of whoever started it. Only an agent config that writes cards,
+// episode_cards on or record (store.AgentConfig.WritesCards), opens one: off, the thread has
+// no episode, so no card and no summary. A connector with no episode source, or an author the
+// contact map cannot key, gets no card either; the message is answered all the same. started
+// is when an episode the message opens starts; zero is now.
 func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, started time.Time) (omnichannel.Opened, error) {
 	source, carded := episodeSources[message.ConnectorID]
-	if !carded {
+	if !carded || !config.WritesCards() {
 		return omnichannel.Opened{}, nil
 	}
 	person, err := source.person(message.ProviderUnitID, message.AuthorID)
@@ -801,6 +816,43 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 		StartedAt:     started,
 		StreamAppPK:   thread.StreamAppPK,
 	})
+}
+
+// recordStarter records the author of a chat's message as the person who started the chat
+// (store.SetChannelThreadStarter), at the step whose message would open the chat's episode, so
+// the first one the bridge admits names them whatever the config's episode_cards: the person
+// its replies reach while it has no episode (replyTo). An author the contact map cannot key,
+// such as an email handle, starts no chat, as they open no episode.
+func (b *Bridge) recordStarter(ctx context.Context, thread store.ChannelThread, message core.InboundMessage) error {
+	source := episodeSources[message.ConnectorID]
+	if !source.chats {
+		return nil
+	}
+	person, err := source.person(message.ProviderUnitID, message.AuthorID)
+	if err != nil {
+		return nil
+	}
+	return b.store.SetChannelThreadStarter(ctx, thread.ChannelID, person.Address)
+}
+
+// queuedEpisode opens the episode of a queued message (episode) under its agent config as the
+// store holds it now: the row names the config alone, and whether it writes cards
+// (store.AgentConfig.WritesCards) is the config's to say when the message is written, so a
+// config turned off opens no episode from its next message on. A config deleted since the
+// message was queued opens none. A connector with no episode source opens none whatever its
+// config says, so its config is not read.
+func (b *Bridge) queuedEpisode(ctx context.Context, thread store.ChannelThread, message store.ChannelInbound, inbound core.InboundMessage) (omnichannel.Opened, error) {
+	if _, carded := episodeSources[message.ConnectorID]; !carded {
+		return omnichannel.Opened{}, nil
+	}
+	config, err := b.store.AgentConfig(ctx, message.CustomerID, message.ConfigID)
+	if errors.Is(err, store.ErrNoAgentConfig) {
+		return omnichannel.Opened{}, nil
+	}
+	if err != nil {
+		return omnichannel.Opened{}, err
+	}
+	return b.episode(ctx, thread, config, inbound, message.CreatedAt)
 }
 
 // read reads a message again from the raw body with the manifest of the connection's

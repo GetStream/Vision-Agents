@@ -527,7 +527,8 @@ func (s *GuestsSuite) TestAClaimDoesNotLetTheAccountIntoAnotherAppsChannel() {
 	row["id"], row["user_id"], row["conversation_id"], row["agent_id"] = store.NewID(), guest, "", foreign
 	encoded, err := json.Marshal(row)
 	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+	// full: the app already holds the guest.
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import?full=true",
 		ndjson([]dataLine{{Table: "agent_sessions", Row: encoded}}), nil))
 	honest := s.talked(guest)
 
@@ -560,7 +561,8 @@ func (s *GuestsSuite) TestAClaimStillJoinsAChannelWithNoCustomerStamp() {
 	row["id"], row["user_id"], row["conversation_id"], row["agent_id"] = store.NewID(), guest, "", channel
 	encoded, err := json.Marshal(row)
 	s.Require().NoError(err)
-	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import",
+	// full: the app already holds the guest.
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/data/import?full=true",
 		ndjson([]dataLine{{Table: "agent_sessions", Row: encoded}}), nil))
 
 	s.claim(guest, account)

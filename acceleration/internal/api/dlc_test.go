@@ -217,6 +217,7 @@ func (s *DLCSuite) TestAUseCaseIsApprovedByStreamAndThenByTheVendor() {
 	s.False(sandbox.Sandboxed)
 	dialed, failure := s.dial("+15559990000")
 	s.Equal(http.StatusBadRequest, dialed, "past the gate, the call fails for want of Stream: "+failure)
+	s.Contains(failure, "no Stream app")
 }
 
 // The report only names the campaign: what it claims is asked of Telnyx, so a forged one
@@ -311,8 +312,9 @@ func (s *DLCSuite) TestADialToSomebodyWhoOptedOutIsRefused() {
 	s.Contains(failure, "opted out")
 
 	s.Require().Equal(http.StatusNoContent, s.serverClient.do(http.MethodDelete, "/v1/phone/opt-outs/"+optOut.Id, nil, nil))
-	status, _ = s.dial("+15551110000")
+	status, failure = s.dial("+15551110000")
 	s.Equal(http.StatusBadRequest, status, "past the gate, the call fails for want of Stream")
+	s.Contains(failure, "no Stream app")
 }
 
 func (s *DLCSuite) TestASandboxedAppReachesOnlyItsTwoRecipients() {
@@ -324,8 +326,9 @@ func (s *DLCSuite) TestASandboxedAppReachesOnlyItsTwoRecipients() {
 	status, failure := s.dial("+15553330000")
 	s.Equal(http.StatusForbidden, status)
 	s.Contains(failure, "sandbox recipients")
-	status, _ = s.dial("+15551110000")
+	status, failure = s.dial("+15551110000")
 	s.Equal(http.StatusBadRequest, status, "a recipient passes the gate")
+	s.Contains(failure, "no Stream app")
 }
 
 func (s *DLCSuite) TestATransferToSomebodyWhoOptedOutIsRefused() {
@@ -346,8 +349,9 @@ func (s *DLCSuite) TestASandboxedAppTransfersOnlyToItsRecipients() {
 	status, failure := s.transfer("+15553330000")
 	s.Equal(http.StatusForbidden, status)
 	s.Contains(failure, "sandbox recipients")
-	status, _ = s.transfer("+15551110000")
+	status, failure = s.transfer("+15551110000")
 	s.Equal(http.StatusBadRequest, status, "a recipient passes the gate")
+	s.Contains(failure, "no Stream app")
 }
 
 func (s *DLCSuite) TestThirtyMinutesOfCallsInADayRefuseTheNextDial() {

@@ -5,6 +5,7 @@ package usage_test
 import (
 	"context"
 	"net/http"
+	"net/http/httptest"
 	"net/url"
 	"strings"
 	"testing"
@@ -115,9 +116,9 @@ func (s *ClientSuite) TestTheClientReadsAnOrganizationsStanding() {
 	s.True(standings[0].FallbackTier)
 }
 
-// The client sends origin, and api_key, its old name, with the same value, so a usage service
-// of the release before, which reads only api_key, still narrows the read (AI-2811).
-func (s *ClientSuite) TestTheClientReadsUsageByOriginUnderBothNames() {
+// The client narrows a read by origin alone: api_key, its old name, is no longer sent
+// (AI-2851).
+func (s *ClientSuite) TestTheClientReadsUsageByOrigin() {
 	hook := usagetest.Event("o1", func(e *usage.Event) { e.APIKey = "hook:chat" })
 	_, err := s.service.Client.Ship(s.ctx, []usage.Event{hook, usagetest.Event("o1")})
 	s.Require().NoError(err)
@@ -129,8 +130,31 @@ func (s *ClientSuite) TestTheClientReadsUsageByOriginUnderBothNames() {
 	s.Require().Len(page.Items, 1)
 	s.Equal(hook.UsageID, page.Items[0].UsageID)
 	s.Equal("hook:chat", page.Items[0].Origin)
-	s.Equal("hook:chat", page.Items[0].APIKey)
-	s.Equal(url.Values{"origin": {"hook:chat"}, "api_key": {"hook:chat"}}, query.Values())
+	s.Equal(url.Values{"origin": {"hook:chat"}}, query.Values())
+}
+
+// While pods roll, a router reads a usage pod of the release before (v0.6.280 to v0.6.284). Such
+// a pod reads origin and answers it beside api_key, so origin alone still narrows the read and
+// names who started the work (AI-2851). The fake answers as that pod does.
+func (s *ClientSuite) TestTheClientReadsAnOlderUsageServiceByOrigin() {
+	var asked url.Values
+	older := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		asked = r.URL.Query()
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"items":[{"usage_id":"0190f3a4-7b1c-7000-8000-000000000001","occurred_at":"2026-11-01T00:00:00Z",` +
+			`"app_id":"a1","origin":"hook:chat","api_key":"hook:chat","usage_categories":[],"meter":"llm",` +
+			`"quantities":{},"cost_micros":1,"billable":true,"success":true}],"has_more":false}`))
+	}))
+	s.T().Cleanup(older.Close)
+	client, err := usage.NewClient(usage.ClientOptions{URL: older.URL, Token: "token"})
+	s.Require().NoError(err)
+
+	page, err := client.Usage(s.ctx, "o1", usage.UsageQuery{Origin: "hook:chat"})
+
+	s.Require().NoError(err)
+	s.Equal(url.Values{"origin": {"hook:chat"}}, asked)
+	s.Require().Len(page.Items, 1)
+	s.Equal("hook:chat", page.Items[0].Origin)
 }
 
 func (s *ClientSuite) TestTheClientSplitsEventsTooBigForOneBody() {

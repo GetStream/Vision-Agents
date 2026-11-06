@@ -4,6 +4,7 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"io"
 	"log/slog"
@@ -144,8 +145,20 @@ func (s *DataMoveSuite) TestMoreChangesThanEitherEndCanHoldAreRefused() {
 }
 
 func (s *DataMoveSuite) TestImportingAnExportWritesTheRowsItCarried() {
+	// Two rows, so a second row of an app the first one just gave data here is written too.
+	s.data.createAgentConfig()
 	s.data.createAgentConfig()
 	exported := s.export()
+	// Under ids of their own: the source's ids are another app's rows on this deployment.
+	var copied []string
+	for i, line := range exported {
+		if line.Table == "agent_configs" {
+			id := store.NewID()
+			exported[i].Row = s.withID(line.Row, id)
+			copied = append(copied, id)
+		}
+	}
+	s.useApp(s.data.createApp())
 
 	var written struct {
 		Rows   int64            `json:"rows"`
@@ -155,9 +168,92 @@ func (s *DataMoveSuite) TestImportingAnExportWritesTheRowsItCarried() {
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodPost, "/v1/data/import", ndjson(exported), &written))
 
-	s.Equal(int64(1), written.Tables["agent_configs"])
+	s.Equal(int64(2), written.Tables["agent_configs"])
 	s.Equal(int64(len(exported)-1), written.Rows, "every line but the cursor was a row")
 	s.Require().NotNil(written.Cursor)
+	for _, id := range copied {
+		s.Equal("be brief", s.instructionsOf(id), "the copy is the app's")
+	}
+}
+
+func (s *DataMoveSuite) TestAnExportIsNotWrittenOverAnAppThatHoldsData() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import", ndjson(exported))
+
+	s.Equal(http.StatusConflict, status)
+	s.Contains(failure, "full=true")
+	s.Equal("edited here", s.instructionsOf(agent.Id), "the edit made here since the export is kept")
+}
+
+func (s *DataMoveSuite) TestAnExportIsNotWrittenOverAnAppThatHoldsDataWhenFullIsFalse() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	status, _ := s.serverClient.failure(http.MethodPost, "/v1/data/import?full=false", ndjson(exported))
+
+	s.Equal(http.StatusConflict, status)
+	s.Equal("edited here", s.instructionsOf(agent.Id))
+}
+
+// A lookup that fails is not an answer that the app holds nothing: the export is not written.
+func (s *DataMoveSuite) TestAnExportIsNotWrittenWhenWhatTheAppHoldsCannotBeRead() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+	closed, err := store.Open(s.sharedDSN())
+	s.Require().NoError(err)
+	other, _, _ := s.otherNodeServingFrom(closed, nil, s.sealer, slog.New(slog.DiscardHandler))
+	s.Require().NoError(closed.Close())
+
+	status, _ := s.serverClient.on(other).failure(http.MethodPost, "/v1/data/import", ndjson(exported))
+
+	s.Equal(http.StatusInternalServerError, status)
+	s.Equal("edited here", s.instructionsOf(agent.Id), "the edit made here since the export is kept")
+}
+
+func (s *DataMoveSuite) TestFullWritesAnExportOverAnAppThatHoldsData() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodPost, "/v1/data/import?full=true", ndjson(exported), nil))
+
+	s.Equal("be brief", s.instructionsOf(agent.Id), "the export's row is written over the edit")
+}
+
+func (s *DataMoveSuite) TestAFullThatIsNeitherTrueNorFalseIsRefused() {
+	agent := s.data.createAgentConfig()
+	exported := s.export()
+	s.instruct(agent.Id, "edited here")
+
+	status, failure := s.serverClient.failure(http.MethodPost, "/v1/data/import?full=yes", ndjson(exported))
+
+	s.Equal(http.StatusBadRequest, status)
+	s.Contains(failure, "full")
+	s.Equal("edited here", s.instructionsOf(agent.Id))
+}
+
+func (s *DataMoveSuite) TestChangesAreAppliedToAnAppThatHoldsData() {
+	// Changes are the incremental path: each carries the row as the source has it now.
+	agent := s.data.createAgentConfig()
+	s.export()
+	s.instruct(agent.Id, "edited at the source")
+	changed := s.changesSince(0)
+	s.instruct(agent.Id, "edited here")
+
+	lines := make([]dataLine, 0, len(changed.Changes))
+	for i := range changed.Changes {
+		lines = append(lines, dataLine{Change: &changed.Changes[i]})
+	}
+	s.Require().Equal(http.StatusOK,
+		s.serverClient.do(http.MethodPost, "/v1/data/import", ndjson(lines), nil))
+
+	s.Equal("edited at the source", s.instructionsOf(agent.Id))
 }
 
 func (s *DataMoveSuite) TestAnImportCannotClaimAnotherAppsNumberInAnotherForm() {
@@ -315,6 +411,129 @@ func (s *DataMoveSuite) TestAnExportGivesUpOnAWriteThatStaysOpen() {
 	s.export()
 }
 
+// A repeatable read write that looked for the recording before the export started it holds the
+// start, which gives up within the same bound as the wait after it.
+func (s *DataMoveSuite) TestAnExportGivesUpOnARepeatableReadWriteThatLookedBeforeIt() {
+	s.skipOnARouterWithShards()
+	stranger := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(100 * time.Millisecond)
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), "still open")
+
+	s.Require().NoError(stranger.tx.Rollback())
+	s.export()
+}
+
+// Following the changes of a move whose recording expired starts it again, which gives up on such
+// a write too.
+func (s *DataMoveSuite) TestFollowingAnExpiredRecordingGivesUpOnARepeatableReadWriteThatLookedBeforeIt() {
+	s.skipOnARouterWithShards()
+	s.export()
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+	stranger := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(100 * time.Millisecond)
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/data/changes?after=0", nil)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), "still open")
+
+	s.Require().NoError(stranger.tx.Rollback())
+}
+
+// The start and the wait after it share one bound, not one each: a repeatable read write holds the
+// start for most of the bound and a read committed write stays open past what is left of it.
+func (s *DataMoveSuite) TestAnExportSpendsOneBoundOnTheStartAndTheWaitTogether() {
+	s.skipOnARouterWithShards()
+	stranger := s.openWrite("another-app-" + s.utils.uuid())
+	looked := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(2 * time.Second)
+	go func() {
+		time.Sleep(1400 * time.Millisecond)
+		_ = looked.tx.Rollback()
+		time.Sleep(1600 * time.Millisecond)
+		_ = stranger.tx.Rollback()
+	}()
+
+	status, body := s.serverClient.call(http.MethodGet, "/v1/data/export", nil)
+	s.Equal(http.StatusServiceUnavailable, status)
+	s.Contains(string(body), "still open")
+}
+
+// A repeatable read write that looked before the export, and ends within the bound, only delays it.
+func (s *DataMoveSuite) TestAnExportStartWaitsForARepeatableReadWriteThatEndsWithinTheBound() {
+	s.skipOnARouterWithShards()
+	looked := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(5 * time.Second)
+	go func() { time.Sleep(500 * time.Millisecond); _ = looked.tx.Rollback() }()
+
+	s.export()
+}
+
+// Following the changes of an expired recording waits for such a write within the bound too, and
+// then refuses the cursor from before the recording expired.
+func (s *DataMoveSuite) TestFollowingAnExpiredRecordingWaitsForARepeatableReadWriteThatEndsWithinTheBound() {
+	s.skipOnARouterWithShards()
+	s.export()
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+	looked := s.openWriteAt(sql.LevelRepeatableRead, "another-app-"+s.utils.uuid())
+	s.waitAtMost(5 * time.Second)
+	go func() { time.Sleep(500 * time.Millisecond); _ = looked.tx.Rollback() }()
+
+	status, _ := s.serverClient.call(http.MethodGet, "/v1/data/changes?after=0", nil)
+	s.Equal(http.StatusGone, status)
+}
+
+// expireRecording lets the app's recording expire, as it does when nobody follows the changes for
+// longer than the retention.
+func (s *DataMoveSuite) expireRecording() {
+	_, err := s.store.DB().ExecContext(context.Background(),
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = ?", s.customerID())
+	s.Require().NoError(err)
+}
+
+// A write made while the recording was off is in no change, so a follower back after that is told
+// to copy again rather than answered without it. The export it copies again carries on.
+func (s *DataMoveSuite) TestAFollowerBackAfterTheRecordingExpiredIsToldToExportAgain() {
+	exported := s.export()
+	s.data.createAgentConfig()
+	followed := s.changesSince(*exported[len(exported)-1].Cursor)
+	s.expireRecording()
+	missed := s.data.createAgentConfig()
+
+	status, body := s.serverClient.call(http.MethodGet,
+		"/v1/data/changes?after="+strconv.FormatInt(followed.Cursor, 10), nil)
+	var refused ErrorResponse
+	s.Require().NoError(json.Unmarshal(body, &refused))
+	s.Equal(http.StatusGone, status)
+	s.Equal("gone", refused.Error.Code)
+	s.Contains(refused.Error.Message, "export again")
+
+	again := s.export()
+	s.Contains(ndjson(again), missed.Id, "the write made while nothing was recorded is in the new export")
+	after := s.data.createAgentConfig()
+	s.Contains(s.rendered(s.changesSince(*again[len(again)-1].Cursor).Changes), after.Id)
+}
+
+// A follower that reads within the retention keeps the recording on, and is answered every change.
+func (s *DataMoveSuite) TestAFollowerReadingWithinTheRetentionIsAnsweredEveryChange() {
+	exported := s.export()
+	cursor := *exported[len(exported)-1].Cursor
+	first := s.data.createAgentConfig()
+	followed := s.changesSince(cursor)
+	second := s.data.createAgentConfig()
+
+	s.Contains(s.rendered(s.changesSince(followed.Cursor).Changes), second.Id)
+	again := s.rendered(s.changesSince(cursor).Changes)
+	s.Contains(again, first.Id)
+	s.Contains(again, second.Id)
+}
+
 // A shard's tables record no changes, so a write to one after the export would never reach the
 // changes: a router with a shard of its own refuses to be the source, before it records anything.
 func (s *DataMoveSuite) TestARouterWithAShardOfItsOwnRefusesToBeTheSource() {
@@ -369,7 +588,12 @@ func (s *DataMoveSuite) shardDSN() string {
 
 // openWrite writes an agent config of a customer in a transaction the test ends.
 func (s *DataMoveSuite) openWrite(customerID string) openWrite {
-	tx, err := s.store.DB().BeginTx(context.Background(), nil)
+	return s.openWriteAt(sql.LevelDefault, customerID)
+}
+
+// openWriteAt is openWrite in a transaction at an isolation level.
+func (s *DataMoveSuite) openWriteAt(level sql.IsolationLevel, customerID string) openWrite {
+	tx, err := s.store.DB().BeginTx(context.Background(), &sql.TxOptions{Isolation: level})
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = tx.Rollback() })
 	id := "agent-" + s.utils.uuid()
@@ -462,6 +686,29 @@ func (s *DataMoveSuite) rendered(changes []store.DataChange) string {
 	encoded, err := json.Marshal(changes)
 	s.Require().NoError(err)
 	return string(encoded)
+}
+
+// instruct changes an agent config's instructions as the app.
+func (s *DataMoveSuite) instruct(id, instructions string) {
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/configs/"+id,
+		map[string]any{"instructions": instructions}, nil))
+}
+
+// instructionsOf reads an agent config's instructions as the app.
+func (s *DataMoveSuite) instructionsOf(id string) string {
+	var stored AgentConfig
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/configs/"+id, nil, &stored))
+	return value(stored.Instructions)
+}
+
+// withID is an exported row under another id.
+func (s *DataMoveSuite) withID(row json.RawMessage, id string) json.RawMessage {
+	fields := map[string]any{}
+	s.Require().NoError(json.Unmarshal(row, &fields))
+	fields["id"] = id
+	encoded, err := json.Marshal(fields)
+	s.Require().NoError(err)
+	return encoded
 }
 
 // ndjson is an export as the body an import takes.

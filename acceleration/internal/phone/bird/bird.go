@@ -118,7 +118,7 @@ func hostFor(accessKey string) (string, error) {
 // SearchNumbers returns numbers Bird is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("bird: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("bird: a country is required to search for numbers")))
 	}
 
 	query := url.Values{"country_code": {strings.ToUpper(search.Country)}}
@@ -130,7 +130,7 @@ func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]ph
 	if search.Type != "" {
 		kind, ok := kinds[search.Type]
 		if !ok {
-			return nil, stack.Wrap(fmt.Errorf("bird: does not sell %s numbers", search.Type))
+			return nil, stack.Wrap(phone.Invalid(fmt.Errorf("bird: does not sell %s numbers", search.Type)))
 		}
 		query.Set("number_type", kind)
 	}
@@ -309,7 +309,7 @@ func (p *Provider) doVoice(ctx context.Context, method, path string, payload, in
 
 	request, err := http.NewRequestWithContext(ctx, method, p.voiceBaseURL+path, bytes.NewReader(encoded))
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.Header.Set("Authorization", "AccessKey "+p.accessKey)
 	request.Header.Set("Content-Type", "application/json")
@@ -317,20 +317,22 @@ func (p *Provider) doVoice(ctx context.Context, method, path string, payload, in
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("bird: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("bird: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }
@@ -359,7 +361,7 @@ func (p *Provider) send(
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.Header.Set("Authorization", "Bearer "+p.accessKey)
 	request.Header.Set("Accept", "application/json")
@@ -374,20 +376,22 @@ func (p *Provider) send(
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("bird: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("bird: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("bird: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }

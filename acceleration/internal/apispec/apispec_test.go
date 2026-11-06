@@ -23,25 +23,44 @@ func TestDeprecatedParamsSuite(t *testing.T) {
 	suite.Run(t, new(DeprecatedParamsSuite))
 }
 
-func (s *DeprecatedParamsSuite) TestTheRoutersOldOriginNameIsADeprecatedParameter() {
-	rendered, err := api.Spec()
-	s.Require().NoError(err)
+// origin's old names went after one release as deprecated parameters (AI-2851): neither
+// document declares them any more, and the router refuses api_key_id without documenting it.
+func (s *DeprecatedParamsSuite) TestTheOldOriginNamesAreNoLongerParameters() {
+	for _, spec := range []struct {
+		name       string
+		render     func() ([]byte, error)
+		operations []string
+		old        []string
+	}{
+		{"router", api.Spec, []string{"listUsageEvents", "getSpend"}, []string{"api_key_id"}},
+		{"usage", server.Spec, []string{"listUsage", "readAccountUsage"}, []string{"api_key_id", "api_key"}},
+	} {
+		rendered, err := spec.render()
+		s.Require().NoError(err)
 
-	marked := s.params(rendered)
+		var document struct {
+			Paths map[string]map[string]struct {
+				OperationID string `yaml:"operationId"`
+				Parameters  []struct{ Name string }
+			}
+		}
+		s.Require().NoError(yaml.Unmarshal(rendered, &document))
+		declared := map[string][]string{}
+		for _, item := range document.Paths {
+			for _, operation := range item {
+				for _, param := range operation.Parameters {
+					declared[operation.OperationID] = append(declared[operation.OperationID], param.Name)
+				}
+			}
+		}
 
-	s.Equal([]string{"getSpend query api_key_id", "listUsageEvents query api_key_id"}, marked)
-}
-
-func (s *DeprecatedParamsSuite) TestTheUsageServicesOldOriginNamesAreDeprecatedParameters() {
-	rendered, err := server.Spec()
-	s.Require().NoError(err)
-
-	marked := s.params(rendered)
-
-	s.Equal([]string{
-		"listUsage query api_key", "listUsage query api_key_id",
-		"readAccountUsage query api_key", "readAccountUsage query api_key_id",
-	}, marked)
+		for _, operation := range spec.operations {
+			s.Contains(declared[operation], "origin", spec.name+" "+operation)
+			for _, old := range spec.old {
+				s.NotContains(declared[operation], old, spec.name+" "+operation)
+			}
+		}
+	}
 }
 
 func (s *DeprecatedParamsSuite) TestEveryParameterTaggedDeprecatedIsMarkedOnTheParameter() {

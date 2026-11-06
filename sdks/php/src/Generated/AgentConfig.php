@@ -26,8 +26,8 @@ final readonly class AgentConfig
         public ?AgentDispatch $dispatch = null,
         // Absent when chorus-asr ends the agent's turns by the server's default.
         public ?EndOfTurn $endOfTurn = null,
-        // Whether each phone call and each app chat conversation under this agent writes an episode card into the per...
-        public ?bool $episodeCards = null,
+        // What this agent does with episode cards. record and on write a card into the person's omni-channel for each...
+        public EpisodeCardsMode|string|null $episodeCards = null,
         public ?Greeting $greeting = null,
         public ?string $guardrail = null,
         public Harness|string|null $harness = null,
@@ -84,7 +84,7 @@ final readonly class AgentConfig
             connectors: array_key_exists('connectors', $data) && $data['connectors'] !== null ? array_map(AgentConnectorBinding::fromArray(...), Json::objects($data, 'connectors')) : null,
             dispatch: array_key_exists('dispatch', $data) && $data['dispatch'] !== null ? AgentDispatch::fromArray(Json::object($data, 'dispatch')) : null,
             endOfTurn: array_key_exists('end_of_turn', $data) && $data['end_of_turn'] !== null ? EndOfTurn::fromArray(Json::object($data, 'end_of_turn')) : null,
-            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::bool($data, 'episode_cards') : null,
+            episodeCards: array_key_exists('episode_cards', $data) && $data['episode_cards'] !== null ? Json::enum($data, 'episode_cards', EpisodeCardsMode::class) : null,
             greeting: array_key_exists('greeting', $data) && $data['greeting'] !== null ? Greeting::fromArray(Json::object($data, 'greeting')) : null,
             guardrail: array_key_exists('guardrail', $data) && $data['guardrail'] !== null ? Json::string($data, 'guardrail') : null,
             harness: array_key_exists('harness', $data) && $data['harness'] !== null ? Json::enum($data, 'harness', Harness::class) : null,
@@ -144,7 +144,7 @@ final readonly class AgentConfig
             $out['end_of_turn'] = $this->endOfTurn->toArray();
         }
         if ($this->episodeCards !== null) {
-            $out['episode_cards'] = $this->episodeCards;
+            $out['episode_cards'] = Json::enumValue($this->episodeCards);
         }
         if ($this->greeting !== null) {
             $out['greeting'] = $this->greeting->toArray();

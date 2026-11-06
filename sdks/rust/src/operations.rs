@@ -2099,6 +2099,19 @@ impl Client {
         )
         .await
     }
+    /// Get a user's phone link
+    ///
+    /// `GET /v1/agents/users/{user_id}` (`getUser`).
+    pub async fn get_user(&self, user_id: &str) -> Result<types::AgentUser> {
+        self.send(
+            Method::GET,
+            &format!("/v1/agents/users/{user_id}", user_id = segment(user_id)),
+            None::<&()>,
+            None::<&()>,
+            "getUser",
+        )
+        .await
+    }
     /// Link a user to a phone number
     ///
     /// `PUT /v1/agents/users/{user_id}` (`updateUser`).
@@ -2385,11 +2398,15 @@ impl Client {
     /// Write an export, or a batch of changes, into this deployment
     ///
     /// `POST /v1/data/import` (`importData`).
-    pub async fn import_data(&self, body: &serde_json::Value) -> Result<types::DataImport> {
+    pub async fn import_data(
+        &self,
+        query: &ImportDataQuery,
+        body: &serde_json::Value,
+    ) -> Result<types::DataImport> {
         self.send(
             Method::POST,
             "/v1/data/import",
-            None::<&()>,
+            Some(query),
             Some(body),
             "importData",
         )
@@ -4418,6 +4435,13 @@ pub struct ListDataChangesQuery {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
 }
+/// The query string `importData` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ImportDataQuery {
+    /// Write an export's rows over what an app that already has data here holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full: Option<bool>,
+}
 /// The query string `getActivePriceList` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct GetActivePriceListQuery {
@@ -4752,9 +4776,6 @@ pub struct GetSpendQuery {
     /// Only count usage started with this public API key, or by this origin of work no key started, such as hook:chat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
-    /// The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_id: Option<String>,
     /// Only count usage for this end user of the app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,
@@ -4821,9 +4842,6 @@ pub struct ListUsageEventsQuery {
     /// Only work started with this public API key, or by this origin of work no key started, such as hook:chat.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
-    /// The old name of origin, still read for one release. Given with origin, it must name the same key or origin.
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub api_key_id: Option<String>,
     /// Only work for this end user of the app. With scope=organization it needs app_id, since a user id is only unique within its app.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_id: Option<String>,

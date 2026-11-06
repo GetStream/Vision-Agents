@@ -40,7 +40,7 @@ type AgentConfigPatch struct {
 	SandboxOptions     *SandboxOptions          `json:"sandbox_options,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty"`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty"`
 	Tools              *AgentTools              `json:"tools,omitempty"`
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
@@ -76,6 +76,15 @@ func (Harness) Schema(registry huma.Registry) *huma.Schema {
 	return namedEnum(registry, "Harness", "Which harness the agent's sessions run: what hands "+
 		"work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on "+
 		"the agent, never on a session. Omit it for the default, the only one there is.", string(Default))
+}
+
+func (EpisodeCardsMode) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "EpisodeCardsMode", "What the agent does with episode cards, the same for every "+
+		"channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel "+
+		"connections. off writes none and reads none. record writes each conversation's card and its summary into "+
+		"the person's omni-channel, and no session reads them. on writes them as record does, and a session starts "+
+		"with the person's other cards. Turning record into on reads what record wrote.",
+		string(EpisodeCardsOff), string(EpisodeCardsRecord), string(EpisodeCardsOn))
 }
 
 func (AgentRole) Schema(registry huma.Registry) *huma.Schema {
@@ -203,7 +212,9 @@ func (s *Server) patchAgentConfig(ctx context.Context, request *patchAgentConfig
 		config.Harness, _ = harnessOf(patch.Harness)
 	}
 	applyDispatch(&config, patch.Dispatch)
-	config.EpisodeCards = override(config.EpisodeCards, patch.EpisodeCards)
+	if patch.EpisodeCards != nil {
+		setEpisodeCards(&config, *patch.EpisodeCards)
+	}
 	config.ProgressiveTools = progressiveOf(config.ProgressiveTools, patch.Tools)
 	config.ToolOutputRetention = outputRetentionOf(config.ToolOutputRetention, patch.Tools)
 	config.Scheduling = schedulingOr(config.Scheduling, patch.Scheduling)

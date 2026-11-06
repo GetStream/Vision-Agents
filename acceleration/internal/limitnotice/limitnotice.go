@@ -166,16 +166,18 @@ var limits = map[string]string{
 	store.LimitSpendLimit:     "one of its own spend limits",
 }
 
-// Message is the notice as it is posted, in Slack's mrkdwn.
+// Message is the notice as it is posted, in Slack's mrkdwn. A notice from anywhere but
+// production starts with its environment, such as [STAGING], so the channel can tell them apart.
 func Message(environment string, notice store.LimitNotice) string {
 	limit := cmp.Or(limits[notice.Kind], notice.Kind)
 	var b strings.Builder
+	b.WriteString(EnvironmentTag(environment))
 	if notice.Enforced {
-		fmt.Fprintf(&b, ":no_entry: [%s] Organization `%s` was refused for the first time at %s.",
-			environment, notice.OrganizationID, limit)
+		fmt.Fprintf(&b, ":no_entry: Organization `%s` was refused for the first time at %s.",
+			notice.OrganizationID, limit)
 	} else {
-		fmt.Fprintf(&b, ":eyes: [%s] Organization `%s` reached %s for the first time; limits are in shadow, so the work was admitted.",
-			environment, notice.OrganizationID, limit)
+		fmt.Fprintf(&b, ":eyes: Organization `%s` reached %s for the first time; limits are in shadow, so the work was admitted.",
+			notice.OrganizationID, limit)
 	}
 	if notice.Tier != "" {
 		fmt.Fprintf(&b, "\nTier: %s", notice.Tier)
@@ -187,4 +189,16 @@ func Message(environment string, notice store.LimitNotice) string {
 		fmt.Fprintf(&b, "\n> %s", strings.ReplaceAll(notice.Message, "\n", "\n> "))
 	}
 	return b.String()
+}
+
+// EnvironmentTag is what a message from environment starts with: nothing in production
+// (prod or production), and the environment's name in capitals otherwise, such as "[STAGING] ".
+func EnvironmentTag(environment string) string {
+	switch environment = strings.ToLower(strings.TrimSpace(environment)); environment {
+	case "prod", "production":
+		return ""
+	case "":
+		environment = "development"
+	}
+	return "[" + strings.ToUpper(environment) + "] "
 }

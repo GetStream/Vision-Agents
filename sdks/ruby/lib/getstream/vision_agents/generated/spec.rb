@@ -700,7 +700,7 @@ module GetStream
         }.freeze,
         "getSpend" => {
           method: :get, path: "/v1/stats/spend",
-          path_params: [].freeze, query: %w[group_by limit scope granularity from to tag origin api_key_id user_id team category].freeze,
+          path_params: [].freeze, query: %w[group_by limit scope granularity from to tag origin user_id team category].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -752,6 +752,12 @@ module GetStream
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
+        "getUser" => {
+          method: :get, path: "/v1/agents/users/{user_id}",
+          path_params: %w[user_id].freeze, query: [].freeze,
+          body: nil, body_required: false,
+          socket: false, client_accessible: false
+        }.freeze,
         "getUserPolicy" => {
           method: :get, path: "/v1/policies/users/{user_id}",
           path_params: %w[user_id].freeze, query: [].freeze,
@@ -772,7 +778,7 @@ module GetStream
         }.freeze,
         "importData" => {
           method: :post, path: "/v1/data/import",
-          path_params: [].freeze, query: [].freeze,
+          path_params: [].freeze, query: %w[full].freeze,
           body: nil, body_required: true,
           socket: false, client_accessible: false
         }.freeze,
@@ -1054,7 +1060,7 @@ module GetStream
         }.freeze,
         "listUsageEvents" => {
           method: :get, path: "/v1/usage/events",
-          path_params: [].freeze, query: %w[scope app_id from to meter origin api_key_id user_id team category limit cursor].freeze,
+          path_params: [].freeze, query: %w[scope app_id from to meter origin user_id team category limit cursor].freeze,
           body: nil, body_required: false,
           socket: false, client_accessible: false
         }.freeze,
@@ -1780,11 +1786,11 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "AgentUser" => {
-          properties: %w[phone user_id].freeze,
+          properties: %w[include_phone_history phone phone_history_since user_id].freeze,
           required: %w[user_id phone].freeze, open: false
         }.freeze,
         "AgentUserRequest" => {
-          properties: %w[phone].freeze,
+          properties: %w[include_phone_history phone phone_history_since].freeze,
           required: %w[phone].freeze, open: false
         }.freeze,
         "AnalyzeReviewsRequest" => {
@@ -2992,8 +2998,8 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "UsageEvent" => {
-          properties: %w[agent_id api_key app_id attributes billable call_id cost_micros error_code meter model occurred_at origin provider purpose quantities session_id sku success tags team usage_categories usage_id user_id].freeze,
-          required: %w[usage_id occurred_at app_id origin api_key usage_categories meter quantities cost_micros billable success].freeze, open: false
+          properties: %w[agent_id app_id attributes billable call_id cost_micros error_code meter model occurred_at origin provider purpose quantities session_id sku success tags team usage_categories usage_id user_id].freeze,
+          required: %w[usage_id occurred_at app_id origin usage_categories meter quantities cost_micros billable success].freeze, open: false
         }.freeze,
         "UsageEventPage" => {
           properties: %w[has_more items next_cursor].freeze,

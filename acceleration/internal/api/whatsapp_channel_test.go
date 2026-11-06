@@ -185,6 +185,9 @@ func (s *WhatsAppChannelSuite) TestAWhatsAppMessageIsAnsweredFromTheBusinessNumb
 // A person's messages to one business number are one thread channel and one episode card,
 // source whatsapp, in the omni-channel the contact map gives their number in E.164 (T41).
 func (s *WhatsAppChannelSuite) TestAPersonsMessagesAreOneThreadChannelAndOneWhatsAppCard() {
+	// record writes the card as on does (AI-2856).
+	s.config.EpisodeCardsRecord = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	person := "16505551234"
 	s.deliver(s.received(s.unit, person, "first"))
 	s.deliver(s.received(s.unit, person, "second"))

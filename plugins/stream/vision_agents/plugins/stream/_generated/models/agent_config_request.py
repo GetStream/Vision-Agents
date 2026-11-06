@@ -9,6 +9,7 @@ from typing_extensions import Self
 
 from ..models.agent_mode import AgentMode
 from ..models.agent_role import AgentRole
+from ..models.episode_cards_mode import EpisodeCardsMode
 from ..models.harness import Harness
 from ..models.sandbox import Sandbox
 from ..types import UNSET, Unset
@@ -64,17 +65,11 @@ class AgentConfigRequest:
             them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever
             the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read
             when a pause is checked; one that model no longer publishes ends turns by its default.
-        episode_cards (bool | Unset): Whether each phone call under this agent, and each run of messages a Stream user
-            writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an
-            agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id.
-            On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the
-            person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a
-            summary, or the last lines of the episode's channel while there is none. So does a session the person's own app
-            opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members
-            or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a
-            member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth
-            checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting
-            stays.
+        episode_cards (EpisodeCardsMode | Unset): What the agent does with episode cards, the same for every channel:
+            its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off
+            writes none and reads none. record writes each conversation's card and its summary into the person's omni-
+            channel, and no session reads them. on writes them as record does, and a session starts with the person's other
+            cards. Turning record into on reads what record wrote.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
@@ -156,7 +151,7 @@ class AgentConfigRequest:
     connectors: list[AgentConnectorBinding] | Unset = UNSET
     dispatch: AgentDispatch | Unset = UNSET
     end_of_turn: EndOfTurn | Unset = UNSET
-    episode_cards: bool | Unset = UNSET
+    episode_cards: EpisodeCardsMode | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -218,7 +213,9 @@ class AgentConfigRequest:
         if not isinstance(self.end_of_turn, Unset):
             end_of_turn = self.end_of_turn.to_dict()
 
-        episode_cards = self.episode_cards
+        episode_cards: str | Unset = UNSET
+        if not isinstance(self.episode_cards, Unset):
+            episode_cards = self.episode_cards.value
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -472,7 +469,12 @@ class AgentConfigRequest:
         else:
             end_of_turn = EndOfTurn.from_dict(_end_of_turn)
 
-        episode_cards = d.pop("episode_cards", UNSET)
+        _episode_cards = d.pop("episode_cards", UNSET)
+        episode_cards: EpisodeCardsMode | Unset
+        if isinstance(_episode_cards, Unset):
+            episode_cards = UNSET
+        else:
+            episode_cards = EpisodeCardsMode(_episode_cards)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
