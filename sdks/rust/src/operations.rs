@@ -2398,11 +2398,15 @@ impl Client {
     /// Write an export, or a batch of changes, into this deployment
     ///
     /// `POST /v1/data/import` (`importData`).
-    pub async fn import_data(&self, body: &serde_json::Value) -> Result<types::DataImport> {
+    pub async fn import_data(
+        &self,
+        query: &ImportDataQuery,
+        body: &serde_json::Value,
+    ) -> Result<types::DataImport> {
         self.send(
             Method::POST,
             "/v1/data/import",
-            None::<&()>,
+            Some(query),
             Some(body),
             "importData",
         )
@@ -4430,6 +4434,13 @@ pub struct ListDataChangesQuery {
     pub after: Option<i64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub limit: Option<i64>,
+}
+/// The query string `importData` takes. A field left `None` is left out.
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
+pub struct ImportDataQuery {
+    /// Write an export's rows over what an app that already has data here holds.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub full: Option<bool>,
 }
 /// The query string `getActivePriceList` takes. A field left `None` is left out.
 #[derive(Debug, Clone, Default, PartialEq, Serialize)]

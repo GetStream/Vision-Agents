@@ -402,6 +402,9 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A scheduled text the organization may not pay for is not tried again
 
 A task due on SMS, WhatsApp or iMessage, or in the thread it was made in, whose organization is suspended, out of credit or past a spend limit, was tried up to three more times. A thread task's run also said `channel_unreachable`. The run now fails at once, under the refusal's code (`account_suspended`, `insufficient_credits`, `system_limit_reached` or `spend_limit_reached`), and the router logs a warning that names the customer. A refusal because the router could not check the money is still tried again.
+### Importing an export no longer writes over edits made on the target
+
+`POST /v1/data/import` wrote every row of an export, so a second import of an older export undid what had been done to those rows on the target since. An export for an app the target already holds is now refused with a 409 before any row is written, as `router replicate` refuses it; `?full=true` writes it anyway, and a batch of changes is applied as before (AI-2889).
 
 ### A code run that prints a lot no longer fills the router's memory
 
@@ -413,6 +416,10 @@ Under the proxy broker, `git lfs push` in a sandbox is refused at its first requ
 ### A sandbox session cut while it opens leaves no Daytona secret
 
 When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
+
+### A follower whose next changes were pruned is told to copy again
+
+A follower that read nothing after the source's recording started again kept its cursor there, and one whose every change after its cursor had aged out had none of its own kept. Either was answered the later changes, or none, with no refusal once those changes were pruned. Pruning now notes the last change of each app it drops, and a cursor below it is answered 410, so `router replicate` says to run with `--full` (AI-2918, #1806).
 
 ### A move whose recording lapsed is told to copy again
 

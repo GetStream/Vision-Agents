@@ -650,6 +650,185 @@ func (s *DataMoveSuite) TestAnExportAfterALapseIsFollowedFromItsCursor() {
 	s.Contains(ids, lost, "the write made while nothing was recorded is in the new export")
 }
 
+// exportAtRestart starts a customer's recording again after it lapsed and exports them, with
+// nothing recorded since: the cursor is the number the recording started again from.
+func (s *DataMoveSuite) exportAtRestart(customerID string) int64 {
+	s.capture(customerID)
+	s.lapse(customerID)
+	s.capture(customerID)
+	cursor := s.export(customerID).cursor
+	var since int64
+	s.Require().NoError(s.source.DB().QueryRowContext(s.ctx,
+		"SELECT recorded_since FROM data_change_capture WHERE customer_id = ?", customerID).Scan(&since))
+	s.Require().Positive(since)
+	s.Require().Equal(since, cursor)
+	return cursor
+}
+
+// A follower with nothing to read after the restart stays at its cursor while its reads keep
+// the capture on. A change recorded after it that aged out and was pruned is refused, not
+// skipped.
+func (s *DataMoveSuite) TestAFollowerAtTheRestartWhoseNextChangeWasPrunedSaysToExportAgain() {
+	cursor := s.exportAtRestart("acme")
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.age()
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "kept")
+	s.prune()
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// A follower whose every change after its cursor was pruned has none of its own kept, as a
+// quiet one has, and is refused all the same.
+func (s *DataMoveSuite) TestAFollowerWhoseEveryChangeSinceWasPrunedSaysToExportAgain() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	cursor := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.age()
+	s.prune()
+	s.seedAgentConfig(s.source, "other", "later")
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// A number rolled back after the restart and another customer's changes pruned after it leave
+// the same gap after the cursor as a pruned change, but the follower lost nothing.
+func (s *DataMoveSuite) TestAFollowerAtTheRestartIsAnsweredPastNumbersThatWereNeverItsChanges() {
+	s.capture("other")
+	cursor := s.exportAtRestart("acme")
+	rolledBack := s.begin()
+	s.writeIn(rolledBack, "acme", "rolled back")
+	s.Require().NoError(rolledBack.Rollback())
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.capture("acme")
+	next := s.seedAgentConfig(s.source, "acme", "next")
+	s.prune()
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// An export reads the rows its customer's pruned changes left behind, so the first read after it
+// is answered even with none of their changes kept and no other number below its cursor.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredWhenEveryChangeWasPruned() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// An export after a prune carries on from the last change of theirs pruned. Another customer's
+// change pruned right after it leaves a gap there, but the first read lost nothing.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredPastAnotherCustomersPrunedChange() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// A number rolled back right after an export's cursor at the last change of theirs pruned leaves
+// a gap there, but the first read lost nothing.
+func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredPastANumberRolledBack() {
+	s.capture("acme")
+	s.seedAgentConfig(s.source, "acme", "one")
+	s.age()
+	s.prune()
+	cursor := s.export("acme").cursor
+	rolledBack := s.begin()
+	s.writeIn(rolledBack, "acme", "rolled back")
+	s.Require().NoError(rolledBack.Rollback())
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// A follower that read its customer's change stays at it while the customer is quiet. That
+// change and another customer's after it age out and are pruned; the follower lost nothing and is
+// answered the customer's next change.
+func (s *DataMoveSuite) TestAFollowerWhoseOwnReadChangeWasPrunedIsAnsweredTheNextOne() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	_, cursor := s.follow("acme", 0)
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// The same follower, with a change of its customer's after its cursor pruned too, lost it and is
+// refused.
+func (s *DataMoveSuite) TestAFollowerWhoseUnreadChangeWasPrunedSaysToExportAgain() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	_, cursor := s.follow("acme", 0)
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	s.seedAgentConfig(s.source, "acme", "next")
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// Every replica prunes, and of two prunes running at once the one that dropped the lower numbers
+// can commit last: the highest number noted stays.
+func (s *DataMoveSuite) TestAPruneCommittingAfterOneThatDroppedHigherNumbersKeepsTheirs() {
+	s.capture("acme")
+	s.ageChange(s.seedAgentConfig(s.source, "acme", "aged out"))
+	_, cursor := s.follow("acme", 0)
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE data_change_capture SET pruned_through = ? WHERE customer_id = 'acme'", cursor+10)
+	s.Require().NoError(err)
+	s.prune()
+
+	_, _, err = s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
 // afterQuery runs a function once, after the first query mentioning a phrase.
 type afterQuery struct {
 	mu     sync.Mutex
@@ -743,13 +922,14 @@ func (s *DataMoveSuite) prune() {
 func (s *DataMoveSuite) TestPruningDropsWhatNobodyCanResumeFrom() {
 	s.capture("acme")
 	s.seedAgentConfig(s.source, "acme", "old")
+	s.seedAgentConfig(s.source, "acme", "older")
 	_, err := s.source.DB().ExecContext(s.ctx, "UPDATE data_changes SET at = now() - interval '30 days'")
 	s.Require().NoError(err)
 
 	removed, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
 
 	s.Require().NoError(err)
-	s.Positive(removed)
+	s.Equal(int64(2), removed)
 }
 
 // A change is numbered when it is written and seen when its transaction commits, so a
