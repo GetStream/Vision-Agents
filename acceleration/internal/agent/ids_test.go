@@ -993,8 +993,10 @@ func TestUnsourcedTransferIgnoresANumberQuotedByAFailedTool(t *testing.T) {
 }
 
 func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
-	// A tool that reads back what the agent said or posted returns the number the agent wrote:
-	// a near miss of the caller's that the agent wrote is still one nobody gave (AI-2886).
+	// A tool that reads back a note or a message the agent sent returns the number the agent wrote:
+	// a near miss of the caller's that the agent sent is still one nobody gave (AI-2886). What the
+	// agent said on the call is not counted: it reads a number back to confirm it, and a tool may
+	// well list it.
 	said := func(text string) []llm.Message { return []llm.Message{{Role: llm.Assistant, Content: text}} }
 	posted := func(text string) []llm.Message {
 		arguments, err := json.Marshal(map[string]string{"channel_id": "C0HELP002", "text": text})
@@ -1020,13 +1022,17 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 		told    string
 		unheard bool
 	}{
-		{"a number the agent said, read back", [][]llm.Message{said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "", true},
+		{"a number the agent posted, read back", [][]llm.Message{posted("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "", true},
+		{"a number the agent saved in a note, read back with a record", [][]llm.Message{posted("Card ends 5630"), read("Ana Lind | member | notes: Card ends 5630")}, "", true},
+		{"a number the agent said, listed by a tool", [][]llm.Message{said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "", false},
+		{"a number the agent said to confirm it, listed as text", [][]llm.Message{said("Card ending 5630?"), read("Card ending 5630: Ana Lind")}, "", false},
+		{"a number the agent saved in a note, read back with the tool's own", [][]llm.Message{posted("Card ends 5630"), read("Ana Lind | card 5630 | notes: Card ends 5630")}, "", false},
 		{"a number the agent posted, read back in a list", [][]llm.Message{posted("Member's last four: 5630"), read(`{"messages":[{"user":"bot","text":"Member's last four: 5630"}]}`)}, "", true},
 		{"a number the agent posted, read back as text", [][]llm.Message{posted("Last four 5630 confirmed"), read("[bot] Last four 5630 confirmed\n[ana] ok")}, "", true},
 		{"a number the agent posted, read back escaped for HTML", [][]llm.Message{posted("Q&A: last four 5630"), read(`{"notes":"Q&amp;A: last four 5630"}`)}, "", true},
-		{"a number the agent said, read back on another line than a tool's", [][]llm.Message{said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that.\nCard on file ends 5630"}`)}, "", false},
-		{"a number a tool returned before the agent said it", [][]llm.Message{lookup, said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "", false},
-		{"a number the operator gave", [][]llm.Message{said("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "Test members end in 5630.", false},
+		{"a number the agent posted, read back on another line than a tool's", [][]llm.Message{posted("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that.\nCard on file ends 5630"}`)}, "", false},
+		{"a number a tool returned before the agent posted it", [][]llm.Message{lookup, posted("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "", false},
+		{"a number the operator gave", [][]llm.Message{posted("Your last four are 5630, I have noted that."), read(`{"notes":"Agent: Your last four are 5630, I have noted that."}`)}, "Test members end in 5630.", false},
 		{"a number the agent sent alone, returned", [][]llm.Message{lookup}, "", false},
 	}
 	for _, c := range cases {
@@ -1039,7 +1045,8 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 	}
 	heard := []llm.Message{
 		{Role: llm.User, Content: "My last four are five six three zero."},
-		{Role: llm.Assistant, Content: "Your last four are 5630, I have noted that."},
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s1", Name: "save_note", Arguments: `{"text":"Your last four are 5630, I have noted that."}`}}},
+		{Role: llm.ToolResult, ToolCallID: "s1", Content: `{"ok":true}`},
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "r1", Name: "read_notes", Arguments: `{}`}}},
 		{Role: llm.ToolResult, ToolCallID: "r1", Content: `{"notes":"Agent: Your last four are 5630, I have noted that."}`},
 	}
@@ -1048,8 +1055,10 @@ func TestANumberTheAgentWroteIsNoSourceOfANumber(t *testing.T) {
 }
 
 func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
-	// A tool that reads back what the agent said or posted returns the number the agent wrote,
-	// in whatever form it wrote it: the agent is no source of a number to put a caller through to (AI-2886).
+	// A tool that reads back a note or a message the agent sent returns the number the agent wrote,
+	// in whatever form it wrote it: the agent is no source of a number to put a caller through to
+	// (AI-2886). What the agent said on the call is not counted: it reads a number back to confirm
+	// it, and a tool may well list it.
 	said := func(text string) []llm.Message { return []llm.Message{{Role: llm.Assistant, Content: text}} }
 	posted := func(text string) []llm.Message {
 		arguments, err := json.Marshal(map[string]string{"channel_id": "C0HELP002", "text": text})
@@ -1073,6 +1082,16 @@ func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "check_line", Arguments: `{"number":"+15550100199"}`}}},
 		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"status":"Sales +1 555 010 0199 is open"}`},
 	}
+	noted := []llm.Message{
+		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "u1", Name: "update_contact", Arguments: `{"id":"42","notes":"Call Ana back at +1 555 010 0199"}`}}},
+		{Role: llm.ToolResult, ToolCallID: "u1", Content: `{"ok":true}`},
+	}
+	departments := func(result string) []llm.Message {
+		return []llm.Message{
+			{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "d2", Name: "list_departments", Arguments: `{}`}}},
+			{Role: llm.ToolResult, ToolCallID: "d2", Content: result},
+		}
+	}
 	checkedLocal := []llm.Message{
 		{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "c2", Name: "check_line", Arguments: `{"number":"(555) 010-0199"}`}}},
 		{Role: llm.ToolResult, ToolCallID: "c2", Content: `{"status":"Sales +1 555 010 0199 is open"}`},
@@ -1083,17 +1102,26 @@ func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
 		to, told  string
 		unsourced bool
 	}{
-		{"a number the agent said, read back", [][]llm.Message{said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "", true},
+		{"a number the agent posted, read back", [][]llm.Message{posted("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "", true},
+		{"a number the agent saved in a note, read back with a record", [][]llm.Message{noted, read("Ana | customer | notes: Call Ana back at +1 555 010 0199")}, "+15550100199", "", true},
+		{"a number the agent said, listed by a tool", [][]llm.Message{said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "", false},
+		{"a number the agent said to confirm it, listed", [][]llm.Message{{{Role: llm.User, Content: "Billing please, 555 010 0199"}}, said("Billing: 555-010-0199?"), {{Role: llm.User, Content: "yes"}}, departments("Billing: 555-010-0199\nSales: 555-010-0200")}, "+15550100199", "", false},
+		{"a number the agent asked about, listed in other words", [][]llm.Message{said("So that's billing on 555 010 0199, right?"), departments(`{"departments":["So that's billing on 555 010 0199, right? Yes: Billing (Mon-Fri)"]}`)}, "+15550100199", "", false},
+		{"a number the agent saved in a note, read back with the record's own", [][]llm.Message{noted, read("Ana | phone +1 555 010 0199 | notes: Call Ana back at +1 555 010 0199")}, "+15550100199", "", false},
+		{"a number the agent saved in a note, read back with the record's own after it", [][]llm.Message{noted, read("Ana | notes: Call Ana back at +1 555 010 0199 | mobile (555) 010-0199")}, "+15550100199", "", false},
+		{"a number the agent saved in a note, read back with a number running on from it", [][]llm.Message{noted, read("Ana | notes: Call Ana back at +1 555 010 0199 99")}, "+15550100199", "", true},
+		{"a number the agent saved in a note, read back twice", [][]llm.Message{noted, read("Ana | notes: Call Ana back at +1 555 010 0199 | last note: Call Ana back at +1 555 010 0199")}, "+15550100199", "", true},
+		{"a number the agent saved in a note, read back with digits either side of it", [][]llm.Message{noted, read("Ana | ext 1-555Call Ana back at +1 555 010 0199. 010-0199")}, "+15550100199", "", true},
 		{"a number the agent posted, read back in another form", [][]llm.Message{posted("Call us at +15550100199"), read(`{"messages":[{"text":"Call us at +1 555 010 0199"}]}`)}, "+15550100199", "", true},
 		{"a number the agent posted without its country code, read back", [][]llm.Message{posted("Sales is at (555) 010-0199"), read(`{"messages":[{"text":"Sales is at (555) 010-0199"}]}`)}, "+15550100199", "", true},
 		{"a number the agent posted, read back as text, sent in another form", [][]llm.Message{posted("Sales: +15550100199"), read("[bot] Sales: +15550100199\n[ana] thanks")}, "+1 (555) 010-0199", "", true},
-		{"a number the agent said, read back on another line than a person's", [][]llm.Message{said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now.\nAna: yes, sales is +1 555 010 0199"}`)}, "+15550100199", "", false},
-		{"a number a tool returned before the agent said it", [][]llm.Message{directory, said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "", false},
+		{"a number the agent posted, read back on another line than a person's", [][]llm.Message{posted("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now.\nAna: yes, sales is +1 555 010 0199"}`)}, "+15550100199", "", false},
+		{"a number a tool returned before the agent posted it", [][]llm.Message{directory, posted("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "", false},
 		{"a number a tool returned, sent in another form", [][]llm.Message{directory}, "+15550100199", "", false},
-		{"a number the operator gave", [][]llm.Message{said("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "Sales: (555) 010-0199", false},
+		{"a number the operator gave", [][]llm.Message{posted("I'll put you through to +1 (555) 010-0199 now."), read(`{"messages":"Bot: I'll put you through to +1 (555) 010-0199 now."}`)}, "+15550100199", "Sales: (555) 010-0199", false},
 		{"a number the agent sent alone, returned", [][]llm.Message{checked}, "+15550100199", "", false},
 		{"a number the agent sent alone without its country code, returned", [][]llm.Message{checkedLocal}, "+1 (555) 010-0199", "", false},
-		{"an extension on a line with an agent's line holding its last digits", [][]llm.Message{said("Room 234 is ready."), read(`{"messages":"Bot: Room 234 is ready. Front desk is 1234"}`)}, "1234", "", false},
+		{"an extension on a line with an agent's line holding its last digits", [][]llm.Message{posted("Room 234 is ready."), read(`{"messages":"Bot: Room 234 is ready. Front desk is 1234"}`)}, "1234", "", false},
 	}
 	for _, c := range cases {
 		history := []llm.Message{{Role: llm.User, Content: "Can you put me through to sales?"}}
