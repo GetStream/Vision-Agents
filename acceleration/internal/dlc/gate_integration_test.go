@@ -7,6 +7,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -109,6 +110,30 @@ func (s *GateSuite) sent(channel string) int64 {
 	}
 	s.Require().NoError(err)
 	return count
+}
+
+// reached is who the organization reached on channel today, as the counters say.
+func (s *GateSuite) reached(channel string) []string {
+	key := "channel:" + time.Now().UTC().Format("20060102") + ":{" + s.owner.OrganizationID + "}:" + channel + ":to"
+	members, err := s.redis.Do(s.ctx, s.redis.B().Smembers().Key(key).Build()).AsStrSlice()
+	s.Require().NoError(err)
+	slices.Sort(members)
+	return members
+}
+
+func (s *GateSuite) TestAReplyIsCountedAgainstTheNumberItWentTo() {
+	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {RecipientsPerDay: new(2)}})
+	const first, second, third = "+15125550001", "+15125550002", "+15125550003"
+
+	s.gate.Sent(s.ctx, s.app(), dlc.SMS, first)
+
+	s.Equal([]string{first}, s.reached(dlc.SMS), "the number the reply went to, and nobody else, not even the empty recipient")
+	s.Equal(int64(1), s.sent(dlc.SMS))
+	s.gate.Sent(s.ctx, s.app(), dlc.SMS, second)
+	s.Equal([]string{first, second}, s.reached(dlc.SMS))
+	s.Equal(int64(2), s.sent(dlc.SMS))
+	s.ErrorIs(s.gate.Allow(s.ctx, s.app(), dlc.SMS, third), dlc.ErrRefused, "the day's two recipients are the two replied to")
+	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.SMS, first), "a number replied to is reached already")
 }
 
 func (s *GateSuite) TestATextToACountryTheTierDoesNotAllowIsRefused() {
