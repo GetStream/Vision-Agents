@@ -449,6 +449,35 @@ func (s *SessionSuite) TestACreateTurnedAwayIsNoFailedCreate() {
 	s.Equal(before["shutdown"]+1, s.ends("shutdown"))
 }
 
+// attendedJoiningEdge is a joiningEdge whose call has a participant in it.
+type attendedJoiningEdge struct{ joiningEdge }
+
+func (e attendedJoiningEdge) Attendance() <-chan agent.Attendance { return e.attending }
+
+func (s *SessionSuite) TestACreateTurnedAwayIsNotCountedSilent() {
+	// Catches a create the shutdown turned away, whose agent had joined a call with a caller
+	// in it, counted no_inbound_audio: the session was never held, so no call was judged.
+	s.manages()
+	before := s.silences()
+
+	late := attendedJoiningEdge{joiningEdge{quietEdge: newQuietEdge(visitor), entered: make(chan struct{}, 1), allowed: make(chan struct{})}}
+	late.attended = true
+	lost := make(chan error, 1)
+	go func() {
+		_, err := s.manager.Create(s.ctx, Spec{
+			CallID: "call-3", CustomerID: "acme", Edge: late,
+			LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
+		})
+		lost <- err
+	}()
+	<-late.entered
+	s.Require().NoError(s.manager.Shutdown())
+	close(late.allowed)
+	s.Require().ErrorContains(<-lost, "the manager is shut down")
+
+	s.Equal(before, s.silences())
+}
+
 func (s *SessionSuite) TestEveryEndSeriesIsADocumentedReason() {
 	// Catches a reason outside the documented set, or one whose failed value moved, which a
 	// dashboard or an alert would miss.

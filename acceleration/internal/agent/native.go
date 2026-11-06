@@ -611,7 +611,7 @@ func (a *Agent) replyAudio(chunk sts.AudioChunk) {
 	var err error
 	marked, marks := a.options.Edge.(MarkedPlayout)
 	if marks {
-		err = marked.PublishAudioMarked(chunk.Audio, withUtterance(a.turns.marksFor(chunk.ResponseID), heard))
+		err = marked.PublishAudioMarked(chunk.Audio, a.carried.marked(withUtterance(a.turns.marksFor(chunk.ResponseID), heard)))
 	} else {
 		err = a.options.Edge.PublishAudio(chunk.Audio)
 	}

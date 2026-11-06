@@ -108,6 +108,7 @@ func (s *Session) counted() {
 	if s.active.Load() {
 		sessionsActive.Dec()
 		endCounter(s.endLabel()).Inc()
+		s.countSilences()
 	}
 }
 

@@ -483,6 +483,9 @@ type SessionSuite struct {
 	// opens one, nil for nothing.
 	speech     func() (sts.STS, error)
 	speechGate routing.Gate
+	// opens is the edge the manager opens for the next voice session, when a test hands one
+	// in: unlike Spec.Edge, it is a call the manager opened.
+	opens agent.Edge
 }
 
 func TestSessionSuite(t *testing.T) {
@@ -506,6 +509,7 @@ func (s *SessionSuite) SetupTest() {
 	s.unattended = false
 	s.speech = nil
 	s.speechGate = nil
+	s.opens = nil
 	s.shortensPhoneTimeouts()
 }
 
@@ -606,6 +610,10 @@ func (s *SessionSuite) manages() {
 		Logger:        logger,
 		Edge: func(_ context.Context, _ Spec, stream streamapp.Bound, _ *slog.Logger) (agent.Edge, error) {
 			s.edgeApps = append(s.edgeApps, stream.Identity)
+			if opened := s.opens; opened != nil {
+				s.opens = nil
+				return opened, nil
+			}
 			edge := newQuietEdge(s.present...)
 			s.edges = append(s.edges, edge)
 			if s.unattended {

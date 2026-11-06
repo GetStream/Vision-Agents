@@ -413,6 +413,8 @@ type Agent struct {
 	// hearings tally what each participant has been heard to say, kept for the whole call
 	// so a line at its end covers those who left.
 	hearings map[string]*hearing
+	// carried is what the call carried that is not one participant's (CallAudio).
+	carried carried
 	// learnedTerms are names the caller said and the agent has said back, which the
 	// transcriber is told to expect for the rest of the call (keyterms.go).
 	learnedTerms []string
@@ -830,9 +832,12 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.mu.Unlock()
 
 	if !a.options.Text {
+		startup := StartupOf(ctx)
+		startup.JoinStarted(time.Now())
 		if err := a.options.Edge.Join(a.ctx); err != nil {
 			return stack.Wrap(fmt.Errorf("agent: join edge: %w", err))
 		}
+		startup.JoinEnded(time.Now())
 		a.running.Add(1)
 		go a.consumeEdge()
 
@@ -1504,6 +1509,7 @@ func (a *Agent) consumeEdge() {
 		}
 		// A native model hears one stream rather than one per participant.
 		if a.native() {
+			a.carried.native.Store(true)
 			a.hear(inbound)
 			continue
 		}
@@ -1533,6 +1539,7 @@ func (a *Agent) consumeRoster(roster Roster) {
 // attend reports one arrival or departure.
 func (a *Agent) attend(attendance Attendance) {
 	if attendance.Joined {
+		a.carried.attended.Store(true)
 		a.mu.Lock()
 		delete(a.departed, attendance.Participant.ID)
 		a.mu.Unlock()
@@ -3265,7 +3272,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			if marks {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
-				err = marked.PublishAudioMarked(speech, withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard))
+				err = marked.PublishAudioMarked(speech, a.carried.marked(withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard)))
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}

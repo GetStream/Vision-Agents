@@ -258,6 +258,9 @@ type Session struct {
 	runs        map[*agent.Agent]*presence
 	callerSeen  atomic.Bool
 	settledOnce atomic.Bool
+	// carried is what every agent run's call carried, for the silent-session count.
+	carriedMu sync.Mutex
+	carried   agent.CallAudio
 	// caller is the number of the first phone caller to join the call, set once callerHeard
 	// closes (hearCaller). The channel is made on first use.
 	callerMu    sync.Mutex
@@ -1781,6 +1784,7 @@ func (s *Session) consume(held *agent.Agent, transcript Transcript, run *presenc
 		s.broadcast(event)
 		s.name(event)
 	}
+	s.heard(held)
 	// The agent leaves by itself once it has handed the caller over, after a warm transfer's
 	// summary, and nobody is left to report the caller leaving, so nothing else would end
 	// the session. A timeout of zero ends it off this goroutine, which closing waits for.
