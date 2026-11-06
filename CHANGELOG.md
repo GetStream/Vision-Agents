@@ -436,7 +436,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A session whose every reply was lost no longer counts as closed when the flow controller answered
 
-A voice session whose replies all failed, for example on a refused customer key, ended `closed` with fault `none` when the flow controller's own request for the same turn succeeded after the reply had failed: that request was taken for a second provider answering the reply. Now only the reply's own requests lose or answer a turn, so the session ends `model_config_refused`, `model_no_credit` or `model_failed` by whose fault the reply failed, in `router_session_ends_total` and the session's `end_reason`. A subagent's request no longer stands in for a lost reply either, and a failed flow controller or subagent request no longer makes an answered turn count as lost. A reply another provider answered after the first failed still counts as answered (AI-2939, #1811).
+A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
 
 ### A code run that prints a lot no longer fills the router's memory
 
