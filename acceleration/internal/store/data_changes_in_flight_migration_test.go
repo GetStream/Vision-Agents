@@ -19,6 +19,7 @@ import (
 const (
 	schemaBeforeDataChangesInFlight int64 = 20261213090000
 	dataChangesInFlightVersion      int64 = 20261214130000
+	dataChangeStartsVersion         int64 = 20261216100000
 )
 
 // DataChangesInFlightMigrationSuite stops a database of its own short of the lock the
@@ -67,6 +68,25 @@ func (s *DataChangesInFlightMigrationSuite) TestTheMigrationComesOffAgain() {
 	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", schemaBeforeDataChangesInFlight))
 
 	s.Equal(before, s.trigger(), "the function is the one from before")
+}
+
+// 20261216100000_data_change_starts.sql changes the same function, and its down puts back this
+// migration's.
+func (s *DataChangesInFlightMigrationSuite) TestTheStartsMigrationComesOffAgain() {
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", dataChangesInFlightVersion))
+	before := s.trigger()
+
+	s.Require().NoError(goose.UpToContext(s.ctx, s.db.DB().DB, ".", dataChangeStartsVersion))
+	s.Contains(s.trigger(), "data_change_starts FOR SHARE")
+	var started int64
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx, "SELECT started FROM data_change_starts").Scan(&started))
+	s.Require().NoError(goose.DownToContext(s.ctx, s.db.DB().DB, ".", dataChangesInFlightVersion))
+
+	s.Equal(before, s.trigger(), "the function is the one from before")
+	var tables int
+	s.Require().NoError(s.db.DB().QueryRowContext(s.ctx,
+		"SELECT count(*) FROM information_schema.tables WHERE table_name = 'data_change_starts'").Scan(&tables))
+	s.Zero(tables)
 }
 
 // trigger is the source of the function that records a change.

@@ -790,12 +790,14 @@ func startsThread(message core.ChannelMessage) bool {
 
 // episode opens the episode a message is in, in the omni-channel of the person who wrote it:
 // the thread's first message opens it and the later ones find it open, so a thread has one
-// card, in the omni-channel of whoever started it. A connector with no episode source, or an
-// author the contact map cannot key, gets no card; the message is answered all the same.
-// started is when an episode the message opens starts; zero is now.
+// card, in the omni-channel of whoever started it. Only an agent config that writes cards,
+// episode_cards on or record (store.AgentConfig.WritesCards), opens one: off, the thread has
+// no episode, so no card and no summary. A connector with no episode source, or an author the
+// contact map cannot key, gets no card either; the message is answered all the same. started
+// is when an episode the message opens starts; zero is now.
 func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config store.AgentConfig, message core.InboundMessage, started time.Time) (omnichannel.Opened, error) {
 	source, carded := episodeSources[message.ConnectorID]
-	if !carded {
+	if !carded || !config.WritesCards() {
 		return omnichannel.Opened{}, nil
 	}
 	person, err := source.person(message.ProviderUnitID, message.AuthorID)
@@ -814,6 +816,43 @@ func (b *Bridge) episode(ctx context.Context, thread store.ChannelThread, config
 		StartedAt:     started,
 		StreamAppPK:   thread.StreamAppPK,
 	})
+}
+
+// recordStarter records the author of a chat's message as the person who started the chat
+// (store.SetChannelThreadStarter), at the step whose message would open the chat's episode, so
+// the first one the bridge admits names them whatever the config's episode_cards: the person
+// its replies reach while it has no episode (replyTo). An author the contact map cannot key,
+// such as an email handle, starts no chat, as they open no episode.
+func (b *Bridge) recordStarter(ctx context.Context, thread store.ChannelThread, message core.InboundMessage) error {
+	source := episodeSources[message.ConnectorID]
+	if !source.chats {
+		return nil
+	}
+	person, err := source.person(message.ProviderUnitID, message.AuthorID)
+	if err != nil {
+		return nil
+	}
+	return b.store.SetChannelThreadStarter(ctx, thread.ChannelID, person.Address)
+}
+
+// queuedEpisode opens the episode of a queued message (episode) under its agent config as the
+// store holds it now: the row names the config alone, and whether it writes cards
+// (store.AgentConfig.WritesCards) is the config's to say when the message is written, so a
+// config turned off opens no episode from its next message on. A config deleted since the
+// message was queued opens none. A connector with no episode source opens none whatever its
+// config says, so its config is not read.
+func (b *Bridge) queuedEpisode(ctx context.Context, thread store.ChannelThread, message store.ChannelInbound, inbound core.InboundMessage) (omnichannel.Opened, error) {
+	if _, carded := episodeSources[message.ConnectorID]; !carded {
+		return omnichannel.Opened{}, nil
+	}
+	config, err := b.store.AgentConfig(ctx, message.CustomerID, message.ConfigID)
+	if errors.Is(err, store.ErrNoAgentConfig) {
+		return omnichannel.Opened{}, nil
+	}
+	if err != nil {
+		return omnichannel.Opened{}, err
+	}
+	return b.episode(ctx, thread, config, inbound, message.CreatedAt)
 }
 
 // read reads a message again from the raw body with the manifest of the connection's

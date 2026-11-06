@@ -28,6 +28,10 @@ const (
 // an export is a rare call whose caller can come back, so it is told to rather than held.
 const exportWritesWait = 30 * time.Second
 
+// errWritesOpen is a capture start, or the export after it, that gave up on a write from before
+// the start (store.ErrWritesOpen).
+var errWritesOpen = unavailable("a write that started before the changes were recorded is still open: try again")
+
 // errShardedSource refuses a move off a router with shards. A shard's tables (calls, call
 // bridges, recordings, sessions, responses, requests and their stats) record no changes
 // (watchDataChanges), so a write to one after the export would be lost by a move that says
@@ -65,16 +69,22 @@ func (s *Server) exportData(w http.ResponseWriter, r *http.Request) {
 
 	// Recording starts before the snapshot is read rather than after, so a write that
 	// lands while the export is being streamed is in one of the two and not in neither.
-	if err := s.store.StartDataCapture(r.Context(), customerID, s.dataRetention); err != nil {
+	// The start and the wait after it share one bound.
+	deadline := time.Now().Add(s.exportWritesWait)
+	if err := s.store.StartDataCapture(r.Context(), customerID, s.dataRetention, s.exportWritesWait); err != nil {
+		if errors.Is(err, store.ErrWritesOpen) {
+			writeError(w, errWritesOpen)
+			return
+		}
 		s.logger.Error("could not start recording changes", "customer", customerID, "error", err)
 		writeError(w, unavailable("changes cannot be recorded, so an export would be a copy nothing could catch up from"))
 		return
 	}
 	// A write whose trigger looked before the recording started recorded nothing, so the
 	// snapshot is read only once it has committed and is in the rows.
-	if err := s.store.WaitForOpenWrites(r.Context(), s.exportWritesWait); err != nil {
+	if err := s.store.WaitForOpenWrites(r.Context(), time.Until(deadline)); err != nil {
 		if errors.Is(err, store.ErrWritesOpen) {
-			writeError(w, unavailable("a write that started before this export is still open: try again"))
+			writeError(w, errWritesOpen)
 			return
 		}
 		writeFailure(w, r, err)
@@ -182,7 +192,11 @@ func (s *Server) listDataChanges(w http.ResponseWriter, r *http.Request) {
 
 	// Following the changes is the other half of the move, so it says the customer is
 	// still going rather than letting the recording expire under them.
-	if err := s.store.StartDataCapture(r.Context(), customerID, s.dataRetention); err != nil {
+	if err := s.store.StartDataCapture(r.Context(), customerID, s.dataRetention, s.exportWritesWait); err != nil {
+		if errors.Is(err, store.ErrWritesOpen) {
+			writeError(w, errWritesOpen)
+			return
+		}
 		writeFailure(w, r, err)
 		return
 	}

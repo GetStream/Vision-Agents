@@ -257,7 +257,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Kept for the same reason: a client that does not know the setting must not turn the
 	// cards off by saving.
 	if request.Body.EpisodeCards == nil {
-		config.EpisodeCards = existing.EpisodeCards
+		config.EpisodeCards, config.EpisodeCardsRecord = existing.EpisodeCards, existing.EpisodeCardsRecord
 	}
 	// Kept for the same reason: a client that does not know the role must not take it away
 	// from the agent the chat worker looks for by it.
@@ -1526,7 +1526,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.VideoMaxFrames = value(request.Video.MaxFrames)
 	}
 	applyDispatch(&config, request.Dispatch)
-	config.EpisodeCards = value(request.EpisodeCards)
+	if request.EpisodeCards != nil {
+		setEpisodeCards(&config, *request.EpisodeCards)
+	}
 	if request.Tools != nil {
 		config.ProgressiveTools = value(request.Tools.Progressive)
 		config.ToolOutputRetention = options.Retention(value(request.Tools.OutputRetention))
@@ -1617,7 +1619,7 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	}
 	rendered.Harness = &named
 	rendered.Dispatch = dispatchOf(config)
-	episodeCards := config.EpisodeCards
+	episodeCards := episodeCardsOf(config)
 	rendered.EpisodeCards = &episodeCards
 	progressive := config.ProgressiveTools
 	rendered.Tools = &AgentTools{Progressive: &progressive, OutputRetention: optional(string(config.ToolOutputRetention))}
@@ -1875,7 +1877,7 @@ type deleteAgentConfigRequest struct {
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays."`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty" doc:"What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays."`
 	Greeting           *Greeting                `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1915,7 +1917,7 @@ type AgentConfigRequest struct {
 type AgentConfig struct {
 	CreatedAt          time.Time                `json:"created_at"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off."`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty" doc:"What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any."`
 	Greeting           *Greeting                `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1993,6 +1995,24 @@ type ResumeHistory struct {
 func (*ResumeHistory) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "How a conversation is handed back to the model when a session carries it on."
 	return schema
+}
+
+// episodeCardsOf is the mode a config's two columns store: episode_cards is on, whatever
+// episode_cards_record says, as the previous release reads it.
+func episodeCardsOf(config store.AgentConfig) EpisodeCardsMode {
+	switch {
+	case config.EpisodeCards:
+		return EpisodeCardsOn
+	case config.EpisodeCardsRecord:
+		return EpisodeCardsRecord
+	}
+	return EpisodeCardsOff
+}
+
+// setEpisodeCards stores mode as the config's two columns (episodeCardsOf).
+func setEpisodeCards(config *store.AgentConfig, mode EpisodeCardsMode) {
+	config.EpisodeCards = mode == EpisodeCardsOn
+	config.EpisodeCardsRecord = mode == EpisodeCardsRecord
 }
 
 // resumeHistoryOr writes the fields a caller sent over stored: a field left out keeps

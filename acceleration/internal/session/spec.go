@@ -243,10 +243,13 @@ type Spec struct {
 	// DispatchText hands what an end user writes to the customer's dispatch worker rather
 	// than the model, from the agent's config. The model answers only the server.
 	DispatchText bool
-	// EpisodeCards has a phone call write its episode card into the caller's omni-channel,
-	// and a session on a thread channel or a phone call start with the person's other cards,
-	// from the agent's config. Off, the session does what it did before the cards existed.
-	EpisodeCards bool
+	// EpisodeCards has a session on a thread channel, an app chat or a phone call start with
+	// the person's other cards, and a phone call write its episode card into the caller's
+	// omni-channel, from the agent's config: the on mode. EpisodeCardsRecord has the call
+	// write its card while no session reads any: the record mode (WritesCards). Both off, the
+	// session does what it did before the cards existed.
+	EpisodeCards       bool
+	EpisodeCardsRecord bool
 	// ProgressiveTools offers plugin, MCP server and connector tools by a summary, and
 	// answers the first call to each with its full description instead of running it.
 	ProgressiveTools bool
@@ -404,6 +407,7 @@ func FromConfig(config store.AgentConfig) Spec {
 		Harness:            config.Harness,
 		DispatchText:       config.DispatchText,
 		EpisodeCards:       config.EpisodeCards,
+		EpisodeCardsRecord: config.EpisodeCardsRecord,
 		ProgressiveTools:   config.ProgressiveTools,
 		ResumeHistory:      config.ResumeHistory,
 		Scheduling:         config.Scheduling,
@@ -601,6 +605,12 @@ func (s Spec) KeyedAgentID() string {
 		return s.AgentID
 	}
 	return joinedCallID(s.CallID)
+}
+
+// WritesCards is whether the session's agent config writes episode cards: on or record
+// (store.AgentConfig.WritesCards).
+func (s Spec) WritesCards() bool {
+	return s.EpisodeCards || s.EpisodeCardsRecord
 }
 
 // Call is a Stream call: its type and its id.

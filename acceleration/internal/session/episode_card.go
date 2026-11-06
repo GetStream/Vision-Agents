@@ -55,7 +55,7 @@ func newCallCards(pgStore *store.Store, placed *outcome.Keeper, stream *streamap
 }
 
 // started writes the card of a call session that has just joined, when its agent config
-// turned the cards on (store.AgentConfig.EpisodeCards). Off, which every config is unless it
+// writes the cards, on or record (Spec.WritesCards). Off, which every config is unless it
 // says otherwise, nothing runs: no call read, no contact map row, no card, as before the
 // cards existed. A session in writing, an incognito one, which records nothing, and one with
 // no agent config, whose omni-channel the contact map cannot key, get none either.
@@ -63,7 +63,7 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 	// The spec as the session started, read here, on the caller: the card is written off the
 	// start, while SetSettings may change created.spec.
 	spec := created.Spec()
-	if c == nil || !spec.EpisodeCards || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
+	if c == nil || !spec.WritesCards() || spec.Text || spec.CallID == "" || spec.Incognito || spec.ConfigID == "" || stream.Client == nil {
 		return
 	}
 	// A call whose transcript is written nowhere it may write has no channel for its card to
@@ -87,9 +87,9 @@ func (c *callCards) started(created *Session, stream streamapp.Bound) {
 }
 
 // read is the person's other episode cards, for a session to start with (T56 and T42,
-// AI-885), when its agent config turned the cards on. Off, which every config is unless it
-// says otherwise, nothing is read: no call, no contact map, no Stream Chat, and the session
-// starts with what it did before the cards existed. On:
+// AI-885), when its agent config turned the cards on (Spec.EpisodeCards). Off or record,
+// which writes the cards and reads none, nothing is read: no call, no contact map, no Stream
+// Chat, and the session starts with what it did before the cards existed. On:
 //
 //   - a text session on a thread channel reads the cards of the person its thread's episode
 //     is with, the thread itself left out, since it reads that word for word;
