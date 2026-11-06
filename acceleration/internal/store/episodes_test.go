@@ -45,6 +45,20 @@ func (s *StoreSuite) TestTheFirstMessageOfAThreadOpensAnEpisodeInProgress() {
 	s.Equal(s.base, episode.StartedAt)
 }
 
+// Defect: a thread episode dated by Postgres's clock, as a call's is, in place of the time it is
+// given: an SMS episode starts when its message was queued (channel_inbound.created_at), so a
+// message the bridge writes later keeps its place against the link.
+func (s *StoreSuite) TestAThreadEpisodeStartsAtTheTimeItIsGiven() {
+	episode := s.episodeOf(s.mapped("+15550100"), "agent:thread-one")
+
+	_, err := s.store.OpenEpisode(s.ctx, episode)
+
+	s.Require().NoError(err)
+	var started time.Time
+	s.Require().NoError(s.store.db.QueryRowContext(s.ctx, "SELECT started_at FROM episodes WHERE id = ?", episode.ID).Scan(&started))
+	s.Equal(time.Date(2026, 3, 1, 10, 0, 0, 0, time.UTC), started.UTC())
+}
+
 // Three SMS in a row are one episode, so one card.
 func (s *StoreSuite) TestTheNextMessagesOfAThreadFindItsOpenEpisode() {
 	person := s.mapped("+15550100")
