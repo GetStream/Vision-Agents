@@ -168,6 +168,11 @@ type Limits struct {
 	// empty tells nobody.
 	SlackToken   string `koanf:"slack_token"`
 	SlackChannel string `koanf:"slack_channel"`
+	// AppURL and StaffURL are the pages each Slack notice links to, as URLs in which
+	// {organization} and {app} stand for the organization's and the app's ids: the app's own
+	// page, and the operator's. Either empty links nothing.
+	AppURL   string `koanf:"app_url"`
+	StaffURL string `koanf:"staff_url"`
 }
 
 // Usage is the usage service the router ships the rows it writes to. An empty URL is none:
@@ -590,6 +595,8 @@ var variables = map[string]string{
 	"limits.mode":          "ROUTER_LIMITS_MODE",
 	"limits.slack_token":   "ROUTER_LIMITS_SLACK_TOKEN",
 	"limits.slack_channel": "ROUTER_LIMITS_SLACK_CHANNEL",
+	"limits.app_url":       "ROUTER_LIMITS_APP_URL",
+	"limits.staff_url":     "ROUTER_LIMITS_STAFF_URL",
 
 	"knowledge.min_chunk":   "ROUTER_KNOWLEDGE_MIN_CHUNK",
 	"knowledge.max_heading": "ROUTER_KNOWLEDGE_MAX_HEADING",
@@ -1110,6 +1117,8 @@ func (c Config) export() error {
 		"limits.mode":          string(c.Limits.Mode),
 		"limits.slack_token":   c.Limits.SlackToken,
 		"limits.slack_channel": c.Limits.SlackChannel,
+		"limits.app_url":       c.Limits.AppURL,
+		"limits.staff_url":     c.Limits.StaffURL,
 
 		"knowledge.min_chunk":   fmt.Sprint(c.Knowledge.MinChunk),
 		"knowledge.max_heading": fmt.Sprint(c.Knowledge.MaxHeading),
