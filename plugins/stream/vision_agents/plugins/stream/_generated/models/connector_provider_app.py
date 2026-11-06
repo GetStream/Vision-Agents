@@ -78,7 +78,7 @@ class ConnectorProviderApp:
 
         provider_app_id = d.pop("provider_app_id")
 
-        registration = ConnectorClientRegistrationMethod(d.pop("registration"))
+        registration = ConnectorClientRegistrationMethod._decode(d.pop("registration"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

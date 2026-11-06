@@ -164,7 +164,7 @@ class ConnectorAuditEvent:
         from ..models.connector_audit_credential import ConnectorAuditCredential
 
         d = dict(src_dict)
-        action = ConnectorAuditAction(d.pop("action"))
+        action = ConnectorAuditAction._decode(d.pop("action"))
 
         connection_id = d.pop("connection_id")
 
@@ -174,7 +174,7 @@ class ConnectorAuditEvent:
 
         id = d.pop("id")
 
-        owner_type = ConnectionOwnerType(d.pop("owner_type"))
+        owner_type = ConnectionOwnerType._decode(d.pop("owner_type"))
 
         attempt_id = d.pop("attempt_id", UNSET)
 

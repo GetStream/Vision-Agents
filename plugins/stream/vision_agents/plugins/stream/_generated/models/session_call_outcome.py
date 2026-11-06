@@ -76,7 +76,7 @@ class SessionCallOutcome:
         if isinstance(_outcome, Unset):
             outcome = UNSET
         else:
-            outcome = CallOutcome(_outcome)
+            outcome = CallOutcome._decode(_outcome)
 
         session_call_outcome = cls(
             answered_at=answered_at,

@@ -150,7 +150,7 @@ class SimulationRequest:
         if isinstance(_mode, Unset):
             mode = UNSET
         else:
-            mode = SimulationRequestMode(_mode)
+            mode = SimulationRequestMode._decode(_mode)
 
         _tags = d.pop("tags", UNSET)
         tags: SimulationRequestTags | Unset

@@ -91,7 +91,7 @@ class ClassifyAnswer:
         from ..models.classify_answer_probabilities import ClassifyAnswerProbabilities
 
         d = dict(src_dict)
-        type_ = ClassifyQuestionType(d.pop("type"))
+        type_ = ClassifyQuestionType._decode(d.pop("type"))
 
         chosen = d.pop("chosen", UNSET)
 

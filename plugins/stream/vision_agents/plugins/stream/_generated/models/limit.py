@@ -135,13 +135,13 @@ class Limit:
 
         id = d.pop("id")
 
-        interval = LimitInterval(d.pop("interval"))
+        interval = LimitInterval._decode(d.pop("interval"))
 
-        level = LimitLevel(d.pop("level"))
+        level = LimitLevel._decode(d.pop("level"))
 
         limit_micros = d.pop("limit_micros")
 
-        subject = LimitSubject(d.pop("subject"))
+        subject = LimitSubject._decode(d.pop("subject"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

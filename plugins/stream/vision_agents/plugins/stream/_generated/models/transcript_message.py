@@ -119,7 +119,7 @@ class TranscriptMessage:
         if isinstance(_purpose, Unset):
             purpose = UNSET
         else:
-            purpose = TranscriptMessagePurpose(_purpose)
+            purpose = TranscriptMessagePurpose._decode(_purpose)
 
         turn_id = d.pop("turn_id", UNSET)
 

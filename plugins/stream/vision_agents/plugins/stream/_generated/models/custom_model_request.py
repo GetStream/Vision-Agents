@@ -126,7 +126,7 @@ class CustomModelRequest:
         if isinstance(_trains_on_data, Unset):
             trains_on_data = UNSET
         else:
-            trains_on_data = CustomModelRequestTrainsOnData(_trains_on_data)
+            trains_on_data = CustomModelRequestTrainsOnData._decode(_trains_on_data)
 
         custom_model_request = cls(
             base_url=base_url,

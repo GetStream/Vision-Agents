@@ -477,6 +477,137 @@ async fn an_answer_that_is_not_what_the_spec_says_is_a_decode_error() {
     assert!(matches!(error, Error::Decode { .. }), "{error:?}");
 }
 
+/// A session the router describes with these fields laid over the usual ones.
+fn session_with(fields: serde_json::Value) -> serde_json::Value {
+    let mut session = support::session("s1");
+    let laid = session.as_object_mut().expect("a session is an object");
+    for (key, value) in fields.as_object().expect("fields are an object") {
+        laid.insert(key.clone(), value.clone());
+    }
+    session
+}
+
+#[tokio::test]
+async fn a_value_this_sdk_does_not_list_reads_as_it_was_sent() {
+    // A newer router can end a session for a reason this SDK was not built with. Close
+    // spellings of a listed value are not folded into it.
+    for (reason, state) in [("closed", "paused"), ("VOICEMAIL", "Ended"), ("", "live ")] {
+        let server = Server::start().await;
+        let answer = session_with(json!({"end_reason": reason, "state": state}));
+        server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);
+
+        let session = server
+            .client()
+            .agent("docs")
+            .sessions
+            .get("s1")
+            .await
+            .unwrap();
+
+        assert_eq!(
+            session.end_reason,
+            Some(types::SessionEndReason::Unlisted(reason.into()))
+        );
+        assert_eq!(session.state, types::SessionState::Unlisted(state.into()));
+        assert_eq!(session.end_reason.as_ref().unwrap().to_string(), reason);
+        assert_eq!(session.state.to_string(), state);
+        let written = serde_json::to_value(&session).unwrap();
+        assert_eq!(
+            (&written["end_reason"], &written["state"]),
+            (&json!(reason), &json!(state))
+        );
+    }
+}
+
+#[tokio::test]
+async fn a_page_of_sessions_reads_a_value_this_sdk_does_not_list() {
+    let server = Server::start().await;
+    server.route(
+        Method::POST,
+        "/v1/agents/sessions/query",
+        200,
+        json!({"items": [session_with(json!({"end_reason": "model_failed"})),
+                         session_with(json!({"end_reason": "hangup"}))],
+               "has_more": false}),
+    );
+
+    let page = server
+        .client()
+        .agent("docs")
+        .sessions
+        .query(Default::default())
+        .await
+        .unwrap();
+
+    let reasons: Vec<_> = page
+        .items
+        .into_iter()
+        .map(|session| session.end_reason)
+        .collect();
+    assert_eq!(
+        reasons,
+        [
+            Some(types::SessionEndReason::Unlisted("model_failed".into())),
+            Some(types::SessionEndReason::Hangup)
+        ]
+    );
+}
+
+#[tokio::test]
+async fn a_listed_value_reads_as_its_variant_and_is_written_back_unchanged() {
+    let server = Server::start().await;
+    let answer =
+        session_with(json!({"end_reason": "voicemail", "state": "ended", "mode": "native"}));
+    server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);
+
+    let session = server
+        .client()
+        .agent("docs")
+        .sessions
+        .get("s1")
+        .await
+        .unwrap();
+
+    assert_eq!(session.end_reason, Some(types::SessionEndReason::Voicemail));
+    assert_eq!(session.state, types::SessionState::Ended);
+    assert_eq!(session.mode, Some(types::SessionMode::Native));
+    // What the SDK before AI-2951 wrote for this answer, read from a run of it.
+    assert_eq!(
+        serde_json::to_string(&session).unwrap(),
+        r#"{"agent_id":"agent","call_id":"call","call_type":"agent","created_at":"2026-09-24T10:00:00Z","end_reason":"voicemail","id":"s1","modality":"voice","mode":"native","state":"ended","user_id":"user"}"#
+    );
+}
+
+#[tokio::test]
+async fn a_value_a_caller_parses_is_still_one_the_spec_lists() {
+    assert!("closed".parse::<types::SessionEndReason>().is_err());
+    assert!(types::SessionEndReason::try_from("closed").is_err());
+    assert!(types::SessionState::try_from("paused".to_string()).is_err());
+    assert_eq!(
+        "voicemail".parse::<types::SessionEndReason>().unwrap(),
+        types::SessionEndReason::Voicemail
+    );
+}
+
+#[tokio::test]
+async fn a_reason_that_is_not_a_string_is_still_a_decode_error() {
+    for reason in [json!(5), json!({"value": "closed"}), json!(["closed"])] {
+        let server = Server::start().await;
+        let answer = session_with(json!({"end_reason": reason}));
+        server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);
+
+        let error = server
+            .client()
+            .agent("docs")
+            .sessions
+            .get("s1")
+            .await
+            .unwrap_err();
+
+        assert!(matches!(error, Error::Decode { .. }), "{reason}: {error:?}");
+    }
+}
+
 #[tokio::test]
 async fn a_guest_is_minted_and_later_claimed_by_a_backend() {
     let server = Server::start().await;

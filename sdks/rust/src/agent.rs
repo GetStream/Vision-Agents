@@ -508,7 +508,11 @@ impl Agent {
     ) {
         match &self.harness {
             None => (None, None, None),
-            Some(harness) => (harness.name, text(harness.subagent()), harness.vm),
+            Some(harness) => (
+                harness.name.clone(),
+                text(harness.subagent()),
+                harness.vm.clone(),
+            ),
         }
     }
 
@@ -631,17 +635,17 @@ impl Agent {
                     .map(folder::Simulation::declaration)
                     .collect()
             }),
-            mode: settings.mode,
+            mode: settings.mode.clone(),
             stt: text(&settings.stt),
             tts: text(&settings.tts),
             sts: settings.sts.clone(),
             voice: text(&settings.voice),
             llm: text(&settings.llm),
-            harness: harness.or(settings.harness),
+            harness: harness.or(settings.harness.clone()),
             subagent: subagent.or_else(|| text(&settings.subagent)),
             search: text(&settings.search),
             greeting: settings.greeting.clone(),
-            sandbox: sandbox.or(settings.sandbox),
+            sandbox: sandbox.or(settings.sandbox.clone()),
             sandbox_options: settings.sandbox_options.clone(),
             keyterms: (!settings.keyterms.is_empty()).then(|| settings.keyterms.clone()),
             tags,

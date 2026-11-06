@@ -51,7 +51,7 @@ class AgentConnectorSelection:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        type_ = AgentConnectorSelectionType(d.pop("type"))
+        type_ = AgentConnectorSelectionType._decode(d.pop("type"))
 
         connection_id = d.pop("connection_id", UNSET)
 

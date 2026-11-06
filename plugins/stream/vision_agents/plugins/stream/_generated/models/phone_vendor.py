@@ -81,7 +81,7 @@ class PhoneVendor:
         capabilities = []
         _capabilities = d.pop("capabilities")
         for capabilities_item_data in _capabilities:
-            capabilities_item = PhoneCapability(capabilities_item_data)
+            capabilities_item = PhoneCapability._decode(capabilities_item_data)
 
             capabilities.append(capabilities_item)
 
@@ -98,7 +98,7 @@ class PhoneVendor:
         if _operations is not UNSET:
             operations = []
             for operations_item_data in _operations:
-                operations_item = PhoneOperation(operations_item_data)
+                operations_item = PhoneOperation._decode(operations_item_data)
 
                 operations.append(operations_item)
 

@@ -92,7 +92,7 @@ class OcrResult:
 
         markdown = d.pop("markdown")
 
-        status = OcrStatus(d.pop("status"))
+        status = OcrStatus._decode(d.pop("status"))
 
         error = d.pop("error", UNSET)
 
@@ -101,7 +101,7 @@ class OcrResult:
         if isinstance(_error_code, Unset):
             error_code = UNSET
         else:
-            error_code = OcrErrorCode(_error_code)
+            error_code = OcrErrorCode._decode(_error_code)
 
         model = d.pop("model", UNSET)
 
