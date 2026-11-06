@@ -695,7 +695,10 @@ class TestSessions:
         row = await api.agent("docs").sessions.get("session-1")
 
         assert (row.end_reason.value, str(row.end_reason)) == (end_reason, end_reason)
+        assert row.end_reason.name == end_reason
         assert row.state.value == state
+        # It hashes as the string it equals, so it is found in a set of the raw values.
+        assert row.end_reason in {end_reason}
         written = row.to_dict()
         assert (written["end_reason"], written["state"]) == (end_reason, state)
 
@@ -1145,6 +1148,29 @@ class TestAgentConfig:
 
         assert config is not None and config.id == "config-1"
         assert router.query("GET", "/v1/agents/configs")["name"] == "docs"
+
+    async def test_a_config_naming_a_harness_this_client_does_not_list_still_reads(
+        self, api: stream.Client, router: Router
+    ):
+        # Harness and Sandbox list one value each today; a second one is still a value the
+        # client does not list yet.
+        router.configs = [
+            {
+                "id": "config-1",
+                "name": "docs",
+                "mode": "text",
+                "region": "us",
+                "harness": "deep",
+                "sandbox": "firecracker",
+                "created_at": WHEN,
+                "updated_at": WHEN,
+            }
+        ]
+
+        config = await api.agent("docs").config()
+
+        assert config is not None
+        assert (str(config.harness), str(config.sandbox)) == ("deep", "firecracker")
 
     async def test_a_name_nothing_is_stored_under_is_no_config(
         self, api: stream.Client, router: Router

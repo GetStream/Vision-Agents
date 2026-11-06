@@ -169,13 +169,10 @@ fn unlisted(file: &mut syn::File) {
         let syn::Item::Enum(declared) = item else {
             continue;
         };
-        let strings = declared.variants.iter().all(|each| {
-            matches!(each.fields, syn::Fields::Unit)
-                && each
-                    .attrs
-                    .iter()
-                    .any(|attribute| attribute.path().is_ident("serde"))
-        });
+        let strings = declared
+            .variants
+            .iter()
+            .all(|each| matches!(each.fields, syn::Fields::Unit));
         if !strings {
             continue;
         }
