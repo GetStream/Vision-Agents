@@ -397,7 +397,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A sandbox session cut while it opens leaves no Daytona secret
 
-When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, PR_NUM).
+When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).
 
 ### A move whose recording lapsed is told to copy again
 
