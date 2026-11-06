@@ -571,6 +571,7 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	}
 	t.mu.Unlock()
 	if text == "" {
+		t.noted(c.utterance, words.Noise)
 		t.finish(c.epoch)
 		return
 	}
@@ -610,6 +611,7 @@ func (t *Transcriber) finish(epoch int64) {
 	t.mu.Unlock()
 	if ruled.Words == "" {
 		t.sent.ended(utterance)
+		t.unwritten(participant, utterance, "")
 		return
 	}
 	asker.Ruled(participant, ruled)

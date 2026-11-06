@@ -108,4 +108,10 @@ var (
 		Name:      "agent_settled_over_agent_total",
 		Help:      "Settled turns put to the flow controller while the agent was talking, by how many words, whether the last revision of the words was a final, and what came of them",
 	}, []string{"words", "final", "action"})
+	// fate is a fixed set (wordFate).
+	callerWords = promauto.NewCounterVec(prometheus.CounterOpts{
+		Namespace: "router",
+		Name:      "caller_words_total",
+		Help:      "Words of the callers' finals, by what became of them: answered, set aside for a named reason, or lost with none, which should never happen",
+	}, []string{"fate"})
 )
