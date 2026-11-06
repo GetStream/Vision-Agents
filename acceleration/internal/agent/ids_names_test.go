@@ -89,6 +89,7 @@ func (s *GivenNamesSuite) TestAStandInNameTheAgentWroteIsNotGroundedByAToolReadi
 		{"said, read back", append([]llm.Message{said}, read(`{"notes":"Agent: I will book it for John Doe."}`)...), true},
 		{"posted, read back as text", append([]llm.Message{posted}, read("[bot] New booking: John Doe, 2 nights\n[ana] ok")...), true},
 		{"said, read back on another line than a tool's", append([]llm.Message{said}, read(`{"notes":"Agent: I will book it for John Doe.\nFront desk: John Doe checked in"}`)...), false},
+		{"given by a tool before the agent posted a copy of its line", append(append([]llm.Message{}, read(`{"note":"Guest John Doe is in room 5"}`)...), llm.Message{Role: llm.Assistant, ToolCalls: []llm.ToolCall{{ID: "s2", Name: "send_message", Arguments: `{"text":"Guest John Doe"}`}}}), false},
 		{"given by a tool before the agent said it", append([]llm.Message{given, said}, read(`{"notes":"Agent: I will book it for John Doe."}`)...), false},
 	} {
 		_, refused := placeholderName(c.history, llm.ToolCall{Name: "book_room", Arguments: `{"name":"John Doe"}`})
