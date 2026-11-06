@@ -215,7 +215,8 @@ type Notice struct {
 const whatsappWindow = 24 * time.Hour
 
 // ErrUnreachable is a notice the channel would refuse its user now: they never wrote on it, opted
-// out or are outside its window, or the agent has no line there. Any other error is the router's own.
+// out or are outside its window, or the agent has no line there. dlc.ErrUnpaid is the organization
+// that may not pay for the text. Any other error is the router's own.
 var ErrUnreachable = errors.New("channels: the user cannot be reached on this channel")
 
 // Notify sends text and files to one end user on a channel they already talk to the

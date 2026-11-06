@@ -17,8 +17,10 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/node"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/policy"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/scheduling"
@@ -336,6 +338,19 @@ func deliveryReason(err error) string {
 	return scheduling.ReasonOf(err)
 }
 
+// unpaid is a text the organization may not pay for (dlc.ErrUnpaid) as its run records it: under
+// the refusal's own code (deliveryReason), and final. A suspension, spent credit or a spent limit
+// lasts until somebody pays or the limit resets, so the run's retries, minutes apart
+// (scheduling.DeliveryRetries), would only be refused again. A refusal because the money could
+// not be checked (policy.Transient) passes again on its own, and is tried again. Any other error
+// is returned as it is.
+func unpaid(err error) error {
+	if !errors.Is(err, dlc.ErrUnpaid) {
+		return err
+	}
+	return &scheduling.Failure{Reason: deliveryReason(err), Final: !policy.Transient(err), Err: err}
+}
+
 // undelivered is a failed attempt recorded under reason.
 func undelivered(reason string, err error) error {
 	return &scheduling.Failure{Reason: reason, Err: err}
@@ -374,14 +389,14 @@ func (s *Server) deliverOn(ctx context.Context, delivery scheduledDelivery, foun
 			if errors.Is(err, channels.ErrUnreachable) {
 				return "", "", undelivered(scheduling.ReasonUnreachable, err)
 			}
-			return "", "", err
+			return "", "", unpaid(err)
 		}
 		text, files, err := s.captureReply(ctx, found, delivery)
 		if err != nil {
 			return "", "", err
 		}
 		if err := s.notifyText(ctx, delivery, channel, text, files); err != nil {
-			return "", "", err
+			return "", "", unpaid(err)
 		}
 		return channel, found.ID(), nil
 	case store.ScheduledTaskDeliveredPhone:
