@@ -401,7 +401,8 @@ func (s *PhoneSuite) TestAVendorWithoutItsCredentialsSaysWhichAreMissing() {
 	_, err := registry.Open("twilio")
 
 	s.ErrorContains(err, "TWILIO_AUTH_TOKEN")
-	s.ErrorIs(err, ErrInvalid, "another vendor can be named instead")
+	s.ErrorIs(err, ErrNotConfigured, "the deployment lacks the vendor's settings")
+	s.NotErrorIs(err, ErrInvalid)
 }
 
 func (s *PhoneSuite) TestOnlyVendorsThatCanActuallyBeUsedAreAvailable() {
@@ -553,7 +554,8 @@ func (s *PhoneSuite) TestSearchingWithNoUsableVendorSaysSoRatherThanAnsweringEmp
 	_, err = service.SearchAll(s.ctx, Search{Country: "US"})
 
 	s.ErrorContains(err, "no vendor has the credentials")
-	s.ErrorIs(err, ErrInvalid)
+	s.ErrorIs(err, ErrNotConfigured)
+	s.NotErrorIs(err, ErrInvalid)
 }
 
 // serviceWith returns a service whose registry resolves each stub under its own vendor name.
