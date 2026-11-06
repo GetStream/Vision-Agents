@@ -70,10 +70,11 @@ final the model ended is put to the conversation at once, with no settle gap, no
 an overlap and no retry. [8, C5, C7]
 
 What the loop can't know: the model's words and rulings are all it has. A stop ruled on
-misheard words ("let's stop" for "don't stop") is a stop. A stop ruled at a pause, on words
-the caller has finished ("has just said"), means `respond`: the model's options there have no
-stop that leaves nothing to answer, so a "stop" short enough to end at a pause before the
-first check over the agent (under 350 ms voiced) is answered.
+misheard words ("let's stop" for "don't stop") is a stop. A stop first ruled at a pause, on
+words the caller has finished ("has just said"), means `respond`: the model's options there
+have no stop that leaves nothing to answer, so such a stop is answered. That is a "stop"
+short enough to end at a pause before the first check over the agent (under 350 ms voiced),
+or one whose first words that check rightly let pass ("okay, stop").
 
 ## Configure
 

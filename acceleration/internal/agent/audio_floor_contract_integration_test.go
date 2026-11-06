@@ -30,7 +30,7 @@ func TestAudioFloorContract(t *testing.T) {
 	h := newFloorHarness(t, url)
 	h.warm(t)
 	k := &contract{floorHarness: h, clips: map[string][]int16{}}
-	for _, name := range []string{"mmhmm", "hmhm", "okay", "right", "yeah", "laugh", "stoponly", "wait", "holdon", "andlisbon",
+	for _, name := range []string{"mmhmm", "hmhm", "okay", "right", "yeah", "laugh", "stoponly", "wait", "holdon", "okaystop", "andlisbon",
 		"stopporto", "weatherporto", "dontstop", "memberid", "andporto", "noporto"} {
 		k.clips[name] = fixture(t, name)
 	}
@@ -43,7 +43,9 @@ func TestAudioFloorContract(t *testing.T) {
 	t.Run("C1 the room in another language at -30 dBFS is ignored", func(t *testing.T) {
 		k.ignored(t, "", nil, bedAt(h.portuguese, -30), 0)
 	})
-	for _, name := range []string{"stoponly", "wait", "holdon"} {
+	// "Okay, stop." is the line of a live call, where "okay" was ruled a backchannel while
+	// the caller talked on, and the stop was ruled at the pause.
+	for _, name := range []string{"stoponly", "wait", "holdon", "okaystop"} {
 		t.Run("C2 "+name+" stops the agent, which stays quiet", func(t *testing.T) { k.stopsAndQuiet(t, name) })
 	}
 	t.Run("C3 and in Lisbon over a forecast is answered", func(t *testing.T) { k.stopsAndAnswered(t, "andlisbon", "lisbon", false) })
