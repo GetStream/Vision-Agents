@@ -499,13 +499,24 @@ func (s *FlowSuite) TestADecisionThatFailedMidStreamIsLoggedWithItsProviderAndMo
 	s.requireLoggedFailure(errModelDown.Error())
 }
 
+func (s *FlowSuite) TestADecisionAnotherProviderFailedMidStreamIsLoggedWithThatProviderAndModel() {
+	s.model.failing, s.model.writtenBy = true, [2]string{"another-provider", "another-model"}
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "candidate-1", Participant: "Alex", Text: "go on"}))
+
+	s.requireLoggedFailureBy("another-provider", "another-model", errModelDown.Error())
+}
+
 // requireLoggedFailure waits for the controller's one failure line and checks it names the
 // provider and model the session routes to, so a search for either finds it.
 func (s *FlowSuite) requireLoggedFailure(said string) {
+	s.requireLoggedFailureBy("stub", "stub-model", said)
+}
+
+func (s *FlowSuite) requireLoggedFailureBy(provider, model, said string) {
 	s.Require().Eventually(func() bool { return len(s.logs.records("flow controller failed")) == 1 }, settleFor,
 		5*time.Millisecond, "the failure was never logged")
 	failure := s.logs.records("flow controller failed")[0]
-	s.Equal("stub", failure["provider"])
-	s.Equal("stub-model", failure["model"])
+	s.Equal(provider, failure["provider"])
+	s.Equal(model, failure["model"])
 	s.Contains(failure["error"], said)
 }
