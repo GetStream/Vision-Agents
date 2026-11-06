@@ -1,0 +1,617 @@
+//go:build e2e
+
+// Package agentscorego's end-to-end suite drives a running acceleration router through the
+// SDK, rather than through a stand-in for one.
+//
+// It is behind a tag because it needs a router, which needs credentials and a database. Point
+// it at one and run it:
+//
+//	STREAM_ACCELERATION_URL=http://localhost:8099 \
+//	STREAM_ACCELERATION_CUSTOMER_ID=e2e \
+//	go test -tags e2e -v ./...
+//
+// Anything the deployment cannot do is skipped rather than failed: a router with no
+// knowledge provider is a valid router, and so is one with no telephony. A release check
+// sets E2E_REQUIRED=1, which fails every one of those skips instead, so a run that proved
+// nothing cannot pass:
+//
+//	E2E_REQUIRED=1 go test -tags e2e -count=1 -v -run "$SMOKE" .
+//
+// where the release smoke set is
+//
+//	SMOKE='TestTheRouterIsReachable|TestAConversationInWriting|TestAFunctionRegisteredHere|TestASessionIsRecorded|TestSyncStores|TestTheUsageCallbackSeesEveryResponse'
+//
+// The models are real, so a run costs money. The configs, skills and knowledge a test
+// stores are deleted when it ends.
+package agentscorego
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"os"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/sdks/go/acceleration"
+	"github.com/GetStream/Vision-Agents/sdks/go/agents"
+	"github.com/GetStream/Vision-Agents/sdks/go/client"
+	"github.com/GetStream/Vision-Agents/sdks/go/stream"
+)
+
+// requiredEnv names the variable that turns every skip into a failure.
+const requiredEnv = "E2E_REQUIRED"
+
+// skip skips the test for the reason given, or fails it when the run is a required one.
+func skip(t *testing.T, format string, args ...any) {
+	t.Helper()
+	reason := fmt.Sprintf(format, args...)
+	if os.Getenv(requiredEnv) == "1" {
+		t.Fatalf("%s=1, and this would have been skipped: %s", requiredEnv, reason)
+	}
+	t.Skip(reason)
+}
+
+// router is where the acceleration backend under test is, or the suite skips.
+func router(t *testing.T) stream.Backend {
+	t.Helper()
+	if os.Getenv(stream.URLEnv) == "" {
+		skip(t, "%s is not set, so there is no router to test against", stream.URLEnv)
+	}
+
+	backend, err := stream.Backend{}.Resolve()
+	if err != nil {
+		skip(t, "the backend does not resolve: %v", err)
+	}
+	return backend
+}
+
+// cannotSearch reports whether err is the router saying it has no search to offer, rather
+// than any other failure of a search.
+func cannotSearch(err error) bool {
+	var refused *stream.RouterError
+	return errors.As(err, &refused) && (refused.Code == "not_configured" || refused.Code == "modality_not_routed")
+}
+
+// forget deletes the agent configs and skills a test stored, by name, and the knowledge
+// namespaces it filled, once the test is over. What is not there is not an error.
+func forget(t *testing.T, backend stream.Backend, configs, skills, namespaces []string) {
+	t.Helper()
+	t.Cleanup(func() {
+		ctx := context.WithoutCancel(t.Context())
+		api, err := backend.Client()
+		if err != nil {
+			t.Logf("could not clean up: %v", err)
+			return
+		}
+		for _, name := range configs {
+			listed, err := api.ListAgentConfigsWithResponse(ctx, &acceleration.ListAgentConfigsParams{Name: &name})
+			if err != nil || listed.JSON200 == nil {
+				t.Logf("could not find the config %s to delete: %v", name, err)
+				continue
+			}
+			for _, config := range *listed.JSON200 {
+				if config.Name == name {
+					if _, err := api.DeleteAgentConfigWithResponse(ctx, config.Id); err != nil {
+						t.Logf("could not delete the config %s: %v", name, err)
+					}
+				}
+			}
+		}
+		if len(skills) > 0 {
+			listed, err := api.ListSkillsWithResponse(ctx, nil)
+			if err != nil || listed.JSON200 == nil {
+				t.Logf("could not list the skills to delete: %v", err)
+			} else {
+				for _, stored := range *listed.JSON200 {
+					for _, name := range skills {
+						if stored.Name == name {
+							if _, err := api.DeleteSkillWithResponse(ctx, stored.Id); err != nil {
+								t.Logf("could not delete the skill %s: %v", name, err)
+							}
+						}
+					}
+				}
+			}
+		}
+		for _, namespace := range namespaces {
+			if _, err := api.DeleteKnowledgeWithResponse(ctx, &acceleration.DeleteKnowledgeParams{Namespace: namespace}); err != nil {
+				t.Logf("could not delete the knowledge %s: %v", namespace, err)
+			}
+		}
+	})
+}
+
+// chatting builds an agent that holds its conversation in writing, which needs no Stream
+// credentials and no call.
+func chatting(t *testing.T, options agents.Options) *agents.Agent {
+	t.Helper()
+
+	if options.LLM == nil {
+		options.LLM = stream.Accelerated(stream.Config{Backend: router(t)})
+	}
+	if options.Name == "" {
+		options.Name = "e2e-jean"
+	}
+
+	agent, err := agents.New(options)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return agent
+}
+
+// waitFor reads the session until one of the kinds arrives, or the test runs out of patience.
+func waitFor(t *testing.T, session *agents.Session, kinds ...string) stream.Event {
+	t.Helper()
+
+	wanted := map[string]bool{}
+	for _, kind := range kinds {
+		wanted[kind] = true
+	}
+
+	deadline := time.After(90 * time.Second)
+	for {
+		select {
+		case event, open := <-session.Events():
+			if !open {
+				t.Fatalf("the conversation ended before any of %v", kinds)
+			}
+			t.Logf("event %s %s", event.Kind, event.Text)
+			if event.Kind == "error" && !wanted["error"] {
+				t.Fatalf("the backend reported: %s", event.Error)
+			}
+			if wanted[event.Kind] {
+				return event
+			}
+		case <-deadline:
+			t.Fatalf("none of %v arrived", kinds)
+		}
+	}
+}
+
+func TestTheRouterIsReachableAndSaysWhatItCanDo(t *testing.T) {
+	backend := router(t)
+
+	client, err := backend.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	health, err := client.GetHealthWithResponse(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if health.JSON200 == nil {
+		t.Fatalf("the router answered %s: %s", health.Status(), health.Body)
+	}
+	t.Logf("the router reports %v", health.JSON200.Dependencies)
+}
+
+// A backend's client hears what every answer cost through WithUsage, its routed calls included
+// when they go through the client's backend. A router that bills nobody says no balance.
+func TestTheUsageCallbackSeesEveryResponse(t *testing.T) {
+	var mu sync.Mutex
+	var seen []client.Usage
+	api, err := client.New(router(t), client.WithUsage(func(usage client.Usage) {
+		mu.Lock()
+		defer mu.Unlock()
+		seen = append(seen, usage)
+	}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !api.ServerSide() {
+		skip(t, "only a backend is told what its requests cost")
+	}
+
+	answer, err := stream.Router{Backend: api.Backend()}.Search(t.Context(), "What is the capital of France?", nil)
+	if cannotSearch(err) {
+		skip(t, "this router does not search: %v", err)
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Logf("searched with %s/%s", answer.Provider, answer.Model)
+
+	mu.Lock()
+	defer mu.Unlock()
+	if len(seen) != 1 {
+		t.Fatalf("one answer, one call: %+v", seen)
+	}
+	if seen[0].Operation != "POST /v1/search" {
+		t.Errorf("the operation is the request it answered: %q", seen[0].Operation)
+	}
+	if seen[0].CostMicros < 0 {
+		t.Errorf("a cost is never negative: %d", seen[0].CostMicros)
+	}
+	t.Logf("the search cost %d micros, estimated %v; balance %v %q", seen[0].CostMicros, seen[0].Estimated,
+		seen[0].BalanceMicros, seen[0].BalanceWarning)
+}
+
+// With a router that bills, every answer carries the balance, and the warning fires once for
+// the state it is in rather than once an answer.
+func TestTheBalanceWarningFiresOncePerCrossing(t *testing.T) {
+	var mu sync.Mutex
+	var warned []client.BalanceWarning
+	var balances int
+	api, err := client.New(router(t),
+		client.WithUsage(func(usage client.Usage) {
+			mu.Lock()
+			defer mu.Unlock()
+			if usage.BalanceMicros != nil {
+				balances++
+			}
+		}),
+		client.WithBalanceWarning(func(warning client.BalanceWarning) {
+			mu.Lock()
+			defer mu.Unlock()
+			warned = append(warned, warning)
+		}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	searching := stream.Router{Backend: api.Backend()}
+	for range 3 {
+		_, err := searching.Search(t.Context(), "What is the capital of France?", nil)
+		if cannotSearch(err) {
+			skip(t, "this router does not search: %v", err)
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	mu.Lock()
+	defer mu.Unlock()
+	if balances == 0 {
+		skip(t, "this router bills nobody, so no answer says a balance")
+	}
+	if len(warned) > 1 {
+		t.Fatalf("three answers in one state warn once at most: %+v", warned)
+	}
+}
+
+func TestAConversationInWritingIsAnsweredByAModel(t *testing.T) {
+	agent := chatting(t, agents.Options{
+		Instructions: "You are Jean. Answer in one short sentence.",
+	})
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if _, err := session.Responses.Create(t.Context(), "What is the capital of France?"); err != nil {
+		t.Fatal(err)
+	}
+
+	answered := waitFor(t, session, "responded")
+	if answered.Text == "" {
+		t.Fatal("the model answered with nothing")
+	}
+	if !strings.Contains(strings.ToLower(answered.Text), "paris") {
+		t.Errorf("the model said %q, which does not answer the question", answered.Text)
+	}
+}
+
+func TestAFunctionRegisteredHereIsRunHereWhenTheModelAsksForIt(t *testing.T) {
+	// Pinned to Gemini because it signs the calls it asks for and refuses to answer a
+	// result handed back unsigned, which is the whole round-trip this exercises.
+	llm := stream.Accelerated(stream.Config{
+		Backend: router(t),
+		LLM:     "gemini/gemini-3.8-flash",
+	})
+
+	agent := chatting(t, agents.Options{
+		LLM:          llm,
+		Instructions: "You are Jean. Use your tools to answer, and keep replies to one sentence.",
+	})
+	asked := make(chan string, 4)
+	if err := agent.Tools().Add(getWeather{asked: asked}); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if _, err := session.Responses.Create(t.Context(), "What is the weather in Boulder, CO right now?"); err != nil {
+		t.Fatal(err)
+	}
+
+	waitFor(t, session, "tool_ran")
+
+	select {
+	case location := <-asked:
+		t.Logf("the model asked about %q", location)
+		if !strings.Contains(strings.ToLower(location), "boulder") {
+			t.Errorf("the model filled in %q", location)
+		}
+	default:
+		t.Fatal("the function was never run")
+	}
+
+	// What the tool found is said without being asked again. Somebody who asks a
+	// question and gets silence until they prompt a second time has not been answered.
+	answered := waitFor(t, session, "responded")
+	if !strings.Contains(strings.ToLower(answered.Text), "rain") &&
+		!strings.Contains(answered.Text, "20") {
+		t.Errorf("the answer %q does not use what the function returned", answered.Text)
+	}
+}
+
+// getWeather reports the weather it was asked about and says where it was asked.
+type getWeather struct {
+	Location string `json:"location" schema:"the city and state, e.g. Boulder, CO"`
+	asked    chan<- string
+}
+
+func (getWeather) Name() string { return "get_weather" }
+func (getWeather) Description() string {
+	return "Get the current weather for a location. Always use this rather than guessing."
+}
+func (w getWeather) Run(context.Context) (any, error) {
+	w.asked <- w.Location
+	return "It is 20 degrees and raining sideways in " + w.Location + ".", nil
+}
+
+func TestSayingSomethingSkipsTheModelEntirely(t *testing.T) {
+	agent := chatting(t, agents.Options{Instructions: "You are Jean."})
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if err := session.Say("We close in five minutes.", false); err != nil {
+		t.Fatal(err)
+	}
+
+	said := waitFor(t, session, "responded", "spoke")
+	if !strings.Contains(said.Text, "five minutes") {
+		t.Errorf("what went out was %q", said.Text)
+	}
+}
+
+func TestAHardQuestionIsHandedToTheThinkingModel(t *testing.T) {
+	// The fast model is picked for how quickly it talks, not for how well it reasons, so
+	// what makes the pairing worth having is that it knows to hand the hard ones over.
+	// Both models are named rather than left to a capability shortcut, because what is
+	// under test is the pairing itself: a fast model that knows to hand work over, and a
+	// slow one behind it.
+	// The subagent is part of the stored config, so the session runs under the config Sync
+	// wrote.
+	agent := chatting(t, agents.Options{
+		Name:         "e2e-delegating",
+		Instructions: "You are Jean. Be brief.",
+		LLM: stream.Accelerated(stream.Config{
+			Backend: router(t),
+			Agent:   "e2e-delegating",
+			LLM:     "gemini/gemini-3.8-flash",
+		}),
+		Harness: &agents.Harness{
+			Subagents: map[string]string{"default": "openai/gpt-5.6-sol"},
+		},
+	})
+	forget(t, router(t), []string{"e2e-delegating"}, nil, nil)
+	if _, err := agent.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if _, err := session.Responses.Create(
+		t.Context(),
+		"A train leaves at 14:05 and takes 3 hours 50 minutes, "+
+			"but loses 25 minutes at a signal. What time does it arrive? Work it out carefully.",
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	delegated := waitFor(t, session, "delegated")
+	if delegated.Frame["skill"] == "" || delegated.Frame["prompt"] == "" {
+		t.Errorf("the handover named no skill or carried no question: %v", delegated.Frame)
+	}
+
+	// The answer is what the caller is waiting through the small talk for, and a task that
+	// is started and never settles is the same as one never started.
+	// 14:05 plus 3h50m is 17:55, and the signal makes it 18:20.
+	settled := waitFor(t, session, "task_settled")
+	if !strings.Contains(settled.Text, "18:20") && !strings.Contains(settled.Text, "6:20") {
+		t.Errorf("the thinking model made it %q, and the train arrives at 18:20", settled.Text)
+	}
+}
+
+func TestASessionIsRecordedAndCanBeReadBack(t *testing.T) {
+	backend := router(t)
+	agent := chatting(t, agents.Options{Instructions: "You are Jean. Be brief."})
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	client, err := backend.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed, err := client.QuerySessionsWithResponse(t.Context(), acceleration.SessionQuery{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if listed.JSON200 == nil {
+		t.Fatalf("the router answered %s: %s", listed.Status(), listed.Body)
+	}
+
+	for _, running := range listed.JSON200.Items {
+		if running.Id == session.ID() {
+			return
+		}
+	}
+	t.Errorf("%s is not among the sessions the router is holding", session.ID())
+}
+
+func TestSyncStoresTheAgentAndEditsItTheSecondTime(t *testing.T) {
+	agent := chatting(t, agents.Options{
+		Name:         "e2e-sync",
+		Instructions: "You are Jean, the first time.",
+		Harness: &agents.Harness{
+			Skills: []agents.Skill{{
+				Name:         "e2e-think",
+				Description:  "Work something out before answering",
+				Instructions: "Take your time and reason it through.",
+				Deadline:     30 * time.Second,
+			}},
+		},
+	})
+	forget(t, router(t), []string{"e2e-sync"}, []string{"e2e-think"}, nil)
+
+	stored, err := agent.Sync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if stored.Name != "e2e-sync" {
+		t.Fatalf("the config was stored as %+v", stored)
+	}
+	if stored.Skills == nil || (*stored.Skills)[0] != "e2e-think" {
+		t.Errorf("the config does not name the skill: %+v", stored.Skills)
+	}
+
+	again, err := agent.Sync(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if again.Id != stored.Id {
+		t.Errorf("syncing twice stored a second config: %s then %s", stored.Id, again.Id)
+	}
+	if !again.UpdatedAt.After(stored.CreatedAt) && again.UpdatedAt != stored.UpdatedAt {
+		t.Logf("stored at %s, updated at %s", stored.CreatedAt, again.UpdatedAt)
+	}
+}
+
+func TestAStoredConfigIsWhatASessionStartsFrom(t *testing.T) {
+	backend := router(t)
+
+	configured := chatting(t, agents.Options{
+		Name:         "e2e-config",
+		Instructions: "You are Bernard. Whatever you are asked, reply with exactly: BERNARD HERE.",
+	})
+	forget(t, backend, []string{"e2e-config"}, nil, nil)
+	if _, err := configured.Sync(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+
+	// A second agent that is told nothing but the config's name, so what it answers as can
+	// only have come from what was stored.
+	byName := stream.Accelerated(stream.Config{Agent: "e2e-config", Backend: backend})
+	agent, err := agents.New(agents.Options{Name: "e2e-config-user", LLM: byName})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := agent.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if _, err := session.Responses.Create(t.Context(), "Hello, who is this?"); err != nil {
+		t.Fatal(err)
+	}
+
+	answered := waitFor(t, session, "responded")
+	if !strings.Contains(strings.ToUpper(answered.Text), "BERNARD") {
+		t.Errorf("the session answered %q, so it did not start from the stored config", answered.Text)
+	}
+}
+
+func TestADirectoryIsPushedAndLookedUpAgain(t *testing.T) {
+	backend := router(t)
+
+	root := t.TempDir() + "/e2e-knowledge"
+	writeFile(t, root+"/agent.yaml", "name: e2e-knowledge\n")
+	writeFile(t, root+"/instructions.md",
+		"You are Jean. Look things up rather than guessing, and answer in one sentence.")
+	writeFile(t, root+"/knowledge/refunds.md",
+		"# Refunds\n\nAcme refunds any order within 47 days of delivery. "+
+			"The window is 47 days, not 30, because Acme's founder was superstitious.\n")
+
+	agent, err := agents.New(agents.Options{
+		Dir: root,
+		LLM: stream.Accelerated(stream.Config{Backend: backend}),
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	forget(t, backend, []string{"e2e-knowledge"}, nil, []string{"e2e-knowledge"})
+
+	stored, err := agent.Sync(t.Context())
+	if err != nil {
+		if strings.Contains(err.Error(), "no provider configured") {
+			skip(t, "this deployment has no knowledge provider, so there is nothing to fill")
+		}
+		t.Fatal(err)
+	}
+	if stored.KnowledgeNamespace == nil || *stored.KnowledgeNamespace != "e2e-knowledge" {
+		t.Fatalf("the config does not point at the knowledge: %+v", stored)
+	}
+	t.Logf("filled %s and stored config %s", *stored.KnowledgeNamespace, stored.Id)
+
+	// A session started from that config can look the document up, which is the only way
+	// it could know a window nothing in its instructions mentions.
+	reader := stream.Accelerated(stream.Config{Agent: "e2e-knowledge", Backend: backend})
+	asking, err := agents.New(agents.Options{Name: "e2e-knowledge-reader", LLM: reader})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	session, err := asking.Chat(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer session.Close(context.WithoutCancel(t.Context()))
+
+	if _, err := session.Responses.Create(t.Context(), "How many days do I have to ask Acme for a refund?"); err != nil {
+		t.Fatal(err)
+	}
+
+	// The lookup is a tool like any other, so the turn that reaches for it says nothing and
+	// the answer comes on the next one.
+	waitFor(t, session, "looked_up")
+	if _, err := session.Responses.Create(t.Context(), "So how many days is it?"); err != nil {
+		t.Fatal(err)
+	}
+
+	answered := waitFor(t, session, "responded")
+	if !strings.Contains(answered.Text, "47") {
+		t.Errorf("the agent said %q, so it did not read what was written down", answered.Text)
+	}
+}
+
+func writeFile(t *testing.T, path, content string) {
+	t.Helper()
+	if err := os.MkdirAll(dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func dir(path string) string {
+	if index := strings.LastIndex(path, "/"); index > 0 {
+		return path[:index]
+	}
+	return "."
+}

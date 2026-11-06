@@ -1,0 +1,967 @@
+package agents
+
+import (
+	"os"
+	"path/filepath"
+	"reflect"
+	"strings"
+	"testing"
+	"time"
+)
+
+// write puts a file in a directory under the test's own temporary one.
+func write(t *testing.T, root, name, content string) {
+	t.Helper()
+	path := filepath.Join(root, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestADirectoryIsReadAsInstructionsSkillsAndKnowledge(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", `---
+description: Work something out before answering
+deadline: 30s
+---
+Take your time and reason it through.
+`)
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if folder.Name != "jean" {
+		t.Errorf("the agent is called %q", folder.Name)
+	}
+	if folder.Instructions != "You are Jean." {
+		t.Errorf("the instructions are %q", folder.Instructions)
+	}
+
+	if len(folder.Skills) != 1 {
+		t.Fatalf("read %d skills", len(folder.Skills))
+	}
+	skill := folder.Skills[0]
+	if skill.Name != "think" || skill.Description != "Work something out before answering" {
+		t.Errorf("the skill is %+v", skill)
+	}
+	if skill.Deadline != 30*time.Second {
+		t.Errorf("the deadline is %s", skill.Deadline)
+	}
+	if skill.Instructions != "Take your time and reason it through." {
+		t.Errorf("the subagent is told %q", skill.Instructions)
+	}
+
+	if len(folder.Knowledge) != 1 || folder.Knowledge[0].Source != "pricing.md" {
+		t.Errorf("the knowledge is %+v", folder.Knowledge)
+	}
+	if folder.KnowledgeNamespace() != "jean" {
+		t.Errorf("the namespace is %q, want the agent's own name", folder.KnowledgeNamespace())
+	}
+}
+
+func TestADirectoryWithOnlyInstructionsIsAnAgent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "quiet")
+	write(t, root, "agent.yaml", "")
+	write(t, root, "instructions.md", "Say little.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folder.Skills) != 0 || len(folder.Knowledge) != 0 {
+		t.Errorf("an agent with nothing else read %+v", folder)
+	}
+	if folder.KnowledgeNamespace() != "" {
+		t.Error("an agent with nothing written down has nothing to look up in")
+	}
+}
+
+func TestNestedKnowledgeKeepsThePathItWasFoundAt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "knowledge/reference/api.md", "# API\n\nthe endpoints\n")
+	write(t, root, "knowledge/logo.png", "not a document")
+	write(t, root, "knowledge/empty.md", "   \n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(folder.Knowledge) != 1 {
+		t.Fatalf("read %+v", folder.Knowledge)
+	}
+	if folder.Knowledge[0].Source != "reference/api.md" {
+		t.Errorf("the source is %q", folder.Knowledge[0].Source)
+	}
+}
+
+func TestDeclaredPagesAreReadWithoutBeingIngested(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
+	write(t, root, "knowledge/urls.yaml", `- https://example.com/pricing
+- url: https://example.com/plans
+  title: Plans
+  description: What each plan includes.
+  refresh_hours: 24
+`)
+	// Only the one at the root is the declaration.
+	write(t, root, "knowledge/reference/urls.yaml", "the urls we used to have\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if len(folder.Knowledge) != 2 {
+		t.Fatalf("ingesting %+v", folder.Knowledge)
+	}
+	if folder.Knowledge[0].Source != "pricing.md" || folder.Knowledge[1].Source != "reference/urls.yaml" {
+		t.Errorf("the declaration is being looked things up in: %+v", folder.Knowledge)
+	}
+
+	if len(folder.KnowledgeURLs) != 2 {
+		t.Fatalf("read %+v", folder.KnowledgeURLs)
+	}
+	bare, described := folder.KnowledgeURLs[0], folder.KnowledgeURLs[1]
+	if bare.URL != "https://example.com/pricing" || bare.Title != "" || bare.Description != "" {
+		t.Errorf("a url on its own read as %+v", bare)
+	}
+	if described.URL != "https://example.com/plans" || described.Title != "Plans" ||
+		described.Description != "What each plan includes." || described.RefreshHours != 24 {
+		t.Errorf("a described page read as %+v", described)
+	}
+	if bare.RefreshHours != 0 {
+		t.Errorf("a url on its own is read again every %d hours, rather than only when asked", bare.RefreshHours)
+	}
+}
+
+func TestADirectoryWithOnlyPagesHasSomewhereToLookThingsUpIn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "knowledge/urls.yaml", "- https://example.com/pricing\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folder.Knowledge) != 0 {
+		t.Errorf("ingesting %+v", folder.Knowledge)
+	}
+	if folder.KnowledgeNamespace() != "jean" {
+		t.Errorf("the namespace is %q, so the pages would be written where nothing reads them",
+			folder.KnowledgeNamespace())
+	}
+}
+
+func TestAPageThatCannotBeFetchedOrDescribedIsRefused(t *testing.T) {
+	for _, declaration := range []string{
+		"- example.com/pricing\n",
+		"- url: https://example.com/plans\n  heading: Plans\n",
+		"- [https://example.com/plans]\n",
+		"- url: https://example.com/plans\n  refresh_hours: 0\n",
+		"- url: https://example.com/plans\n  refresh_hours: daily\n",
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", "name: jean\n")
+		write(t, root, "knowledge/urls.yaml", declaration)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("accepted %q", declaration)
+		}
+	}
+}
+
+// TestAPageErrorNamesItsLineInTheFile: the line is counted from the top of urls.yaml.
+func TestAPageErrorNamesItsLineInTheFile(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"a key nobody knows", "- https://example.com/a\n- url: https://example.com/plans\n  heading: Plans\n", `line 3: "heading"`},
+		{"a key nobody knows after a comment", "# pages\n\n- url: https://example.com/plans\n  # why\n  heading: Plans\n", `line 5: "heading"`},
+		{"a key nobody knows, flow style", "- https://example.com/a\n- {url: https://example.com/plans, heading: Plans}\n", `line 2: "heading"`},
+		{"a key nobody knows, the value on its own line", "- url: https://example.com/plans\n  heading:\n\n    Plans\n", `line 2: "heading"`},
+		{"refresh_hours below 1", "- https://example.com/a\n- url: https://example.com/plans\n  refresh_hours: 0\n", "line 3: refresh_hours is how many hours"},
+		{"refresh_hours below 1, the value on its own line", "- url: https://example.com/plans\n  refresh_hours:\n\n    -2\n", "line 4: refresh_hours is how many hours"},
+		{"a page that is a list", "- https://example.com/a\n\n- [https://example.com/plans]\n", "line 3: a page is a url"},
+		{"a url without a scheme", "- https://example.com/a\n\n- example.com/pricing\n", `line 3: "example.com/pricing" is not an http or https url`},
+		{"a url without a scheme after a null page", "- ~\n- example.com/pricing\n", `line 2: "example.com/pricing" is not an http or https url`},
+		{"an ftp url below the title", "- https://example.com/a\n- title: Plans\n\n  url: ftp://example.com/plans\n", `line 4: "ftp://example.com/plans" is not an http or https url`},
+		{"an ftp url, flow style", "- https://example.com/a\n- {title: Plans,\n   url: ftp://example.com/plans}\n", `line 3: "ftp://example.com/plans" is not an http or https url`},
+		{"a page without a url", "- https://example.com/a\n\n- title: Plans\n  description: What each plan includes.\n", `line 3: "" is not an http or https url`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "jean")
+			write(t, root, "agent.yaml", "name: jean\n")
+			write(t, root, "knowledge/urls.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "urls.yaml") {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+func TestASkillWithoutADescriptionIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/think.md", "Just a body, with nothing saying when to use it.\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("the fast model would have nothing to choose by")
+	}
+}
+
+func TestASkillCanBeNamedSomethingOtherThanItsFile(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/01-think.md", `---
+name: think
+description: Work something out
+---
+Reason it through.
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Skills[0].Name != "think" {
+		t.Errorf("the skill is called %q", folder.Skills[0].Name)
+	}
+}
+
+func TestADirectoryFillsInWhatTheCodeLeftEmpty(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blank := Options{}
+	folder.fill(&blank)
+	if blank.Name != "jean" || blank.Instructions != "You are Jean." {
+		t.Errorf("the directory filled in %+v", blank)
+	}
+
+	written := Options{Name: "other", Instructions: "You are somebody else."}
+	folder.fill(&written)
+	if written.Name != "other" || written.Instructions != "You are somebody else." {
+		t.Errorf("the directory overrode what was written in code: %+v", written)
+	}
+}
+
+func TestADirectoryWithoutADeclarationIsNotAnAgent(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "instructions.md", "You are Jean.\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("instructions alone made a directory an agent")
+	}
+}
+
+func TestTheDeclarationSaysWhatTheAgentIsCalledAndRunsOn(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", `name: receptionist
+llm: openai/gpt-5.6
+sts: ""
+keyterms: [Vision Agents]
+greeting:
+  text: Hello.
+  mode: variation
+video:
+  source: camera
+dispatch:
+  incoming_call: enabled
+  text: enabled
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Name != "receptionist" {
+		t.Errorf("the agent is called %q", folder.Name)
+	}
+	settings := folder.Settings
+	if settings.LLM != "openai/gpt-5.6" || settings.Keyterms[0] != "Vision Agents" ||
+		settings.Greeting == nil || settings.Greeting.Text != "Hello." || settings.Greeting.Mode != "variation" {
+		t.Errorf("the declaration read as %+v", settings)
+	}
+	if settings.STS == nil || *settings.STS != "" {
+		t.Errorf("turning speech-to-speech off read as %v", settings.STS)
+	}
+	if settings.Video.Source != "camera" || settings.Video.MaxFrames != 1 {
+		t.Errorf("the video read as %+v", settings.Video)
+	}
+	if settings.Dispatch == nil || settings.Dispatch.IncomingCall != "enabled" || settings.Dispatch.Text != "enabled" {
+		t.Errorf("what is left to dispatch read as %+v", settings.Dispatch)
+	}
+}
+
+func TestPluginsAreRefusedWithAPointerToConnectors(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugins:\n  - sentry\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "agent.yaml: plugins is no longer read") ||
+		!strings.Contains(err.Error(), "name the provider under connectors") {
+		t.Fatalf("a folder naming plugins loaded: %v", err)
+	}
+}
+
+func TestPluginEventsAreRefusedWithAPointerToConnectors(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugin_events:\n  - plugin: sentry\n    event: issue.created\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "agent.yaml: plugin_events is no longer read") ||
+		!strings.Contains(err.Error(), "name the provider under connectors") {
+		t.Fatalf("a folder naming plugin events loaded: %v", err)
+	}
+}
+
+func TestMCPServersAreRefusedWithAPointerToACustomConnector(t *testing.T) {
+	for _, declared := range []string{
+		"mcp_servers:\n  - name: notes\n    url: https://notes.example/mcp\n",
+		"mcp_servers: [notes]\n",
+		"mcp_servers: notes\n",
+		"mcp_servers: {name: notes}\n",
+		"mcp_servers: {}\n",
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n"+declared)
+
+		_, err := Load(root)
+		want := "agents: " + filepath.Join(root, "agent.yaml") + ": mcp_servers is no longer read: " +
+			"a server named by URL is now a custom connector, so create one for its URL and name it under connectors"
+		if err == nil || err.Error() != want {
+			t.Errorf("%q: a folder naming MCP servers loaded: %v", declared, err)
+		}
+	}
+}
+
+func TestAPluginNamedOutsideAListIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "triage")
+	write(t, root, "agent.yaml", "name: triage\nplugins: sentry\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "plugins is no longer read") {
+		t.Fatalf("a folder naming a plugin loaded: %v", err)
+	}
+}
+
+func TestEmptyPluginKeysLoadAsTheyDidBefore(t *testing.T) {
+	for _, declared := range []string{
+		"plugins: []\nplugin_events: []\n",
+		"plugins:\nplugin_events:\n",
+		// Probed on 1af941985, while the SDK still read mcp_servers.
+		"mcp_servers: []\n",
+		"mcp_servers:\n",
+		"plugins: []\nplugin_events: []\nmcp_servers: []\n",
+	} {
+		root := filepath.Join(t.TempDir(), "concierge")
+		write(t, root, "agent.yaml", "name: concierge\n"+declared+"connectors:\n  - linear\n")
+
+		folder, err := Load(root)
+		if err != nil {
+			t.Fatalf("%q: %v", declared, err)
+		}
+		// Probed on 259da758b, while the SDK still read both keys.
+		if got := folder.Settings.Connectors; len(got) != 1 || got[0] != (ConnectorSettings{Name: "linear"}) {
+			t.Errorf("%q: the connectors read as %#v", declared, got)
+		}
+	}
+}
+
+func TestTheOldPluginKeysAreRefused(t *testing.T) {
+	for _, declared := range []string{
+		"agent_plugins: [sentry]\n",
+		"user_plugins: [linear]\n",
+		"plugin_options:\n  - plugin: linear\n    readonly: true\n",
+		"thinking_llm: openai/gpt-5.6-sol\n",
+		"progressive_tools: true\n",
+	} {
+		root := filepath.Join(t.TempDir(), "triage")
+		write(t, root, "agent.yaml", "name: triage\n"+declared)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("%q loaded", declared)
+		}
+	}
+}
+
+func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
+	for _, declaration := range []string{
+		"name: jean\nlmm: openai/gpt-5.6\n",
+		"video:\n  max_frames: 9\n",
+		"sandbox_options:\n  timeout: 2h\n",
+		"sandbox_options:\n  timeout: soon\n",
+		"sandbox_options:\n  memory: 4\n",
+		"keyterms: Vision Agents\n",
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", declaration)
+
+		if _, err := Load(root); err == nil {
+			t.Errorf("accepted %q", declaration)
+		}
+	}
+}
+
+func TestTheApplicationsOwnSectionIsLeftToIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\napp:\n  sandbox_profile: support\n  tool_timeout_ms: 195000\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Settings.App["sandbox_profile"] != "support" {
+		t.Errorf("the application's section read as %+v", folder.Settings.App)
+	}
+}
+
+func TestADirectoryHashesTheWayThePythonSDKHashesIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// What vision_agents.plugins.stream.folder.load(root).hash() gives for the same files.
+	if hash := folder.Hash(); hash != "02a7b2c8428f31e3a2b93ca2f5a6ec70" {
+		t.Errorf("the directory hashes to %s", hash)
+	}
+
+	write(t, root, "knowledge/urls.yaml", "- https://example.com/plans\n")
+	declared, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if declared.Hash() == folder.Hash() {
+		t.Error("declaring a page did not change the fingerprint")
+	}
+
+	write(t, root, "knowledge/urls.yaml", "- url: https://example.com/plans\n  refresh_hours: 24\n")
+	refreshed, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if refreshed.Hash() == declared.Hash() {
+		t.Error("reading a page on a schedule did not change the fingerprint, so it would never be synced")
+	}
+}
+
+func TestEachSimulationFileIsAListReadInFileOrder(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", `- name: change of order
+  scenario: Order a club, then swap it for a wrap.
+  assertion: The final order is one wrap.
+  variations: 3
+- name: off the menu
+  scenario: Ask for a milkshake.
+  assertion: The agent says there is no milkshake.
+  mode: audio
+`)
+	write(t, root, "simulations/allergies.yml", `- name: peanut allergy
+  scenario: Ask whether the wrap has nuts.
+  assertion: The agent does not guess.
+`)
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var names []string
+	for _, simulation := range folder.Simulations {
+		names = append(names, simulation.Name)
+	}
+	if strings.Join(names, ", ") != "peanut allergy, change of order, off the menu" {
+		t.Errorf("read %v", names)
+	}
+	if folder.Simulations[1].Variations != 3 || folder.Simulations[2].Mode != "audio" {
+		t.Errorf("the lunch simulations are %+v", folder.Simulations[1:])
+	}
+}
+
+func TestASimulationNameTwoFilesShareIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	simulation := "- name: change of order\n  scenario: Swap the club.\n  assertion: One wrap.\n"
+	write(t, root, "simulations/a.yaml", simulation)
+	write(t, root, "simulations/b.yaml", simulation)
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "also declared in a.yaml") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+// TestASimulationErrorNamesItsLineInTheFile: the line of the key at fault, or of the entry
+// when the key is missing, counted from the top of the simulation's file.
+func TestASimulationErrorNamesItsLineInTheFile(t *testing.T) {
+	valid := "- name: a\n  scenario: Order.\n  assertion: Ordered.\n"
+	cases := []struct{ name, yaml, want string }{
+		{"no name", valid + "\n- scenario: Order.\n  assertion: Ordered.\n", "line 5: a simulation needs a name"},
+		{"an empty name below the other keys", valid + "- scenario: Order.\n  assertion: Ordered.\n  name: \"\"\n", "line 6: a simulation needs a name"},
+		{"no name after a null entry", "- ~\n- scenario: Order.\n  assertion: Ordered.\n", "line 2: a simulation needs a name"},
+		{"no scenario", valid + "- name: b\n  assertion: Ordered.\n", `line 4: simulation "b" needs a scenario`},
+		{"an empty scenario below the other keys", valid + "- name: b\n  assertion: Ordered.\n\n  scenario: \"\"\n", `line 7: simulation "b" needs a scenario`},
+		{"no assertion", valid + "- name: b\n  scenario: Order.\n", `line 4: simulation "b" needs an assertion`},
+		{"an empty assertion below the other keys", valid + "- name: b\n  scenario: Order.\n  # why\n  assertion: \"\"\n", `line 7: simulation "b" needs an assertion`},
+		{"a mode nobody knows", valid + "- name: b\n  scenario: Order.\n  assertion: Ordered.\n  mode: video\n", `line 7: simulation "b" is text or audio, not "video"`},
+		{"a mode nobody knows, flow style", valid + "- {name: b, scenario: Order.,\n   assertion: Ordered., mode: video}\n", `line 5: simulation "b" is text or audio, not "video"`},
+		{"a name the file already has", valid + "- scenario: Order.\n  assertion: Ordered.\n  name: a\n", `line 6: simulation "a" is also declared in lunch.yaml`},
+		{"an alias of an entry the file already has", "- &order\n  name: a\n  scenario: Order.\n  assertion: Ordered.\n\n- *order\n", `line 6: simulation "a" is also declared in lunch.yaml`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "deli")
+			write(t, root, "agent.yaml", "name: deli\n")
+			write(t, root, "simulations/lunch.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "lunch.yaml") {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+// TestANullPageOrSimulationIsSkipped: a null entry is passed over, as before lines were named,
+// and a page is read whether it is http or https.
+func TestANullPageOrSimulationIsSkipped(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "knowledge/urls.yaml", "- ~\n- http://example.com/a\n- ~\n- https://example.com/b\n")
+	write(t, root, "simulations/lunch.yaml", "- ~\n- name: a\n  scenario: Order.\n  assertion: Ordered.\n- ~\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatalf("loading gave %v", err)
+	}
+	if len(folder.KnowledgeURLs) != 2 || folder.KnowledgeURLs[0].URL != "http://example.com/a" || folder.KnowledgeURLs[1].URL != "https://example.com/b" {
+		t.Errorf("the pages are %+v", folder.KnowledgeURLs)
+	}
+	if len(folder.Simulations) != 1 || folder.Simulations[0].Name != "a" {
+		t.Errorf("the simulations are %+v", folder.Simulations)
+	}
+}
+
+func TestASimulationKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	write(t, root, "simulations/lunch.yaml", "- name: order\n  scenario: Order.\n  assertion: Ordered.\n  asertion: typo\n")
+
+	if _, err := Load(root); err == nil {
+		t.Fatal("a misspelt key was accepted")
+	}
+}
+
+func TestAnEmptySimulationsDirectoryIsNotTheSameAsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "deli")
+	write(t, root, "agent.yaml", "name: deli\n")
+	without, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Mkdir(filepath.Join(root, SimulationsDir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	empty, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if without.Simulations != nil || empty.Simulations == nil {
+		t.Errorf("without is %v and empty is %v", without.Simulations, empty.Simulations)
+	}
+	if without.Hash() == empty.Hash() {
+		t.Error("emptying simulations/ would not sync, so the stored ones would never be deleted")
+	}
+}
+
+func TestSomethingThatIsNotADirectoryIsNotAnAgent(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, "jean.md", "You are Jean.")
+
+	if _, err := Load(filepath.Join(root, "jean.md")); err == nil {
+		t.Fatal("a file is not an agent directory")
+	}
+}
+
+func TestAConnectorNamedAloneIsASessionBindingOfEveryTool(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - linear\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := folder.Settings.Connectors
+	if len(got) != 1 || got[0].Name != "linear" || got[0].Connector != "" || got[0].Tools != nil || got[0].Connection != nil || got[0].Required != nil {
+		t.Errorf("linear read as %+v", got)
+	}
+}
+
+func TestAConnectorObjectDefaultsItsConnectorToItsName(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: [list_*, get_issue]\n    required: true\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := folder.Settings.Connectors
+	if len(got) != 1 || got[0].Name != "github" || got[0].Connector != "" || got[0].Connection != nil {
+		t.Fatalf("github read as %+v", got)
+	}
+	if got[0].Tools == nil || strings.Join(*got[0].Tools, ",") != "list_*,get_issue" || got[0].Required == nil || !*got[0].Required {
+		t.Errorf("github read as %+v", got[0])
+	}
+}
+
+func TestAConnectorNamesAnotherConnectorUnderItsAlias(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := folder.Settings.Connectors
+	if len(got) != 1 || got[0].Name != "issues" || got[0].Connector != "linear" || got[0].Tools != nil {
+		t.Errorf("issues read as %+v", got)
+	}
+}
+
+func TestAConnectorWithoutToolsOffersEveryTool(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: null\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if folder.Settings.Connectors[0].Tools != nil {
+		t.Errorf("null tools read as %v", folder.Settings.Connectors[0].Tools)
+	}
+}
+
+func TestANullConnectorEntryIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - ~\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a null connector loaded: %v", err)
+	}
+}
+
+func TestACommentedOutConnectorEntryIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - # linear\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a commented-out connector loaded: %v", err)
+	}
+}
+
+func TestAConnectorWithoutANameIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - connector: linear\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), "a connector needs a name") {
+		t.Fatalf("a nameless connector loaded: %v", err)
+	}
+}
+
+func TestAnEmptyConnectionIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    connection: \"\"\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), `connector "github"`) || !strings.Contains(err.Error(), "connection must be a connection id or label") {
+		t.Fatalf("an empty connection loaded: %v", err)
+	}
+}
+
+func TestAnEmptyConnectorToolListIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    tools: []\n")
+
+	_, err := Load(root)
+	if err == nil || !strings.Contains(err.Error(), `connector "github"`) || !strings.Contains(err.Error(), "tools: [] grants nothing") {
+		t.Fatalf("empty tools loaded: %v", err)
+	}
+}
+
+func TestAConnectorSandboxThatIsNotABooleanIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    sandbox: github\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "agent.yaml") || !strings.Contains(err.Error(), "`github` into bool") {
+		t.Errorf("a sandbox that is not a boolean loaded: %v", err)
+	}
+}
+
+func TestAConnectorEntryWithAKeyNobodyKnowsIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: github\n    plugin: github\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "plugin") {
+		t.Errorf("an entry with a key nobody knows loaded: %v", err)
+	}
+}
+
+// TestAConnectorEntryErrorNamesItsLineInTheFile: the line is counted from the top of
+// agent.yaml, not from the start of the entry.
+func TestAConnectorEntryErrorNamesItsLineInTheFile(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"a key nobody knows", "name: concierge\nconnectors:\n  - name: github\n    plugin: github\n", `line 4: "plugin"`},
+		{"a key nobody knows in the second entry", "name: concierge\nconnectors:\n  - linear\n  - name: notes\n    connector: linear\n\n    # a comment\n    plugin: x\n",
+			`line 8: "plugin"`},
+		{"a key nobody knows, flow style", "name: concierge\nconnectors:\n  - linear\n  - {name: github, plugin: x}\n", `line 4: "plugin"`},
+		{"a key that is not a string", "name: concierge\nconnectors:\n  - name: github\n    1: x\n", `line 4: "1"`},
+		{"a sandbox that is not a boolean", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    sandbox: github\n",
+			"line 5: cannot unmarshal !!str `github` into bool"},
+		{"tools that are not strings", "name: concierge\nconnectors:\n  - name: github\n\n    tools: [list_*, {a: b}]\n",
+			"line 5: cannot unmarshal !!map into string"},
+		{"an entry that is a list", "name: concierge\nconnectors:\n  - linear\n  - [github]\n", "line 4: cannot unmarshal !!seq"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "concierge")
+			write(t, root, "agent.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+// TestAConnectorEntryRefusedAfterItReadsNamesItsLine: the checks on a decoded entry name the
+// entry's line in agent.yaml, as the ones on its keys do.
+func TestAConnectorEntryRefusedAfterItReadsNamesItsLine(t *testing.T) {
+	cases := []struct{ name, yaml, want string }{
+		{"a null entry", "name: concierge\nconnectors:\n  - linear\n  - ~\n", `line 4: a connector needs a name`},
+		{"a commented-out entry", "name: concierge\nconnectors:\n  - linear\n\n  - # github\n", `line 5: a connector needs a name`},
+		{"an entry without a name", "name: concierge\nconnectors:\n  - linear\n  - connector: github\n", `line 4: a connector needs a name`},
+		{"an empty name", "name: concierge\nconnectors:\n  - linear\n\n  - name: \"\"\n", `line 5: a connector needs a name`},
+		{"an empty tool list", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    tools: []\n", `line 5: connector "github": tools: []`},
+		{"an empty connection", "name: concierge\nconnectors:\n  - linear\n\n  - name: github\n    connection: \"\"\n", `line 6: connector "github": connection must be`},
+		{"an empty tool list, the key below the name", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    connection: work\n\n    # none\n    tools: []\n", `line 8: connector "github": tools: []`},
+		{"an empty connection, the key below the name", "name: concierge\nconnectors:\n  - linear\n  - name: github\n    tools: [issues]\n\n    connection: \"\"\n", `line 7: connector "github": connection must be`},
+		{"connectors that are not a list", "name: concierge\n\nconnectors: linear\n", `line 3: connectors must be a list`},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			root := filepath.Join(t.TempDir(), "concierge")
+			write(t, root, "agent.yaml", c.yaml)
+
+			if _, err := Load(root); err == nil || !strings.Contains(err.Error(), c.want) || !strings.Contains(err.Error(), "agent.yaml") {
+				t.Errorf("want %q, got %v", c.want, err)
+			}
+		})
+	}
+}
+
+func TestAConnectorEntryWithKnownKeysAloneLoads(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\nconnectors:\n  - name: issues\n    connector: linear\n    tools: [list_*]\n"+
+		"    connection: work\n    required: true\n    sandbox: true\n    require_approval: [delete_*]\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	tools, connection, required, approval := []string{"list_*"}, "work", true, []string{"delete_*"}
+	want := ConnectorSettings{Name: "issues", Connector: "linear", Tools: &tools, Connection: &connection, Required: &required,
+		Sandbox: true, RequireApproval: &approval}
+	if got := folder.Settings.Connectors; len(got) != 1 || !reflect.DeepEqual(got[0], want) {
+		t.Errorf("the connectors read as %#v", got)
+	}
+}
+
+func TestAnEmptyConnectorListIsNotTheSameAsNone(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "concierge")
+	write(t, root, "agent.yaml", "name: concierge\n")
+	without, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "agent.yaml", "name: concierge\nconnectors: []\n")
+	empty, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if without.Settings.Connectors != nil || empty.Settings.Connectors == nil || len(empty.Settings.Connectors) != 0 {
+		t.Errorf("without = %#v, empty = %#v", without.Settings.Connectors, empty.Settings.Connectors)
+	}
+}
+
+func TestASkillFolderBringsItsNestedFiles(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nsandbox: daytona\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nRead reference/forms.md, then run scripts/fill.py.\n")
+	write(t, root, "skills/pdf/reference/forms.md", "# Forms\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(folder.Skills) != 2 || folder.Skills[0].Name != "pdf" || folder.Skills[1].Name != "think" {
+		t.Fatalf("the skills read as %+v", folder.Skills)
+	}
+	pdf := folder.Skills[0]
+	if pdf.Instructions != "Read reference/forms.md, then run scripts/fill.py." {
+		t.Errorf("the instructions read as %q", pdf.Instructions)
+	}
+	want := map[string]string{"reference/forms.md": "# Forms\n", "scripts/fill.py": "print('filled')\n"}
+	if len(pdf.Files) != len(want) || pdf.Files["reference/forms.md"] != want["reference/forms.md"] ||
+		pdf.Files["scripts/fill.py"] != want["scripts/fill.py"] {
+		t.Errorf("the files read as %v", pdf.Files)
+	}
+	if folder.Skills[1].Files != nil {
+		t.Errorf("a one-file skill brought %v", folder.Skills[1].Files)
+	}
+}
+
+func TestASkillFolderWithoutASkillFileIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "has no SKILL.md") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestASkillThatIsBothAFileAndAFolderIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), `skill "pdf" is both`) {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestASkillFileThatIsNotTextIsRefused(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+	write(t, root, "skills/pdf/blank.pdf", "\xff\xfe\x00binary")
+
+	if _, err := Load(root); err == nil || !strings.Contains(err.Error(), "is not text") {
+		t.Fatalf("loading gave %v", err)
+	}
+}
+
+func TestAFolderSkillHashesTheWayEverySDKHashesIt(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n")
+	write(t, root, "skills/pdf/reference/forms.md", "# Forms\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+	write(t, root, "skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n")
+	write(t, root, "skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", "\xcb\x0d\xff")
+	write(t, root, "skills/pdf/.DS_Store", "\x00\xff")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash := folder.Hash(); hash != "e47f7807b97bbcbdee683c6c481d1d36" {
+		t.Errorf("the directory hashes to %s", hash)
+	}
+}
+
+func TestHiddenFilesAndPycacheAreLeftOutOfASkill(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\n")
+	write(t, root, "skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill it.\n")
+	write(t, root, "skills/pdf/scripts/fill.py", "print('filled')\n")
+	write(t, root, "skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", "\xff\xfe\x00binary")
+	write(t, root, "skills/pdf/.DS_Store", "\xff\xfe\x00binary")
+
+	folder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := folder.Skills[0].Files; len(got) != 1 || got["scripts/fill.py"] == "" {
+		t.Fatalf("files were %v", got)
+	}
+}
+
+func TestASkillsFilesAreSentWithIt(t *testing.T) {
+	body := skillRequestOf(Skill{Name: "pdf", Description: "Fill PDF forms", Instructions: "Fill it.",
+		Files: map[string]string{"scripts/fill.py": "print('filled')"}})
+
+	if body.Files == nil || (*body.Files)["scripts/fill.py"] != "print('filled')" {
+		t.Errorf("the request carried %v", body.Files)
+	}
+	if skillRequestOf(Skill{Name: "think"}).Files != nil {
+		t.Error("a skill without files sent some")
+	}
+}
+
+func TestASkillsFilesChangeTheHashOnlyWhenThereAreSome(t *testing.T) {
+	root := filepath.Join(t.TempDir(), "jean")
+	write(t, root, "agent.yaml", "name: jean\nllm: openai/gpt-5.6\n")
+	write(t, root, "instructions.md", "You are Jean.\n")
+	write(t, root, "skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	write(t, root, "knowledge/pricing.md", "# Pricing\n\nA penny.\n")
+	asFile, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if err := os.Remove(filepath.Join(root, "skills/think.md")); err != nil {
+		t.Fatal(err)
+	}
+	write(t, root, "skills/think/SKILL.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
+	asFolder, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if asFolder.Hash() != asFile.Hash() {
+		t.Error("moving a skill into a folder of its own changed the hash")
+	}
+
+	write(t, root, "skills/think/reference/steps.md", "1. Think.\n")
+	withFile, err := Load(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if withFile.Hash() == asFile.Hash() {
+		t.Error("a file added to a skill left the hash as it was")
+	}
+}
