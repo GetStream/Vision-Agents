@@ -128,7 +128,7 @@ class LlmOptions:
         if isinstance(_format_, Unset):
             format_ = UNSET
         else:
-            format_ = LlmOptionsFormat(_format_)
+            format_ = LlmOptionsFormat._decode(_format_)
 
         max_output_tokens = d.pop("max_output_tokens", UNSET)
 
@@ -148,7 +148,7 @@ class LlmOptions:
         if isinstance(_reasoning_effort, Unset):
             reasoning_effort = UNSET
         else:
-            reasoning_effort = LlmOptionsReasoningEffort(_reasoning_effort)
+            reasoning_effort = LlmOptionsReasoningEffort._decode(_reasoning_effort)
 
         store = d.pop("store", UNSET)
 
@@ -163,7 +163,7 @@ class LlmOptions:
         if isinstance(_verbosity, Unset):
             verbosity = UNSET
         else:
-            verbosity = LlmOptionsVerbosity(_verbosity)
+            verbosity = LlmOptionsVerbosity._decode(_verbosity)
 
         llm_options = cls(
             format_=format_,

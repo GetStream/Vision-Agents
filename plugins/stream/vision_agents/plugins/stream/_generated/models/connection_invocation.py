@@ -185,7 +185,7 @@ class ConnectionInvocation:
         if isinstance(_error_type, Unset):
             error_type = UNSET
         else:
-            error_type = InvocationErrorType(_error_type)
+            error_type = InvocationErrorType._decode(_error_type)
 
         provider_status = d.pop("provider_status", UNSET)
 

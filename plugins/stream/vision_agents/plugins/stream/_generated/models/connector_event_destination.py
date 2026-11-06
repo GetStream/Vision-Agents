@@ -94,7 +94,7 @@ class ConnectorEventDestination:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
-        forward = ConnectorEventForward(d.pop("forward"))
+        forward = ConnectorEventForward._decode(d.pop("forward"))
 
         id = d.pop("id")
 

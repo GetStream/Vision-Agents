@@ -164,6 +164,34 @@ async fn agent_yaml_names_the_harness_and_the_code_its_subagent_and_sandbox() {
 }
 
 #[tokio::test]
+async fn a_config_naming_a_harness_this_sdk_does_not_list_still_reads() {
+    // Harness and Sandbox list one value each today; a second one is still a value the spec
+    // does not list yet.
+    let server = Server::start().await;
+    let mut stored = config("cfg-1", "docs");
+    stored["harness"] = json!("deep");
+    stored["sandbox"] = json!("firecracker");
+    server.route(Method::GET, "/v1/agents/configs", 200, json!([stored]));
+
+    let config = server
+        .client()
+        .agent("docs")
+        .config()
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(
+        config.harness,
+        Some(types::Harness::Unlisted("deep".into()))
+    );
+    assert_eq!(
+        config.sandbox,
+        Some(types::Sandbox::Unlisted("firecracker".into()))
+    );
+}
+
+#[tokio::test]
 async fn an_agents_config_is_patched_with_only_what_was_set() {
     let server = Server::start().await;
     server.route(

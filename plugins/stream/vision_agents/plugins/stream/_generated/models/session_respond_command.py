@@ -71,7 +71,7 @@ class SessionRespondCommand:
         d = dict(src_dict)
         text = d.pop("text")
 
-        type_ = SessionRespondCommandType(d.pop("type"))
+        type_ = SessionRespondCommandType._decode(d.pop("type"))
 
         _images = d.pop("images", UNSET)
         images: list[ImageSource] | Unset = UNSET

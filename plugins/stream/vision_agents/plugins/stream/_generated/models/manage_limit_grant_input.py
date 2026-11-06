@@ -103,7 +103,7 @@ class ManageLimitGrantInput:
 
         reason = d.pop("reason")
 
-        subject = LimitSubject(d.pop("subject"))
+        subject = LimitSubject._decode(d.pop("subject"))
 
         api_key = d.pop("api_key", UNSET)
 

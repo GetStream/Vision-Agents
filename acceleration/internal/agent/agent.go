@@ -3344,6 +3344,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				}
 				continue
 			}
+			a.turns.wentOut(turnOf(typed.SynthesisID), time.Now())
 			speech := leveller.Level(typed.Audio)
 			queued := time.Now()
 			var err error

@@ -105,7 +105,7 @@ class DetectionResult:
 
         id = d.pop("id")
 
-        status = DetectionStatus(d.pop("status"))
+        status = DetectionStatus._decode(d.pop("status"))
 
         error = d.pop("error", UNSET)
 
@@ -114,7 +114,7 @@ class DetectionResult:
         if isinstance(_error_code, Unset):
             error_code = UNSET
         else:
-            error_code = DetectionErrorCode(_error_code)
+            error_code = DetectionErrorCode._decode(_error_code)
 
         model = d.pop("model", UNSET)
 

@@ -92,7 +92,7 @@ class AgentResponseItem:
         d = dict(src_dict)
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
-        kind = AgentResponseItemKind(d.pop("kind"))
+        kind = AgentResponseItemKind._decode(d.pop("kind"))
 
         ordinal = d.pop("ordinal")
 

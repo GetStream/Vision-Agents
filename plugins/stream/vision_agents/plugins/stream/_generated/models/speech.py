@@ -124,7 +124,7 @@ class Speech:
 
         id = d.pop("id")
 
-        status = RecordingStatus(d.pop("status"))
+        status = RecordingStatus._decode(d.pop("status"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 

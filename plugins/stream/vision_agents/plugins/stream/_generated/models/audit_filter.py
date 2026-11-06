@@ -85,7 +85,7 @@ class AuditFilter:
         if isinstance(_action, Unset):
             action = UNSET
         else:
-            action = AuditAction(_action)
+            action = AuditAction._decode(_action)
 
         agent_id = d.pop("agent_id", UNSET)
 
@@ -96,14 +96,14 @@ class AuditFilter:
         if isinstance(_resource_type, Unset):
             resource_type = UNSET
         else:
-            resource_type = AuditResourceType(_resource_type)
+            resource_type = AuditResourceType._decode(_resource_type)
 
         _source = d.pop("source", UNSET)
         source: AuditSource | Unset
         if isinstance(_source, Unset):
             source = UNSET
         else:
-            source = AuditSource(_source)
+            source = AuditSource._decode(_source)
 
         audit_filter = cls(
             action=action,
