@@ -3902,6 +3902,34 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
 }
 
+// What the caller says after the words a stop over the agent was ruled on, in the same breath,
+// is the turn, and only it is answered: "No, Porto." stopped on "No." is answered "Porto.". The
+// utterance is not cut where the check's window ended, which was mid-word ("No, P|orto" was
+// heard as "Corto."), and the turn is ruled as the pause check that ended it ruled.
+func (s *AgentSuite) TestOnlyWhatIsSaidAfterTheStopIsAnswered() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon tomorrow")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	asker := pauseAsker{s.agent}
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: "No.", Speaking: true, Overheard: true, AudioMs: 600, WordsMs: 100, Utterance: 2}
+	s.True(asker.Overheard(participant, stop), "the agent stopped")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
+	s.False(asker.Spent(participant, audiofloor.Ruled{Words: "No, Porto.", Utterance: 2}), "\"Porto\" adds to the stop")
+	s.True(asker.Spent(participant, audiofloor.Ruled{Words: "No.", Utterance: 2}), "the stop's words alone")
+
+	s.model.reply = []string{"Porto will be cloudy."}
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "No, Porto.",
+		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
+	s.Equal("Porto.", harness.WithoutNotes(s.model.requests()[1].Input)[len(harness.WithoutNotes(s.model.requests()[1].Input))-1].Content)
+}
+
 // A check-in is a turn the agent took, not a murmur: a caller who talks over it and is ruled
 // to have the floor stops it, as they would a reply. Said as a murmur, it played to its end
 // over a caller the model had ruled should have the floor.

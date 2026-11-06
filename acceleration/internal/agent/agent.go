@@ -1990,7 +1990,7 @@ func (a *Agent) ask(ready candidate) {
 		Paused:       time.Since(ready.RevisedAt),
 		FirstPause:   a.converse.firstPause(ready),
 	}
-	a.audioFloor.listen(&turn, ready.Participant.ID, tools)
+	a.audioFloor.listen(&turn, ready.Participant.ID, ready.Text, tools)
 	a.audioFloor.ask(turn)
 	if a.speculate(current, ready, speaking, anotherVoice) {
 		return
