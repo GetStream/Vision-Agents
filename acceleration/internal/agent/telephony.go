@@ -1287,7 +1287,8 @@ func (a *Agent) resolveToolLocked(call llm.ToolCall, parts []llm.ContentPart, ho
 			return
 		}
 		if hold.answered {
-			message = llm.Message{Role: llm.User}
+			// On the caller's side for the provider's sake, and said by nobody on the call.
+			message = llm.Message{Role: llm.User, Typed: true}
 			parts = append(llm.TextParts(fmt.Sprintf(lateResult, call.Name, call.ID)), parts...)
 			late = true
 		}

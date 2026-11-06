@@ -3564,7 +3564,7 @@ func summarised(summary string) []llm.Message {
 	}{summary})
 	return []llm.Message{
 		{Role: llm.System, Content: summaryAttribution},
-		{Role: llm.User, Content: string(envelope)},
+		{Role: llm.User, Content: string(envelope), Typed: true},
 	}
 }
 

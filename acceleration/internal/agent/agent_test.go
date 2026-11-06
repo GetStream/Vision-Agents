@@ -2192,6 +2192,27 @@ func (s *AgentSuite) TestCompactionKeepsNewerTurnsVerbatim() {
 	s.Equal(4, event.After)
 }
 
+// A summary of the conversation so far stands on the caller's side, and is no caller's speech:
+// a model of the call's speech is not told it was said.
+func (s *AgentSuite) TestASummaryOfTheCallIsNotSaidOnIt() {
+	prefix := []llm.Message{
+		{Role: llm.User, Content: "first question"},
+		{Role: llm.Assistant, Content: "first answer"},
+	}
+	emitter := NewEmitter(eventBuffer)
+	defer emitter.Close()
+	agent := &Agent{emitter: emitter, history: append(append([]llm.Message(nil), prefix...), llm.Message{Role: llm.User, Content: "new question"})}
+
+	agent.applyCompaction(harness.Compacted{Prefix: prefix, Summary: "The caller asked a first question."})
+
+	history := harness.WithoutNotes(agent.History())
+	s.Require().Len(history, 3)
+	s.Equal(llm.User, history[1].Role)
+	s.Contains(history[1].Content, "The caller asked a first question.")
+	s.True(history[1].Typed, "the summary was kept as said on the call")
+	s.False(history[2].Typed, "what the caller said")
+}
+
 func (s *AgentSuite) TestACompactionSummaryIsHandedOverAsUntrustedContextNotAsTheOperators() {
 	prefix := []llm.Message{
 		{Role: llm.User, Content: "first question"},

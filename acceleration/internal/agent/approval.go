@@ -342,7 +342,7 @@ func (a *Agent) tickApprovals() {
 				continue
 			}
 			note := llm.Message{Role: llm.User, Content: fmt.Sprintf(approvalSilence,
-				waiting.question, int(wait.Round(time.Second)/time.Second), waiting.call.Name, waiting.call.Name)}
+				waiting.question, int(wait.Round(time.Second)/time.Second), waiting.call.Name, waiting.call.Name), Typed: true}
 			if callsOpen(a.history) {
 				a.lateResults = append(a.lateResults, note)
 			} else {

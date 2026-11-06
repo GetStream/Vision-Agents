@@ -1295,6 +1295,7 @@ func (s *AgentSuite) TestAnInterruptedWaitToolLeavesItsCallAnsweredForTheNextTur
 	late := history[slices.IndexFunc(history, lateMessage)]
 	s.Empty(unanswered(history), "the late result broke the conversation")
 	s.Equal(llm.User, late.Role)
+	s.True(late.Typed, "a tool's result, on the caller's side, is no caller's speech")
 	s.Equal(fmt.Sprintf(lateResult, "lookup_order", "call-1")+"\norder 12 ships tomorrow", late.Content)
 	s.eventually(func() bool { return countOf[Responded](s.reported()) >= 3 },
 		"the late result was left for the caller to ask about")
@@ -1433,7 +1434,8 @@ func (s *AgentSuite) TestALateResultWaitsForTheCallsRunningWhenItComes() {
 	last := harness.WithoutNotes(asked[2].Input)
 	s.Equal(llm.ToolResult, last[len(last)-2].Role)
 	s.Equal("call-2", last[len(last)-2].ToolCallID)
-	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result"},
+	// Typed: no caller said it (llm.Message.Typed), which no provider reads.
+	s.Equal(llm.Message{Role: llm.User, Content: fmt.Sprintf(lateResult, "lookup_order", "call-1") + "\ncall-1 result", Typed: true},
 		last[len(last)-1])
 }
 

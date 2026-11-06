@@ -79,9 +79,10 @@ type Message struct {
 	// several people may write in. No provider reads it: the agent counts each author as it
 	// counts a speaker, and names them in Speaker once two have written.
 	Author string
-	// Typed says a User turn's words were typed, or handed to the agent by its app ("greet
-	// the user"), rather than said on the call. No provider reads it: a model of the call's
-	// speech is told only what was said.
+	// Typed says a User turn's words were not said on the call: typed, handed to the agent by
+	// its app ("greet the user"), or written by the router on the caller's side, such as a
+	// tool's late result, a call silence declined or a summary of the call so far. No provider
+	// reads it: a model of the call's speech is told only what was said.
 	Typed bool
 }
 
