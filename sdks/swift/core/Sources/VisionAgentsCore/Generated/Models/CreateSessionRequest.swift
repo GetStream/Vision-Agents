@@ -20,8 +20,10 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     let custom: [String: RawJSON]?
     /// A longer note about the conversation, searched alongside the title.
     let description: String?
-    /// When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+    /// When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
     let endOfTurn: EndOfTurn?
+    /// Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
+    let floorControl: FloorControl?
     /// What the agent says as it joins, before anyone speaks.
     let greeting: GreetingPayload?
     /// The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
@@ -84,7 +86,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
     /// The voice to speak in: a provider's own voice id, or one of your voices by id or by the name you gave it. Prefix it with custom: to mean only the latter: without the prefix a name that is not one of yours is passed through to the provider's library, and with it a name that is not one of yours is refused. A native session (sts) takes the vendor's own voice name instead, such as marin at OpenAI.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, endOfTurn: EndOfTurn? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, maxToolRounds: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwritesPayload? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, resumeHistory: ResumeHistory? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String? = nil, backchannel: Bool? = nil, call: SessionCall? = nil, configId: String? = nil, connectorBindings: [SessionConnectorBinding]? = nil, contextTruncated: Bool? = nil, custom: [String: RawJSON]? = nil, description: String? = nil, endOfTurn: EndOfTurn? = nil, floorControl: FloorControl? = nil, greeting: GreetingPayload? = nil, history: [HistoryMessage]? = nil, id: String? = nil, incognito: Bool? = nil, instructions: String? = nil, keyterms: [String]? = nil, languages: [String]? = nil, llm: String? = nil, maxTokens: Int? = nil, maxToolRounds: Int? = nil, memory: SessionMemory? = nil, minConfidence: Double? = nil, modelOverwrites: ModelOverwritesPayload? = nil, navigating: Bool? = nil, phone: SessionPhone? = nil, projectId: String? = nil, resumeHistory: ResumeHistory? = nil, returnUrl: String? = nil, search: String? = nil, startVoice: Bool? = nil, sts: String? = nil, stt: String? = nil, tags: [String: String]? = nil, timezone: String? = nil, title: String? = nil, toolTimeoutMs: Int? = nil, tools: [SessionTool]? = nil, tts: String? = nil, userId: String? = "vision-agent", userName: String? = "Vision Agent", video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.backchannel = backchannel
@@ -95,6 +97,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.custom = custom
         self.description = description
         self.endOfTurn = endOfTurn
+        self.floorControl = floorControl
         self.greeting = greeting
         self.history = history
         self.id = id
@@ -141,6 +144,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         self.custom = try container.decodeIfPresent([String: RawJSON].self, forKey: .custom)
         self.description = try container.decodeIfPresent(String.self, forKey: .description)
         self.endOfTurn = try container.decodeIfPresent(EndOfTurn.self, forKey: .endOfTurn)
+        self.floorControl = try container.decodeIfPresent(FloorControl.self, forKey: .floorControl)
         self.greeting = try container.decodeIfPresent(GreetingPayload.self, forKey: .greeting)
         self.history = try container.decodeIfPresent([HistoryMessage].self, forKey: .history)
         self.id = try container.decodeIfPresent(String.self, forKey: .id)
@@ -187,6 +191,7 @@ final class CreateSessionRequest: Sendable, Codable, JSONEncodable {
         try container.encodeIfPresent(custom, forKey: .custom)
         try container.encodeIfPresent(description, forKey: .description)
         try container.encodeIfPresent(endOfTurn, forKey: .endOfTurn)
+        try container.encodeIfPresent(floorControl, forKey: .floorControl)
         try container.encodeIfPresent(greeting, forKey: .greeting)
         try container.encodeIfPresent(history, forKey: .history)
         try container.encodeIfPresent(id, forKey: .id)
@@ -235,6 +240,7 @@ extension CreateSessionRequest: Hashable {
         lhs.custom == rhs.custom &&
         lhs.description == rhs.description &&
         lhs.endOfTurn == rhs.endOfTurn &&
+        lhs.floorControl == rhs.floorControl &&
         lhs.greeting == rhs.greeting &&
         lhs.history == rhs.history &&
         lhs.id == rhs.id &&
@@ -280,6 +286,7 @@ extension CreateSessionRequest: Hashable {
         hasher.combine(custom)
         hasher.combine(description)
         hasher.combine(endOfTurn)
+        hasher.combine(floorControl)
         hasher.combine(greeting)
         hasher.combine(history)
         hasher.combine(id)

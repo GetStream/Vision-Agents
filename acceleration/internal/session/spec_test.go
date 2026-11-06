@@ -55,6 +55,19 @@ func (s *SpecSuite) TestAConfigsEndOfTurnIsWhatItsSessionsEndTurnsBy() {
 	s.Equal(audiofloor.EndOfTurn{}, EndOfTurnOf(FromConfig(store.AgentConfig{CustomerID: "acme"}).EndOfTurn), "none chosen is the server's default")
 }
 
+func (s *SpecSuite) TestAConfigsFloorControlIsWhatItsSessionsAreRuledBy() {
+	acting := store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeAct}
+	spec := FromConfig(store.AgentConfig{CustomerID: "acme", FloorControl: acting})
+
+	s.Equal(acting, spec.FloorControl)
+	s.Equal(audiofloor.Act, FloorModeOf(spec.FloorControl))
+	s.Equal(audiofloor.Shadow, FloorModeOf(store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeShadow}))
+	s.Equal(audiofloor.Off, FloorModeOf(store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeOff}))
+	unset := FromConfig(store.AgentConfig{CustomerID: "acme"}).FloorControl
+	s.True(unset.IsZero())
+	s.Equal(audiofloor.Off, FloorModeOf(unset), "none chosen is off")
+}
+
 func (s *SpecSuite) TestAConfigsVariedGreetingIsVariedInTheSession() {
 	spec := FromConfig(store.AgentConfig{CustomerID: "acme", Greeting: "Hello.", GreetingMode: store.GreetingVariation})
 

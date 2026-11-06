@@ -24,6 +24,7 @@
 package io.getstream.visionagents.android.core.generated
 
 import io.getstream.visionagents.android.core.generated.EndOfTurn
+import io.getstream.visionagents.android.core.generated.FloorControl
 import io.getstream.visionagents.android.core.generated.Greeting
 import io.getstream.visionagents.android.core.generated.HistoryMessage
 import io.getstream.visionagents.android.core.generated.ModelOverwrites
@@ -57,6 +58,7 @@ import kotlinx.serialization.encoding.Encoder
  * @param custom Anything the caller wants to remember about the session, handed back untouched and never read by the router. Sessions can be queried by these, which is what makes them worth writing.
  * @param description A longer note about the conversation, searched alongside the title.
  * @param endOfTurn 
+ * @param floorControl 
  * @param greeting 
  * @param history The conversation so far, for a backend that keeps its own: a thread in its own Slack app, say, that outlives any one session. Send it when a session closed and the thread goes on: open a new session with the thread's messages here, oldest first, then send the message to answer to the responses endpoint. The model is handed them before the first response, as a resumed conversation's history is. They are recorded nowhere, as turns, transcript or Chat messages, so add incognito to keep nothing at all. Up to 100 messages and 60000 characters of text, the most a session reads back of a conversation the router kept; more is refused rather than cut. Server-side only: a device sending it is refused with a 403, because an assistant message puts words in the agent's mouth.
  * @param id The id to hold the session by, so a caller can know it before the session exists. It may be any string of up to 64 letters, digits, - and _, such as your own record's id, that nobody has used for a session before. A UUID is held lowercase. Omitted, the router generates a UUIDv7.
@@ -131,6 +133,9 @@ internal data class CreateSessionRequest (
 
     @SerialName(value = "end_of_turn")
     val endOfTurn: EndOfTurn? = null,
+
+    @SerialName(value = "floor_control")
+    val floorControl: FloorControl? = null,
 
     @SerialName(value = "greeting")
     val greeting: Greeting? = null,

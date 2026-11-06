@@ -33,6 +33,7 @@ if TYPE_CHECKING:
     from ..models.agent_scheduling import AgentScheduling
     from ..models.agent_tools import AgentTools
     from ..models.end_of_turn import EndOfTurn
+    from ..models.floor_control import FloorControl
     from ..models.greeting import Greeting
     from ..models.resume_history import ResumeHistory
     from ..models.sandbox_options import SandboxOptions
@@ -59,17 +60,23 @@ class AgentConfigRequest:
             connector, is refused.
         dispatch (AgentDispatch | Unset): What the agent leaves to the customer's own server, which waits on
             /v1/dispatch. Omitted settings are disabled.
-        end_of_turn (EndOfTurn | Unset): When chorus-asr has a caller's turn ended, where the router asks it about
-            turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait
-            chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach
-            them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever
-            the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read
-            when a pause is checked; one that model no longer publishes ends turns by its default.
+        end_of_turn (EndOfTurn | Unset): When chorus-asr has a caller's turn ended, where the agent's floor_control asks
+            it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or
+            a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must
+            reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn
+            whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server
+            runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
         episode_cards (EpisodeCardsMode | Unset): What the agent does with episode cards, the same for every channel:
             its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off
             writes none and reads none. record writes each conversation's card and its summary into the person's omni-
             channel, and no session reads them. on writes them as record does, and a session starts with the person's other
             cards. Turning record into on reads what record wrote.
+        floor_control (FloorControl | Unset): Whether a model that hears the caller's audio rules the agent's floor:
+            when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one
+            that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a
+            router without one is refused. Off, the flow controller rules the floor as it does with no such model, and
+            end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each
+            session runs by its own, so agents on one router may choose differently.
         greeting (Greeting | Unset): What the agent says as it joins, before anyone speaks.
         guardrail (str | Unset): A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or
             llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the
@@ -152,6 +159,7 @@ class AgentConfigRequest:
     dispatch: AgentDispatch | Unset = UNSET
     end_of_turn: EndOfTurn | Unset = UNSET
     episode_cards: EpisodeCardsMode | Unset = UNSET
+    floor_control: FloorControl | Unset = UNSET
     greeting: Greeting | Unset = UNSET
     guardrail: str | Unset = UNSET
     harness: Harness | Unset = UNSET
@@ -216,6 +224,10 @@ class AgentConfigRequest:
         episode_cards: str | Unset = UNSET
         if not isinstance(self.episode_cards, Unset):
             episode_cards = self.episode_cards.value
+
+        floor_control: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.floor_control, Unset):
+            floor_control = self.floor_control.to_dict()
 
         greeting: dict[str, Any] | Unset = UNSET
         if not isinstance(self.greeting, Unset):
@@ -343,6 +355,8 @@ class AgentConfigRequest:
             field_dict["end_of_turn"] = end_of_turn
         if episode_cards is not UNSET:
             field_dict["episode_cards"] = episode_cards
+        if floor_control is not UNSET:
+            field_dict["floor_control"] = floor_control
         if greeting is not UNSET:
             field_dict["greeting"] = greeting
         if guardrail is not UNSET:
@@ -424,6 +438,7 @@ class AgentConfigRequest:
         from ..models.agent_scheduling import AgentScheduling
         from ..models.agent_tools import AgentTools
         from ..models.end_of_turn import EndOfTurn
+        from ..models.floor_control import FloorControl
         from ..models.greeting import Greeting
         from ..models.resume_history import ResumeHistory
         from ..models.sandbox_options import SandboxOptions
@@ -475,6 +490,13 @@ class AgentConfigRequest:
             episode_cards = UNSET
         else:
             episode_cards = EpisodeCardsMode(_episode_cards)
+
+        _floor_control = d.pop("floor_control", UNSET)
+        floor_control: FloorControl | Unset
+        if isinstance(_floor_control, Unset):
+            floor_control = UNSET
+        else:
+            floor_control = FloorControl.from_dict(_floor_control)
 
         _greeting = d.pop("greeting", UNSET)
         greeting: Greeting | Unset
@@ -643,6 +665,7 @@ class AgentConfigRequest:
             dispatch=dispatch,
             end_of_turn=end_of_turn,
             episode_cards=episode_cards,
+            floor_control=floor_control,
             greeting=greeting,
             guardrail=guardrail,
             harness=harness,

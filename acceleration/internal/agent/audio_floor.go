@@ -79,7 +79,7 @@ type audioFloorTurn struct {
 // newAudioFloor returns nil unless the model is asked. A turn with the floor free ends by the
 // bars endOfTurn chooses.
 func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, endOfTurn audiofloor.EndOfTurn, logger *slog.Logger) *audioFloor {
-	if client == nil || (mode != audiofloor.Shadow && mode != audiofloor.Act) {
+	if client == nil || !mode.Asks() {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())

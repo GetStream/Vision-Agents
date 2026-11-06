@@ -17,10 +17,13 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
-// Mode is what an agent does with the model's answers.
+// Mode is what an agent does with the model's answers: its floor control, which each agent
+// chooses for itself.
 type Mode string
 
 const (
+	// Off asks it nothing about turns, as the empty mode does.
+	Off Mode = "off"
 	// Shadow asks it about each turn beside the flow controller and acts on nothing it says:
 	// the two answers are counted and logged side by side.
 	Shadow Mode = "shadow"
@@ -28,6 +31,11 @@ const (
 	// decides the turns it doesn't answer in time.
 	Act Mode = "act"
 )
+
+// Asks says whether the model is asked about turns: in shadow, or acting.
+func (m Mode) Asks() bool {
+	return m == Shadow || m == Act
+}
 
 var (
 	checks = promauto.NewCounterVec(prometheus.CounterOpts{

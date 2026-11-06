@@ -71,6 +71,7 @@ extension StringCodingKey {
     static let field: StringCodingKey = "field"
     static let filter: StringCodingKey = "filter"
     static let finishedAt: StringCodingKey = "finished_at"
+    static let floorControl: StringCodingKey = "floor_control"
     static let forkedFrom: StringCodingKey = "forked_from"
     static let fromMs: StringCodingKey = "from_ms"
     static let greeting: StringCodingKey = "greeting"

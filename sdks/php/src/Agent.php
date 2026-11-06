@@ -295,6 +295,7 @@ final class Agent
             dispatch: $declared->dispatch,
             simulations: $simulations === null ? null : array_map(static fn (Simulation $simulation) => $simulation->toDeclaration(), $simulations),
             endOfTurn: $declared->endOfTurn,
+            floorControl: $declared->floorControl,
         );
         $sent = $body->toArray();
         if ($declared->endOfTurn !== null) {

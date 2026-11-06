@@ -59,7 +59,8 @@ type SyncAgentRequest struct {
 	Calls          *AgentCalls        `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. A tool left out keeps what is stored; a tool sent replaces its settings whole."`
 	Scheduling     *AgentScheduling   `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. A setting left out keeps what is stored."`
 	ResumeHistory  *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session carries it on. A setting left out keeps what is stored."`
-	EndOfTurn      *EndOfTurn         `json:"end_of_turn,omitempty" doc:"agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. When the server cannot be asked, or the router asks it nothing about turns, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
+	EndOfTurn      *EndOfTurn         `json:"end_of_turn,omitempty" doc:"agent.yaml's end_of_turn: when chorus-asr has a caller's turn ended, by one of max_wait_ms, preset and bars. Sent, it replaces the stored choice, and an empty object is the server's default; left out, the stored one stays. A choice that says more than one, or bars that do not begin at 0 ms and rise, each strictly between 0 and 1, is refused (400), and so is a preset or wait the chorus-asr server does not publish, before anything is written. It is held to the server where floor_control asks chorus-asr about turns. When the server cannot be asked, or floor_control is off, the choice is kept and a warning says so, as it does of a point that fails the server's dictation guard."`
+	FloorControl   *FloorControl      `json:"floor_control,omitempty" doc:"agent.yaml's floor_control: whether chorus-asr rules the agent's floor, by model and mode, off, shadow or act. Sent, it replaces the stored choice; left out, the stored one stays, and an agent that never chose is off. shadow or act on a router without a chorus-asr server is refused (400) before anything is written."`
 }
 
 func (*SyncAgentRequest) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
@@ -260,9 +261,12 @@ func (s *Server) syncAgent(ctx context.Context, request *syncAgentRequest) (*syn
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
-	if warning, message, ok := s.endOfTurnComplaint(ctx, config.EndOfTurn, existing.EndOfTurn); !ok {
+	if failure, refused := s.floorControlRefusal(body.FloorControl); refused {
+		return nil, failure
+	}
+	if warning, message, ok := s.endOfTurnComplaint(ctx, floorChoiceOf(config), floorChoiceOf(existing)); !ok {
 		return nil, invalidRequest(message)
-	} else if warning != "" && body.EndOfTurn != nil {
+	} else if warning != "" && (body.EndOfTurn != nil || body.FloorControl != nil) {
 		warnings = append(warnings, warning)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
@@ -582,6 +586,7 @@ func applySettings(config *store.AgentConfig, body SyncAgentRequest) {
 	config.Calls = callsOr(config.Calls, body.Calls)
 	config.ResumeHistory = resumeHistoryOr(config.ResumeHistory, body.ResumeHistory)
 	config.EndOfTurn = endOfTurnOr(config.EndOfTurn, body.EndOfTurn)
+	config.FloorControl = floorControlOr(config.FloorControl, body.FloorControl)
 	if body.Channels != nil {
 		config.Channels = channelsOf(body.Channels)
 	}

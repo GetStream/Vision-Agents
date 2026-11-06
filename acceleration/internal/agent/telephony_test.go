@@ -2110,6 +2110,10 @@ func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsT
 	s.says(participant, "that's all, thanks")
 	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
 	s.replyWentOut()
+	// The goodbye is said as the model writes it, and the call to end_call comes after it in
+	// the same reply: words over the goodbye before the call is taken up cut a reply that
+	// never asked to hang up.
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "end_call never began")
 
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
 	s.mutters(participant, "oh wait, one more thing")
@@ -2122,4 +2126,43 @@ func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsT
 	s.edge.holdSpeech(false)
 	s.never(func() bool { return s.ender.ends() > 0 }, "the call ended on a caller still talking")
 	s.False(s.left(), "the agent left a caller still talking")
+}
+
+// Talking over the goodbye cancels the hang-up and then drops the goodbye, which leaves the
+// agent as quiet as a goodbye heard to its end. A hang-up that looks only once both are
+// done, as one on a busy machine does, still keeps the call: the test above, under load,
+// hung up on the caller this way.
+func (s *AgentSuite) TestAGoodbyeCutOffBeforeTheHangUpLooksKeepsTheCall() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	s.Require().False(s.agent.Busy() || s.agent.speechPending(), "the goodbye was dropped and the agent is quiet")
+	cut, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	result, left, err := s.agent.endCall(cut)
+
+	s.Require().NoError(err)
+	s.Equal(endCallCancelled, result, "the model is told the call is still open")
+	s.False(left)
+	s.Zero(s.ender.ends(), "the call ended on a caller who cut the goodbye off")
+}
+
+// The caller can talk over the goodbye before its end_call has begun to run, the call
+// cancelled before the tool's goroutine reaches it: the model is told the call is still
+// open, as it is when they talk over the goodbye while the hang-up waits, not that ending it
+// failed. Under load the test two above was told "That did not work: context canceled".
+func (s *AgentSuite) TestAnEndCallCancelledBeforeItRanTellsTheModelTheCallIsOpen() {
+	s.onACall()
+	s.ender = &stubEnder{}
+	s.join(true)
+	cut, cancel := context.WithCancel(s.ctx)
+	cancel()
+
+	parts, left, err := s.agent.callTool(cut, llm.ToolCall{ID: "call-1", Name: toolEndCall, Arguments: `{}`})
+
+	s.Require().NoError(err)
+	s.Equal(endCallCancelled, llm.TextOf(parts), "the model is told the call is still open")
+	s.False(left)
+	s.Zero(s.ender.ends(), "the call ended on a caller who talked over the goodbye")
 }

@@ -144,6 +144,8 @@ type Options struct {
 	JudgeTarget string
 	// AudioFloor is the chorus-asr model the flow controller asks first when
 	// AudioFloorMode is Act, or beside it when Shadow. Nil or another mode asks it nothing.
+	// AudioFloorMode is this agent's own floor control: agents on one router share the
+	// client and nothing else of it.
 	AudioFloor     *audiofloor.Client
 	AudioFloorMode audiofloor.Mode
 	// EndOfTurn is the agent's choice of when the audio floor model has a turn with the
@@ -3903,6 +3905,10 @@ func (a *Agent) dropUnheard(participant stt.Participant, turnID string, why inte
 		}
 		stale, a.unheard = a.unheard, unheardReply{}
 		a.missed = stale
+		// The tools an interruption cancels are cancelled before the speech is dropped, as
+		// they are when the caller talks over a reply: an end_call waiting on its goodbye
+		// takes the agent gone quiet for the goodbye heard unless the call was cancelled first.
+		a.cancelToolsLocked()
 		return true
 	}, why) {
 		return

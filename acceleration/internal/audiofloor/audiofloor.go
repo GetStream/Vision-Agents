@@ -761,13 +761,13 @@ func lastRunes(s string, n int) string {
 	return s[at:]
 }
 
-// Open returns a client of the server a deployment's settings name, or nil without one, and
-// the mode its agents ask it in. Loading the settings checked them all.
-func Open(settings config.Agent) (*Client, Mode) {
+// Open returns a client of the server a deployment's settings name, or nil without one.
+// Loading the settings checked them all.
+func Open(settings config.Agent) *Client {
 	if settings.AudioFloorURL == "" {
-		return nil, ""
+		return nil
 	}
 	client := New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil).WithAPIKey(settings.AudioFloorAPIKey)
 	client.interims = settings.AudioFloorInterims != "off"
-	return client, Mode(settings.AudioFloorMode)
+	return client
 }

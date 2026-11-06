@@ -70,6 +70,8 @@ type loopbackEdge struct {
 	// unheard is speech that has been published but has not gone out yet, which is what a
 	// real edge holds while a reply is being spoken.
 	unheard bool
+	// onDrop, when set, is called as DropSpeech begins.
+	onDrop func()
 }
 
 func newLoopbackEdge() *loopbackEdge {
@@ -107,9 +109,22 @@ func (e *loopbackEdge) SpeechPending() bool {
 // empties its playout queue when the caller takes the floor.
 func (e *loopbackEdge) DropSpeech() {
 	e.mu.Lock()
+	onDrop := e.onDrop
+	e.mu.Unlock()
+	if onDrop != nil {
+		onDrop()
+	}
+	e.mu.Lock()
 	defer e.mu.Unlock()
 	e.published = nil
 	e.unheard = false
+}
+
+// dropping has f called as the agent drops speech, from then on.
+func (e *loopbackEdge) dropping(f func()) {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	e.onDrop = f
 }
 
 // holdSpeech makes the edge report published speech as still on its way out, the way a real
@@ -1743,7 +1758,9 @@ func (s *AgentSuite) TestASpeculativeReplyStartsBeforeTheRulingAndIsSpokenOnlyAf
 
 	s.eventually(func() bool { return len(s.model.requests()) == 1 },
 		"the reply should be asked for while the flow controller is still deciding")
-	s.Len(s.flow.requests(), 1)
+	// The reply is asked for on a goroutine of its own, started before the flow controller
+	// is asked, so either can come first.
+	s.eventually(func() bool { return len(s.flow.requests()) == 1 }, "the flow controller was never asked")
 	edge := s.edge
 	s.Never(func() bool { return len(edge.heard()) > 0 }, 150*time.Millisecond, 10*time.Millisecond,
 		"nothing may be spoken before the ruling says to answer")
@@ -6584,6 +6601,10 @@ func (s *AgentSuite) TestAnInterimIsShownAndNotActedOn() {
 	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 1, Text: "one two three four", Language: "en", Confidence: 1})
 	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the final was never answered")
 	s.Equal("one two three four", harness.WithoutNotes(s.model.requests()[0].Input)[0].Content)
+	// The final's Hearing and then its Heard are sent before the model is asked, and read off
+	// the agent's events on a goroutine of their own (collect), which may not have read them
+	// yet: once the Heard is read, the Hearing before it is too.
+	s.eventually(func() bool { return countOf[Heard](s.reported()) > 0 }, "the final was never heard")
 	shown := hearings()
 	s.Require().GreaterOrEqual(len(shown), 3)
 	s.Equal("one two three", shown[1].Text)

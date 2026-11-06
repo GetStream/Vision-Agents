@@ -22,7 +22,7 @@ type EndOfTurn struct {
 }
 
 func (*EndOfTurn) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
-	schema.Description = "When chorus-asr has a caller's turn ended, where the router asks it about " +
+	schema.Description = "When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about " +
 		"turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. " +
 		"A preset or a wait chooses one of the server's measured points: its bars, and how many checks " +
 		"in a row of one pause must reach them. When a pause is checked, how much more a turn's first " +
@@ -89,38 +89,34 @@ func renderedEndOfTurn(stored store.EndOfTurn) *EndOfTurn {
 // written, so a server that is down does not hold the write.
 const endOfTurnWait = 2 * time.Second
 
-// asksAboutTurns is the chorus-asr server an agent's end_of_turn applies to, or nil when the
-// router asks it nothing about turns.
-func asksAboutTurns(client *audiofloor.Client, mode audiofloor.Mode) *audiofloor.Client {
-	if mode != audiofloor.Shadow && mode != audiofloor.Act {
-		return nil
-	}
-	return client
-}
-
 // endOfTurnComplaint reports what is wrong with an agent's end_of_turn, if anything, and what
-// a sync should be told about one it keeps that may not do what it says.
+// a sync should be told about one it keeps that may not do what it says. chosen is the agent's
+// floor control and end_of_turn after the write, and was before it.
 //
 // What the choice says is always checked: one of max_wait_ms, preset and bars, and bars that
 // begin at 0 ms and rise, each a probability strictly between 0 and 1. What it names is
-// checked against the policy the chorus-asr server publishes, when it changed from was and
-// the router asks the server about turns, so a preset or wait the server doesn't have is
-// refused while the agent is written. A choice the server could not be asked about is kept,
-// with a warning: the agent is not refused for a server that is down, and a choice that turns
-// out to name nothing the server publishes ends turns by its default. So is one that chooses a
-// point failing the dictation guard, with what it was measured to do.
-func (s *Server) endOfTurnComplaint(ctx context.Context, chosen, was store.EndOfTurn) (warning, message string, ok bool) {
-	choice := session.EndOfTurnOf(chosen)
+// checked against the policy the chorus-asr server publishes when the agent's floor control
+// asks chorus-asr about its turns, in shadow or acting, so a preset or wait the server doesn't
+// have is refused while the agent is written: when it changed, or when the floor control before
+// the write asked chorus-asr nothing, as nothing checked it then. A choice the server could not
+// be asked about is kept, with a warning: the agent is not refused for a server that is down,
+// and a choice that turns out to name nothing the server publishes ends turns by its default.
+// So is one that chooses a point failing the dictation guard, with what it was measured to do.
+func (s *Server) endOfTurnComplaint(ctx context.Context, chosen, was floorChoice) (warning, message string, ok bool) {
+	choice := session.EndOfTurnOf(chosen.endOfTurn)
 	if err := choice.Check(); err != nil {
 		return "", err.Error(), false
 	}
-	if chosen.IsZero() {
+	if chosen.endOfTurn.IsZero() {
 		return "", "", true
 	}
 	if s.audioFloor == nil {
-		return "end_of_turn is kept, and does nothing on this router, which asks chorus-asr nothing about turns", "", true
+		return "end_of_turn is kept, and does nothing on this router, which has no chorus-asr server", "", true
 	}
-	if reflect.DeepEqual(chosen, was) {
+	if !session.FloorModeOf(chosen.control).Asks() {
+		return "end_of_turn is kept, and does nothing while the agent's floor control is off: chorus-asr is asked nothing about its turns", "", true
+	}
+	if reflect.DeepEqual(chosen.endOfTurn, was.endOfTurn) && session.FloorModeOf(was.control).Asks() {
 		return "", "", true
 	}
 	// As the server publishes it now, rather than as the sessions last read it: the agent is

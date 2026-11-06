@@ -277,6 +277,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 	}
 	body.Calls = declareCalls(settings.Calls)
 	body.EndOfTurn = declareEndOfTurn(settings.EndOfTurn)
+	body.FloorControl = declareFloorControl(settings.FloorControl)
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}
@@ -346,6 +347,18 @@ func declareEndOfTurn(settings *EndOfTurnSettings) *acceleration.EndOfTurn {
 		declared.Bars = &bars
 	}
 	return declared
+}
+
+// declareFloorControl is what the file says of floor_control for the wire, as written, or nil
+// when it says nothing, which leaves the stored choice.
+func declareFloorControl(settings *FloorControlSettings) *acceleration.FloorControl {
+	if settings == nil {
+		return nil
+	}
+	return &acceleration.FloorControl{
+		Model: acceleration.FloorControlModel(settings.Model),
+		Mode:  acceleration.FloorControlMode(settings.Mode),
+	}
 }
 
 func enabledOr(enabled *bool, fallback bool) *bool {

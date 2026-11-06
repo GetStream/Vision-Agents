@@ -5,3 +5,8 @@ mode: voice
 stt: deepgram/flux-general-en
 llm: gemini/gemini-3.8-flash
 tts: cartesia/sonic-preview
+
+# The agent opts in to chorus-asr's floor control, and acts on its rulings.
+floor_control:
+  model: chorus-asr
+  mode: act

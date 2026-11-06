@@ -4,7 +4,8 @@
 // Pick this when you want chorus-asr's words and nothing else: your own pipeline decides when
 // to answer, and the router asks the server only for words (POST /v1/transcribe).
 //
-// The router runs with ROUTER_CHORUS_ASR_URL; ROUTER_CHORUS_ASR_MODE stays off (../README.md).
+// The router runs with ROUTER_CHORUS_ASR_URL, and nothing here opts in to floor control
+// (../README.md).
 //
 //	go run .
 package main

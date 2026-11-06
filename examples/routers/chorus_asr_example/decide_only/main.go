@@ -4,7 +4,8 @@
 // Pick this to keep the transcriber you have, for its languages or its words, and take the
 // turn-taking from the audio rather than from the words.
 //
-// The router runs with ROUTER_CHORUS_ASR_URL and ROUTER_CHORUS_ASR_MODE=act (../README.md).
+// The router runs with ROUTER_CHORUS_ASR_URL, and the agent opts in with floor_control in its
+// agent.yaml (../README.md).
 //
 //	go run .
 package main
@@ -26,7 +27,8 @@ func main() {
 	defer stop()
 	_ = godotenv.Load("../../../../.env")
 
-	// stt: deepgram/flux-general-en; chorus-asr decides the turns by the server's default.
+	// stt: deepgram/flux-general-en, and floor_control: {model: chorus-asr, mode: act}:
+	// chorus-asr decides the turns by the server's default end_of_turn.
 	agent, err := agents.New(agents.Options{Dir: "../agents/clinic-front-desk"})
 	if err != nil {
 		log.Fatal(err)

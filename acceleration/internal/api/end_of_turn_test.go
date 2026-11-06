@@ -14,8 +14,9 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
-// EndOfTurnSuite runs a router that asks a chorus-asr server about turns, which publishes
-// chorusASRInfo, on an app of each test's own.
+// EndOfTurnSuite runs a router with a chorus-asr server, which publishes chorusASRInfo, on an
+// app of each test's own, its agents shadowing chorus-asr (shadowing), so that it is asked
+// about their turns and their end_of_turn is held to what it publishes.
 type EndOfTurnSuite struct {
 	RouterSuite
 }
@@ -29,7 +30,7 @@ func (s *EndOfTurnSuite) SetupSuite() {
 		_, _ = w.Write([]byte(chorusASRInfo))
 	}))
 	s.T().Cleanup(server.Close)
-	s.audioFloor, s.audioFloorMode = audiofloor.New(server.URL, audiofloor.Opus, server.Client()), audiofloor.Shadow
+	s.audioFloor = audiofloor.New(server.URL, audiofloor.Opus, server.Client())
 	s.RouterSuite.SetupSuite()
 }
 
@@ -37,8 +38,11 @@ func (s *EndOfTurnSuite) SetupTest() {
 	s.useApp(s.data.createApp())
 }
 
+// shadowing is the floor control of the suite's agents.
+var shadowing = map[string]any{"model": "chorus-asr", "mode": "shadow"}
+
 func (s *EndOfTurnSuite) sync(name, hash string, endOfTurn any) SyncAgentResult {
-	declaration := map[string]any{"name": name, "hash": hash}
+	declaration := map[string]any{"name": name, "hash": hash, "floor_control": shadowing}
 	if endOfTurn != nil {
 		declaration["end_of_turn"] = endOfTurn
 	}
@@ -49,7 +53,7 @@ func (s *EndOfTurnSuite) sync(name, hash string, endOfTurn any) SyncAgentResult 
 
 func (s *EndOfTurnSuite) refusedSync(endOfTurn any) (int, string) {
 	return s.serverClient.failure(http.MethodPost, "/v1/agents/sync",
-		map[string]any{"name": "refused-" + s.utils.uuid(), "hash": "v1", "end_of_turn": endOfTurn})
+		map[string]any{"name": "refused-" + s.utils.uuid(), "hash": "v1", "floor_control": shadowing, "end_of_turn": endOfTurn})
 }
 
 // A sync stores each way of choosing as sent, the config serves it, and a session opened from
@@ -136,13 +140,14 @@ func (s *EndOfTurnSuite) TestAChoiceOutsideTheSchemaIsAValidationFailure() {
 // A config created, replaced or patched is held to what a sync is held to.
 func (s *EndOfTurnSuite) TestEveryWriteOfAConfigIsHeldToTheSameChoice() {
 	eager := &EndOfTurn{Preset: pointerTo("eager")}
-	status, message := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{Name: "created", EndOfTurn: eager})
+	shadow := floorControl(floorModeShadow)
+	status, message := s.serverClient.failure(http.MethodPost, "/v1/agents/configs", AgentConfigRequest{Name: "created", FloorControl: shadow, EndOfTurn: eager})
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(message, `there is no preset "eager"`)
 
 	var created AgentConfig
 	s.Require().Equal(http.StatusCreated, s.serverClient.do(http.MethodPost, "/v1/agents/configs",
-		AgentConfigRequest{Name: "created", EndOfTurn: &EndOfTurn{MaxWaitMs: pointerTo(1200)}}, &created))
+		AgentConfigRequest{Name: "created", FloorControl: shadow, EndOfTurn: &EndOfTurn{MaxWaitMs: pointerTo(1200)}}, &created))
 	s.Equal(&EndOfTurn{MaxWaitMs: pointerTo(1200)}, created.EndOfTurn)
 
 	status, message = s.serverClient.failure(http.MethodPatch, "/v1/agents/configs/"+created.Id, AgentConfigPatch{EndOfTurn: &EndOfTurn{MaxWaitMs: pointerTo(100)}})
@@ -168,7 +173,8 @@ func (s *EndOfTurnSuite) TestEveryWriteOfAConfigIsHeldToTheSameChoice() {
 // keeps what it was opened with.
 func (s *EndOfTurnSuite) TestASessionChoosesForItselfServerSide() {
 	agent := store.AgentConfig{CustomerID: s.customerID(), Name: "session-" + s.utils.uuid(), Mode: store.AgentModeText,
-		LLM: "en-low-latency", EndOfTurn: store.EndOfTurn{Preset: "safe"}}
+		LLM: "en-low-latency", EndOfTurn: store.EndOfTurn{Preset: "safe"},
+		FloorControl: store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeShadow}}
 	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &agent))
 
 	request := CreateSessionRequest{ConfigId: &agent.ID, EndOfTurn: &EndOfTurn{Preset: pointerTo("fast")}}

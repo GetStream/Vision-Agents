@@ -13,7 +13,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/socketedge"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
 
@@ -121,10 +120,6 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 		refuseWith(errSocketCall)
 		return
 	}
-	if _, message, ok := s.endOfTurnComplaint(ctx, endOfTurnOr(store.EndOfTurn{}, start.Session.EndOfTurn), store.EndOfTurn{}); !ok {
-		refuseWith(invalidRequest(message))
-		return
-	}
 
 	edge, err := socketedge.New(socketedge.Options{
 		SampleRate: start.SampleRate,
@@ -140,6 +135,10 @@ func (s *Server) openSocketSession(w http.ResponseWriter, r *http.Request) {
 	config, failure := s.configFor(ctx, customerID, start.Session.ConfigId, start.Session.Agent)
 	if failure != nil {
 		refuse(failure.Error())
+		return
+	}
+	if failure, refused := s.sessionFloorRefusal(ctx, start.Session, config); refused {
+		refuseWith(failure)
 		return
 	}
 	spec := specOf(start.Session, customerID, config)

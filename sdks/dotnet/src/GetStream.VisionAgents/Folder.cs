@@ -193,6 +193,13 @@ public sealed record Declaration
     /// default. Which one, and whether the bars rise, is the router's to judge.
     /// </summary>
     public EndOfTurn? EndOfTurn { get; init; }
+
+    /// <summary>
+    /// Whether chorus-asr rules the agent's floor: its model and its mode (off, shadow or act), as
+    /// written. Null when agent.yaml says nothing, which leaves the stored choice; an agent that
+    /// never chose is off. Which models and modes there are is the router's to say.
+    /// </summary>
+    public FloorControl? FloorControl { get; init; }
 }
 
 /// <summary>
@@ -606,6 +613,7 @@ public sealed class Folder
             Video = video,
             Dispatch = read.Dispatch is { } dispatch ? new DispatchDeclaration(dispatch.IncomingCall ?? "", dispatch.Text ?? "") : null,
             EndOfTurn = endOfTurn,
+            FloorControl = read.FloorControl is { Model: { } model, Mode: { } mode } ? new FloorControl { Model = model, Mode = mode } : null,
         };
     }
 
@@ -1110,6 +1118,7 @@ public sealed class Folder
         [YamlMember(Alias = "video")] public WrittenVideo? Video { get; set; }
         [YamlMember(Alias = "dispatch")] public WrittenDispatch? Dispatch { get; set; }
         [YamlMember(Alias = "end_of_turn")] public WrittenEndOfTurn? EndOfTurn { get; set; }
+        [YamlMember(Alias = "floor_control")] public WrittenFloorControl? FloorControl { get; set; }
     }
 
     /// <summary>
@@ -1210,6 +1219,69 @@ public sealed class Folder
     {
         [YamlMember(Alias = "from_ms")] public long? FromMs { get; set; }
         [YamlMember(Alias = "bar")] public double? Bar { get; set; }
+    }
+
+    /// <summary>
+    /// The <c>floor_control:</c> mapping, read by hand so that each refusal names what is wrong:
+    /// not a mapping, a key nobody knows, model or mode missing, or one that is not a string. A
+    /// plain null is absent, and both stay null. A bare off is the string it is written as.
+    /// </summary>
+    private sealed class WrittenFloorControl : IYamlConvertible
+    {
+        public string? Model { get; private set; }
+        public string? Mode { get; private set; }
+
+        void IYamlConvertible.Read(IParser parser, Type expectedType, ObjectDeserializer nestedObjectDeserializer)
+        {
+            if (parser.Current is Scalar { Style: ScalarStyle.Plain } nothing && IsNull(nothing.Value))
+            {
+                parser.MoveNext();
+                return;
+            }
+            if (!parser.TryConsume<MappingStart>(out _))
+            {
+                throw new YamlException("floor_control is a mapping of model and mode");
+            }
+            string? model = null, mode = null;
+            while (!parser.TryConsume<MappingEnd>(out _))
+            {
+                var key = parser.Consume<Scalar>().Value;
+                if (key is not ("model" or "mode"))
+                {
+                    throw new YamlException($"\"{key}\" is not a floor_control setting; model and mode are");
+                }
+                // YAML 1.2's core schema: a plain true, false or number is not a string.
+                if (!parser.TryConsume<Scalar>(out var value) ||
+                    value.Style == ScalarStyle.Plain && NotAString.IsMatch(value.Value))
+                {
+                    throw new YamlException($"floor_control.{key} must be a string");
+                }
+                var written = value.Style == ScalarStyle.Plain && IsNull(value.Value) ? null : value.Value;
+                if (key == "model")
+                {
+                    model = written;
+                }
+                else
+                {
+                    mode = written;
+                }
+            }
+            if (model is null || mode is null)
+            {
+                throw new YamlException("floor_control names both model and mode");
+            }
+            (Model, Mode) = (model, mode);
+        }
+
+        void IYamlConvertible.Write(IEmitter emitter, ObjectSerializer nestedObjectSerializer) =>
+            throw new NotSupportedException();
+
+        private static bool IsNull(string plain) => plain is "" or "~" or "null" or "Null" or "NULL";
+
+        /// <summary>A plain scalar YAML 1.2's core schema reads as a boolean or a number.</summary>
+        private static readonly System.Text.RegularExpressions.Regex NotAString = new(
+            @"^(?:true|True|TRUE|false|False|FALSE|[-+]?[0-9]+|0o[0-7]+|0x[0-9a-fA-F]+|[-+]?(?:\.[0-9]+|[0-9]+(?:\.[0-9]*)?)(?:[eE][-+]?[0-9]+)?|[-+]?\.(?:inf|Inf|INF)|\.(?:nan|NaN|NAN))$",
+            System.Text.RegularExpressions.RegexOptions.CultureInvariant);
     }
 
     private sealed class WrittenSandboxOptions

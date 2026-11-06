@@ -425,6 +425,60 @@ func TestADeclarationKeyNobodyKnowsIsRefused(t *testing.T) {
 	}
 }
 
+// floor_control is read as written: a bare off is the word it is, and which models and modes
+// there are is the router's to say.
+func TestTheFloorControlIsReadAsWritten(t *testing.T) {
+	for _, c := range []struct {
+		declared string
+		want     *FloorControlSettings
+	}{
+		{"floor_control:\n  model: chorus-asr\n  mode: act\n", &FloorControlSettings{Model: "chorus-asr", Mode: "act"}},
+		{"floor_control: {model: chorus-asr, mode: shadow}\n", &FloorControlSettings{Model: "chorus-asr", Mode: "shadow"}},
+		{"floor_control:\n  model: chorus-asr\n  mode: off\n", &FloorControlSettings{Model: "chorus-asr", Mode: "off"}},
+		{"floor_control:\n  model: chorus-asr\n  mode: \"off\"\n", &FloorControlSettings{Model: "chorus-asr", Mode: "off"}},
+		{"floor_control:\n  model: other\n  mode: loud\n", &FloorControlSettings{Model: "other", Mode: "loud"}},
+		{"floor_control:\n", nil},
+		{"floor_control: ~\n", nil},
+		{"llm: openai/gpt-5.6\n", nil},
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", c.declared)
+
+		folder, err := Load(root)
+		if err != nil {
+			t.Errorf("%q: %v", c.declared, err)
+			continue
+		}
+		if !reflect.DeepEqual(folder.Settings.FloorControl, c.want) {
+			t.Errorf("%q: floor_control read as %+v, not %+v", c.declared, folder.Settings.FloorControl, c.want)
+		}
+	}
+}
+
+func TestAFloorControlThatCannotBeReadIsRefused(t *testing.T) {
+	for _, c := range []struct{ declared, reason string }{
+		{"floor_control: act\n", "floor_control is a mapping of model and mode"},
+		{"floor_control: [chorus-asr, act]\n", "floor_control is a mapping of model and mode"},
+		{"floor_control: {}\n", "floor_control names both model and mode"},
+		{"floor_control:\n  mode: act\n", "floor_control names both model and mode"},
+		{"floor_control:\n  model: chorus-asr\n", "floor_control names both model and mode"},
+		{"floor_control:\n  model: chorus-asr\n  mode: ~\n", "floor_control names both model and mode"},
+		{"floor_control:\n  model: chorus-asr\n  mode: act\n  eager: true\n", `"eager" is not a floor_control setting`},
+		{"floor_control:\n  model: chorus-asr\n  mode: [act]\n", "floor_control.mode must be a string"},
+		{"floor_control:\n  model: {name: chorus-asr}\n  mode: act\n", "floor_control.model must be a string"},
+		{"floor_control:\n  model: chorus-asr\n  mode: 1\n", "floor_control.mode must be a string"},
+		{"floor_control:\n  model: chorus-asr\n  mode: true\n", "floor_control.mode must be a string"},
+	} {
+		root := filepath.Join(t.TempDir(), "jean")
+		write(t, root, "agent.yaml", c.declared)
+
+		_, err := Load(root)
+		if err == nil || !strings.Contains(err.Error(), c.reason) {
+			t.Errorf("%q: refused with %v, not %q", c.declared, err, c.reason)
+		}
+	}
+}
+
 func TestTheApplicationsOwnSectionIsLeftToIt(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "jean")
 	write(t, root, "agent.yaml", "name: jean\napp:\n  sandbox_profile: support\n  tool_timeout_ms: 195000\n")

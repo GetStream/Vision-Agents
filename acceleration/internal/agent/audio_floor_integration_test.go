@@ -280,8 +280,8 @@ func (h *floorHarness) backchannel(t *testing.T) {
 // writes it, as any transcriber would. In an agent's call the agent drops it (withoutEcho)
 // before the conversation, the model or anyone watching sees it, so what the transcriber wrote
 // of it is logged as an observation, and the contract is what they see: one turn of the
-// caller's, none of the agent's voice. Transcribing alone (mode off), the router does not know
-// the app's voice, and cancelling the echo is the edge's to do; the contract is the
+// caller's, none of the agent's voice. Transcribing alone (floor control off), the router does
+// not know the app's voice, and cancelling the echo is the edge's to do; the contract is the
 // transcriber's: the model ends the caller's turn under the transcriber's own agent, so their
 // words are one final of their own, written within a check or two of their voice rather than
 // at the silence cap, which the agent's reply came back inside of, and the agent's voice is a
@@ -501,7 +501,7 @@ func (h *floorHarness) coughAlone(t *testing.T) {
 	assert.Empty(t, all[Responding](c), "no answer")
 }
 
-// 9. With the mode off, the chorus-asr transcriber writes a turn by itself: the model ends
+// 9. With floor control off, the chorus-asr transcriber writes a turn by itself: the model ends
 // it under the transcriber's own agent, the decision and the words in one request, within a
 // check or two of the voice, and no words are asked for alone once the caller has stopped.
 func (h *floorHarness) transcriptionAlone(t *testing.T) {
@@ -566,13 +566,23 @@ func fromTheRoom(text string) []string {
 // flipped language and script from one to the next. Only a declared language keeps the
 // room's own words out: with none, the README's Limits say they can be written as a turn of
 // their own, which is logged here and not held against the loop.
+//
+// The room falls quiet once the caller has been answered, as in 11. Talking on, it keeps the
+// speech gate open (Limits) and is heard over the reply, which is C1's to hold: the call
+// settled only if a pause of 3 s in the room's checks came before the room's utterance
+// reached the transcriber's 60 s cap, and once it didn't, that utterance was answered and
+// the room's next words stopped the reply, over and over.
 func (h *floorHarness) liveWordsOverAnotherLanguage(t *testing.T, languages []string) {
 	c := h.start(t, audiofloor.Act, replayInstructions, languages)
 	c.edge.background(bedBelow(h.portuguese, h.long, roomLevel), 0)
 	c.edge.pause(time.Second)
 	said := c.edge.say("long", h.long)
 	c.edge.pause(5 * time.Second)
-	c.settle(3*time.Second, 2*time.Minute)
+	// The room keeps the gate open, so the turn ends at the room's pauses, if the model ends
+	// it there, or at the transcriber's 60 s cap on an utterance (Limits).
+	c.until(func() bool { return c.answered(said).ok }, 70*time.Second, "the caller's turn was answered")
+	c.edge.background(nil, 0)
+	c.settle(3*time.Second, time.Minute)
 	defer c.report()
 
 	var interims, finals int
@@ -741,8 +751,9 @@ type call struct {
 	logs   *logBook
 }
 
-// start joins an agent to a new call: the chorus-asr model transcribing, and asked as mode
-// says, with the conversation model and the voice stand-ins.
+// start joins an agent to a new call: the chorus-asr model transcribing, and asked as mode,
+// the agent's own floor control, says, with the conversation model and the voice stand-ins.
+// Each call's agent chooses for itself, as on a router where agents opt in one by one.
 func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions string, languages []string) *call {
 	return h.startWith(t, callSetup{mode: mode, instructions: instructions, languages: languages})
 }
@@ -750,6 +761,7 @@ func (h *floorHarness) start(t *testing.T, mode audiofloor.Mode, instructions st
 // callSetup is what a call is started with. A nil client is the harness's, and an empty
 // endOfTurn the one every call chooses (CHORUS_ASR_END_OF_TURN).
 type callSetup struct {
+	// mode is the agent's floor control: empty or off, shadow or act.
 	mode         audiofloor.Mode
 	instructions string
 	languages    []string
@@ -1190,6 +1202,8 @@ type cue struct {
 	name       string
 	from, to   int64
 	start, end time.Time
+	// mu is the edge's, which sets start and end as it plays the line.
+	mu *sync.Mutex
 }
 
 func newReplayEdge(caller stt.Participant) *replayEdge {
@@ -1277,7 +1291,7 @@ func (e *replayEdge) say(name string, samples []int16) *cue {
 		e.at = at
 	}
 	from, to := voiced(samples)
-	line := &cue{name: name, from: at + int64(from), to: at + int64(to)}
+	line := &cue{name: name, from: at + int64(from), to: at + int64(to), mu: &e.mu}
 	e.lines = append(e.lines, line)
 	e.script = append(e.script, samples...)
 	return line
@@ -1406,8 +1420,18 @@ func (e *replayEdge) heard() time.Duration {
 	return time.Duration(e.played) * time.Second / replayRate
 }
 
-func (c *cue) began() time.Time { return c.start }
-func (c *cue) ended() time.Time { return c.end }
+// began and ended are read while the edge plays the line, as a check waits on its answer.
+func (c *cue) began() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.start
+}
+
+func (c *cue) ended() time.Time {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.end
+}
 
 // replayVoice speaks the recorded reply for the agent: the recording of the line it is
 // given when it has one, and otherwise the reply, as much of it as the line's length in

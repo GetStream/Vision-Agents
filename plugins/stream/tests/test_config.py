@@ -101,6 +101,22 @@ class Router:
         body = await request.json()
         self.bodies.append(body)
         self.syncs += 1
+        floor = body.get("floor_control")
+        if floor is not None and (
+            floor.get("model") != "chorus-asr"
+            or floor.get("mode") not in ("off", "shadow", "act")
+        ):
+            # As the router does, before anything is written.
+            return web.json_response(
+                status=400,
+                data={
+                    "error": {
+                        "type": "invalid_request",
+                        "code": "validation_failed",
+                        "message": "floor_control is a model and a mode it knows",
+                    }
+                },
+            )
         self.simulations = body.get("simulations")
         existing_id = ""
         for stored in self.configs.values():
@@ -770,6 +786,64 @@ class TestSyncAgent:
         )
 
         assert "end_of_turn" not in router.bodies[-1]
+
+    @pytest.mark.parametrize(
+        "declared, sent",
+        [
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: act\n",
+                {"model": "chorus-asr", "mode": "act"},
+            ),
+            (
+                "floor_control: {model: chorus-asr, mode: shadow}\n",
+                {"model": "chorus-asr", "mode": "shadow"},
+            ),
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: off\n",
+                {"model": "chorus-asr", "mode": "off"},
+            ),
+            (
+                'floor_control:\n  model: chorus-asr\n  mode: "off"\n',
+                {"model": "chorus-asr", "mode": "off"},
+            ),
+        ],
+    )
+    async def test_the_floor_control_the_agent_declares_is_sent_as_written(
+        self, router: Router, support_dir, declared: str, sent: dict[str, Any]
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\n" + declared)
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert router.bodies[-1]["floor_control"] == sent
+
+    async def test_a_floor_control_the_router_does_not_know_goes_for_it_to_refuse(
+        self, router: Router, support_dir
+    ):
+        (support_dir / "agent.yaml").write_text(
+            "name: support\nfloor_control:\n  model: other\n  mode: loud\n"
+        )
+
+        with pytest.raises(stream.RouterError, match="floor_control"):
+            await stream.sync_agent(
+                "support", path=str(support_dir), url=router.url, customer_id="acme"
+            )
+
+        assert router.bodies[-1]["floor_control"] == {"model": "other", "mode": "loud"}
+
+    @pytest.mark.parametrize("declared", ["llm: llm-fast\n", "floor_control:\n"])
+    async def test_a_file_naming_no_floor_control_sends_none_so_the_stored_one_stays(
+        self, router: Router, support_dir, declared: str
+    ):
+        (support_dir / "agent.yaml").write_text("name: support\n" + declared)
+
+        await stream.sync_agent(
+            "support", path=str(support_dir), url=router.url, customer_id="acme"
+        )
+
+        assert "floor_control" not in router.bodies[-1]
 
     @pytest.mark.parametrize("key", ["plugins", "plugin_events"])
     async def test_a_directory_naming_plugins_is_refused_and_nothing_is_sent(

@@ -1282,6 +1282,42 @@ func (e ErrorType) Valid() bool {
 	}
 }
 
+// Defines values for FloorControlMode.
+const (
+	FloorControlModeAct    FloorControlMode = "act"
+	FloorControlModeOff    FloorControlMode = "off"
+	FloorControlModeShadow FloorControlMode = "shadow"
+)
+
+// Valid indicates whether the value is a known member of the FloorControlMode enum.
+func (e FloorControlMode) Valid() bool {
+	switch e {
+	case FloorControlModeAct:
+		return true
+	case FloorControlModeOff:
+		return true
+	case FloorControlModeShadow:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for FloorControlModel.
+const (
+	ChorusAsr FloorControlModel = "chorus-asr"
+)
+
+// Valid indicates whether the value is a known member of the FloorControlModel enum.
+func (e FloorControlModel) Valid() bool {
+	switch e {
+	case ChorusAsr:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GeneratedImageMediaType.
 const (
 	Imagejpeg GeneratedImageMediaType = "image/jpeg"
@@ -3280,11 +3316,14 @@ type AgentConfig struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
 
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
+
+	// FloorControl Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting  *Greeting `json:"greeting,omitempty"`
@@ -3364,11 +3403,14 @@ type AgentConfigPatch struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
 
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
+
+	// FloorControl Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -3469,11 +3511,14 @@ type AgentConfigRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
 
 	// EpisodeCards What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 	EpisodeCards *EpisodeCardsMode `json:"episode_cards,omitempty"`
+
+	// FloorControl Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -5650,8 +5695,11 @@ type CreateSessionRequest struct {
 	// Description A longer note about the conversation, searched alongside the title.
 	Description *string `json:"description,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
+
+	// FloorControl Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`
@@ -6084,7 +6132,7 @@ type EndCallSettings struct {
 	When *string `json:"when,omitempty"`
 }
 
-// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 type EndOfTurn struct {
 	// Bars Bars of the agent's own: the first from 0 ms, each later one from further into the pause. The turn has ended at the first check of a pause where p_eot reaches the last bar to have begun. Unlike a measured point, nobody has measured what they do to callers.
 	Bars *[]EndOfTurnBar `json:"bars,omitempty"`
@@ -6154,6 +6202,21 @@ type ErrorResponse struct {
 
 // ErrorType The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 type ErrorType string
+
+// FloorControl Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
+type FloorControl struct {
+	// Mode What the agent does with the model's rulings. off asks it nothing. shadow asks it about each turn beside the flow controller and acts on nothing it says, to compare the two on real calls. act asks it first and acts on its ruling, and the flow controller rules a turn it does not answer in time.
+	Mode FloorControlMode `json:"mode"`
+
+	// Model A model that hears the caller's audio and rules an agent's floor. chorus-asr is the one there is.
+	Model FloorControlModel `json:"model"`
+}
+
+// FloorControlMode What the agent does with the model's rulings. off asks it nothing. shadow asks it about each turn beside the flow controller and acts on nothing it says, to compare the two on real calls. act asks it first and acts on its ruling, and the flow controller rules a turn it does not answer in time.
+type FloorControlMode string
+
+// FloorControlModel A model that hears the caller's audio and rules an agent's floor. chorus-asr is the one there is.
+type FloorControlModel string
 
 // ForkSessionRequest Continue a conversation as a new one. Everything the parent was opened with is inherited; anything named here is written over it, which is what makes a fork useful rather than a copy -- the usual reason to fork is to ask the same question of a different model.
 type ForkSessionRequest struct {
@@ -9466,8 +9529,11 @@ type SyncAgentRequest struct {
 	// Dispatch What the agent leaves to the customer's own server, which waits on /v1/dispatch. Omitted settings are disabled.
 	Dispatch *AgentDispatch `json:"dispatch,omitempty"`
 
-	// EndOfTurn When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
+	// EndOfTurn When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms, preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer publishes ends turns by its default.
 	EndOfTurn *EndOfTurn `json:"end_of_turn,omitempty"`
+
+	// FloorControl Whether a model that hears the caller's audio rules the agent's floor: when a caller has finished, and what to do about speech over the agent. An agent opts in for itself, and one that never chose is off. shadow and act need the router's chorus-asr server, and a write asking for either on a router without one is refused. Off, the flow controller rules the floor as it does with no such model, and end_of_turn does nothing; chorus-asr still transcribes for an agent whose stt names stream/chorus-asr. Each session runs by its own, so agents on one router may choose differently.
+	FloorControl *FloorControl `json:"floor_control,omitempty"`
 
 	// Greeting What the agent says as it joins, before anyone speaks.
 	Greeting *Greeting `json:"greeting,omitempty"`

@@ -7,6 +7,7 @@ from vision_agents.plugins.stream.folder import (
     ConnectorSettings,
     EndOfTurnBar,
     EndOfTurnSettings,
+    FloorControlSettings,
     GreetingSettings,
     ToolSettings,
     SandboxSettings,
@@ -958,6 +959,99 @@ class TestFolder:
         assert load(root).settings.end_of_turn == EndOfTurnSettings(
             preset="nobody-publishes-this", bars=[EndOfTurnBar(from_ms=900, bar=1.5)]
         )
+
+    @pytest.mark.parametrize(
+        "declared, chosen",
+        [
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: act\n",
+                FloorControlSettings(model="chorus-asr", mode="act"),
+            ),
+            (
+                "floor_control: {model: chorus-asr, mode: shadow}\n",
+                FloorControlSettings(model="chorus-asr", mode="shadow"),
+            ),
+            # YAML 1.1 reads a bare off as false; the file means the mode off.
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: off\n",
+                FloorControlSettings(model="chorus-asr", mode="off"),
+            ),
+            (
+                'floor_control:\n  model: chorus-asr\n  mode: "off"\n',
+                FloorControlSettings(model="chorus-asr", mode="off"),
+            ),
+            # Which models and modes there are is the router's to say.
+            (
+                "floor_control:\n  model: other\n  mode: loud\n",
+                FloorControlSettings(model="other", mode="loud"),
+            ),
+            ("floor_control:\n", None),
+            ("floor_control: ~\n", None),
+            ("llm: llm-fast\n", None),
+        ],
+    )
+    def test_the_floor_control_is_read_as_written(
+        self, tmp_path: Path, declared: str, chosen: FloorControlSettings | None
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        assert load(root).settings.floor_control == chosen
+
+    @pytest.mark.parametrize(
+        "declared, reason",
+        [
+            (
+                "floor_control: act\n",
+                "should give floor_control as a mapping of model and mode",
+            ),
+            (
+                "floor_control: [chorus-asr, act]\n",
+                "should give floor_control as a mapping of model and mode",
+            ),
+            ("floor_control: {}\n", "floor_control names both model and mode"),
+            (
+                "floor_control:\n  mode: act\n",
+                "floor_control names both model and mode",
+            ),
+            (
+                "floor_control:\n  model: chorus-asr\n",
+                "floor_control names both model and mode",
+            ),
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: ~\n",
+                "floor_control names both model and mode",
+            ),
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: act\n  eager: true\n",
+                "unknown floor_control setting: eager",
+            ),
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: [act]\n",
+                "floor_control.mode must be a string",
+            ),
+            (
+                "floor_control:\n  model: {name: chorus-asr}\n  mode: act\n",
+                "floor_control.model must be a string",
+            ),
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: 1\n",
+                "floor_control.mode must be a string",
+            ),
+            (
+                "floor_control:\n  model: chorus-asr\n  mode: on\n",
+                "floor_control.mode must be a string",
+            ),
+        ],
+    )
+    def test_a_floor_control_that_cannot_be_read_is_refused(
+        self, tmp_path: Path, declared: str, reason: str
+    ):
+        root = tmp_path / "jean"
+        write(root, "agent.yaml", "name: jean\n" + declared)
+
+        with pytest.raises(ValueError, match=re.escape(reason)):
+            load(root)
 
     def test_a_list_setting_given_as_one_word_is_refused(self, tmp_path: Path):
         root = tmp_path / "jean"

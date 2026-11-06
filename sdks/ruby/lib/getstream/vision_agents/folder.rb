@@ -142,7 +142,7 @@ module GetStream
       SETTING_STRINGS = %w[name description mode stt tts sts voice llm harness subagent search sandbox].freeze
       SETTING_LISTS = %w[keyterms].freeze
       SETTINGS = (SETTING_STRINGS + SETTING_LISTS +
-                  %w[greeting tags video dispatch connectors sandbox_options end_of_turn]).freeze
+                  %w[greeting tags video dispatch connectors sandbox_options end_of_turn floor_control]).freeze
       SANDBOX_LISTS = %w[setup allowed_domains network_allow_list].freeze
       SANDBOX_SIZES = %w[cpu memory_gb disk_gb].freeze
       SANDBOX_KEYS = (SANDBOX_LISTS + SANDBOX_SIZES + %w[image timeout network]).freeze
@@ -151,6 +151,7 @@ module GetStream
       DISPATCH_KEYS = %w[incoming_call text].freeze
       END_OF_TURN_KEYS = %w[max_wait_ms preset bars].freeze
       BAR_KEYS = %w[from_ms bar].freeze
+      FLOOR_CONTROL_KEYS = %w[model mode].freeze
       PAGE_KEYS = %w[url title description refresh_hours].freeze
       CONNECTOR_KEYS = %w[name connector tools connection required].freeze
       SIMULATION_STRINGS = %w[name scenario assertion mode caller_target judge_target caller_stt caller_tts
@@ -312,6 +313,38 @@ module GetStream
         when "connectors" then connectors(value, file)
         when "sandbox_options" then sandbox_options(value, file)
         when "end_of_turn" then end_of_turn(value, file)
+        when "floor_control" then floor_control(value, file)
+        end
+      end
+
+      # Whether chorus-asr rules the agent's floor, as written: model and mode, both named.
+      # Which models and modes there are is the router's to say, and it refuses shadow or act
+      # when it has no chorus-asr server.
+      def self.floor_control(value, file)
+        raise ConfigurationError, "#{file}: floor_control is a mapping of model and mode" unless value.is_a?(Hash)
+
+        unknown = value.keys.map(&:to_s) - FLOOR_CONTROL_KEYS
+        raise ConfigurationError, "#{file}: floor_control has no #{unknown.join(", ")}" unless unknown.empty?
+
+        fields = value.transform_keys(&:to_s)
+        chosen = FLOOR_CONTROL_KEYS.to_h { |key| [key, floor_control_word(fields[key], key, file)] }
+        raise ConfigurationError, "#{file}: floor_control names both model and mode" if chosen.value?(nil)
+
+        chosen
+      end
+
+      # model or mode as written. Psych reads YAML 1.1, where a bare off is false, so false is
+      # the mode off, as every other SDK reads it; a bare true, on or yes is refused rather
+      # than guessed at.
+      def self.floor_control_word(value, key, file)
+        case value
+        when nil, String then value
+        when false then "off"
+        when true
+          raise ConfigurationError,
+                "#{file}: floor_control.#{key} must be a string; quote it, since YAML reads a bare on, yes or true as true"
+        else
+          raise ConfigurationError, "#{file}: floor_control.#{key} must be a string"
         end
       end
 

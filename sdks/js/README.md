@@ -381,6 +381,10 @@ naming each, and one whose knowledge base is already kept in another region.
 `end_of_turn` is how eager chorus-asr's turn-taking is: one of `max_wait_ms: 900`, `preset: fast`
 or `bars` of its own, sent as written; `end_of_turn: {}` is the server's default again.
 
+`floor_control` is whether chorus-asr rules the agent's floor: `model: chorus-asr` and `mode`, one
+of `off`, `shadow` and `act`, both named and sent as written. Left out, the stored choice stays, and
+an agent that never chose is off; the router refuses `shadow` or `act` without a chorus-asr server.
+
 Each file in `simulations/` is a list of `name`, `scenario` and `assertion`, with `mode`,
 `variations`, `max_turns`, `caller_*`, `judge_target` and `tags` optional. With a
 `simulations/` directory the config's simulations become exactly what it declares, so an

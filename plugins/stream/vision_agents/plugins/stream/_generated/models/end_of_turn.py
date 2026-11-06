@@ -17,12 +17,12 @@ T = TypeVar("T", bound="EndOfTurn")
 
 @_attrs_define
 class EndOfTurn:
-    """When chorus-asr has a caller's turn ended, where the router asks it about turns: one of max_wait_ms, preset and
-    bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's measured
-    points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how much more
-    a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What a preset
-    or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no longer
-    publishes ends turns by its default.
+    """When chorus-asr has a caller's turn ended, where the agent's floor_control asks it about turns: one of max_wait_ms,
+    preset and bars. An empty object is the server's default preset. A preset or a wait chooses one of the server's
+    measured points: its bars, and how many checks in a row of one pause must reach them. When a pause is checked, how
+    much more a turn's first pause asks, and the pause that ends a turn whatever the model says stay the server's. What
+    a preset or a wait means is the policy of the model the server runs, read when a pause is checked; one that model no
+    longer publishes ends turns by its default.
 
         Attributes:
             bars (list[EndOfTurnBar] | Unset): Bars of the agent's own: the first from 0 ms, each later one from further

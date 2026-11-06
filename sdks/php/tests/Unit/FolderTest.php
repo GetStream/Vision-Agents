@@ -317,6 +317,62 @@ final class FolderTest extends TestCase
         self::assertSame(['bars' => [['bar' => 1.0, 'from_ms' => 0], ['bar' => 0.25, 'from_ms' => 900]]], $endOfTurn?->toArray());
     }
 
+    /**
+     * @return iterable<string, array{string, ?array{mode: string, model: string}}>
+     */
+    public static function floorControls(): iterable
+    {
+        yield 'act' => ["floor_control:\n  model: chorus-asr\n  mode: act\n", ['mode' => 'act', 'model' => 'chorus-asr']];
+        yield 'on one line' => ["floor_control: {model: chorus-asr, mode: shadow}\n", ['mode' => 'shadow', 'model' => 'chorus-asr']];
+        yield 'a bare off' => ["floor_control:\n  model: chorus-asr\n  mode: off\n", ['mode' => 'off', 'model' => 'chorus-asr']];
+        yield 'a quoted off' => ["floor_control:\n  model: chorus-asr\n  mode: \"off\"\n", ['mode' => 'off', 'model' => 'chorus-asr']];
+        yield 'a pair for the router to judge' => ["floor_control:\n  model: other\n  mode: loud\n", ['mode' => 'loud', 'model' => 'other']];
+        yield 'no value' => ["floor_control:\n", null];
+        yield 'null' => ["floor_control: ~\n", null];
+        yield 'left out' => ["llm: openai/gpt-5.6\n", null];
+    }
+
+    /**
+     * floor_control is read as written; which models and modes there are is the router's to say.
+     *
+     * @param ?array{mode: string, model: string} $chosen
+     */
+    #[DataProvider('floorControls')]
+    public function testReadsFloorControlAsWritten(string $declaration, ?array $chosen): void
+    {
+        $this->write('agent.yaml', $declaration);
+
+        self::assertSame($chosen, Folder::load($this->dir)->settings->floorControl?->toArray());
+    }
+
+    /**
+     * @return iterable<string, array{string, string}>
+     */
+    public static function refusedFloorControls(): iterable
+    {
+        yield 'a scalar' => ["floor_control: act\n", 'floor_control is a mapping of model and mode'];
+        yield 'a list' => ["floor_control: [chorus-asr, act]\n", 'floor_control is a mapping of model and mode'];
+        yield 'empty' => ["floor_control: {}\n", 'floor_control names both model and mode'];
+        yield 'no model' => ["floor_control:\n  mode: act\n", 'floor_control names both model and mode'];
+        yield 'no mode' => ["floor_control:\n  model: chorus-asr\n", 'floor_control names both model and mode'];
+        yield 'a null mode' => ["floor_control:\n  model: chorus-asr\n  mode: ~\n", 'floor_control names both model and mode'];
+        yield 'unknown key' => ["floor_control:\n  model: chorus-asr\n  mode: act\n  eager: true\n", '"floor_control.eager" is not something agent.yaml declares'];
+        yield 'a mode that is a list' => ["floor_control:\n  model: chorus-asr\n  mode: [act]\n", 'floor_control.mode must be a string'];
+        yield 'a model that is a mapping' => ["floor_control:\n  model: {name: chorus-asr}\n  mode: act\n", 'floor_control.model must be a string'];
+        yield 'a mode that is a number' => ["floor_control:\n  model: chorus-asr\n  mode: 1\n", 'floor_control.mode must be a string'];
+        yield 'a mode that is true' => ["floor_control:\n  model: chorus-asr\n  mode: true\n", 'floor_control.mode must be a string'];
+    }
+
+    #[DataProvider('refusedFloorControls')]
+    public function testRefusesAFloorControlThatCannotBeRead(string $declaration, string $message): void
+    {
+        $this->write('agent.yaml', $declaration);
+
+        $this->expectException(ConfigurationException::class);
+        $this->expectExceptionMessage($message);
+        Folder::load($this->dir);
+    }
+
     public function testReadsConnectorsAsWritten(): void
     {
         $this->write('agent.yaml', "connectors:\n  - linear\n  - name: issues\n    connector: linear\n    tools: [search]\n    connection: prod\n    required: false\n");

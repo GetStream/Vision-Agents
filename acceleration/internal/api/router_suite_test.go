@@ -354,10 +354,9 @@ type RouterSuite struct {
 	// connectors is what connector adapters the router has, for a suite about connectors to
 	// set before it starts the harness. Empty has none.
 	connectors core.Registry
-	// audioFloor and audioFloorMode are the chorus-asr server the router asks about turns,
-	// for a suite about end_of_turn to set before it starts the harness. Nil asks none.
-	audioFloor     *audiofloor.Client
-	audioFloorMode audiofloor.Mode
+	// audioFloor is the router's chorus-asr server, for a suite about floor control or
+	// end_of_turn to set before it starts the harness. Nil is none.
+	audioFloor *audiofloor.Client
 	// connectorsOff gives the router no connector keyring, transports or limiter, as a deployment with
 	// ROUTER_CONNECTORS_ENABLED unset has, for a control suite to set before it starts the
 	// harness. The suite's store, resolver and sealer are still built.
@@ -765,7 +764,6 @@ func (s *RouterSuite) SetupSuite() {
 		ChatInboundKeys:    s.chatInboundKeys,
 		TelnyxConnectionID: s.telnyxConnectionID,
 		AudioFloor:         s.audioFloor,
-		AudioFloorMode:     s.audioFloorMode,
 		Logger:             logger,
 		// The connector events endpoint revokes through the suite's resolver.
 		ConnectorResolver:     s.resolver,

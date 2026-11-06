@@ -423,6 +423,13 @@ async def _declare_settings(
                 for bar in settings.end_of_turn.bars
             ]
         body.end_of_turn = end_of_turn
+    if settings.floor_control is not None:
+        # As written, rather than through the generated FloorControl, which takes only the
+        # models and modes it was generated with: which there are is the router's to say.
+        body.additional_properties["floor_control"] = {
+            "model": settings.floor_control.model,
+            "mode": settings.floor_control.mode,
+        }
     if settings.keyterms:
         body.keyterms = settings.keyterms
     if settings.sandbox:

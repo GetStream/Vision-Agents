@@ -151,6 +151,11 @@ export interface Declaration {
    * written. Undefined leaves the stored choice; an empty object is the server's default.
    */
   endOfTurn?: Schemas["EndOfTurn"];
+  /**
+   * Whether chorus-asr rules the agent's floor: `model` and `mode` (off, shadow or act), as
+   * written. Undefined leaves the stored choice; an agent that never chose is off.
+   */
+  floorControl?: Schemas["FloorControl"];
 }
 
 /** One connector an agent binds, as agent.yaml names it. */
@@ -766,6 +771,7 @@ function declaredRequest(declared: Declaration): Partial<Schemas["SyncAgentReque
     ...(declared.channels ? { channels: declared.channels } : {}),
     ...(declared.scheduling ? { scheduling: declared.scheduling } : {}),
     ...(declared.endOfTurn ? { end_of_turn: declared.endOfTurn } : {}),
+    ...(declared.floorControl ? { floor_control: declared.floorControl } : {}),
     ...(declared.keyterms?.length ? { keyterms: declared.keyterms } : {}),
     ...(declared.video ? { video: declared.video } : {}),
     ...(declared.dispatch ? { dispatch: declared.dispatch } : {}),
