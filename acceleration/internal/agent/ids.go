@@ -154,7 +154,8 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 			}
 			return name, text, collectIDs(values), true
 		}
-		agents := func(returned line) bool { return wrote.readBack(returned.text, returned.wrote, wanted) }
+		held := wrote.holding(wanted)
+		agents := func(returned line) bool { return held.readBack(returned.text, returned.wrote) }
 		if strings.Contains(heard, wanted) && holdsKind(plainWords(said.String()), entityOf(name), strings.Contains) || slices.Contains(pasted, wanted) ||
 			slices.ContainsFunc(linked, func(link toolLink) bool {
 				return link.part == wanted && holdsKind(link.named, entityOf(name), strings.Contains) && !agents(link.in)
@@ -172,8 +173,7 @@ func unfoundID(history []llm.Message, call llm.ToolCall, tools []string, told st
 			// A result that reads back what the agent wrote with the ID in it returns the ID in none
 			// of its fields either: a message read back keeps a channel the agent named in it as a
 			// field of its own, a "channel_id" in its blocks.
-			held := wrote[:result.wrote].holding(wanted)
-			echoes := slices.ContainsFunc(result.lines, func(text string) bool { return held.readBack(text, len(held), wanted) })
+			echoes := slices.ContainsFunc(result.lines, func(text string) bool { return held.readBack(text, result.wrote) })
 			walkIDs(result.value, "", func(at, id string) {
 				if echoes && alphanumeric(id) == wanted {
 					return
@@ -302,12 +302,17 @@ func nameWasGiven(history []llm.Message, name string) bool {
 	}
 	// A value gives the name whole, wherever its words break, but for the lines in it that read back
 	// what the agent wrote.
+	held := wrote.holding(alphanumeric(name))
 	for _, given := range results {
 		var contains func(any) bool
 		contains = func(value any) bool {
 			switch value := value.(type) {
 			case string:
-				return strings.Contains(words(value), wanted) && strings.Contains(words(wrote.cut(value, given.wrote, alphanumeric(name))), wanted)
+				if !strings.Contains(words(value), wanted) {
+					return false
+				}
+				rest, _ := held.cut(value, given.wrote)
+				return strings.Contains(words(rest), wanted)
 			case []any:
 				return slices.ContainsFunc(value, contains)
 			case map[string]any:
@@ -348,38 +353,54 @@ func (own *ownLines) write(message llm.Message) {
 	}
 }
 
+// heldLines are the lines the agent wrote with a value in them (ownLines.holding), in the order it
+// wrote them.
+type heldLines []heldLine
+
+// heldLine is a line the agent wrote, with how many lines it had written before it.
+type heldLine struct {
+	line string
+	at   int
+}
+
 // holding returns the lines with one of wanted in them, each of wanted alphanumeric, the forms of one
 // value. A line that is the value alone, an argument's, is not one: every line that gives the value
 // holds it.
-func (own ownLines) holding(wanted ...string) ownLines {
-	var held ownLines
-	for _, line := range own {
+func (own ownLines) holding(wanted ...string) heldLines {
+	var held heldLines
+	for at, line := range own {
 		if !slices.Contains(wanted, line) && slices.ContainsFunc(wanted, func(value string) bool { return strings.Contains(line, value) }) {
-			held = append(held, line)
+			held = append(held, heldLine{line, at})
 		}
 	}
 	return held
 }
 
-// readBack reports whether text, a line a tool returned once the agent had written its first upto
-// lines, holds one of those lines with one of wanted in it (holding): the agent's own text read back.
-func (own ownLines) readBack(text string, upto int, wanted ...string) bool {
-	held := own[:upto].holding(wanted...)
+// before returns the lines the agent had written once it had written upto lines.
+func (held heldLines) before(upto int) heldLines {
+	end, _ := slices.BinarySearchFunc(held, upto, func(line heldLine, upto int) int { return line.at - upto })
+	return held[:end]
+}
+
+// readBack reports whether text, a line a tool returned once the agent had written upto lines, holds
+// one of the lines held by then: the agent's own text read back.
+func (held heldLines) readBack(text string, upto int) bool {
+	held = held.before(upto)
 	if len(held) == 0 {
 		return false
 	}
 	text = alphanumeric(html.UnescapeString(text))
-	return slices.ContainsFunc(held, func(line string) bool { return strings.Contains(text, line) })
+	return slices.ContainsFunc(held, func(own heldLine) bool { return strings.Contains(text, own.line) })
 }
 
-// cut returns text, a tool's, without the lines it reads back that the agent wrote in its first upto
-// lines with one of wanted in them (readBack), each cut where it stands: what is left is what the
-// tool wrote beside them. A record that holds a note the agent saved, "Ana | phone +1 555 010 0199 |
-// notes: Call Ana back at +1 555 010 0199", still gives the phone.
-func (own ownLines) cut(text string, upto int, wanted ...string) string {
-	held := own[:upto].holding(wanted...)
+// cut returns text, a tool's, without the lines held by the time the agent had written upto lines
+// that it reads back (readBack), each cut where it stands, and whether it cut one: what is left is
+// what the tool wrote beside them. A record that holds a note the agent saved, "Ana | phone +1 555
+// 010 0199 | notes: Call Ana back at +1 555 010 0199", still gives the phone.
+func (held heldLines) cut(text string, upto int) (string, bool) {
+	held = held.before(upto)
 	if len(held) == 0 {
-		return text
+		return text, false
 	}
 	text = html.UnescapeString(text)
 	// letters are text alphanumeric, as alphanumeric writes it, with the span of text each byte
@@ -397,17 +418,18 @@ func (own ownLines) cut(text string, upto int, wanted ...string) string {
 		letters = append(letters, lower...)
 	}
 	gone := make([]bool, len(text))
-	for _, line := range held {
+	cut := false
+	for _, own := range held {
 		for start := 0; ; {
-			found := strings.Index(string(letters[start:]), line)
+			found := strings.Index(string(letters[start:]), own.line)
 			if found < 0 {
 				break
 			}
 			found += start
-			for at := from[found]; at < to[found+len(line)-1]; at++ {
+			for at := from[found]; at < to[found+len(own.line)-1]; at++ {
 				gone[at] = true
 			}
-			start = found + len(line)
+			start, cut = found+len(own.line), true
 		}
 	}
 	// Each cut is a line break, so that nothing the tool wrote either side of it runs together.
@@ -419,35 +441,29 @@ func (own ownLines) cut(text string, upto int, wanted ...string) string {
 			kept.WriteByte('\n')
 		}
 	}
-	return kept.String()
+	return kept.String(), cut
 }
 
-// returnedLines are the lines of the successful tool results in history (asWritten), but for those
-// that read back a line the agent wrote before them with one of wanted in it (ownLines.readBack): a
-// number the agent made up and posted is still one no tool gave when a tool reads the post back.
-func returnedLines(history []llm.Message, wanted ...string) []string {
-	// wrote are only the agent's lines that hold the value: a long call holds many others.
-	var wrote ownLines
-	var lines []string
+// toolResult is a successful tool result, with how many lines the agent had written by then (ownLines).
+type toolResult struct {
+	content string
+	wrote   int
+}
+
+// toolResults returns the lines the agent wrote in history (ownLines) and its successful tool results.
+func toolResults(history []llm.Message) (wrote ownLines, results []toolResult) {
 	for _, message := range history {
 		switch message.Role {
 		case llm.Assistant:
-			var written ownLines
-			written.write(message)
-			wrote = append(wrote, written.holding(wanted...)...)
+			wrote.write(message)
 		case llm.ToolResult:
 			// A refusal quotes the value refused: "56305" refused let 5630 through.
-			if failedResult(message.Content) {
-				continue
-			}
-			for _, text := range strings.Split(asWritten(message.Content), "\n") {
-				if !wrote.readBack(text, len(wrote), wanted...) {
-					lines = append(lines, text)
-				}
+			if !failedResult(message.Content) {
+				results = append(results, toolResult{message.Content, len(wrote)})
 			}
 		}
 	}
-	return lines
+	return wrote, results
 }
 
 // unheardNumber reports an argument of four or more digits that neither the caller, a tool
@@ -476,6 +492,15 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 		}
 	}
 	spoken = append(spoken, heard...)
+	digits := digitGroups(sources...)
+	wrote, results := toolResults(history)
+	// groups are the numbers each result writes, as its digits alone. lines are its lines (asWritten),
+	// read only for a result with the number in it once the agent wrote it: a long call holds many.
+	groups := make([][]string, len(results))
+	for i, result := range results {
+		groups[i] = digitGroups(result.content)
+	}
+	lines := make([][]string, len(results))
 	keys := make([]string, 0, len(arguments))
 	for name := range arguments {
 		keys = append(keys, name)
@@ -486,8 +511,31 @@ func unheardNumber(history []llm.Message, call llm.ToolCall, told string) (key, 
 		if !ok || len(text) < 4 || !allDigits(text) {
 			continue
 		}
-		digits := digitGroups(append(slices.Clone(sources), returnedLines(history, text)...)...)
-		if slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) }) {
+		given := func(digits []string) bool {
+			return slices.ContainsFunc(digits, func(said string) bool { return strings.Contains(said, text) })
+		}
+		if given(digits) {
+			continue
+		}
+		held := wrote.holding(text)
+		returns := false
+		for i, result := range results {
+			if !given(groups[i]) {
+				continue
+			}
+			if len(held.before(result.wrote)) == 0 {
+				returns = true
+				break
+			}
+			if lines[i] == nil {
+				lines[i] = strings.Split(asWritten(result.content), "\n")
+			}
+			if slices.ContainsFunc(lines[i], func(line string) bool { return given(digitGroups(line)) && !held.readBack(line, result.wrote) }) {
+				returns = true
+				break
+			}
+		}
+		if returns {
 			continue
 		}
 		if slices.ContainsFunc(spoken, func(said string) bool { return nearMiss(text, said) }) {
@@ -511,8 +559,8 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 	if local, ok := strings.CutPrefix(wanted, "1"); ok && len(local) == 10 {
 		forms = append(forms, local)
 	}
-	sources := append([]string{told}, returnedLines(history, forms...)...)
-	for _, source := range sources {
+	// gives reports whether source writes the number as its digits alone.
+	gives := func(source string) bool {
 		for _, run := range writtenNumber.FindAllString(source, -1) {
 			groups := digitGroups(run)
 			spans := numberGroup.FindAllStringIndex(run, -1)
@@ -534,15 +582,44 @@ func unsourcedTransfer(history []llm.Message, call llm.ToolCall, told string) (t
 				for end := start + 1; end <= len(groups); end++ {
 					digits := strings.Join(groups[start:end], "")
 					if digits == wanted && before(start) && after(end) {
-						return "", false
+						return true
 					}
 					// A US number written without its country code is the same line, unless
 					// digits run on from it unmarked, as a country code or a second number do.
 					if len(digits) == 10 && "1"+digits == wanted &&
 						before(start) && after(end) {
-						return "", false
+						return true
 					}
 				}
+			}
+		}
+		return false
+	}
+	if gives(told) {
+		return "", false
+	}
+	// held are the lines the agent wrote with the number in it, and wrote how many it wrote: read as
+	// the call goes, a source early in a long call is found without reading the rest.
+	var held heldLines
+	wrote := 0
+	for _, message := range history {
+		switch message.Role {
+		case llm.Assistant:
+			var own ownLines
+			own.write(message)
+			for _, line := range own.holding(forms...) {
+				held = append(held, heldLine{line.line, wrote + line.at})
+			}
+			wrote += len(own)
+		case llm.ToolResult:
+			// A refusal quotes the value refused: "56305" refused let 5630 through.
+			if failedResult(message.Content) || !gives(message.Content) {
+				continue
+			}
+			if len(held) == 0 || slices.ContainsFunc(strings.Split(asWritten(message.Content), "\n"), func(line string) bool {
+				return gives(line) && !held.readBack(line, wrote)
+			}) {
+				return "", false
 			}
 		}
 	}
