@@ -198,6 +198,30 @@ func TestACancelledModelCallSaysItWasCancelled(t *testing.T) {
 	require.NoError(t, err)
 	require.JSONEq(t, `false`, string(mustField(t, raw, "success")))
 	require.JSONEq(t, `"cancelled"`, string(mustField(t, raw, "error_code")))
+	require.NotContains(t, sent, "error_message", "a cancel that said nothing adds no message")
+}
+
+func TestAFailedModelCallSaysWhatTheProviderAnswered(t *testing.T) {
+	failed := flowCall(false, "create_failed")
+	failed.ErrorMessage = `POST "https://gemma.example/v1/chat/completions": 502 Bad Gateway : failed to connect to local service`
+	sent, ok := frameOf(agent.ModelCall{CallTiming: failed})
+
+	require.True(t, ok)
+	raw, err := json.Marshal(sent)
+	require.NoError(t, err)
+	require.JSONEq(t, `"create_failed"`, string(mustField(t, raw, "error_code")))
+	require.JSONEq(t, `"POST \"https://gemma.example/v1/chat/completions\": 502 Bad Gateway : failed to connect to local service"`,
+		string(mustField(t, raw, "error_message")))
+}
+
+func TestAServedModelCallCarriesNoMessageWhateverItsTimingHeld(t *testing.T) {
+	served := flowCall(true, "")
+	served.ErrorMessage = "a failure the provider recovered from"
+	sent, ok := frameOf(agent.ModelCall{CallTiming: served})
+
+	require.True(t, ok)
+	require.NotContains(t, sent, "error_message")
+	require.NotContains(t, sent, "error_code")
 }
 
 // timelineCall is the one model call a timeline lists for a turn that made only the request given.
@@ -226,6 +250,14 @@ func TestACancelledModelCallOnTheTimelineSaysWhyAndWhatItCost(t *testing.T) {
 	raw := timelineCall(t, store.Request{Success: false, ErrorCode: store.ErrorCancelled})
 
 	require.JSONEq(t, `[{"input_tokens":10,"model":"fast","operation_id":"op-1","output_tokens":2,"provider":"stub","purpose":"flow","started_at":"2026-10-20T12:00:00Z","success":false,"error_code":"cancelled","ttft_ms":80}]`,
+		string(raw))
+}
+
+func TestAFailedModelCallOnTheTimelineSaysWhatTheProviderAnswered(t *testing.T) {
+	raw := timelineCall(t, store.Request{Success: false, ErrorCode: "create_failed",
+		ErrorMessage: "502 Bad Gateway : failed to connect to local service"})
+
+	require.JSONEq(t, `[{"input_tokens":10,"model":"fast","operation_id":"op-1","output_tokens":2,"provider":"stub","purpose":"flow","started_at":"2026-10-20T12:00:00Z","success":false,"error_code":"create_failed","error_message":"502 Bad Gateway : failed to connect to local service","ttft_ms":80}]`,
 		string(raw))
 }
 

@@ -1,8 +1,11 @@
 package harness
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"sync"
@@ -26,6 +29,35 @@ type FlowSuite struct {
 
 	mu      sync.Mutex
 	decided []Decided
+	// logs is what the controller logged, as JSON, one record a line.
+	logs *logLines
+}
+
+// logLines keeps what is logged, as JSON, one record a line.
+type logLines struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (l *logLines) Write(p []byte) (int, error) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.buf.Write(p)
+}
+
+// records returns every record logged with message.
+func (l *logLines) records(message string) []map[string]any {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	var found []map[string]any
+	lines := bufio.NewScanner(bytes.NewReader(l.buf.Bytes()))
+	for lines.Scan() {
+		var record map[string]any
+		if json.Unmarshal(lines.Bytes(), &record) == nil && record["msg"] == message {
+			found = append(found, record)
+		}
+	}
+	return found
 }
 
 func TestFlowSuite(t *testing.T) {
@@ -52,7 +84,8 @@ func (s *FlowSuite) SetupTest() {
 		}
 	}()
 
-	s.flow = newFlow(stubSession(&s.Suite, s.ctx, s.model), s.emitter, slog.New(slog.DiscardHandler))
+	s.logs = &logLines{}
+	s.flow = newFlow(stubSession(&s.Suite, s.ctx, s.model), s.emitter, slog.New(slog.NewJSONHandler(s.logs, nil)))
 	s.T().Cleanup(func() {
 		_ = s.flow.Close()
 		s.emitter.Close()
@@ -450,4 +483,29 @@ func (s *FlowSuite) TestARulingSaysWhoseAnswerItIs() {
 		"the stop a caller still talking gets for an unreadable answer is nobody's answer either")
 	s.Equal(Fallback, ruled("hedged", respond, [2]string{"", "another-model"}))
 	s.Equal(Fallback, ruled("elsewhere", respond, [2]string{"another-provider", ""}))
+}
+
+func (s *FlowSuite) TestARequestTheModelRefusedIsLoggedWithItsProviderAndModel() {
+	s.model.refuses = errors.New("502 Bad Gateway: failed to connect to local service")
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "candidate-1", Participant: "Alex", Text: "go on"}))
+
+	s.requireLoggedFailure("failed to connect to local service")
+}
+
+func (s *FlowSuite) TestADecisionThatFailedMidStreamIsLoggedWithItsProviderAndModel() {
+	s.model.failing = true
+	s.Require().NoError(s.flow.Decide(FlowTurn{ID: "candidate-1", Participant: "Alex", Text: "go on"}))
+
+	s.requireLoggedFailure(errModelDown.Error())
+}
+
+// requireLoggedFailure waits for the controller's one failure line and checks it names the
+// provider and model the session routes to, so a search for either finds it.
+func (s *FlowSuite) requireLoggedFailure(said string) {
+	s.Require().Eventually(func() bool { return len(s.logs.records("flow controller failed")) == 1 }, settleFor,
+		5*time.Millisecond, "the failure was never logged")
+	failure := s.logs.records("flow controller failed")[0]
+	s.Equal("stub", failure["provider"])
+	s.Equal("stub-model", failure["model"])
+	s.Contains(failure["error"], said)
 }

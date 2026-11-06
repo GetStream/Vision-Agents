@@ -57,6 +57,9 @@ type stubLLM struct {
 	failures int
 	// failure is what a failing request reports, errModelDown when unset.
 	failure error
+	// refuses, if set, is what Create returns in place of a stream: an endpoint that answers
+	// the request with an error status.
+	refuses error
 	// holdCreate, if set, is waited on after the request is recorded and before a stream
 	// is returned, so a test can Cancel while Create has not come back.
 	holdCreate <-chan struct{}
@@ -90,9 +93,12 @@ func (s *stubLLM) Create(ctx context.Context, params llm.ResponseParams) (*llm.S
 	})
 	s.scripts[params.ID] = script
 	s.order = append(s.order, params.ID)
-	hold := s.holdCreate
+	hold, refuses := s.holdCreate, s.refuses
 	s.mu.Unlock()
 
+	if refuses != nil {
+		return nil, refuses
+	}
 	if hold != nil {
 		select {
 		case <-hold:
