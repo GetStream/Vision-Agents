@@ -160,6 +160,7 @@ func (s *GateSuite) TestAnOverrideOfTheCountriesLetsTheOrganizationReachThem() {
 	s.T().Cleanup(func() { s.money.Usage.SetTier(s.T(), usage.BuiltInDefaultTier()) })
 
 	s.limit(map[string]usage.ChannelLimits{dlc.SMS: {Countries: []string{"US", "CA", "GB"}}})
+	s.waitForLimits(func(limits usage.Limits) bool { return slices.Contains(limits.Channels[dlc.SMS].Countries, "GB") })
 
 	s.NoError(s.gate.Allow(s.ctx, s.app(), dlc.SMS, "+442079460000"))
 }
