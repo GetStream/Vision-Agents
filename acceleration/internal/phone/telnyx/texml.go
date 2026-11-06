@@ -50,8 +50,8 @@ func renderTexml(bridge phone.Bridge, ringSeconds int, digits string) ([]byte, e
 		return nil, err
 	}
 	if ringSeconds != 0 && (ringSeconds < minRingSeconds || ringSeconds > maxRingSeconds) {
-		return nil, stack.Wrap(phone.Invalid(fmt.Errorf("telnyx: a trunk rings for %d to %d seconds, not %d",
-			minRingSeconds, maxRingSeconds, ringSeconds)))
+		return nil, stack.Wrap(fmt.Errorf("telnyx: a trunk rings for %d to %d seconds, not %d",
+			minRingSeconds, maxRingSeconds, ringSeconds))
 	}
 
 	response := texmlResponse{

@@ -219,6 +219,17 @@ func (s *SIPTrunkSuite) TestReleasingATrunkNumberAsksNoVendor() {
 	s.NoError(s.service.DeleteSIPTrunk(s.ctx, "acme", trunk.ID), "a released number no longer holds its trunk")
 }
 
+// A deployment without Stream is ErrNoStream, which the router answers 400, not 500.
+func (s *SIPTrunkSuite) TestAttachingWithoutStreamSaysSo() {
+	number := store.PhoneNumber{E164: "+15550000212", Vendor: "telnyx", CustomerID: "acme"}
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &number))
+
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: "acme", E164: number.E164})
+
+	s.EqualError(err, "phone: attaching a number needs stream credentials")
+	s.ErrorIs(err, ErrNoStream)
+}
+
 func (s *SIPTrunkSuite) TestAttachingATrunkNumberIsRefused() {
 	trunk := s.create("acme", "s3cret")
 	s.number("acme", trunk.ID, "+15550000208")
