@@ -216,12 +216,33 @@ func (s *ManifestSuite) TestARevisionChangingOnlyWhatTheCatalogShowsReadsAsTheOn
 	s.True(s.pinned().ReadsAsConnection(later))
 }
 
+// An input's label and description and the provider app's text only the catalog shows too
+// (AI-2915); the input's name, pattern and default still count.
+func (s *ManifestSuite) TestARevisionChangingOnlyAnInputsOrTheProviderAppsTextReadsAsTheOneBefore() {
+	const input = "inputs:\n  - name: shop\n    pattern: \"[a-z]+\"\n"
+	pinned, err := ParseManifest(minimal(input))
+	s.Require().NoError(err)
+	labelled := ProviderAppText{IDLabel: "App ID", IDDescription: "Where the id is.", SecretLabel: "App Secret", SecretDescription: "Where the secret is."}
+	later := pinned
+	later.Revision, later.ProviderApp = 2, labelled
+	later.Inputs = []Input{{Name: "shop", Pattern: "[a-z]+", Label: "Shop", Description: "The shop's name."}}
+
+	s.True(pinned.ReadsAsConnection(later))
+	s.True(later.ReadsAsConnection(pinned))
+	s.Equal("Shop", later.Inputs[0].Label, "the comparison changes neither manifest")
+	s.Equal(labelled, later.ProviderApp)
+
+	later.Inputs[0].Pattern = "[a-z0-9]+"
+	s.False(pinned.ReadsAsConnection(later))
+}
+
 // readsAsConnectionIgnores is every field ReadsAsConnection leaves out, by name. Any other
-// field of Manifest or SourceRule counts, so one added later counts until it is named here
+// field of Manifest, Input or SourceRule counts, so one added later counts until it is named here
 // with the check that reads it.
 var readsAsConnectionIgnores = map[string]bool{
 	"Revision": true, "BrokenRevisions": true, "Sensitive": true,
-	"Category": true, "Description": true, "Setup": true,
+	"Category": true, "Description": true, "Setup": true, "ProviderApp": true,
+	"Input.Label": true, "Input.Description": true,
 	"SourceRule.Outbound": true, "SourceRule.ReadOnlyTools": true,
 	"SandboxRule.Reads": true,
 }
@@ -258,7 +279,7 @@ func filled(t reflect.Type) reflect.Value {
 	return v
 }
 
-// Every field of a manifest, and of each source, counts for a connection unless named in
+// Every field of a manifest, of each input and of each source, counts for a connection unless named in
 // readsAsConnectionIgnores: a connection reads the rest from its pinned revision (headers
 // sources/mcp/source.go, refresh schemes/oauth2cc/scheme.go, channel channelbridge/bridge.go,
 // sandbox per google_drive.yaml revision 5).
@@ -288,6 +309,16 @@ func (s *ManifestSuite) TestEveryFieldCountsForAConnectionUnlessItIsNamedAsIgnor
 		check("SourceRule."+f.Name, func(m *Manifest) {
 			reflect.ValueOf(&m.Sources[0]).Elem().Field(i).Set(filled(f.Type))
 		})
+	}
+	it := reflect.TypeFor[Input]()
+	for i := range it.NumField() {
+		f := it.Field(i)
+		name := "Input." + f.Name
+		seen[name] = true
+		base, changed := Manifest{Inputs: []Input{{}}}, Manifest{Inputs: []Input{{}}}
+		reflect.ValueOf(&changed.Inputs[0]).Elem().Field(i).Set(filled(f.Type))
+		s.Equal(readsAsConnectionIgnores[name], base.ReadsAsConnection(changed), name)
+		s.Equal(readsAsConnectionIgnores[name], changed.ReadsAsConnection(base), name)
 	}
 	sb := reflect.TypeFor[SandboxRule]()
 	for i := range sb.NumField() {

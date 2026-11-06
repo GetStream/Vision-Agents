@@ -168,6 +168,7 @@ from .connector_o_auth_client_request import ConnectorOAuthClientRequest
 from .connector_on_interrupt import ConnectorOnInterrupt
 from .connector_page import ConnectorPage
 from .connector_provider_app import ConnectorProviderApp
+from .connector_provider_app_fields import ConnectorProviderAppFields
 from .connector_provider_app_request import ConnectorProviderAppRequest
 from .connector_sandbox import ConnectorSandbox
 from .connector_setup import ConnectorSetup
@@ -755,6 +756,7 @@ __all__ = (
     "ConnectorOnInterrupt",
     "ConnectorPage",
     "ConnectorProviderApp",
+    "ConnectorProviderAppFields",
     "ConnectorProviderAppRequest",
     "ConnectorSandbox",
     "ConnectorSetup",

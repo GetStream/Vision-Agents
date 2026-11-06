@@ -5606,6 +5606,8 @@ export type components = {
             /** @description What a connection is created with, such as a region or a shop. */
             readonly inputs: readonly components["schemas"]["ConnectorInput"][] | null;
             readonly name: string;
+            /** @description The customer's own provider app the channel's events are verified with: its id and signing secret go on the connector's OAuth client record (provider_app_id and signing_secret), and the provider delivers to the app's events URL. Absent when the connector is no channel or its channel is verified with the operator's secret, as Slack's is. */
+            readonly provider_app?: components["schemas"]["ConnectorProviderAppFields"];
             /**
              * Format: uri
              * @description The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
@@ -5785,8 +5787,12 @@ export type components = {
         readonly ConnectorInput: {
             /** @description Used when the connection gives no value. An input without one is required. */
             readonly default?: string;
+            /** @description Where a person finds the value at the provider. Absent when the manifest says nothing. */
+            readonly description?: string;
             /** @description The values it may take. Absent when a pattern decides. */
             readonly enum?: readonly string[] | null;
+            /** @description How a form names the input, such as Phone number ID. Absent when the manifest says nothing: then name is shown. */
+            readonly label?: string;
             readonly name: string;
             /** @description A regular expression the whole value must match. */
             readonly pattern?: string;
@@ -5851,6 +5857,24 @@ export type components = {
             readonly registration: components["schemas"]["ConnectorClientRegistrationMethod"];
             /** Format: date-time */
             readonly updated_at: string;
+        };
+        /** @description The customer's own provider app a channel's events are verified with. */
+        readonly ConnectorProviderAppFields: {
+            /**
+             * Format: uri
+             * @description The app's events URL without the app's id at its end: ROUTER_PUBLIC_URL followed by /v1/connectors/events/{id}/. Followed by the provider_app_id, it is the URL the provider app delivers its events to, such as a Meta app's WhatsApp webhook Callback URL. Absent when ROUTER_PUBLIC_URL is not set.
+             */
+            readonly events_url_prefix?: string;
+            /** @description Where a person finds the app's id at the provider. Absent when the manifest says nothing. */
+            readonly id_description?: string;
+            /** @description How the provider names the app's id, such as Meta App ID. Absent when the manifest says nothing. */
+            readonly id_label?: string;
+            /** @description Where a person finds that secret at the provider. Absent when the manifest says nothing. */
+            readonly secret_description?: string;
+            /** @description How the provider names the secret it signs the app's events with, such as Meta App Secret. Absent when the manifest says nothing. */
+            readonly secret_label?: string;
+            /** @description The provider checks the events URL with a verify token before it delivers, as Meta does for a webhook: the token is the provider_app_id. */
+            readonly verify_token: boolean;
         };
         /** @description The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored. */
         readonly ConnectorProviderAppRequest: {

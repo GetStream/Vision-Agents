@@ -82,9 +82,10 @@ func (s *WhatsAppSuite) TestAPhotoIsReadWithItsFileAndNothingElseNew() {
 // drops the media key it does not know from an also entry, and the rule left reads a photo
 // by its caption alone, as base c47835b0a read revision 2: the same messages as revision 2's
 // test there (TestAPhotoIsReadByItsCaptionAndNothingElseNew), with no file. The old build is
-// this rule without kind media and without media_lookup.
+// this rule without kind media and without media_lookup. Revision 4 changes only what the
+// catalog shows, so its channel is revision 3's.
 func (s *WhatsAppSuite) TestABuildWithoutKindMediaReadsRevision3AsRevision2() {
-	s.Require().Equal(3, s.manifest.Revision)
+	s.Require().Equal(4, s.manifest.Revision)
 	older := *s.manifest.Channel
 	older.Messages.Also = append([]core.MessageKind(nil), older.Messages.Also...)
 	for i := range older.Messages.Also {

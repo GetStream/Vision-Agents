@@ -3921,6 +3921,12 @@ namespace GetStream.VisionAgents.Models
         public string Name { get; set; } = default!;
 
         /// <summary>
+        /// The customer's own provider app the channel's events are verified with: its id and signing secret go on the connector's OAuth client record (provider_app_id and signing_secret), and the provider delivers to the app's events URL. Absent when the connector is no channel or its channel is verified with the operator's secret, as Slack's is.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("provider_app")]
+        public ConnectorProviderAppFields? ProviderApp { get; set; } = default!;
+
+        /// <summary>
         /// The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("redirect_uri")]
@@ -4379,10 +4385,22 @@ namespace GetStream.VisionAgents.Models
         public string? Default { get; set; } = default!;
 
         /// <summary>
+        /// Where a person finds the value at the provider. Absent when the manifest says nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("description")]
+        public string? Description { get; set; } = default!;
+
+        /// <summary>
         /// The values it may take. Absent when a pattern decides.
         /// </summary>
         [System.Text.Json.Serialization.JsonPropertyName("enum")]
         public System.Collections.Generic.List<string>? Enum { get; set; } = default!;
+
+        /// <summary>
+        /// How a form names the input, such as Phone number ID. Absent when the manifest says nothing: then name is shown.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("label")]
+        public string? Label { get; set; } = default!;
 
         [System.Text.Json.Serialization.JsonPropertyName("name")]
         public string Name { get; set; } = default!;
@@ -4563,6 +4581,51 @@ namespace GetStream.VisionAgents.Models
             get { return _additionalProperties ?? (_additionalProperties = new System.Collections.Generic.Dictionary<string, object>()); }
             set { _additionalProperties = value; }
         }
+
+    }
+
+    /// <summary>
+    /// The customer's own provider app a channel's events are verified with.
+    /// </summary>
+    [System.CodeDom.Compiler.GeneratedCode("NJsonSchema", "14.7.1.0 (NJsonSchema v11.6.1.0 (Newtonsoft.Json v13.0.0.0))")]
+    public partial class ConnectorProviderAppFields
+    {
+
+        /// <summary>
+        /// The app's events URL without the app's id at its end: ROUTER_PUBLIC_URL followed by /v1/connectors/events/{id}/. Followed by the provider_app_id, it is the URL the provider app delivers its events to, such as a Meta app's WhatsApp webhook Callback URL. Absent when ROUTER_PUBLIC_URL is not set.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("events_url_prefix")]
+        public System.Uri? EventsUrlPrefix { get; set; } = default!;
+
+        /// <summary>
+        /// Where a person finds the app's id at the provider. Absent when the manifest says nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id_description")]
+        public string? IdDescription { get; set; } = default!;
+
+        /// <summary>
+        /// How the provider names the app's id, such as Meta App ID. Absent when the manifest says nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("id_label")]
+        public string? IdLabel { get; set; } = default!;
+
+        /// <summary>
+        /// Where a person finds that secret at the provider. Absent when the manifest says nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("secret_description")]
+        public string? SecretDescription { get; set; } = default!;
+
+        /// <summary>
+        /// How the provider names the secret it signs the app's events with, such as Meta App Secret. Absent when the manifest says nothing.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("secret_label")]
+        public string? SecretLabel { get; set; } = default!;
+
+        /// <summary>
+        /// The provider checks the events URL with a verify token before it delivers, as Meta does for a webhook: the token is the provider_app_id.
+        /// </summary>
+        [System.Text.Json.Serialization.JsonPropertyName("verify_token")]
+        public bool VerifyToken { get; set; } = default!;
 
     }
 

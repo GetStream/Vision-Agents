@@ -2028,7 +2028,7 @@ module GetStream
           required: [].freeze, open: false
         }.freeze,
         "Connector" => {
-          properties: %w[category channel client created_at custom description id inputs name redirect_uri revision sandbox schemes scopes setup].freeze,
+          properties: %w[category channel client created_at custom description id inputs name provider_app redirect_uri revision sandbox schemes scopes setup].freeze,
           required: %w[id revision name custom schemes inputs scopes client channel created_at].freeze, open: false
         }.freeze,
         "ConnectorAuditCredential" => {
@@ -2072,7 +2072,7 @@ module GetStream
           required: %w[destination secret].freeze, open: false
         }.freeze,
         "ConnectorInput" => {
-          properties: %w[default enum name pattern].freeze,
+          properties: %w[default description enum label name pattern].freeze,
           required: %w[name].freeze, open: false
         }.freeze,
         "ConnectorOAuthClient" => {
@@ -2090,6 +2090,10 @@ module GetStream
         "ConnectorProviderApp" => {
           properties: %w[client_id connector_id created_at provider_app_id registration updated_at].freeze,
           required: %w[connector_id registration provider_app_id client_id created_at updated_at].freeze, open: false
+        }.freeze,
+        "ConnectorProviderAppFields" => {
+          properties: %w[events_url_prefix id_description id_label secret_description secret_label verify_token].freeze,
+          required: %w[verify_token].freeze, open: false
         }.freeze,
         "ConnectorProviderAppRequest" => {
           properties: %w[allowed_ip_address_ranges config_refresh_token name].freeze,

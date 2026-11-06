@@ -73,6 +73,11 @@ type Manifest struct {
 	// Schemes are the registered scheme names a connection may use.
 	Schemes []string     `yaml:"schemes" json:"schemes"`
 	Client  ClientPolicy `yaml:"client,omitempty" json:"client,omitzero"`
+	// ProviderApp is how a dashboard names the customer's own provider app's id and secret,
+	// which the app's backend puts on the OAuth client record of a connector whose channel
+	// verifies with a provider_app secret. Nothing that connects reads it. Left out of the JSON when empty, so the
+	// JSON of every manifest stored before it stays as it was.
+	ProviderApp ProviderAppText `yaml:"provider_app,omitempty" json:"provider_app,omitzero"`
 	// AuthorizeParams are added to the authorize URL as they are, such as access_type.
 	AuthorizeParams map[string]string `yaml:"authorize_params,omitempty" json:"authorize_params,omitempty"`
 	// TokenParams are added to the code exchange body as they are, such as expiring.
@@ -117,12 +122,13 @@ type Manifest struct {
 // ReadsAsConnection reports whether a connection pinned to m reads what one pinned to other
 // does: whether the two differ only in fields no connection reads from its pinned revision.
 // Those are the revision's own number; broken_revisions, which the seeder alone reads;
-// category, description and setup, which only the catalog shows, from the connector's latest
-// revision (connectorOf, internal/api/connectors.go); and sensitive and each source's outbound
-// and read_only_tools, which only the sensitive-connector check and a connection's tools'
-// read_only read, from the connector's latest revision whatever a connection pins
-// (SensitiveBindingsComplaint, internal/api/configs.go; listConnectionTools,
-// internal/api/connection_tools.go); and sandbox.reads, which a session reads from the connector's latest
+// category, description, setup, provider_app and each input's label and description, which
+// only the catalog shows, from the connector's latest revision (connectorOf,
+// internal/api/connectors.go); and sensitive and each source's outbound and read_only_tools,
+// which only the sensitive-connector check and a connection's tools' read_only read, from the
+// connector's latest revision whatever a connection pins (SensitiveBindingsComplaint,
+// internal/api/configs.go; listConnectionTools, internal/api/connection_tools.go); and
+// sandbox.reads, which a session reads from the connector's latest
 // revision (sandboxGrant, internal/session/sandbox_grants.go). Any other field counts, the name
 // among them: a consent shows the pinned name (ConnectorConsents, internal/api/authorizations.go).
 func (m Manifest) ReadsAsConnection(other Manifest) bool {
@@ -132,7 +138,11 @@ func (m Manifest) ReadsAsConnection(other Manifest) bool {
 // connectionReads is m without the fields ReadsAsConnection leaves out.
 func (m Manifest) connectionReads() Manifest {
 	m.Revision, m.BrokenRevisions, m.Sensitive = 0, nil, false
-	m.Category, m.Description, m.Setup = "", "", Setup{}
+	m.Category, m.Description, m.Setup, m.ProviderApp = "", "", Setup{}, ProviderAppText{}
+	m.Inputs = slices.Clone(m.Inputs)
+	for i := range m.Inputs {
+		m.Inputs[i].Label, m.Inputs[i].Description = "", ""
+	}
 	m.Sources = slices.Clone(m.Sources)
 	for i := range m.Sources {
 		m.Sources[i].Outbound, m.Sources[i].ReadOnlyTools = nil, nil
@@ -179,13 +189,27 @@ type SetupStep struct {
 // Input is one value a connection is created with. It has an enum or a pattern, so what a
 // developer types can only land in an endpoint in a shape the manifest allowed.
 type Input struct {
-	Name string   `yaml:"name" json:"name"`
-	Enum []string `yaml:"enum,omitempty" json:"enum,omitempty"`
+	Name string `yaml:"name" json:"name"`
+	// Label and Description are how a dashboard names the input and says where a person finds
+	// its value. Nothing that connects reads them. Left out of the JSON when empty, so the JSON
+	// of every manifest stored before them stays as it was.
+	Label       string   `yaml:"label,omitempty" json:"label,omitempty"`
+	Description string   `yaml:"description,omitempty" json:"description,omitempty"`
+	Enum        []string `yaml:"enum,omitempty" json:"enum,omitempty"`
 	// Pattern is a Go regexp the whole value must match.
 	Pattern string `yaml:"pattern,omitempty" json:"pattern,omitempty"`
 	// Default is used when the connection gives no value. An input without one is
 	// required.
 	Default string `yaml:"default,omitempty" json:"default,omitempty"`
+}
+
+// ProviderAppText is how a dashboard names the provider app's id (provider_app_id on the OAuth
+// client record) and its secret (signing_secret), and says where a person finds each.
+type ProviderAppText struct {
+	IDLabel           string `yaml:"id_label,omitempty" json:"id_label,omitempty"`
+	IDDescription     string `yaml:"id_description,omitempty" json:"id_description,omitempty"`
+	SecretLabel       string `yaml:"secret_label,omitempty" json:"secret_label,omitempty"`
+	SecretDescription string `yaml:"secret_description,omitempty" json:"secret_description,omitempty"`
 }
 
 // Var is a fixed string per value of one enum input. Its values are written by the
@@ -600,6 +624,10 @@ func (m Manifest) Validate() error {
 		if step.Title == "" || step.Description == "" {
 			fail(fmt.Sprintf("setup.steps[%d]", i), "a step needs a title and a description")
 		}
+	}
+
+	if m.ProviderApp != (ProviderAppText{}) && (m.Channel == nil || m.Channel.Verifier.Secret != SecretProviderApp) {
+		fail("provider_app", "names a provider app, which only a channel.verifier.secret provider_app has")
 	}
 
 	inputs := map[string]Input{}
