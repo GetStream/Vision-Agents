@@ -219,7 +219,9 @@ func DataTables() []string {
 // A start of a capture that expired also takes a change number of its own, above every one handed
 // out before, into recorded_since: what was written while it was off was never recorded and has
 // no number, so Changes refuses a cursor below it. The row outlives its capture for that
-// (PruneDataChanges).
+// (PruneDataChanges). A capture within captureLapseMargin of expiring counts as expired: a
+// write can run its trigger past expires_at before this renewal commits and is not recorded, so
+// the renewal fails closed.
 func (s *Store) StartDataCapture(ctx context.Context, customerID string, retention, within time.Duration) error {
 	if customerID == "" {
 		return errors.New("store: a customer id is required")
@@ -240,9 +242,9 @@ WHERE NOT EXISTS (SELECT 1 FROM data_change_capture WHERE customer_id = ? AND ex
 INSERT INTO data_change_capture (customer_id, expires_at)
 VALUES (?, now() + make_interval(secs => ?))
 ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at,
-  recorded_since = CASE WHEN data_change_capture.expires_at > now() THEN data_change_capture.recorded_since
+  recorded_since = CASE WHEN data_change_capture.expires_at > now() + make_interval(secs => ?) THEN data_change_capture.recorded_since
     ELSE nextval('data_changes_seq_seq') END`,
-			customerID, retention.Seconds())
+			customerID, retention.Seconds(), captureLapseMargin.Seconds())
 		return err
 	})
 	if isViolation(err, lockNotAvailable) {
@@ -253,6 +255,11 @@ ON CONFLICT (customer_id) DO UPDATE SET expires_at = EXCLUDED.expires_at,
 	}
 	return nil
 }
+
+// captureLapseMargin is how close to expiring a capture may be and still count as lapsed when
+// it is renewed. It is well above a renewal's usual length (milliseconds) and far below any
+// retention.
+const captureLapseMargin = 5 * time.Second
 
 // ErrWritesOpen says a transaction that wrote before a capture started was still open when
 // StartDataCapture or WaitForOpenWrites gave up on it.

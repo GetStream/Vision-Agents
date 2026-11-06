@@ -587,6 +587,37 @@ func (s *DataMoveSuite) TestACursorFollowedWithinTheRetentionIsAnsweredEveryChan
 	s.Contains(string(changes[1].Key), second)
 }
 
+// A capture renewed in the last moments before it expires may have missed a write whose trigger
+// ran after the expiry and before the renewal committed, so it counts as lapsed.
+func (s *DataMoveSuite) TestACaptureRenewedJustBeforeItExpiresCountsAsLapsed() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE data_change_capture SET expires_at = now() + interval '1 second' WHERE customer_id = ?", "acme")
+	s.Require().NoError(err)
+	s.capture("acme")
+
+	_, _, err = s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// One customer's lapse does not touch another's follower.
+func (s *DataMoveSuite) TestAnotherCustomersLapseLeavesAFollowerAlone() {
+	s.capture("other")
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	s.lapse("other")
+	s.capture("other")
+	seeded := s.seedAgentConfig(s.source, "acme", "after")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), seeded)
+}
+
 // An export after a lapse carries on from where the recording started again, even with no change
 // kept at that number and the number after it rolled back.
 func (s *DataMoveSuite) TestAnExportAfterALapseIsFollowedFromItsCursor() {
