@@ -492,6 +492,9 @@ type Agent struct {
 	// interrupting holds off new replies until the voice, edge and old model stream have
 	// all finished the interruption cleanup.
 	interrupting bool
+	// gaveWay is the turn the agent last gave the floor up on, stopping it or shortening it,
+	// which it has until it takes the next (pauseAsker.GivenWay).
+	gaveWay string
 	// generating is true while the voice model is still writing the current reply.
 	generating bool
 	// composing is true from asking for a line the agent chose to say (compose) until it
@@ -3954,6 +3957,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 		behind = a.abandonPlayingLocked(turnID, now)
 	}
 	a.interrupting = true
+	a.gaveWay = turnID
 	a.speakingTurn = ""
 	a.generating = false
 	why.reply = a.saying
@@ -4073,6 +4077,7 @@ func (a *Agent) shorten(participant stt.Participant, turnID string, why interrup
 		return
 	}
 	a.running.Add(1)
+	a.gaveWay = turnID
 	a.mu.Unlock()
 	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID, "tail", shortenTail)
 	if reply != nil {

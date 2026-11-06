@@ -109,8 +109,11 @@ on as one ruled while they talk, and spent on its words alike: a "stop" short en
 a pause before the first check over the agent (under 350 ms voiced), or one whose first words
 that check rightly let pass ("okay, stop"). Words the model rules `continue` at a pause over
 the agent, as it ruled "I hope that's all right." (0.51, where with the floor free it rules
-`respond` 1.00), end at the cap as `ignore` if the agent talks on through it, and are not
-answered.
+`respond` 1.00), end as `ignore`, and are not answered: at that pause if the caller began them
+over the agent, and at the cap if they began them before hearing it and the agent talks on
+through it. The server writes no words of what it rules `ignore` over the agent, so words a
+caller began over the agent that are ruled so are lost unless a check over the agent without
+a pause wrote them.
 
 ## Configure
 
@@ -257,19 +260,36 @@ last frame, and a pause costs one request:
   had its wait, and the words never change after it. The flow controller's Hearer rules on
   those words as the check did, with no request of its own, and the reply is asked for at
   once. Over the agent a pause check says what to do about the floor and not whether the
-  caller has finished: the model's answer there has no p_eot. It ends the turn only at the
-  policy's `cap_ms`, where the turn has ended whatever the model says, on its ruling, `stop`,
-  `shorten`, `continue` or `ignore`; a `stop` or `shorten` before that is acted on at once,
-  with the pause's words, as over the agent without a pause (below), and the utterance goes
-  on. Once the agent is quiet the checks have the floor free, and the point's bars end the
-  turn, its checks in a row counted from the pause's first with the floor free. Ended at the
-  first check over the agent, a 200 ms pause at the comma of "Last four 9821, 14 Cedar Lane"
-  ended the utterance on its first half. A turn a check ended is over whatever comes next:
-  speech before its words are written, the caller going on or somebody else in the room, is
-  the next utterance's. Its words are the first check of its last pause's; where those come
-  back empty and a check over the agent wrote some of the utterance, they are that check's,
-  as far as it heard, and an utterance with no words at all is logged as such and sends
-  nothing.
+  caller has finished: the model's answer there has no p_eot. Whose pause it is says what
+  its ruling means, by when the caller began the utterance, against what they had heard of
+  the agent (as a stop's words are spent, above):
+  - *Begun before they had heard it*, the caller was going on with their own turn, which
+    the agent began to answer over. A ruling that the agent may talk on says nothing of
+    whether they have finished, so while the agent holds the floor the check ends nothing
+    before the policy's `cap_ms`, where the turn has ended whatever the model says, and its
+    ruling stands while the agent talks on, with nothing more asked. Ended at once, a 200 ms
+    pause at the comma of "Last four 9821, 14 Cedar Lane", begun 2 s before the reply could
+    be heard, ended the utterance on its first half, its words written as nothing.
+  - *Begun over the agent*, while they could hear it, a ruling that it may talk on ends the
+    utterance at that check, as the model let the agent talk through it: a murmur, a cough,
+    its own voice heard back. What the caller says next is an utterance of its own; run on,
+    the agent's echo took the caller's question in with it.
+
+  Either way a `stop` or `shorten` is acted on at once, with the pause's words, as over the
+  agent without a pause (below), and the ruling stands. Once the agent is quiet the pause is
+  asked about at once with the floor free, and the point's bars end the turn, its checks in a
+  row counted from the pause's first with the floor free. Once the agent has given the floor
+  up, stopped or playing out the tail of a reply it shortened, a ruling at the caller's pause
+  that they take it (`stop` or `shorten`, which a pause rules `respond`) ends their turn, as
+  the model rules on it with the conversation in view and with the floor free it has none:
+  "And in Lisbon." over a forecast it shortened is answered at the pause's first check, where
+  the checks with the floor free waited on it for 2 s (p_eot 0.04 to 0.23). A ruling that the
+  agent go on ends nothing then. A turn a check ended is over whatever comes next: speech
+  before its words are written, the caller going on or somebody else in the room, is the
+  next utterance's. Its words are the first check of its last pause's; where those come back
+  empty and a check over the agent wrote some of the utterance, they are that check's, as far
+  as it heard, and an utterance with no words at all sends nothing, logged as lost where the
+  model ruled them to be answered and the server gave no reason for writing none.
 - **Over the agent, without a pause.** While the agent speaks, a caller who has been voiced
   for 350 ms in the utterance is asked about without waiting for a pause, the decision and
   the words of the utterance so far (up to 16 s) in one request, then every `interval_ms`

@@ -105,6 +105,9 @@ type fakeServer struct {
 	// pause (unfinished), in place of decision and words: the server's other frames.
 	speakingDecision, unfinishedDecision string
 	speakingWords, unfinishedWords       *string
+	// blanked is the reason a decision's words give for being none, as the server says why
+	// it wrote nothing of a murmur it ruled ignored.
+	blanked string
 }
 
 // requests is how many decisions the server was asked for.
@@ -228,7 +231,7 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				time.Sleep(f.wordsAfter)
 				f.mu.Lock()
 			}
-			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q},"transcript_ms":3}`+"\n", words, f.spoken())
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q,"noise":%q},"transcript_ms":3}`+"\n", words, f.spoken(), f.blanked)
 		}
 	}
 }
