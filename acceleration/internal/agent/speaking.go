@@ -254,10 +254,12 @@ func (a *Agent) cutShortLocked(turnID string, now time.Time) cutShort {
 // this call, from the syntheses it finished whole; before one has finished the agent can't
 // tell. Utterances of the turn ahead of the one being played were heard whole, none of a turn
 // whose audio has not gone out was, and all of one whose every utterance has finished was, but
-// for what the edge still had queued. It is cut back to a whole word. Agent.mu must be held.
+// for what the edge still had queued. It is cut back to a whole word. The rate is the voice's
+// saying it: one that replaced another can't tell until it has finished a synthesis whole.
+// Agent.mu must be held.
 func (a *Agent) replyHeardLocked(reply string, now time.Time) (string, bool) {
 	turnID := a.speakingTurn
-	if turnID == "" || a.voicedMs == 0 {
+	if turnID == "" || a.voicedMs == 0 || a.ratedVoice != a.tts {
 		return "", false
 	}
 	if a.voiced != turnID {

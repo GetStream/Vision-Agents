@@ -478,6 +478,15 @@ func saysMore(text, stop string) bool {
 	return len(said) > len(stopped)
 }
 
+// forgetStop forgets the stop over the agent a participant's utterance was ruled on, if one was:
+// a new transcriber hears them, numbering their utterances from one again, so none of its is
+// the one the stop was ruled on.
+func (c *converse) forgetStop(participantID string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	delete(c.stops, participantID)
+}
+
 // stopSpent is a settled turn of the utterance a stop over the agent was ruled on in, if it
 // is one with nothing more than the stop's words: it is heard and set aside, as the agent has
 // done what they asked. One that says more is the caller's turn, and is answered on all its
@@ -486,7 +495,9 @@ func saysMore(text, stop string) bool {
 func (c *converse) stopSpent(ready candidate) (Action, bool) {
 	c.mu.Lock()
 	stop, ok := c.stops[ready.Participant.ID]
-	if ok && stop.utterance == ready.Utterance {
+	// A later utterance of the same transcriber means the stop's is over, its final never
+	// settled (an echo alone, or nothing written): no turn can be spent on it any more.
+	if ok && stop.utterance <= ready.Utterance {
 		delete(c.stops, ready.Participant.ID)
 	}
 	c.mu.Unlock()

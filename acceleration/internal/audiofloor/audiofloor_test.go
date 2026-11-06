@@ -669,6 +669,25 @@ func (s *HearerSuite) TestOverTheAgentTheModelIsToldWhatWasSaidAndHeard() {
 	s.Equal(reply, s.server.turns[1].Said, "what the caller heard unknown, the reply stands for it")
 }
 
+// The reply being said is no line of the conversation before it wherever the router keeps it:
+// a reply that called a tool has the tool's result after it, which is no line either, and the
+// reply was told twice, as a line of the agent's and as what it has so far said.
+func (s *HearerSuite) TestTheReplyIsToldOnceWhenATurnFollowsItInTheHistory() {
+	s.server.decision = `{"answer":"continue","answer_probability":0.8,"options":[],"decide_ms":1,"ruling":{"disposition":"ignore","floor":"continue"}}`
+	reply := "Let me look that up for you."
+	history := []llm.Message{
+		{Role: llm.User, Content: "Where is my order?"},
+		{Role: llm.Assistant, Content: reply, ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_order"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"status":"shipped"}`},
+	}
+	_, err := s.hearer.Hear(context.Background(), harness.FlowTurn{Audio: some, Speaking: true, Unfinished: true, History: history,
+		Reply: reply, Heard: "Let me look", Measured: true})
+	s.Require().NoError(err)
+	s.Equal(Turn{Speaker: caller, Speaking: true, Unfinished: true, Said: "Let me look", Conversation: []Line{
+		{Text: "Where is my order?"},
+	}}, s.server.turns[0])
+}
+
 // TranscriberSuite runs the transcriber on frames of voice, of noise and of quiet, asking
 // about no pauses: the words alone, which is how a session ends up once the server has said
 // it can't rule on them, and what any pause falls to when a check of it fails.

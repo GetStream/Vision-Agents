@@ -596,12 +596,14 @@ type Agent struct {
 	// history: a request for help was written to the harness, not said, so remembering
 	// it would have the model reading its own instructions back on the next turn.
 	spoken strings.Builder
-	// voicedChars and voicedMs are the characters and the audio of the syntheses the voice
+	// voicedChars and voicedMs are the characters and the audio of the syntheses ratedVoice
 	// finished whole on the call: its speaking rate, by which how long the caller has heard
-	// an utterance says how much of it they have heard (replyHeardLocked).
+	// an utterance says how much of it they have heard (replyHeardLocked). A voice that
+	// replaces another speaks at a rate of its own, measured afresh.
 	voicedChars, voicedMs float64
-	// pausesAsked says chorus-asr transcribes a caller of this agent and asks the model about
-	// their pauses for it (actsOnChorusASR).
+	ratedVoice            *ttsrouter.Session
+	// pausesAsked says chorus-asr transcribes the callers of this agent and asks the model
+	// about their pauses for it (actsOnChorusASR), as the last transcriber opened for one does.
 	pausesAsked atomic.Bool
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
@@ -1653,12 +1655,19 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	if err != nil {
 		return nil, fmt.Errorf("agent: start stt for %s: %w", participant.ID, err)
 	}
+	// A new transcriber numbers the participant's utterances from one again: a stop ruled
+	// in one of the last one's is spent, and is forgotten before this one can rule another.
+	a.converse.forgetStop(participant.ID)
 	// Acting on chorus-asr, which transcribes as well, the transcriber times the caller's
-	// pauses from the audio and asks about each, the decision and its words in one pass.
+	// pauses from the audio and asks about each, the decision and its words in one pass. The
+	// contract is kept while it does (actsOnChorusASR): every participant is heard on the
+	// session's one target, and a target changed mid-call to another transcriber leaves it.
+	asks := false
 	if pauses, ok := session.Serving().(audiofloor.Pauses); ok && a.audioFloor.asksOnPauses() {
 		pauses.AskOnPauses(pauseAsker{a})
-		a.pausesAsked.Store(true)
+		asks = true
 	}
+	a.pausesAsked.Store(asks)
 
 	a.mu.Lock()
 	if a.closed {
@@ -1763,7 +1772,8 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 
 		case stt.Failover:
 			// What the participant said as the vendor refused is lost; what they say next
-			// is heard by the next model.
+			// is heard by the next model, which numbers their utterances afresh.
+			a.converse.forgetStop(participantID)
 			a.logger.Warn("the transcriber refused the session, the next model took it over",
 				"from", typed.From, "provider", typed.Provider, "model", typed.Model, "error", typed.Err)
 			partials = sttPartials.WithLabelValues(typed.Provider)
@@ -3372,6 +3382,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				// Cut short, a synthesis was billed all of its text and made only part of its
 				// audio, so only whole ones say how fast the voice speaks.
 				a.mu.Lock()
+				if a.ratedVoice != voice {
+					a.ratedVoice, a.voicedChars, a.voicedMs = voice, 0, 0
+				}
 				a.voicedChars += float64(typed.Characters)
 				a.voicedMs += typed.AudioDurationMs
 				a.mu.Unlock()

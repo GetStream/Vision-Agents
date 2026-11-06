@@ -3948,7 +3948,7 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "tell me a long story")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	asker := pauseAsker{s.agent}
@@ -3974,6 +3974,45 @@ func (s *AgentSuite) TestTheWordsAStopWasRuledOnAreNotAnswered() {
 	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what the caller said after the stop was not answered")
 }
 
+// A stop over the agent is spent on its utterance, which a transcriber numbers from its first.
+// A caller who leaves and comes back is heard by a new transcriber, numbering from one again,
+// and what they say then is no utterance a stop was ruled on: taken for one, "Yes." was set
+// aside as a stop's words.
+func (s *AgentSuite) TestAStopIsNotSpentOnAnUtteranceANewTranscriberHeard() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "tell me a long story")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
+		Words: "Stop.", Speaking: true, Overheard: true, AudioMs: 700, WordsMs: 100, Utterance: 2}
+	pauseAsker{s.agent}.Overheard(participant, stop)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
+
+	// The caller leaves before the utterance's final, and comes back.
+	listening := func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		_, ok := s.agent.listeners[participant.ID]
+		return ok
+	}
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+	s.eventually(func() bool { return !listening() }, "the caller who left is still listened to")
+	s.ears = newStubSTT()
+	s.edge.attending <- Attendance{Participant: participant, Joined: true}
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 }, "the caller never came back")
+	s.speak(participant)
+	s.eventually(listening, "the caller who came back is not listened to")
+
+	s.model.reply = []string{"Here it is."}
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Utterance: 2, Text: "Yes.",
+		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+	s.eventually(func() bool { return len(s.model.requests()) == 2 }, "what a new transcriber heard was set aside as the stop's words")
+}
+
 // Words the caller says after those a stop over the agent was ruled on, in the same breath,
 // make the utterance a turn, answered on all its words: "No, Porto." stopped on "No." is
 // answered "No, Porto.", as a stop ruled on the start of a request would otherwise cut it. The
@@ -3985,7 +4024,7 @@ func (s *AgentSuite) TestWhatIsSaidAfterTheStopMakesATurnOfItAll() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon tomorrow")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	asker := pauseAsker{s.agent}
@@ -4038,7 +4077,7 @@ func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTail() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon this week")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	// Still playing at the edge when its tail is up.
@@ -4062,7 +4101,7 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnUnlessActingOnChorusASR() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon this week")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	turnID := s.agent.floor().Speaking
@@ -4097,6 +4136,32 @@ func (s *AgentSuite) TestAReplyThatEndsWithinItsShortenedTailIsNotCut() {
 	s.Zero(s.voice.interrupted(), "the voice was stopped")
 }
 
+// The loop's contract is kept while chorus-asr hears the callers, and no longer once another
+// transcriber does, as when a session's transcriber is changed mid-call: kept, a check-in said
+// over another transcriber's line was stopped by its own echo.
+func (s *AgentSuite) TestTheContractIsKeptWhileChorusASRHearsTheCaller() {
+	s.actsOnChorusASR()
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	listening := func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		_, ok := s.agent.listeners[participant.ID]
+		return ok
+	}
+	s.speak(participant)
+	s.eventually(s.agent.actsOnChorusASR, "chorus-asr never heard the caller")
+
+	s.edge.attending <- Attendance{Participant: participant, Joined: false}
+	s.eventually(func() bool { return !listening() }, "the caller who left is still listened to")
+	s.ears, s.earsPause = newStubSTT(), false
+	s.edge.attending <- Attendance{Participant: participant, Joined: true}
+	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 }, "the caller never came back")
+	s.speak(participant)
+	s.eventually(listening, "the caller who came back is not listened to")
+	s.False(s.agent.actsOnChorusASR(), "the contract was kept with another transcriber hearing the caller")
+}
+
 // Acting on chorus-asr while another transcriber hears the callers, the loop's contract, which
 // is that of chorus-asr transcribing, isn't kept: a shortened reply plays on what the voice was
 // sent, as with every transcriber but chorus-asr.
@@ -4107,7 +4172,7 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnActingWithAnotherTranscriber() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon this week")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	s.edge.holdSpeech(true)
@@ -5454,6 +5519,41 @@ func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
 		"the reply was not spoken in the voice that replaced the lost one")
 }
 
+// How much of a reply the caller has heard is told by the speaking rate of the voice saying it:
+// a voice that replaces a lost one has a rate of its own, which the agent can't tell until it
+// has said something whole. Told by the lost voice's, a faster or slower one was taken to have
+// said more or less than it had.
+func (s *AgentSuite) TestAVoiceThatReplacesALostOneIsHeardAtItsOwnRate() {
+	s.join(false)
+	s.replacement = newStubTTS(false)
+	heard := func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		turnID, voiced := s.agent.speakingTurn, s.agent.voiced
+		s.agent.speakingTurn, s.agent.voiced = "turn-measured", "turn-measured"
+		_, measured := s.agent.replyHeardLocked("Sunny and warm.", time.Now())
+		s.agent.speakingTurn, s.agent.voiced = turnID, voiced
+		return measured
+	}
+	_, err := s.agent.RespondTo(s.ctx, "what's the weather like", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) >= 1 }, "the first voice never said a reply whole")
+	s.eventually(heard, "the first voice's rate was never measured")
+
+	lost := s.agent.voice()
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+	s.eventually(func() bool { return s.agent.voice() != lost }, "the lost voice was never replaced")
+	s.False(heard(), "the lost voice's rate told how much of the next voice's reply was heard")
+
+	spoke := countOf[Spoke](s.reported())
+	_, err = s.agent.RespondTo(s.ctx, "and tomorrow?", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) > spoke }, "the new voice never said a reply whole")
+	s.eventually(heard, "the new voice's own rate was never measured")
+}
+
 func (s *AgentSuite) TestAnAgentWithNoVoiceOpensItsVoiceWithNone() {
 	s.join(true)
 
@@ -6510,7 +6610,7 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	s.model.reply = nil
 	s.speak(participant)
 	s.says(participant, "what's the weather like in Lisbon tomorrow")
-	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
 	s.agent.mu.Lock()

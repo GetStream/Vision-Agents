@@ -197,24 +197,39 @@ func turnOf(turn harness.FlowTurn) Turn {
 	if turn.AnotherVoice {
 		out.Speaker = anotherVoice
 	}
-	history := turn.History
+	// replying is where the reply being said is in the history, -1 when it is not: the last
+	// line said on the call, whatever the router kept after it (a tool's result, a turn typed
+	// in), when that line is the agent's and is the reply.
+	replying := -1
 	if turn.Speaking {
 		out.Said, out.Unfinished = turn.Reply, turn.Unfinished
 		if turn.Measured {
 			out.Said = turn.Heard
 		}
-		if n := len(history); n > 0 && history[n-1].Role == llm.Assistant && sameText(history[n-1].Content, turn.Reply) {
-			history = history[:n-1]
+		for i := len(turn.History) - 1; i >= 0; i-- {
+			if !saidOnTheCall(turn.History[i]) {
+				continue
+			}
+			if turn.History[i].Role == llm.Assistant && sameText(turn.History[i].Content, turn.Reply) {
+				replying = i
+			}
+			break
 		}
 	}
-	for _, message := range history {
-		said := message.Role == llm.Assistant || message.Role == llm.User && !message.Typed
-		if !said || strings.TrimSpace(message.Content) == "" {
+	for i, message := range turn.History {
+		if i == replying || !saidOnTheCall(message) {
 			continue
 		}
 		out.Conversation = append(out.Conversation, Line{Agent: message.Role == llm.Assistant, Text: message.Content})
 	}
 	return out
+}
+
+// saidOnTheCall reports whether a message is a line said on the call, the agent's or a
+// caller's: not a turn typed or handed in, a tool's result or a note, and not empty.
+func saidOnTheCall(message llm.Message) bool {
+	said := message.Role == llm.Assistant || message.Role == llm.User && !message.Typed
+	return said && strings.TrimSpace(message.Content) != ""
 }
 
 // sameText reports whether two texts are the same words, spaced alike or not.
