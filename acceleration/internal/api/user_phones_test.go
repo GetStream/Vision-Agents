@@ -329,7 +329,8 @@ func (s *UserPhonesSuite) TestAnotherCustomerLinksItsOwnUser() {
 
 // Catches a link kept for the customer rather than for the Stream app the request acts in:
 // the same user id in a second app is another person, who may have a number of their own, and
-// a number the first app's user holds is free in the second.
+// a number the first app's user holds is free in the second. A GET reads the link of the app the
+// request acts in, not another app's.
 func (s *UserPhonesSuite) TestTheSameUserInASecondStreamAppIsAnotherPerson() {
 	second := s.utils.number()
 	s.giveApp(s.customerID(), 7101, "key-"+s.utils.uuid())
@@ -338,6 +339,10 @@ func (s *UserPhonesSuite) TestTheSameUserInASecondStreamAppIsAnotherPerson() {
 
 	s.Equal(http.StatusOK, s.put(s.user, `{"phone": "`+second+`"}`, nil))
 	s.Equal(http.StatusOK, s.put("other-"+s.utils.uuid(), `{"phone": "`+s.person+`"}`, nil))
+	var got AgentUser
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/users/"+s.user, "", &got))
+	s.Require().NotNil(got.Phone, "app 7102's link")
+	s.Equal(second, *got.Phone, "app 7102's link")
 
 	var apps []int64
 	s.Require().NoError(s.store.DB().NewSelect().Table("user_phones").Column("stream_app_pk").
