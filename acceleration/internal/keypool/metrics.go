@@ -44,7 +44,7 @@ var (
 	rateLimited = promauto.NewCounterVec(prometheus.CounterOpts{
 		Namespace: "router",
 		Name:      "vendor_rate_limited_total",
-		Help:      "Requests and websocket handshakes a vendor refused with 429 on one of the router's own keys, by the variable the keys were read from and the key's place in the pool; Anthropic's 429 for a spent monthly cap (enforced_spend_limit_reached) is not a rate limit and is not counted. Each attempt counts, also one the pool moved past to the next key",
+		Help:      "Requests and websocket handshakes a vendor refused with 429 on one of the router's own keys, by the variable the keys were read from and the key's place in the pool; Anthropic's 429 for a spent monthly cap (enforced_spend_limit_reached) is not a rate limit and is not counted. Each attempt counts, also one the pool moved past to the next key. A variable the router serves from start-up that holds no key has one series, key none, which stays at 0",
 	}, []string{"key_var", "key"})
 	headroom = promauto.NewGaugeVec(prometheus.GaugeOpts{
 		Namespace: "router",
@@ -81,13 +81,22 @@ const (
 // https://platform.claude.com/docs/en/api/rate-limits#reaching-your-spend-cap
 var spendCapMarker = []byte("enforced_spend_limit_reached")
 
+// noKey is the key label of the one series served for a variable that holds no key. No 429 is
+// counted into it: a 429 is counted only on a key read from the variable.
+const noKey = "none"
+
 // ServeRateLimited serves the vendor rate-limit refusal counter at 0 for each key read from
 // each of names, under the labels a 429 on it is counted with, before any pool over those keys
-// is built: an alert on 429s then reads 0, not no data. It reads each variable as Env does, but
-// names no pool by it, so a pool keeps the name the first provider to read its keys gives it.
+// is built: an alert on 429s then reads 0, not no data. A variable that holds no key is served
+// one series, key noKey, so every vendor of names has one. It reads each variable as Env does,
+// but names no pool by it, so a pool keeps the name the first provider to read its keys gives it.
 func ServeRateLimited(names ...string) {
 	for _, name := range names {
-		zeroRateLimited(name, len(Parse(numbered(name)...)))
+		n := len(Parse(numbered(name)...))
+		if n == 0 {
+			rateLimited.WithLabelValues(name, noKey)
+		}
+		zeroRateLimited(name, n)
 	}
 }
 
