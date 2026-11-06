@@ -641,6 +641,7 @@ var (
 		Message: "The phone vendor is still setting up this number, bought moments ago. Release it again in a minute."}
 	errCallNotConfirmed = APIError{Type: ErrorTypeUnavailable, Code: codePhoneVendorFailed,
 		Message: "The phone vendor did not confirm the call, so it can still ring. Do not place it again at once. Contact support if this keeps happening."}
+	errPhoneNoStream      = notConfigured("phone lines are not available: this deployment has no Stream app to make them in")
 	errCallHookUnpointed  = unavailable("this app's Stream call hook could not be pointed at this router, so its calls would not reach an agent: try again")
 	errNumberNotAttached  = conflict("The number is not attached: attach the number first.")
 	errNumberOnItsOwnCall = conflict("Every caller of this number joins one call: attach the number again so each caller gets a session of their own.")
@@ -651,9 +652,10 @@ var (
 // clientPhoneFailures are the failures of a phone operation answered in their own words, as
 // the client asked for something it can change: a request the phone cannot carry out as
 // asked, a number that cannot be dialled or stored, an app the customer cannot act in, and
-// sip trunks or Stream credentials this deployment is without.
+// sip trunks this deployment is without. A deployment without Stream credentials or a vendor's
+// credentials is notConfigured, answered by phoneFailure.
 var clientPhoneFailures = []error{
-	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164, phone.ErrSIPTrunksDisabled, phone.ErrNoStream,
+	phone.ErrInvalid, phone.ErrNotDialable, store.ErrNotE164, phone.ErrSIPTrunksDisabled,
 	streamapp.ErrNoIdentity, streamapp.ErrStreamAppMoved, streamapp.ErrStreamAppDisconnected, streamapp.ErrReadOnly,
 }
 
@@ -687,6 +689,13 @@ func phoneFailure(logger *slog.Logger, err error) error {
 		logger.Error("a phone vendor failed", "vendor", refused.Vendor, "path", refused.Path,
 			"status", refused.Status, "code", refused.Code, "message", refused.Message, "error", err)
 		return errPhoneVendorFailed
+	}
+	if errors.Is(err, phone.ErrNoStream) {
+		return errPhoneNoStream
+	}
+	if errors.Is(err, phone.ErrNotConfigured) {
+		// A vendor name and the settings it lacks: the operator's to set, the client's to know.
+		return notConfigured(err.Error())
 	}
 	for _, theirs := range clientPhoneFailures {
 		if errors.Is(err, theirs) {

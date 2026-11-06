@@ -295,7 +295,7 @@ type Offers struct {
 func (s *Service) SearchAll(ctx context.Context, search Search) (Offers, error) {
 	usable := s.registry.Available()
 	if len(usable) == 0 {
-		return Offers{}, stack.Wrap(Invalid(errors.New("phone: no vendor has the credentials to be searched")))
+		return Offers{}, stack.Wrap(NotConfigured(errors.New("phone: no vendor has the credentials to be searched")))
 	}
 
 	type answer struct {

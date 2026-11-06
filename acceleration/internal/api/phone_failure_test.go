@@ -80,7 +80,6 @@ func clientPhoneErrors() map[string]error {
 		"a number that is not E.164":        phone.Dialable("911"),
 		"a number stored in another form":   stack.Wrap(fmt.Errorf("phone: %w: %q", store.ErrNotE164, "5125551234")),
 		"sip trunks off on this deployment": stack.Wrap(phone.ErrSIPTrunksDisabled),
-		"no Stream on this deployment":      stack.Wrap(phone.ErrNoStream),
 		"no app for the customer":           stack.Wrap(streamapp.ErrNoIdentity),
 		"an app the customer moved from":    stack.Wrap(streamapp.ErrStreamAppMoved),
 		"a disconnected app":                stack.Wrap(streamapp.ErrStreamAppDisconnected),
@@ -99,6 +98,34 @@ func TestAPhoneFailureTheClientCanFixSaysWhatToFix(t *testing.T) {
 			got := answered(t, response.Body.Bytes())
 			require.Equal(t, ErrorTypeInvalidRequest, got.Type, "%s: %s", answer, name)
 			require.Equal(t, failure.Error(), got.Message, "%s: %s", answer, name)
+		}
+	}
+}
+
+// A deployment without Stream credentials, or without a vendor's, is a feature it lacks:
+// still a 400, with the code that says so.
+func TestAPhoneFailureOfTheDeploymentsMissingSettingsIsNotConfigured(t *testing.T) {
+	missing := map[string]struct {
+		failure error
+		message string
+	}{
+		"no Stream app": {stack.Wrap(phone.ErrNoStream),
+			"phone lines are not available: this deployment has no Stream app to make them in"},
+		"a vendor without credentials": {stack.Wrap(phone.NotConfigured(errors.New("phone: twilio needs TWILIO_SID"))),
+			"phone: twilio needs TWILIO_SID"},
+		"every vendor without credentials": {stack.Wrap(phone.NotConfigured(errors.New("phone: no vendor has the credentials to be searched"))),
+			"phone: no vendor has the credentials to be searched"},
+	}
+	for name, want := range missing {
+		for answer, failed := range map[string]func(*slog.Logger, error) error{"phone": phoneFailure, "call": callFailure} {
+			handler, _ := served(t, func() error { return failed(slog.New(slog.DiscardHandler), want.failure) })
+
+			response := postSync(handler, `{"name":"jean"}`)
+
+			require.Equal(t, http.StatusBadRequest, response.Code, "%s: %s", answer, name)
+			got := answered(t, response.Body.Bytes())
+			require.Equal(t, codeNotConfigured, got.Code, "%s: %s", answer, name)
+			require.Equal(t, want.message, got.Message, "%s: %s", answer, name)
 		}
 	}
 }

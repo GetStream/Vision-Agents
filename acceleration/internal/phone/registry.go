@@ -245,7 +245,7 @@ func (r *Registry) Open(name string) (Provider, error) {
 		return NotImplemented(name), nil
 	}
 	if missing := vendor.Missing(); len(missing) > 0 {
-		return nil, stack.Wrap(Invalid(fmt.Errorf("phone: %s needs %s", name, strings.Join(missing, " and "))))
+		return nil, stack.Wrap(NotConfigured(fmt.Errorf("phone: %s needs %s", name, strings.Join(missing, " and "))))
 	}
 
 	provider, err := factory()

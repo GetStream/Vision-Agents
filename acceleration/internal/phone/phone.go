@@ -76,6 +76,13 @@ var ErrInvalid = errors.New("phone: invalid request")
 // Invalid marks err as ErrInvalid without changing its message.
 func Invalid(err error) error { return marked{err, ErrInvalid} }
 
+// ErrNotConfigured is a vendor, or every vendor, this deployment has no credentials for: the
+// operator's setting to fix, not the request's.
+var ErrNotConfigured = errors.New("phone: not configured")
+
+// NotConfigured marks err as ErrNotConfigured without changing its message.
+func NotConfigured(err error) error { return marked{err, ErrNotConfigured} }
+
 // marked is err that is also kind, with err's own message.
 type marked struct{ err, kind error }
 

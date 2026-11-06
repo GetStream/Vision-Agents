@@ -79,11 +79,14 @@ func (s *PhoneSuite) TestSearchingAtAVendorThatIsNotOneIsRefused() {
 func (s *PhoneSuite) TestSearchingEveryVendorSaysNoneCanBeAsked() {
 	// Leaving the vendor out fans the search out, and no vendor here has credentials,
 	// which is a different answer from having nothing for sale.
-	status, failure := s.serverClient.failure(http.MethodGet,
+	status, payload := s.serverClient.call(http.MethodGet,
 		"/v1/phone/numbers/available?country=US&administrative_area=CO", nil)
 
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "no vendor has the credentials")
+	s.Contains(answered.Error.Message, "no vendor has the credentials")
+	s.Equal(codeNotConfigured, answered.Error.Code)
 }
 
 func (s *PhoneSuite) TestAnAppThatHasBoughtNothingHoldsNoNumbers() {
