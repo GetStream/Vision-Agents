@@ -49,8 +49,10 @@ type platform struct {
 	cut map[string]bool
 	// failing are the files whose download answers a part named error of that many bytes of x.
 	failing map[string]int
-	// refuseUpload answers every file written into the sandbox with a 400.
+	// refuseUpload answers every file written into the sandbox with a 400, and refusal, when set,
+	// with that many bytes of x after it, counted in served under "upload".
 	refuseUpload bool
+	refusal      int
 	// commands are every shell command run in the sandbox, with how many runs came before,
 	// and commandExit and commandOutput the exit code and output each gives.
 	commands      []string
@@ -212,6 +214,9 @@ func (p *platform) serve(w http.ResponseWriter, r *http.Request) {
 		file, _, err := r.FormFile("file")
 		if err != nil || p.refuseUpload {
 			w.WriteHeader(http.StatusBadRequest)
+			wire := &counted{Writer: w}
+			_, _ = io.Copy(wire, io.LimitReader(filler{}, int64(p.refusal)))
+			p.served["upload"] += wire.n
 			return
 		}
 		if r.Context().Err() != nil {
@@ -859,6 +864,23 @@ func (s *DaytonaSuite) TestADownloadsErrorFarTooLargeIsNotReadWhole() {
 		return ended
 	}, 10*time.Second, 10*time.Millisecond)
 	// The SDK reads an error part whole; past its bound the router stops reading it.
+	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
+}
+
+func (s *DaytonaSuite) TestAnUploadsRefusalFarTooLargeIsNotReadWhole() {
+	s.platform.refuseUpload = true
+	s.platform.refusal = 10 * sandbox.MaxFileBytes
+
+	err := s.box.Write(s.ctx, "notes.txt", []byte("hello"))
+
+	s.Require().Error(err)
+	var sent int64
+	s.Eventually(func() bool {
+		var ended bool
+		sent, ended = s.platform.sent("upload")
+		return ended
+	}, 10*time.Second, 10*time.Millisecond)
+	// The SDK reads a refused upload's answer whole; past its bound the router stops reading it.
 	s.Less(sent, int64(2*sandbox.MaxFileBytes), "the router read on past the limit")
 }
 

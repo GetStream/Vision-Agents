@@ -18,7 +18,7 @@ const maxAnswerBytes = sandbox.MaxFileBytes
 
 // downloadSlack is what a download's answer may hold past sandbox.MaxFileBytes: the one byte more
 // that download reads of its file, the multipart framing, and an error part, which the SDK reads
-// whole (sdk-go v0.211.2 pkg/daytona/file_transfer.go:92, :139).
+// whole (sdk-go v0.211.2 pkg/daytona/file_transfer.go:92, :139). An upload's answer is far smaller.
 const downloadSlack = 1 << 20
 
 // maxHeldBytes is the most of an output's JSON string held before it is cut. An escape such as
@@ -36,7 +36,7 @@ var (
 
 // bounded bounds what the router reads of the toolbox's answers that the SDK reads whole: a code
 // run's and a command's (toolbox-api-client-go v0.211.2 api_process.go, io.ReadAll before the
-// JSON decode) and a download's.
+// JSON decode), a download's and an upload's (api_file_system.go).
 type bounded struct {
 	next http.RoundTripper
 }
@@ -49,7 +49,7 @@ func (b bounded) RoundTrip(r *http.Request) (*http.Response, error) {
 	switch {
 	case strings.HasSuffix(r.URL.Path, "/process/code-run"), strings.HasSuffix(r.URL.Path, "/process/execute"):
 		answer.Body = &cutOutput{body: answer.Body, left: maxAnswerBytes}
-	case strings.HasSuffix(r.URL.Path, "/files/bulk-download"):
+	case strings.HasSuffix(r.URL.Path, "/files/bulk-download"), strings.HasSuffix(r.URL.Path, "/files/upload-v2"):
 		answer.Body = &capped{body: answer.Body, left: sandbox.MaxFileBytes + downloadSlack}
 	}
 	return answer, nil
