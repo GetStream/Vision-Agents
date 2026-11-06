@@ -2490,16 +2490,17 @@ func TestWordsGoneBackOverAreJoinedOnce(t *testing.T) {
 }
 
 // A Hearer that waits says when to put the same words again, and the cadence's own retry is
-// for everyone else.
+// for everyone else. The wait is timed from before the ruling: Ruled starts it, and what it
+// does after, on a busy machine, is part of the wait, not before it.
 func (s *ConverseSuite) TestAHearersWaitPutsTheWordsAgainAfterItsInterval() {
 	ready := s.settle("could you", s.quiet())
+	ruled := time.Now()
 	s.converse.Ruled(harness.Decided{
 		CandidateID: ready.ID, Disposition: harness.Wait, Floor: harness.Continue, Again: 10 * testRetry,
 	}, s.quiet())
-	waited := time.Now()
 	again := s.held()
 	s.Equal(ready.Text, again.Text)
-	s.GreaterOrEqual(time.Since(waited), 10*testRetry)
+	s.GreaterOrEqual(time.Since(ruled), 10*testRetry)
 }
 
 // A turn's first pause is the one before any wait, however often it is put; words that go on

@@ -812,6 +812,11 @@ func (a *Agent) followsTool(requested harness.ToolRequested) bool {
 // the call.
 func (a *Agent) callTool(ctx context.Context, call llm.ToolCall) ([]llm.ContentPart, bool, error) {
 	if err := ctx.Err(); err != nil {
+		// An end_call cancelled before it ran is a goodbye the caller spoke over, as one
+		// cancelled while it waits on the goodbye is (endCall), and the model is told so.
+		if call.Name == toolEndCall && a.options.Ender != nil && !a.options.Text && !a.native() {
+			return llm.TextParts(endCallCancelled), false, nil
+		}
 		return nil, false, err
 	}
 	if a.native() && (call.Name == delegateSkill || call.Name == cancelSkill) {
@@ -1151,8 +1156,13 @@ func (a *Agent) transfer(ctx context.Context, call llm.ToolCall) (string, bool, 
 
 // endCall hangs up once the goodbye the model said with the call has been heard. The
 // caller speaking before then cancels ctx, which keeps the call; after, the call ends.
+//
+// Finish returns once the agent is quiet, and a goodbye the caller cut off leaves it as
+// quiet as one heard to its end: an interruption cancels ctx and then drops the speech, and
+// Finish, looking after both, as a busy machine has it, takes the quiet for the goodbye heard.
+// A cancelled ctx is the caller's, however Finish returned.
 func (a *Agent) endCall(ctx context.Context) (string, bool, error) {
-	if a.Finish(ctx) != nil {
+	if a.Finish(ctx) != nil || ctx.Err() != nil {
 		return endCallCancelled, false, nil
 	}
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(ctx), endCallTimeout)
@@ -1430,6 +1440,16 @@ func (a *Agent) stopTools() {
 		cancel()
 	}
 	a.toolReply = false
+}
+
+// cancelToolsLocked cancels the tools stopTools cancels, and leaves the ones it answers
+// (toolHolds) to it. The caller holds the lock.
+func (a *Agent) cancelToolsLocked() {
+	for id, cancel := range a.toolCancels {
+		if a.toolHolds[id] == nil {
+			cancel()
+		}
+	}
 }
 
 // HoldTool makes a running call that an interruption would cancel outlive one from now on,
