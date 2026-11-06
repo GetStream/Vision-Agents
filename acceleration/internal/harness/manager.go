@@ -653,7 +653,8 @@ func (m *manager) advance(running *task, response llm.Response) (*llm.Stream, bo
 		messages := running.messages
 		m.mu.Unlock()
 		m.logger.Info("asking a subagent again after its provider failed mid-answer",
-			"skill", running.skill, "task", running.id, "error", failed)
+			"skill", running.skill, "task", running.id, "provider", response.Provider, "model", response.Model,
+			"error", failed)
 		stream, err := m.ask(running, messages)
 		if err != nil {
 			m.report(running, Result{State: Failed, Err: errors.Join(failed, err)})

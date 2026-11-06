@@ -231,6 +231,8 @@ type HarnessSuite struct {
 
 	harness *Harness
 	events  *collector
+	// logs is what the last harness built logged, as JSON, one record a line.
+	logs *logLines
 }
 
 func TestHarnessSuite(t *testing.T) {
@@ -300,11 +302,12 @@ func stubSession(s *suite.Suite, ctx context.Context, provider *stubLLM) *llmrou
 // tools is offered, which is nothing unless a test set it first.
 func (s *HarnessSuite) build(delegating bool) {
 	s.fast = newStubLLM()
+	s.logs = &logLines{}
 	options := Options{
 		Model:  s.session(s.fast),
 		Skills: s.skills,
 		Tools:  s.tools,
-		Logger: slog.New(slog.DiscardHandler),
+		Logger: slog.New(slog.NewJSONHandler(s.logs, nil)),
 	}
 	if delegating {
 		s.slow = newStubLLM()
@@ -1961,6 +1964,10 @@ func (s *HarnessSuite) TestWorkWhoseProviderFailsMidAnswerIsAskedAgain() {
 	s.Equal("It is 12.63.", settled.Text)
 	s.Require().Len(s.slow.requests(), 2)
 	s.Equal(s.slow.requests()[0].Input, s.slow.requests()[1].Input, "the same question is put again")
+	retried := s.logs.records("asking a subagent again after its provider failed mid-answer")
+	s.Require().Len(retried, 1)
+	s.Equal("stub", retried[0]["provider"], "a search for the provider finds its failure")
+	s.Equal("stub-model", retried[0]["model"])
 }
 
 func (s *HarnessSuite) TestWorkWhoseRequestTheProviderRefusesIsNotAskedAgain() {
