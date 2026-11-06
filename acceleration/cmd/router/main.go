@@ -192,6 +192,9 @@ func main() {
 		os.Exit(1)
 	}
 	logger.Info("loaded configuration", "from", from)
+	for _, retired := range settings.Retired {
+		logger.Warn(retired)
+	}
 
 	// Dsn is deliberately not set. The SDK reads SENTRY_DSN and
 	// SENTRY_ENVIRONMENT itself, so the DSN stays out of this repository and an
@@ -813,8 +816,8 @@ func run(settings config.Config, logger *slog.Logger) error {
 	streams := &api.Streams{}
 
 	// One chorus-asr server serves every agent: as a transcriber where one names it, and
-	// to the flow controller as the mode says.
-	floor, floorMode := audiofloor.Open(settings.Agent)
+	// to the flow controller of an agent whose floor control opts in.
+	floor := audiofloor.Open(settings.Agent)
 
 	if section, ok := capabilities[routing.STT]; ok {
 		transcribers := sttrouter.DefaultRegistry()
@@ -1149,7 +1152,7 @@ func run(settings config.Config, logger *slog.Logger) error {
 	if connectorResolver != nil {
 		sessionConnectors.Resolver = connectorResolver
 	}
-	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, floorMode, streamClients,
+	sessions, err := buildSessions(settings, streams, pgStore, configs, liveClient, usageWriter, directory, telephony, base, finding, judging, floor, streamClients,
 		sessionConnectors, prices, policies, customerKeys, logger)
 	if err != nil {
 		return err
@@ -1373,7 +1376,6 @@ func run(settings config.Config, logger *slog.Logger) error {
 		Workers:               everyWorker,
 		Streams:               streams,
 		AudioFloor:            floor,
-		AudioFloorMode:        floorMode,
 		Stream:                streamClients,
 		ProxyDeclaresKind:     settings.Auth.ProxyDeclaresKind,
 		HookSecret:            settings.Stream.APISecret,
@@ -1985,7 +1987,6 @@ func buildSessions(
 	finding *searchrouter.Router,
 	judging *decisionrouter.Router,
 	floor *audiofloor.Client,
-	floorMode audiofloor.Mode,
 	stream *streamapp.Clients,
 	connectors session.Connectors,
 	prices pricing.Pricer,
@@ -2019,9 +2020,8 @@ func buildSessions(
 		Classifier: judging,
 		FlowJudge:  settings.Agent.FlowJudge,
 		Phone:      telephony,
-		// Off unless the deployment names a server and a mode.
-		AudioFloor:     floor,
-		AudioFloorMode: floorMode,
+		// Off unless the deployment names a server and an agent opts in.
+		AudioFloor: floor,
 		// Off unless the deployment asks: a reply started before its ruling is paid for
 		// whether or not it is spoken.
 		SpeculativeReplies: settings.Agent.SpeculativeReplies,

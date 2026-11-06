@@ -103,6 +103,9 @@ func main() {
 		"how long a reply may say nothing before the same request is asked of another candidate as well, 0 asks once")
 	flag.DurationVar(&options.flowHedge, "flow-hedge", config.Defaults().Agent.FlowHedge,
 		"how long a flow decision may say nothing before it is asked of another candidate as well, 0 asks once")
+	flag.StringVar(&options.floorControl, "floor-control", string(audiofloor.Off),
+		"whether chorus-asr rules the agent's floor: off, shadow (asked beside the flow controller, acted on for nothing) "+
+			"or act; shadow and act need ROUTER_CHORUS_ASR_URL")
 	verbose := flag.Bool("verbose", false, "log lifecycle events")
 	flag.Parse()
 
@@ -145,6 +148,7 @@ type options struct {
 	chatTimings    bool
 	replyHedge     time.Duration
 	flowHedge      time.Duration
+	floorControl   string
 
 	number       string
 	vendor       string
@@ -193,7 +197,11 @@ func run(options options, logger *slog.Logger) error {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	floor, floorMode, err := openAudioFloor()
+	floor, err := openAudioFloor(logger)
+	if err != nil {
+		return err
+	}
+	floorMode, err := floorControlOf(options.floorControl, floor)
 	if err != nil {
 		return err
 	}
@@ -483,15 +491,34 @@ func speaker(heard agent.Heard) string {
 	return "someone"
 }
 
-// openAudioFloor is the chorus-asr server the router's settings name (ROUTER_CHORUS_ASR_URL,
-// _MODE and _AUDIO), read as the router reads them, or nil.
-func openAudioFloor() (*audiofloor.Client, audiofloor.Mode, error) {
+// openAudioFloor is the chorus-asr server the router's settings name (ROUTER_CHORUS_ASR_URL
+// and the rest), read as the router reads them, or nil. A setting no longer read is warned of,
+// as the router warns of it.
+func openAudioFloor(logger *slog.Logger) (*audiofloor.Client, error) {
 	settings, _, err := config.Load("")
 	if err != nil {
-		return nil, "", err
+		return nil, err
 	}
-	floor, mode := audiofloor.Open(settings.Agent)
-	return floor, mode, nil
+	for _, retired := range settings.Retired {
+		logger.Warn(retired)
+	}
+	return audiofloor.Open(settings.Agent), nil
+}
+
+// floorControlOf is the agent's floor control as -floor-control names it: off, shadow or act,
+// the last two needing a chorus-asr server to ask.
+func floorControlOf(named string, floor *audiofloor.Client) (audiofloor.Mode, error) {
+	switch mode := audiofloor.Mode(named); mode {
+	case audiofloor.Off:
+		return mode, nil
+	case audiofloor.Shadow, audiofloor.Act:
+		if floor == nil {
+			return "", fmt.Errorf("-floor-control %s needs a chorus-asr server (ROUTER_CHORUS_ASR_URL)", mode)
+		}
+		return mode, nil
+	default:
+		return "", fmt.Errorf("-floor-control is off, shadow or act, got %q", named)
+	}
 }
 
 // routers is the three modalities an agent needs, plus the store its turns are recorded

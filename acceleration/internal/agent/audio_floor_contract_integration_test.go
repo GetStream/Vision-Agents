@@ -338,8 +338,8 @@ func (k *contract) oneWait(t *testing.T, name string) {
 // says nothing of its own accord while the model waits on the count, and answers it once,
 // after "ten".
 func (k *contract) noCheckInMidTurn(t *testing.T) {
-	client, _ := audiofloor.Open(config.Agent{AudioFloorURL: k.url, AudioFloorAPIKey: os.Getenv("ROUTER_CHORUS_ASR_API_KEY"),
-		AudioFloorInterims: "off", AudioFloorMode: string(audiofloor.Act)})
+	client := audiofloor.Open(config.Agent{AudioFloorURL: k.url, AudioFloorAPIKey: os.Getenv("ROUTER_CHORUS_ASR_API_KEY"),
+		AudioFloorInterims: "off"})
 	require.NotNil(t, client)
 	c := k.startWith(t, callSetup{mode: audiofloor.Act, instructions: replayInstructions, languages: []string{"en"}, client: client})
 	c.model.mu.Lock()

@@ -288,13 +288,11 @@ func (s *ClientSuite) TestAnAgentIsRegisteredOnceAndTheMomentGoesInTheBody() {
 // talks unless they say off.
 func TestTheSettingsSayWhetherTheWordsAreWrittenWhileTheCallerTalks(t *testing.T) {
 	for setting, interims := range map[string]bool{"": true, "on": true, "off": false} {
-		client, mode := Open(config.Agent{AudioFloorURL: "http://floor:8080", AudioFloorMode: "act", AudioFloorInterims: setting})
+		client := Open(config.Agent{AudioFloorURL: "http://floor:8080", AudioFloorInterims: setting})
 		require.NotNil(t, client, setting)
-		require.Equal(t, Act, mode)
 		require.Equal(t, interims, NewTranscriber(client, "", nil, slog.New(slog.DiscardHandler)).interims, "interims %q", setting)
 	}
-	client, _ := Open(config.Agent{})
-	require.Nil(t, client)
+	require.Nil(t, Open(config.Agent{}))
 }
 
 // A gateway's address has a path of its own, and every route goes under it, with the key when
@@ -325,7 +323,7 @@ func TestEveryRequestGoesUnderTheAddressesPathWithTheKey(t *testing.T) {
 		// Written with and without the slash an address may end in.
 		for _, address := range []string{srv.URL + prefix, srv.URL + prefix + "/"} {
 			routes = nil
-			client, _ := Open(config.Agent{AudioFloorURL: address, AudioFloorAudio: "pcm", AudioFloorAPIKey: key})
+			client := Open(config.Agent{AudioFloorURL: address, AudioFloorAudio: "pcm", AudioFloorAPIKey: key})
 			_, err := client.PolicyNow(context.Background())
 			require.NoError(t, err)
 			_, err = client.Decide(context.Background(), booking, Turn{Speaker: caller}, some)

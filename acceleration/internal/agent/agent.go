@@ -144,6 +144,8 @@ type Options struct {
 	JudgeTarget string
 	// AudioFloor is the chorus-asr model the flow controller asks first when
 	// AudioFloorMode is Act, or beside it when Shadow. Nil or another mode asks it nothing.
+	// AudioFloorMode is this agent's own floor control: agents on one router share the
+	// client and nothing else of it.
 	AudioFloor     *audiofloor.Client
 	AudioFloorMode audiofloor.Mode
 	// EndOfTurn is the agent's choice of when the audio floor model has a turn with the

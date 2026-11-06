@@ -846,11 +846,30 @@ func (s *ConfigSuite) TestStreamTenancyIsDeploymentOrApp() {
 	s.ErrorContains(err, "stream.tenancy")
 }
 
-func (s *ConfigSuite) TestAnAudioFloorModeIsOffShadowOrAct() {
-	s.T().Setenv("ROUTER_CHORUS_ASR_URL", "http://floor:8080")
-	s.T().Setenv("ROUTER_CHORUS_ASR_MODE", "on")
-	_, _, err := Load("")
-	s.ErrorContains(err, "agent.chorus_asr_mode")
+// The router's floor control is gone: each agent opts in to chorus-asr's itself. A router
+// still given it starts, acts on it for nothing, and says what took its place.
+func (s *ConfigSuite) TestTheRoutersFloorControlIsNoLongerRead() {
+	settings, _, err := Load("")
+	s.Require().NoError(err)
+	s.Empty(settings.Retired)
+
+	for _, mode := range []string{"act", "shadow", "on"} {
+		s.T().Setenv("ROUTER_CHORUS_ASR_MODE", mode)
+		settings, _, err = Load("")
+		s.Require().NoError(err, "a router given %q starts", mode)
+		s.Equal([]string{chorusASRModeRetired}, settings.Retired)
+		s.Contains(settings.Retired[0], "floor_control")
+	}
+
+	file := filepath.Join(s.T().TempDir(), "router.yaml")
+	s.Require().NoError(os.WriteFile(file, []byte("agent:\n  chorus_asr_mode: act\n"), 0o600))
+	s.T().Setenv("ROUTER_CHORUS_ASR_MODE", "")
+	settings, _, err = Load("")
+	s.Require().NoError(err)
+	s.Empty(settings.Retired, "an empty variable sets nothing")
+	settings, _, err = Load(file)
+	s.Require().NoError(err)
+	s.Equal([]string{chorusASRModeRetired}, settings.Retired, "and so is a file that names it")
 }
 
 func (s *ConfigSuite) TestTheAudioFloorsAudioIsOpusOrPCM() {
@@ -871,17 +890,6 @@ func (s *ConfigSuite) TestTheAudioFloorsInterimsAreOnOrOff() {
 	settings, _, err := Load("")
 	s.Require().NoError(err)
 	s.Equal("off", settings.Agent.AudioFloorInterims)
-}
-
-func (s *ConfigSuite) TestAnAudioFloorModeNeedsAServer() {
-	s.T().Setenv("ROUTER_CHORUS_ASR_MODE", "act")
-	_, _, err := Load("")
-	s.ErrorContains(err, "ROUTER_CHORUS_ASR_URL")
-
-	s.T().Setenv("ROUTER_CHORUS_ASR_URL", "http://floor:8080")
-	settings, _, err := Load("")
-	s.Require().NoError(err)
-	s.Equal("act", settings.Agent.AudioFloorMode)
 }
 
 // The server's address is an http or https URL the client appends its paths to, so one with

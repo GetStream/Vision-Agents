@@ -102,10 +102,10 @@ type ManagerOptions struct {
 	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
 	// language model. Empty keeps the language model.
 	FlowJudge string
-	// AudioFloor is optional, and is the chorus-asr model every agent's flow controller
-	// asks as AudioFloorMode says.
-	AudioFloor     *audiofloor.Client
-	AudioFloorMode audiofloor.Mode
+	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
+	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
+	// nothing about turns.
+	AudioFloor *audiofloor.Client
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -789,7 +789,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
 			AudioFloor:         m.options.AudioFloor,
-			AudioFloorMode:     m.options.AudioFloorMode,
+			AudioFloorMode:     m.floorMode(created.id, spec),
 			EndOfTurn:          EndOfTurnOf(spec.EndOfTurn),
 			Skills:             skills,
 			Telephony:          line,

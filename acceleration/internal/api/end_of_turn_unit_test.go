@@ -43,15 +43,24 @@ func chorusASRServer(t *testing.T, info string) (*audiofloor.Client, *atomic.Int
 	return audiofloor.New(srv.URL, audiofloor.Opus, srv.Client()), &asked
 }
 
-func serverAsking(client *audiofloor.Client, mode audiofloor.Mode) *Server {
-	return &Server{audioFloor: asksAboutTurns(client, mode), logger: slog.New(slog.DiscardHandler)}
+// serverAsking is a router with client as its chorus-asr server, nil for none.
+func serverAsking(client *audiofloor.Client) *Server {
+	return &Server{audioFloor: client, logger: slog.New(slog.DiscardHandler)}
 }
 
-// What a choice says is checked whatever the router asks; what it names, against what the
-// server publishes.
+// chorusASRActing is the floor control of an agent that acts on chorus-asr.
+var chorusASRActing = store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeAct}
+
+// acting is endOfTurn, chosen by an agent that acts on chorus-asr.
+func acting(endOfTurn store.EndOfTurn) floorChoice {
+	return floorChoice{control: chorusASRActing, endOfTurn: endOfTurn}
+}
+
+// What a choice says is checked whatever the agent's floor control; what it names, against
+// what the server publishes.
 func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishes(t *testing.T) {
 	client, _ := chorusASRServer(t, chorusASRInfo)
-	s := serverAsking(client, audiofloor.Act)
+	s := serverAsking(client)
 	for _, chosen := range []store.EndOfTurn{
 		{},
 		{Preset: "safe"},
@@ -59,13 +68,13 @@ func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishes(t *testing.T) {
 		{MaxWaitMs: 5000},
 		{Bars: []store.EndOfTurnBar{{FromMs: 0, Bar: 0.9}, {FromMs: 800, Bar: 0.4}}},
 	} {
-		warning, message, ok := s.endOfTurnComplaint(context.Background(), chosen, store.EndOfTurn{})
+		warning, message, ok := s.endOfTurnComplaint(context.Background(), acting(chosen), floorChoice{})
 		require.True(t, ok, "%+v: %s", chosen, message)
 		require.Empty(t, warning)
 	}
 	// A point that fails the dictation guard is kept, and the app is told what it does.
 	for _, chosen := range []store.EndOfTurn{{Preset: "fast"}, {MaxWaitMs: 800}} {
-		warning, message, ok := s.endOfTurnComplaint(context.Background(), chosen, store.EndOfTurn{})
+		warning, message, ok := s.endOfTurnComplaint(context.Background(), acting(chosen), floorChoice{})
 		require.True(t, ok, "%+v: %s", chosen, message)
 		require.Equal(t, "end_of_turn chooses the 500 ms point, which fails the dictation guard: it ended 9 of 9 slow counts before their last number, "+
 			"and 16.0% of real pauses inside a dictated number, ID or spelled name; an agent whose callers read those out wants a point that passes", warning)
@@ -82,7 +91,7 @@ func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishes(t *testing.T) {
 		{store.EndOfTurn{Bars: []store.EndOfTurnBar{{FromMs: 0, Bar: 1}}}, "end_of_turn.bars[0].bar is 1: a bar is a probability strictly between 0 and 1"},
 		{store.EndOfTurn{Bars: []store.EndOfTurnBar{{FromMs: 0, Bar: 0}}}, "end_of_turn.bars[0].bar is 0: a bar is a probability strictly between 0 and 1"},
 	} {
-		_, message, ok := s.endOfTurnComplaint(context.Background(), c.chosen, store.EndOfTurn{})
+		_, message, ok := s.endOfTurnComplaint(context.Background(), acting(c.chosen), floorChoice{})
 		require.False(t, ok, "%+v", c.chosen)
 		require.Contains(t, message, c.says)
 	}
@@ -102,11 +111,11 @@ func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishesNow(t *testing.T) {
 	require.NoError(t, err, "a session read the policy, with its fast preset")
 
 	info.Store(new(strings.Replace(chorusASRInfo, `"presets":{"safe":1100,"fast":500}`, `"presets":{"safe":1100}`, 1)))
-	s := serverAsking(client, audiofloor.Act)
-	_, message, ok := s.endOfTurnComplaint(context.Background(), store.EndOfTurn{Preset: "fast"}, store.EndOfTurn{})
+	s := serverAsking(client)
+	_, message, ok := s.endOfTurnComplaint(context.Background(), acting(store.EndOfTurn{Preset: "fast"}), floorChoice{})
 	require.False(t, ok, "fast is no longer published")
 	require.Contains(t, message, `there is no preset "fast"; the model's are safe`)
-	_, message, ok = s.endOfTurnComplaint(context.Background(), store.EndOfTurn{Preset: "safe"}, store.EndOfTurn{})
+	_, message, ok = s.endOfTurnComplaint(context.Background(), acting(store.EndOfTurn{Preset: "safe"}), floorChoice{})
 	require.True(t, ok, message)
 }
 
@@ -114,30 +123,60 @@ func TestAnEndOfTurnIsCheckedAgainstWhatTheServerPublishesNow(t *testing.T) {
 // isn't asked about it again.
 func TestAnUnchangedEndOfTurnIsNotAskedAboutAgain(t *testing.T) {
 	client, asked := chorusASRServer(t, chorusASRInfo)
-	s := serverAsking(client, audiofloor.Shadow)
-	stored := store.EndOfTurn{Preset: "gone"}
-	_, message, ok := s.endOfTurnComplaint(context.Background(), stored, stored)
+	s := serverAsking(client)
+	shadow := floorChoice{control: store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeShadow},
+		endOfTurn: store.EndOfTurn{Preset: "gone"}}
+	_, message, ok := s.endOfTurnComplaint(context.Background(), shadow, shadow)
 	require.True(t, ok, message)
+	_, message, ok = s.endOfTurnComplaint(context.Background(), acting(shadow.endOfTurn), shadow)
+	require.True(t, ok, "from shadow to act, it was checked already: %s", message)
 	require.Zero(t, asked.Load())
 }
 
-// A router that asks the server nothing about turns, or a server that can't say what it
-// publishes, keeps the choice and says why it may not do what it says.
-func TestAnEndOfTurnThatCannotBeCheckedIsKeptWithAWarning(t *testing.T) {
+// A choice stored while the agent's floor control asked chorus-asr nothing was never checked,
+// so a write that has it ask is checked as a new choice would be, with nothing else changed.
+func TestAnEndOfTurnIsCheckedOnceTheFloorControlAsks(t *testing.T) {
 	client, _ := chorusASRServer(t, chorusASRInfo)
-	for _, s := range []*Server{serverAsking(nil, audiofloor.Act), serverAsking(client, ""), serverAsking(client, "off")} {
-		warning, message, ok := s.endOfTurnComplaint(context.Background(), store.EndOfTurn{Preset: "eager"}, store.EndOfTurn{})
-		require.True(t, ok, message)
-		require.Equal(t, "end_of_turn is kept, and does nothing on this router, which asks chorus-asr nothing about turns", warning)
+	s := serverAsking(client)
+	stored := store.EndOfTurn{Preset: "gone"}
+	off := store.FloorControl{Model: store.FloorModelChorusASR, Mode: store.FloorModeOff}
+	for _, was := range []floorChoice{{endOfTurn: stored}, {control: off, endOfTurn: stored}} {
+		for _, mode := range []string{store.FloorModeShadow, store.FloorModeAct} {
+			chosen := floorChoice{control: store.FloorControl{Model: store.FloorModelChorusASR, Mode: mode}, endOfTurn: stored}
+			_, message, ok := s.endOfTurnComplaint(context.Background(), chosen, was)
+			require.False(t, ok, mode)
+			require.Contains(t, message, `there is no preset "gone"`, mode)
+		}
 	}
+}
+
+// A router with no chorus-asr server, an agent whose floor control asks the server nothing
+// about turns, or a server that can't say what it publishes, keeps the choice and says why it
+// may not do what it says.
+func TestAnEndOfTurnThatCannotBeCheckedIsKeptWithAWarning(t *testing.T) {
+	eager := store.EndOfTurn{Preset: "eager"}
+	warning, message, ok := serverAsking(nil).endOfTurnComplaint(context.Background(), acting(eager), floorChoice{})
+	require.True(t, ok, message)
+	require.Equal(t, "end_of_turn is kept, and does nothing on this router, which has no chorus-asr server", warning)
+
+	client, asked := chorusASRServer(t, chorusASRInfo)
+	for name, control := range map[string]store.FloorControl{
+		"none chosen": {},
+		"off":         {Model: store.FloorModelChorusASR, Mode: store.FloorModeOff},
+	} {
+		warning, message, ok := serverAsking(client).endOfTurnComplaint(context.Background(), floorChoice{control: control, endOfTurn: eager}, floorChoice{})
+		require.True(t, ok, "%s: %s", name, message)
+		require.Equal(t, "end_of_turn is kept, and does nothing while the agent's floor control is off: chorus-asr is asked nothing about its turns", warning, name)
+	}
+	require.Zero(t, asked.Load(), "a choice that does nothing is not asked about")
 
 	down, _ := chorusASRServer(t, "")
-	warning, message, ok := serverAsking(down, audiofloor.Act).endOfTurnComplaint(context.Background(), store.EndOfTurn{Preset: "eager"}, store.EndOfTurn{})
+	warning, message, ok = serverAsking(down).endOfTurnComplaint(context.Background(), acting(eager), floorChoice{})
 	require.True(t, ok, message)
 	require.Contains(t, warning, "end_of_turn is kept unchecked: the chorus-asr server did not say what it publishes")
 	require.NotContains(t, warning, "127.0.0.1", "where the server is stays the router's")
 
-	_, message, ok = serverAsking(nil, audiofloor.Act).endOfTurnComplaint(context.Background(), store.EndOfTurn{MaxWaitMs: 1, Preset: "fast"}, store.EndOfTurn{})
+	_, message, ok = serverAsking(nil).endOfTurnComplaint(context.Background(), acting(store.EndOfTurn{MaxWaitMs: 1, Preset: "fast"}), floorChoice{})
 	require.False(t, ok, "what a choice says is checked with no server to ask")
 	require.Contains(t, message, "it takes one of max_wait_ms, preset and bars")
 }
