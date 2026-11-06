@@ -775,6 +775,44 @@ func (s *DataMoveSuite) TestTheFirstReadAfterAnExportIsAnsweredPastANumberRolled
 	s.Contains(string(changes[0].Key), next)
 }
 
+// A follower that read its customer's change stays at it while the customer is quiet. That
+// change and another customer's after it age out and are pruned; the follower lost nothing and is
+// answered the customer's next change.
+func (s *DataMoveSuite) TestAFollowerWhoseOwnReadChangeWasPrunedIsAnsweredTheNextOne() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	_, cursor := s.follow("acme", 0)
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	next := s.seedAgentConfig(s.source, "acme", "next")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+}
+
+// The same follower, with a change of its customer's after its cursor pruned too, lost it and is
+// refused.
+func (s *DataMoveSuite) TestAFollowerWhoseUnreadChangeWasPrunedSaysToExportAgain() {
+	s.capture("acme")
+	s.capture("other")
+	s.seedAgentConfig(s.source, "acme", "one")
+	_, cursor := s.follow("acme", 0)
+	s.seedAgentConfig(s.source, "acme", "lost")
+	s.seedAgentConfig(s.source, "other", "aged out")
+	s.age()
+	s.prune()
+	s.seedAgentConfig(s.source, "acme", "next")
+
+	_, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
 // Every replica prunes, and of two prunes running at once the one that dropped the lower numbers
 // can commit last: the highest number noted stays.
 func (s *DataMoveSuite) TestAPruneCommittingAfterOneThatDroppedHigherNumbersKeepsTheirs() {
