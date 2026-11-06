@@ -214,16 +214,16 @@ func TestAVendorThatFailedIsAnsweredWithoutItsPathOrBody(t *testing.T) {
 	for failure, base := range bases {
 		vendors := map[string]func() (phone.Provider, error){
 			"bird": func() (phone.Provider, error) {
-				return bird.New(bird.Options{AccessKey: "bk_us1_ACCOUNTID", BaseURL: base})
+				return bird.New(bird.Options{AccessKey: "bk_us1_abc", BaseURL: base})
 			},
 			"didww": func() (phone.Provider, error) {
-				return didww.New(didww.Options{APIKey: "ACCOUNTID", BaseURL: base})
+				return didww.New(didww.Options{APIKey: "key", BaseURL: base})
 			},
 			"plivo": func() (phone.Provider, error) {
-				return plivo.New(plivo.Options{AuthID: "ACCOUNTID", AuthToken: "secret", BaseURL: base})
+				return plivo.New(plivo.Options{AuthID: "MA123", AuthToken: "secret", BaseURL: base})
 			},
 			"vonage": func() (phone.Provider, error) {
-				return vonage.New(vonage.Options{APIKey: "ACCOUNTID", APISecret: "secret", BaseURL: base})
+				return vonage.New(vonage.Options{APIKey: "k", APISecret: "s", BaseURL: base})
 			},
 		}
 		for name, open := range vendors {
@@ -240,10 +240,10 @@ func TestAVendorThatFailedIsAnsweredWithoutItsPathOrBody(t *testing.T) {
 		// Bird and Vonage place calls through a voice API of their own.
 		dialers := map[string]func() (phone.Provider, error){
 			"bird": func() (phone.Provider, error) {
-				return bird.New(bird.Options{AccessKey: "bk_us1_ACCOUNTID", VoiceBaseURL: base})
+				return bird.New(bird.Options{AccessKey: "bk_us1_abc", VoiceBaseURL: base})
 			},
 			"vonage": func() (phone.Provider, error) {
-				return vonage.New(vonage.Options{APIKey: "ACCOUNTID", APISecret: "secret", VoiceBaseURL: base,
+				return vonage.New(vonage.Options{APIKey: "k", APISecret: "s", VoiceBaseURL: base,
 					ApplicationID: "app-1", PrivateKey: applicationKey})
 			},
 		}
