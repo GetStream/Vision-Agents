@@ -10,13 +10,9 @@
 
 `/metrics` serves `router_phone_call_sip_responses_total{vendor, direction, code}`, each placed call's final SIP response where the vendor reports one (Twilio, Vonage, Bandwidth rejections, a customer's own SIP trunk), `router_phone_post_dial_delay_seconds{vendor, direction}` (Vonage's ringing event and the router's own SIP bridge), and `router_phone_short_calls_total{vendor, direction}`, answered calls under 6 s. A dial the vendor refuses is counted `refused` in `router_phone_call_outcomes_total`. What each vendor reports is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2830, AI-2905, #1793).
 
-### The router counts its sessions and how they end
+### The router counts its sessions and how they end, whose fault it was and at which stage
 
-`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed}`, each session end once: its stored end reason, or `closed`, `shutdown`, `create_failed`, `agent_failed` or `model_failed`; `failed` is `true` for `start`, `create_failed`, `agent_failed` and `model_failed` (AI-2779, #1782).
-
-### Session end reasons say whose fault it was and at which stage
-
-Every session end reason now has a fault (`none`, `caller`, `router`, `vendor`, `carrier`, `customer_config`, `customer_credit`) and a stage (`starting`, `ringing`, `conversation`), listed in `session.EndReasons` (`acceleration/internal/session/timeout.go`). `router_session_ends_total` gains the `fault` and `stage` labels, still one series per reason. A session's record gains `end_fault` and `end_stage`, and a session stopped through the API, ended by a shutdown or failed now keeps `closed`, `shutdown`, `agent_failed`, `model_failed`, `model_config_refused` or `model_no_credit` where it kept nothing; the six reasons kept before keep their values. A session that failed to open counts as `create_failed`, `create_vendor_failed`, `create_config_refused` or `create_no_credit` (AI-2831, #1796).
+`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed, fault, stage}`, each session end once, one series per reason. Every end reason is listed in `session.EndReasons` (`acceleration/internal/session/timeout.go`) with its fault (`none`, `caller`, `router`, `vendor`, `carrier`, `customer_config`, `customer_credit`) and stage (`starting`, `ringing`, `conversation`); `failed` is `true` for `start` and every `create_*`, `agent_failed` and `model_*` reason. A session's record gains `end_fault` and `end_stage`, and a session stopped through the API, ended by a shutdown or failed now keeps `closed`, `shutdown`, `agent_failed`, `model_failed`, `model_config_refused` or `model_no_credit` where it kept nothing; the six reasons kept before keep their values. A session that failed to open counts as `create_failed`, `create_vendor_failed`, `create_config_refused` or `create_no_credit` (AI-2779, #1782; AI-2831, #1796).
 
 ### Vendor rate limits per key: refusals and headroom
 
