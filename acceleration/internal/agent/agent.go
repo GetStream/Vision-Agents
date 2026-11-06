@@ -4247,8 +4247,8 @@ func (a *Agent) fail(err error, context string, attrs ...any) {
 	a.emitter.Send(Error{Err: err, Context: context})
 }
 
-// createFailed is a reply whose request never started, reported as one that failed
-// mid-stream is, and named for the model it was asked of so its failure line is.
+// createFailed is a reply whose request never started, sent on as a reply that failed
+// mid-stream is. It names the model it was asked of, so the failure line does too.
 func createFailed(turnID string, model *llmrouter.Session, err error) llm.ResponseFailed {
 	failed := llm.ResponseFailed{ResponseID: turnID, Err: err, Context: "llm"}
 	// A harness with no text model fails its turn before asking anyone.

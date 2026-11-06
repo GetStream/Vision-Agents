@@ -247,8 +247,8 @@ func (s *Session) attempt(ctx context.Context, params llm.ResponseParams, hedge 
 	createdAt := time.Now()
 	charged := s.charged(ctx)
 	settled := s.keep(held)
-	// The response settles with its status alone, so what its failure said is kept from the
-	// event that reported it, the last one as the stream's own Err keeps.
+	// The response settles with its status alone, so what its failure said is taken from the
+	// event that reported it: the last one, as the stream's own Err keeps.
 	var failure string
 	return stream.Observe(func(event llm.Event) {
 		if failed, ok := event.(llm.ResponseFailed); ok {
