@@ -77,11 +77,9 @@ func (s *MetricsSuite) TestMetricsAreServedAsOpenMetrics() {
 	s.Contains(string(body), "go_goroutines")
 }
 
-// A fresh router serves each table vendor's 429 count at 0 per key, before any request: an
-// alert on it reads an absent series as no data. A vendor with no key gets no series.
-func (s *MetricsSuite) TestATableVendorsRateLimitCountIsServedAtZeroPerKeyBeforeAnyRequest() {
-	s.T().Setenv("CEREBRAS_API_KEY", "metrics-test-key-1,metrics-test-key-2")
-	s.T().Setenv("FIREWORKS_API_KEY", "")
+// servedRateLimited serves metrics and returns the router_vendor_rate_limited_total series
+// the router serves, as its label set mapped to its value.
+func (s *MetricsSuite) servedRateLimited() map[string]string {
 	stop, _ := serveMetrics(s.addr, slog.New(slog.DiscardHandler))
 	s.T().Cleanup(stop)
 
@@ -103,17 +101,46 @@ func (s *MetricsSuite) TestATableVendorsRateLimitCountIsServedAtZeroPerKeyBefore
 			served[labels] = value
 		}
 	}
-	s.Equal("0.0", served[`key="0",key_var="CEREBRAS_API_KEY"}`])
+	return served
+}
+
+// A fresh router serves each table vendor's 429 count at 0 per key, before any request: an
+// alert on it reads an absent series as no data. The eleven variables are written out here, so
+// dropping or misspelling one in the router's list fails this test.
+func (s *MetricsSuite) TestEveryTableVendorsRateLimitCountIsServedAtZeroPerKeyBeforeAnyRequest() {
+	vars := []string{
+		"OPENAI_API_KEY", "ANTHROPIC_API_KEY", "ELEVENLABS_API_KEY", "CEREBRAS_API_KEY", "XAI_API_KEY",
+		"TOGETHER_API_KEY", "FIREWORKS_API_KEY", "DEEPGRAM_API_KEY", "GOOGLE_API_KEY", "CARTESIA_API_KEY",
+		"OPENROUTER_API_KEY",
+	}
+	for _, name := range vars {
+		s.T().Setenv(name, "metrics-test-key")
+	}
+	s.T().Setenv("CEREBRAS_API_KEY", "metrics-test-key-1,metrics-test-key-2")
+
+	served := s.servedRateLimited()
+
+	for _, name := range vars {
+		s.Equal("0.0", served[`key="0",key_var="`+name+`"}`], name)
+	}
 	s.Equal("0.0", served[`key="1",key_var="CEREBRAS_API_KEY"}`])
-	cerebras := 0
+	s.Len(served, len(vars)+1, "one series per key")
 	for labels := range served {
-		if strings.Contains(labels, `key_var="CEREBRAS_API_KEY"`) {
-			cerebras++
-		}
-		s.NotContains(labels, "FIREWORKS_API_KEY")
 		s.NotContains(labels, "metrics-test-key")
 	}
-	s.Equal(2, cerebras, "one series per key")
+}
+
+// A vendor with no key gets no series: nothing could count a 429 under it.
+func (s *MetricsSuite) TestAVendorWithNoKeyIsServedNoRateLimitSeries() {
+	s.T().Setenv("CEREBRAS_API_KEY", "metrics-test-key-1")
+	s.T().Setenv("FIREWORKS_API_KEY", "")
+
+	served := s.servedRateLimited()
+
+	s.Equal("0.0", served[`key="0",key_var="CEREBRAS_API_KEY"}`])
+	for labels := range served {
+		s.NotContains(labels, "FIREWORKS_API_KEY")
+	}
 }
 
 func (s *MetricsSuite) TestMetricsStopBeingServedWhenStopped() {
