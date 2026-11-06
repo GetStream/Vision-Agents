@@ -432,7 +432,6 @@ func (s *ClientSuite) TestAnOldPolicyIsReadAgainInTheBackground() {
 	s.Equal(2, s.infos(), "read again once")
 }
 
-// A read that fails leaves the last policy standing, and is tried again after policyRetry.
 // reading says the client is reading its policy again in the background.
 func (s *ClientSuite) reading() bool {
 	s.client.mu.Lock()
@@ -440,6 +439,7 @@ func (s *ClientSuite) reading() bool {
 	return s.client.reading
 }
 
+// A read that fails leaves the last policy standing, and is tried again after policyRetry.
 func (s *ClientSuite) TestAFailedReadLeavesTheLastPolicyStanding() {
 	var skew atomic.Int64
 	s.client.now = skewed(&skew)
