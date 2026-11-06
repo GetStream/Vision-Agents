@@ -399,6 +399,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A code run that prints a lot no longer fills the router's memory
+
+The router read everything a Daytona code run printed into memory, however much, and handed all of it to the model. It now keeps the first 1 MiB and ends it with a line telling the model the output was cut. The rest is dropped as it is read, so the router holds about 6 MiB of one output, a few times that while cutting, and never more as the answer grows. An output under 1 MiB reaches the model as before. A command's, a download's and an upload's answer from the sandbox are bounded too. (#1804)
+
 ### git lfs push in a sandbox says why it is refused
 
 Under the proxy broker, `git lfs push` in a sandbox is refused at its first request, `locks/verify`, and git-lfs showed «Authentication error … Check that you have proper access to the repository». The proxy now answers every refused request under a Git LFS API (`/info/lfs/`) with an LFS error, so git-lfs prints the proxy's hint: code in the sandbox only reads through a connector, and writes with the connector's tools. Uploads stay refused, and the log says why (AI-2876, #1801).
