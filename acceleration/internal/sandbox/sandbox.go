@@ -13,7 +13,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
@@ -27,13 +26,15 @@ const MaxFiles = 4
 const MaxFileBytes = 20 << 20
 
 // MaxOutputBytes is the most of what a run printed that comes back: a longer output is cut to fit
-// and ends with OutputCut, within the same bound. It is core.MaxResultBytes, the cap the session's
-// dispatcher puts on every other tool result the model reads (internal/session/dispatcher.go); a
-// run's output reaches the model without passing it.
-const MaxOutputBytes = core.MaxResultBytes
+// and ends with OutputCut, within the same bound. It protects the router's memory, not the model's
+// context: on base a run's output reached the model whole (internal/agent/telephony.go,
+// internal/harness/manager.go), so the bound is far above what code prints for a person to read
+// and below what one run can print in a loop. The router holds at most 6 times it, 6 MiB, of one
+// output at a time (maxHeldBytes in daytona/bounded.go).
+const MaxOutputBytes = 1 << 20
 
 // OutputCut ends an output cut at MaxOutputBytes, so the model knows it read only the start.
-const OutputCut = "\n[output cut: the code printed more than 32 KiB; print less, or only the part you need]"
+const OutputCut = "\n[output cut: the code printed more than 1 MiB; print less, or only the part you need]"
 
 // MaxTimeout is the longest one run of code may be allowed.
 const MaxTimeout = 30 * time.Minute

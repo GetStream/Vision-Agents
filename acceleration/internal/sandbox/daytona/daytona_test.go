@@ -886,7 +886,7 @@ func (s *DaytonaSuite) TestAnUploadsRefusalFarTooLargeIsNotReadWhole() {
 
 func (s *DaytonaSuite) TestACommandsOutputFarOverTheBoundIsCutInItsError() {
 	s.platform.commandExit = 1
-	s.platform.commandOutput = strings.Repeat("x", 1<<20)
+	s.platform.commandOutput = strings.Repeat("x", 4*sandbox.MaxOutputBytes)
 
 	err := s.box.Write(s.ctx, "skills/pdf/merge.py", []byte("print(1)"))
 

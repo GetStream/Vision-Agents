@@ -15,7 +15,6 @@ import (
 
 	"github.com/stretchr/testify/suite"
 
-	"github.com/GetStream/Vision-Agents/acceleration/internal/connectors/core"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 )
@@ -83,12 +82,13 @@ func (s *OutputSuite) TestAnOutputFarOverTheBoundComesBackCutWithItsExitCode() {
 	s.GreaterOrEqual(len(kept), sandbox.MaxOutputBytes-len(sandbox.OutputCut)-utf8.UTFMax, "no more is dropped than a character")
 	s.True(utf8.ValidString(result.Output))
 	// The answer is 256 MiB: read whole, as the SDK reads it, it would be allocated several times.
-	s.Less(after.TotalAlloc-before.TotalAlloc, uint64(32<<20), "the router held the answer whole")
+	// The router holds up to 6 MiB of the output, and allocates a few times that while it does.
+	s.Less(after.TotalAlloc-before.TotalAlloc, uint64(128<<20), "the router held the answer whole")
 }
 
-func (s *OutputSuite) TestTheBoundIsTheToolResultCapAndTheMarkerSaysIt() {
-	s.Equal(core.MaxResultBytes, sandbox.MaxOutputBytes, "a run's output is cut where every other tool result is")
-	s.Contains(sandbox.OutputCut, fmt.Sprintf("more than %d KiB", sandbox.MaxOutputBytes>>10))
+func (s *OutputSuite) TestTheMarkerSaysTheBoundItCutsAt() {
+	s.Equal(1<<20, sandbox.MaxOutputBytes)
+	s.Contains(sandbox.OutputCut, fmt.Sprintf("more than %d MiB", sandbox.MaxOutputBytes>>20))
 }
 
 func (s *OutputSuite) TestAnOutputUnderTheBoundComesBackAsPrinted() {
