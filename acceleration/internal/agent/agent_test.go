@@ -1312,12 +1312,12 @@ func (s *AgentSuite) listening(participantID string) bool {
 }
 
 // says makes the transcriber report a settled turn.
-// synthesises has the voice send one chunk of audio for a turn, the way a provider does
-// while a reply is being spoken.
+// synthesises has the voice send one chunk of speech for a turn, loud enough to hear, the way
+// a provider does while a reply is being spoken.
 func (s *AgentSuite) synthesises(turnID string) {
 	s.voice.emitter.Send(tts.AudioChunk{
 		SynthesisID: turnID,
-		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+		Audio:       audio.PcmData{Samples: loudFor(16_000, 10*time.Millisecond), SampleRate: 16_000, Channels: 1},
 	})
 }
 
@@ -6994,6 +6994,9 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	s.True(asker.Speaking())
 	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Wait, Floor: harness.Stop}},
 		Speaking: true, Overheard: true, AudioMs: 1200, WordsMs: 100}
+	// The reply's echo is in audio heard once the reply has gone out, and the check's audio
+	// ended its WordsMs before its words came.
+	time.Sleep(200 * time.Millisecond)
 
 	echo := stop
 	echo.Words = "Tomorrow in Lisbon it will be sunny"
