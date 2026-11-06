@@ -171,7 +171,7 @@ func (s *PriceSyncSuite) TestTheNextReleaseAddsOnlyItsNewItems() {
 	s.Require().NoError(err)
 	s.Require().Len(entries, 2)
 	s.Equal("own-model", entries[0].Model)
-	s.InDelta(1.2, entries[0].Prices[pricing.InputTokens].USD, 1e-12, "an item new in a release is priced at the factor")
+	s.InDelta(1.08, entries[0].Prices[pricing.InputTokens].USD, 1e-12, "an item new in a release is priced at the factor")
 	s.Equal("llm-own-own-model-us", entries[0].SKU)
 	s.True(entries[1].BYOK)
 	s.InDelta(0.2, entries[1].Prices[pricing.InputTokens].USD, 1e-12, "and its BYOK twin at the fee")
@@ -263,7 +263,7 @@ func (s *PriceSyncSuite) TestShowSaysTheListInForce() {
 	priced := shown.Entries[0]
 	s.NotEmpty(priced.SKU)
 	for meter, rate := range priced.Rates {
-		s.InDelta(rate.USD*1.2, priced.Prices[meter].USD, 1e-12)
+		s.InDelta(rate.USD*1.08, priced.Prices[meter].USD, 1e-12)
 	}
 	for _, entry := range shown.Entries {
 		s.Equal(pricing.RegionUS, entry.Region, prices.Name(entry.Entry))
