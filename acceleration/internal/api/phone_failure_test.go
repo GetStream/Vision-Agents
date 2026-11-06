@@ -2,15 +2,25 @@ package api
 
 import (
 	"bytes"
+	"context"
+	"crypto/rand"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
 	"errors"
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/http/httptest"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/phone"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/bird"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/didww"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/plivo"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/phone/vonage"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -175,6 +185,78 @@ func TestASkippedVendorIsAnsweredWithoutItsWords(t *testing.T) {
 	for _, secret := range []string{"AC123", "/2010-04-01", "the vendor's own words"} {
 		require.NotContains(t, reason, secret)
 		require.Contains(t, logged.String(), secret, "the log keeps what debugging needs")
+	}
+}
+
+// A vendor that refused, never answered, answered what cannot be read, or was never asked
+// is a vendor failure: a search skips it in the vendor-free words and a call is answered as
+// one the vendor did not confirm. Its path holds the account id and its body the vendor's
+// own words.
+func TestAVendorThatFailedIsAnsweredWithoutItsPathOrBody(t *testing.T) {
+	refusing := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusUnauthorized)
+		_, _ = w.Write([]byte(`{"error":"authentication failed for account VENDORWORDS"}`))
+	}))
+	t.Cleanup(refusing.Close)
+	garbled := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`VENDORWORDS<`))
+	}))
+	t.Cleanup(garbled.Close)
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	key, err := rsa.GenerateKey(rand.Reader, 2048)
+	require.NoError(t, err)
+	applicationKey := string(pem.EncodeToMemory(&pem.Block{Type: "RSA PRIVATE KEY", Bytes: x509.MarshalPKCS1PrivateKey(key)}))
+	bases := map[string]string{
+		"refused": refusing.URL, "unreadable": garbled.URL, "no answer": gone.URL,
+		"no request": "http://router.test/\x7f",
+	}
+	for failure, base := range bases {
+		vendors := map[string]func() (phone.Provider, error){
+			"bird": func() (phone.Provider, error) {
+				return bird.New(bird.Options{AccessKey: "bk_us1_ACCOUNTID", BaseURL: base})
+			},
+			"didww": func() (phone.Provider, error) {
+				return didww.New(didww.Options{APIKey: "ACCOUNTID", BaseURL: base})
+			},
+			"plivo": func() (phone.Provider, error) {
+				return plivo.New(plivo.Options{AuthID: "ACCOUNTID", AuthToken: "secret", BaseURL: base})
+			},
+			"vonage": func() (phone.Provider, error) {
+				return vonage.New(vonage.Options{APIKey: "ACCOUNTID", APISecret: "secret", BaseURL: base})
+			},
+		}
+		for name, open := range vendors {
+			provider, err := open()
+			require.NoError(t, err, "%s: %s", failure, name)
+			_, err = provider.SearchNumbers(context.Background(), phone.Search{Country: "US"})
+			require.Error(t, err, "%s: %s", failure, name)
+
+			reason := skipReason(slog.New(slog.DiscardHandler), phone.Skip{Vendor: name, Reason: err.Error(), Err: err})
+
+			require.Equal(t, "The phone vendor could not complete the request.", reason, "%s: %s: %v", failure, name, err)
+		}
+
+		// Bird and Vonage place calls through a voice API of their own.
+		dialers := map[string]func() (phone.Provider, error){
+			"bird": func() (phone.Provider, error) {
+				return bird.New(bird.Options{AccessKey: "bk_us1_ACCOUNTID", VoiceBaseURL: base})
+			},
+			"vonage": func() (phone.Provider, error) {
+				return vonage.New(vonage.Options{APIKey: "ACCOUNTID", APISecret: "secret", VoiceBaseURL: base,
+					ApplicationID: "app-1", PrivateKey: applicationKey})
+			},
+		}
+		for name, open := range dialers {
+			provider, err := open()
+			require.NoError(t, err, "%s: %s", failure, name)
+			_, err = provider.Dial(context.Background(), phone.Outbound{
+				From: "+15125551234", To: "+15550001111", Bridge: phone.Bridge{URI: "sip:trunk-7@sip.stream-io-api.com"},
+			})
+			require.Error(t, err, "%s: %s", failure, name)
+
+			require.Equal(t, error(errCallNotConfirmed), callFailure(slog.New(slog.DiscardHandler), err), "%s: %s: %v", failure, name, err)
+		}
 	}
 }
 

@@ -351,7 +351,7 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	request, err := http.NewRequestWithContext(ctx, method, endpoint, payload)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("didww: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "could not build the request", Cause: err})
 	}
 	request.Header.Set("Api-Key", p.apiKey)
 	request.Header.Set("Accept", contentType)
@@ -361,20 +361,22 @@ func (p *Provider) do(ctx context.Context, method, path string, query url.Values
 
 	response, err := p.client.Do(request)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("didww: %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Message: "no answer", Cause: err})
 	}
 	defer response.Body.Close()
 
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		detail, _ := io.ReadAll(io.LimitReader(response.Body, errorBodyLimit))
-		return stack.Wrap(fmt.Errorf("didww: %s: %s: %s", path, response.Status, strings.TrimSpace(string(detail))))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: strings.TrimSpace(string(detail))})
 	}
 
 	if into == nil {
 		return nil
 	}
 	if err := json.NewDecoder(response.Body).Decode(into); err != nil {
-		return stack.Wrap(fmt.Errorf("didww: decode %s: %w", path, err))
+		return stack.Wrap(&phone.VendorError{Vendor: p.Vendor(), Path: path, Status: response.StatusCode,
+			Message: "could not read the answer", Cause: err})
 	}
 	return nil
 }
