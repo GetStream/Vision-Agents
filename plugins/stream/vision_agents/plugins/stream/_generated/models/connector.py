@@ -13,6 +13,7 @@ from ..types import UNSET, Unset
 if TYPE_CHECKING:
     from ..models.connector_client import ConnectorClient
     from ..models.connector_input import ConnectorInput
+    from ..models.connector_provider_app_fields import ConnectorProviderAppFields
     from ..models.connector_sandbox import ConnectorSandbox
     from ..models.connector_setup import ConnectorSetup
 
@@ -43,6 +44,8 @@ class Connector:
             scopes (list[str] | None): The scopes a consent asks for.
             category (str | Unset):
             description (str | Unset):
+            provider_app (ConnectorProviderAppFields | Unset): The customer's own provider app a channel's events are
+                verified with.
             redirect_uri (str | Unset): The redirect URI an OAuth client registered for this connector has to list: where
                 every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by
                 /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when
@@ -64,6 +67,7 @@ class Connector:
     scopes: list[str] | None
     category: str | Unset = UNSET
     description: str | Unset = UNSET
+    provider_app: ConnectorProviderAppFields | Unset = UNSET
     redirect_uri: str | Unset = UNSET
     sandbox: ConnectorSandbox | Unset = UNSET
     setup: ConnectorSetup | Unset = UNSET
@@ -112,6 +116,10 @@ class Connector:
 
         description = self.description
 
+        provider_app: dict[str, Any] | Unset = UNSET
+        if not isinstance(self.provider_app, Unset):
+            provider_app = self.provider_app.to_dict()
+
         redirect_uri = self.redirect_uri
 
         sandbox: dict[str, Any] | Unset = UNSET
@@ -142,6 +150,8 @@ class Connector:
             field_dict["category"] = category
         if description is not UNSET:
             field_dict["description"] = description
+        if provider_app is not UNSET:
+            field_dict["provider_app"] = provider_app
         if redirect_uri is not UNSET:
             field_dict["redirect_uri"] = redirect_uri
         if sandbox is not UNSET:
@@ -155,6 +165,7 @@ class Connector:
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         from ..models.connector_client import ConnectorClient
         from ..models.connector_input import ConnectorInput
+        from ..models.connector_provider_app_fields import ConnectorProviderAppFields
         from ..models.connector_sandbox import ConnectorSandbox
         from ..models.connector_setup import ConnectorSetup
 
@@ -229,6 +240,13 @@ class Connector:
 
         description = d.pop("description", UNSET)
 
+        _provider_app = d.pop("provider_app", UNSET)
+        provider_app: ConnectorProviderAppFields | Unset
+        if isinstance(_provider_app, Unset):
+            provider_app = UNSET
+        else:
+            provider_app = ConnectorProviderAppFields.from_dict(_provider_app)
+
         redirect_uri = d.pop("redirect_uri", UNSET)
 
         _sandbox = d.pop("sandbox", UNSET)
@@ -258,6 +276,7 @@ class Connector:
             scopes=scopes,
             category=category,
             description=description,
+            provider_app=provider_app,
             redirect_uri=redirect_uri,
             sandbox=sandbox,
             setup=setup,

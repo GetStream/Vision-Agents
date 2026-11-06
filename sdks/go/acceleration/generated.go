@@ -4721,6 +4721,9 @@ type Connector struct {
 	Inputs *[]ConnectorInput `json:"inputs"`
 	Name   string            `json:"name"`
 
+	// ProviderApp The customer's own provider app a channel's events are verified with.
+	ProviderApp *ConnectorProviderAppFields `json:"provider_app,omitempty"`
+
 	// RedirectUri The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
 	RedirectUri *string `json:"redirect_uri,omitempty"`
 
@@ -4918,9 +4921,15 @@ type ConnectorInput struct {
 	// Default Used when the connection gives no value. An input without one is required.
 	Default *string `json:"default,omitempty"`
 
+	// Description Where a person finds the value at the provider. Absent when the manifest says nothing.
+	Description *string `json:"description,omitempty"`
+
 	// Enum The values it may take. Absent when a pattern decides.
 	Enum *[]string `json:"enum,omitempty"`
-	Name string    `json:"name"`
+
+	// Label How a form names the input, such as Phone number ID. Absent when the manifest says nothing: then name is shown.
+	Label *string `json:"label,omitempty"`
+	Name  string  `json:"name"`
 
 	// Pattern A regular expression the whole value must match.
 	Pattern *string `json:"pattern,omitempty"`
@@ -4992,6 +5001,27 @@ type ConnectorProviderApp struct {
 	// Registration operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 	Registration ConnectorClientRegistrationMethod `json:"registration"`
 	UpdatedAt    *time.Time                        `json:"updated_at,omitempty"`
+}
+
+// ConnectorProviderAppFields The customer's own provider app a channel's events are verified with.
+type ConnectorProviderAppFields struct {
+	// EventsUrlPrefix The app's events URL without the app's id at its end: ROUTER_PUBLIC_URL followed by /v1/connectors/events/{id}/. Followed by the provider_app_id, it is the URL the provider app delivers its events to, such as a Meta app's WhatsApp webhook Callback URL. Absent when ROUTER_PUBLIC_URL is not set.
+	EventsUrlPrefix *string `json:"events_url_prefix,omitempty"`
+
+	// IdDescription Where a person finds the app's id at the provider. Absent when the manifest says nothing.
+	IdDescription *string `json:"id_description,omitempty"`
+
+	// IdLabel How the provider names the app's id, such as Meta App ID. Absent when the manifest says nothing.
+	IdLabel *string `json:"id_label,omitempty"`
+
+	// SecretDescription Where a person finds that secret at the provider. Absent when the manifest says nothing.
+	SecretDescription *string `json:"secret_description,omitempty"`
+
+	// SecretLabel How the provider names the secret it signs the app's events with, such as Meta App Secret. Absent when the manifest says nothing.
+	SecretLabel *string `json:"secret_label,omitempty"`
+
+	// VerifyToken The provider checks the events URL with a verify token before it delivers, as Meta does for a webhook: the token is the provider_app_id.
+	VerifyToken bool `json:"verify_token"`
 }
 
 // ConnectorProviderAppRequest The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored.

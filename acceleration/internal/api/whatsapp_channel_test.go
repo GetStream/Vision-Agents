@@ -127,6 +127,30 @@ func (s *WhatsAppChannelSuite) TestMetasHandshakeIsAnsweredWithItsChallenge() {
 	s.Equal("nosniff", response.Header.Get("X-Content-Type-Options"))
 }
 
+// TestTheCatalogsCallbackURLAndVerifyTokenAreWhatMetasHandshakeIsAnsweredOn (AI-2915): what a
+// dashboard shows a person to paste at Meta, the catalog's events URL prefix followed by the app
+// id as the Callback URL and the app id as the Verify token, is answered with the challenge, on a
+// router whose ROUTER_PUBLIC_URL is the test's server.
+func (s *WhatsAppChannelSuite) TestTheCatalogsCallbackURLAndVerifyTokenAreWhatMetasHandshakeIsAnsweredOn() {
+	public := s.router.publicURL
+	s.T().Cleanup(func() { s.router.publicURL = public })
+	s.router.publicURL = s.server.URL
+	var whatsapp Connector
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodGet, "/v1/agents/connectors/whatsapp", nil, &whatsapp))
+	s.Require().NotNil(whatsapp.ProviderApp)
+	s.Require().True(whatsapp.ProviderApp.VerifyToken)
+
+	query := url.Values{"hub.mode": {"subscribe"}, "hub.verify_token": {s.app}, "hub.challenge": {"1158201444"}}
+	response, err := http.Get(whatsapp.ProviderApp.EventsURLPrefix + s.app + "?" + query.Encode())
+
+	s.Require().NoError(err)
+	defer response.Body.Close()
+	body, err := io.ReadAll(response.Body)
+	s.Require().NoError(err)
+	s.Equal(http.StatusOK, response.StatusCode)
+	s.Equal("1158201444", string(body))
+}
+
 // A handshake with another token, another mode or a challenge that is not digits is refused
 // with PubSubHubbub 0.3's 404 (6.2.1), and nothing of it is echoed.
 func (s *WhatsAppChannelSuite) TestAHandshakeTheURLDoesNotAgreeWithIsRefused() {
@@ -799,7 +823,8 @@ func (s *WhatsAppChannelSuite) pinToRevision1() {
 
 // pinTo stores the manifest as revision 1 or 2 was and pins the test's connection to it:
 // revision 2 is revision 3 without the photo's file (also[0].media, media_lookup), and
-// revision 1 is revision 2 without its caption entries.
+// revision 1 is revision 2 without its caption entries. Revision 3 is read as today's file,
+// revision 4, whose labels and setup steps no delivery reads.
 func (s *WhatsAppChannelSuite) pinTo(revision int) {
 	ctx := context.Background()
 	raw, err := fs.ReadFile(providers.FS, "whatsapp.yaml")
@@ -812,7 +837,7 @@ func (s *WhatsAppChannelSuite) pinTo(revision int) {
 	file := string(raw)[start : end+len(media)]
 	lookup := "    media_lookup:\n      url: https://graph.facebook.com/v25.0/{id}\n      file: $.url\n      host: lookaside.fbsbx.com\n"
 	s.Require().Contains(string(raw), lookup)
-	older := strings.NewReplacer("\nrevision: 3\n", "\nrevision: 2\n", file, "", lookup, "").Replace(string(raw))
+	older := strings.NewReplacer("\nrevision: 4\n", "\nrevision: 2\n", file, "", lookup, "").Replace(string(raw))
 	s.Require().NotContains(older, "media_lookup:")
 	s.Require().NotContains(older, "media:\n")
 	if revision == 1 {

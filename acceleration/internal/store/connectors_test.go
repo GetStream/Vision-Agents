@@ -584,6 +584,33 @@ func (s *StoreSuite) TestBigQueryRevisionThreeLeavesAConnectionOnRevisionTwoCurr
 	s.Equal(map[string]DefinitionStatus{"bigquery 2": {Status: DefinitionCurrent}}, statuses)
 }
 
+// whatsapp.yaml revision 4 (AI-2915) adds the input's label and description, the provider
+// app's text and the setup steps, which only the catalog shows. A router that ships it, on a
+// database the build before it seeded with revision 3, stores 4 as the latest and leaves a
+// connection pinned to 3 current. testdata/whatsapp-revision-3.yaml is the file the base,
+// d3a1dbeb1, shipped.
+func (s *StoreSuite) TestWhatsAppRevisionFourLeavesAConnectionOnRevisionThreeCurrent() {
+	three, err := os.ReadFile("testdata/whatsapp-revision-3.yaml")
+	s.Require().NoError(err)
+	four, err := fs.ReadFile(providers.FS, "whatsapp.yaml")
+	s.Require().NoError(err)
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"whatsapp.yaml": {Data: three}}))
+	pinned := []ConnectorConnection{pinnedTo("whatsapp 3", "whatsapp", 3)}
+	statuses, err := s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", pinned)
+	s.Require().NoError(err)
+	s.Require().Equal(DefinitionCurrent, statuses["whatsapp 3"].Status)
+
+	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, fstest.MapFS{"whatsapp.yaml": {Data: four}}))
+
+	latest, err := s.store.LatestBuiltinConnectorDefinition(s.ctx, "whatsapp")
+	s.Require().NoError(err)
+	s.Equal(4, latest.Revision)
+	s.Equal("Phone number ID", latest.Manifest.Inputs[0].Label)
+	statuses, err = s.store.ConnectorDefinitionStatuses(s.ctx, "acme-app", pinned)
+	s.Require().NoError(err)
+	s.Equal(map[string]DefinitionStatus{"whatsapp 3": {Status: DefinitionCurrent}}, statuses)
+}
+
 func (s *StoreSuite) TestSeedingAnEmptyTableStoresEachShippedBuiltInAtTheRevisionItNames() {
 	s.Require().NoError(s.store.SeedConnectorDefinitions(s.ctx, providers.FS))
 	shipped, err := builtinManifests(providers.FS)

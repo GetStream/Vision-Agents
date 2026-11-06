@@ -3312,6 +3312,9 @@ pub struct Connector {
     #[serde(deserialize_with = "::std::option::Option::deserialize")]
     pub inputs: ::std::option::Option<::std::vec::Vec<ConnectorInput>>,
     pub name: ::std::string::String,
+    ///The customer's own provider app the channel's events are verified with: its id and signing secret go on the connector's OAuth client record (provider_app_id and signing_secret), and the provider delivers to the app's events URL. Absent when the connector is no channel or its channel is verified with the operator's secret, as Slack's is.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub provider_app: ::std::option::Option<ConnectorProviderAppFields>,
     ///The redirect URI an OAuth client registered for this connector has to list: where every consent of this deployment sends the browser back to, ROUTER_PUBLIC_URL followed by /v1/agents/connectors/oauth/callback. Only on a connector that connects with oauth2_code, and absent when ROUTER_PUBLIC_URL is not set, since no consent can start then.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub redirect_uri: ::std::option::Option<::std::string::String>,
@@ -3783,12 +3786,18 @@ pub struct ConnectorInput {
     ///Used when the connection gives no value. An input without one is required.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub default: ::std::option::Option<::std::string::String>,
+    ///Where a person finds the value at the provider. Absent when the manifest says nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub description: ::std::option::Option<::std::string::String>,
     ///The values it may take. Absent when a pattern decides.
     #[serde(
         rename = "enum",
         skip_serializing_if = "::std::option::Option::is_none"
     )]
     pub enum_: ::std::option::Option<::std::vec::Vec<::std::string::String>>,
+    ///How a form names the input, such as Phone number ID. Absent when the manifest says nothing: then name is shown.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub label: ::std::option::Option<::std::string::String>,
     pub name: ::std::string::String,
     ///A regular expression the whole value must match.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
@@ -3959,6 +3968,29 @@ pub struct ConnectorProviderApp {
     ///managed: the router created the app in the customer's workspace. operator: Stream's own app, which serves Stream's own agents.
     pub registration: ConnectorClientRegistrationMethod,
     pub updated_at: ::std::string::String,
+}
+///The customer's own provider app a channel's events are verified with.
+#[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+#[derive(Default)]
+pub struct ConnectorProviderAppFields {
+    ///The app's events URL without the app's id at its end: ROUTER_PUBLIC_URL followed by /v1/connectors/events/{id}/. Followed by the provider_app_id, it is the URL the provider app delivers its events to, such as a Meta app's WhatsApp webhook Callback URL. Absent when ROUTER_PUBLIC_URL is not set.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub events_url_prefix: ::std::option::Option<::std::string::String>,
+    ///Where a person finds the app's id at the provider. Absent when the manifest says nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub id_description: ::std::option::Option<::std::string::String>,
+    ///How the provider names the app's id, such as Meta App ID. Absent when the manifest says nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub id_label: ::std::option::Option<::std::string::String>,
+    ///Where a person finds that secret at the provider. Absent when the manifest says nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub secret_description: ::std::option::Option<::std::string::String>,
+    ///How the provider names the secret it signs the app's events with, such as Meta App Secret. Absent when the manifest says nothing.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub secret_label: ::std::option::Option<::std::string::String>,
+    ///The provider checks the events URL with a verify token before it delivers, as Meta does for a webhook: the token is the provider_app_id.
+    pub verify_token: bool,
 }
 ///The app the router creates and keeps in the customer's workspace. An unknown field is refused rather than ignored.
 #[derive(::serde::Deserialize, ::serde::Serialize, Clone, Debug, PartialEq)]

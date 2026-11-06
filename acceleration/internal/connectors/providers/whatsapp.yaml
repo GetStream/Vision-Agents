@@ -19,16 +19,67 @@
 #   [video]    https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/video
 #   [document] https://developers.facebook.com/docs/whatsapp/cloud-api/webhooks/reference/messages/document
 #   [media]    https://developers.facebook.com/docs/whatsapp/cloud-api/reference/media
+# Opened November 5, 2026:
+#   [basic]    https://developers.facebook.com/docs/development/create-an-app/app-dashboard/basic-settings
+#   [endpoint] https://developers.facebook.com/documentation/business-messaging/whatsapp/webhooks/create-webhook-endpoint
+#   [start]    https://developers.facebook.com/documentation/business-messaging/whatsapp/get-started.md
+#   [tokens]   https://developers.facebook.com/docs/whatsapp/access-tokens
 id: whatsapp
 # A new revision for any change to what this file says; see AGENTS.md.
 # Revision 2 (AI-2133): a photo, a video and a document with a caption are read, with the
 # caption as their text (also).
 # Revision 3 (AI-2740): a photo's file is read too, by its id (also[0].media, media_lookup), so
 # a photo without a caption is read as well.
-revision: 3
+# Revision 4 (AI-2915): the input's and the provider app's labels and descriptions, and the
+# setup steps, which only the catalog shows: a connection on revision 3 stays current.
+revision: 4
 name: WhatsApp
 category: Communication
 description: Answer people on WhatsApp from the customer's own business number.
+setup:
+  # [basic] links the App Dashboard here: «developers.facebook.com/apps».
+  url: https://developers.facebook.com/apps
+  steps:
+    # [basic]: the page is «the Basic Settings of your App Dashboard», with a section «App ID»
+    # and «find the app secret assigned to your app by Meta».
+    - title: Copy the app's ID and secret
+      description: >-
+        In the App Dashboard, open your app's Basic settings. Paste its App ID and App Secret
+        as the Meta app here.
+    # [endpoint]: «navigate to the App Dashboard > WhatsApp > Configuration panel», or for an app
+    # with the «Connect with customers through WhatsApp» use case «App Dashboard > Use cases >
+    # Customize > Configuration»; the endpoint goes in the «Callback URL field» and the string in
+    # the «Verify token field»; once the endpoint answers the check «the panel will save your
+    # changes». The verify token is the app id (channel.handshake below).
+    - title: Point the webhook at the router
+      description: >-
+        In the App Dashboard, open WhatsApp > Configuration (or Use cases > Customize >
+        Configuration). Paste the Callback URL shown here, and your App ID as the Verify token.
+        Meta checks the URL before it saves them.
+    # [endpoint]: after the check «a list of fields you can subscribe to will appear»; [payload]:
+    # a message arrives in a change with «"field": "messages"».
+    - title: Subscribe to messages
+      description: In the same panel, subscribe the webhook to the messages field.
+    # [start]: the API Setup page, where a person is told to «retain both your test phone number
+    # ID and Messaging account ID». # unverified: where on that page the id is shown.
+    - title: Copy the phone number ID
+      description: >-
+        In the App Dashboard, open WhatsApp > API Setup and copy the ID of the business number
+        that is to answer.
+    # [tokens]: «Business settings» > «System Users» > «+Add»; «Assign assets» with «Manage
+    # app»; «Generate token» with «business_management», «whatsapp_business_management» and
+    # «whatsapp_business_messaging».
+    - title: Make a system user token
+      description: >-
+        In Business settings, open System Users and add one. Assign it your app with Manage
+        app, then generate a token with business_management, whatsapp_business_management and
+        whatsapp_business_messaging.
+    # The bridge finds the connection of a message's number among the app's own connections
+    # only (store.AppConnectionByAccount, owner_type app).
+    - title: Connect the number
+      description: >-
+        Create a connection owned by the app, not by a user, with the phone number ID and the
+        token. A user's connection gets no messages.
 # [send]: «Authorization: Bearer EAAJB...», the customer's access token.
 schemes: [bearer]
 inputs:
@@ -38,12 +89,26 @@ inputs:
   # an event's number by (store.AppConnectionByAccount). # unverified: the length; [payload]'s
   # example has 15 digits.
   - name: phone_number_id
+    # [start] writes «phone number ID»; # unverified: the API Setup page's own label for it.
+    label: Phone number ID
+    description: In the App Dashboard, WhatsApp > API Setup, the ID of the business number. Digits only.
     pattern: "[0-9]{1,32}"
 identity: [phone_number_id]
 client:
   # The customer's own Meta app is the provider app: its App Secret signs the webhooks
   # ([hooks]), so it is the signing secret. The record holds the app alone: no OAuth client.
   registration: [customer]
+# The provider app's two fields: provider_app_id is the Meta app's id, signing_secret its App
+# Secret. [basic]: the Basic settings section «App ID», and «find the app secret assigned to
+# your app by Meta»; [hooks]: «Generate a SHA256 signature using the payload and your app's App
+# Secret». "Meta" is ours, so a form says whose app.
+provider_app:
+  id_label: Meta App ID
+  id_description: In the App Dashboard, your app's Basic settings, App ID. It is also the webhook's Verify token.
+  secret_label: Meta App Secret
+  secret_description: >-
+    In the App Dashboard, your app's Basic settings, App Secret. Meta signs every webhook with it
+    (X-Hub-Signature-256).
 channel:
   verifier:
     # [hooks]: «We sign all Event Notification payloads with a SHA256 signature and include
