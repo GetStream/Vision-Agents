@@ -115,8 +115,16 @@ func histogramOf(name, label, value string) (samples, aboveOne uint64) {
 func (s *AgentSuite) TestWhatIsSaidAroundAToolIsSaidAsBefore() {
 	s.waitsOnATool()
 
-	// Probed on 7bf225e2b, before turns were linked and tool calls logged. The line said
-	// while the tool runs is the agent's own turn, no longer a murmur's.
+	// Probed on 7bf225e2b, before turns were linked and tool calls logged.
+	s.Equal([]string{"back|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
+}
+
+// Acting on chorus-asr, the line said while the tool runs is the agent's own turn, which a
+// caller talking over it stops, rather than a murmur's.
+func (s *AgentSuite) TestWhatIsSaidAroundAToolActingOnChorusASRIsTheAgentsOwnTurn() {
+	s.actsOnChorusASR()
+	s.waitsOnATool()
+
 	s.Equal([]string{"own|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
 }
 

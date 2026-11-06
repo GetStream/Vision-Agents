@@ -1318,6 +1318,12 @@ func (s *AgentSuite) replyWentOut() {
 	}, "the reply never went out")
 }
 
+// actsOnChorusASR has the agent joined next act on the chorus-asr model, at a server that
+// never answers, so the flow controller rules every turn the model is asked about.
+func (s *AgentSuite) actsOnChorusASR() {
+	s.floor, s.floorMode = audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Act
+}
+
 func (s *AgentSuite) says(participant stt.Participant, text string) {
 	s.saysAfter(participant, text, 0)
 }
@@ -3958,6 +3964,7 @@ func (s *AgentSuite) TestWhatIsSaidAfterTheStopMakesATurnOfItAll() {
 // to have the floor stops it, as they would a reply. Said as a murmur, it played to its end
 // over a caller the model had ruled should have the floor.
 func (s *AgentSuite) TestACheckInTheCallerTalksOverIsStopped() {
+	s.actsOnChorusASR()
 	s.join(true)
 	s.voice.silent = true
 	s.model.composes = []string{"Are you still with me, or should I hold on?"}
@@ -3983,6 +3990,7 @@ func (s *AgentSuite) TestACheckInTheCallerTalksOverIsStopped() {
 // already handed to the voice played for as long as it was. Over a line the agent said of its
 // own accord, which answers no request, it is a stop.
 func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTail() {
+	s.actsOnChorusASR()
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	s.model.reply = nil
@@ -4002,7 +4010,29 @@ func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTail() {
 	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept saying the reply")
 }
 
+// Not acting on chorus-asr, a shortening is the flow controller's as it always was: the model
+// adds nothing more to the reply, and what the voice was sent plays on.
+func (s *AgentSuite) TestAShortenedReplyPlaysOnUnlessActingOnChorusASR() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon this week")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	turnID := s.agent.floor().Speaking
+	s.Require().NotEmpty(turnID)
+
+	s.agent.perform(Action{Kind: ActShorten, Participant: participant, TurnID: turnID,
+		Interruption: interruption{cause: causeShortened, words: "and in Porto"}})
+	time.Sleep(shortenTail + 500*time.Millisecond)
+	s.Zero(countOf[Interrupted](s.reported()), "the shortened reply was cut")
+	s.Zero(s.voice.interrupted(), "the voice was stopped")
+}
+
 func (s *AgentSuite) TestAShortenedCheckInStopsAtOnce() {
+	s.actsOnChorusASR()
 	s.join(true)
 	s.voice.silent = true
 	s.model.composes = []string{"Are you still with me, or should I hold on?"}

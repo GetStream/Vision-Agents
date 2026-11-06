@@ -121,7 +121,13 @@ func (r ruledFirst) Hear(ctx context.Context, turn harness.FlowTurn) (harness.De
 
 // asksOnPauses says the transcriber is to ask about each pause for the agent: acting, the
 // model decides when the turn ends, from the audio, and writes its words in the same pass.
-func (v *audioFloor) asksOnPauses() bool { return v != nil && !v.shadow }
+func (v *audioFloor) asksOnPauses() bool { return v.acts() }
+
+// acts says the agent acts on the model's rulings, and so keeps the loop's contract (README,
+// "The loop's contract"): a line of its own is a turn a caller talking over it stops, and a
+// shortened reply stops shortenTail after the ruling. Off or shadowing, the agent does as it
+// did before chorus-asr.
+func (v *audioFloor) acts() bool { return v != nil && !v.shadow }
 
 // keep holds a pause check's ruling on participant's words for the flow controller.
 func (v *audioFloor) keep(participant string, ruled audiofloor.Ruled) {

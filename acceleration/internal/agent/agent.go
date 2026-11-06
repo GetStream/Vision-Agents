@@ -2536,7 +2536,13 @@ func (a *Agent) sayComposed(participant stt.Participant, line, purpose string, a
 		return
 	}
 
-	turnID := ownPrefix + turnStamp()
+	// Acting on chorus-asr, the line is a turn of the agent's own, which a caller talking
+	// over it stops (audioFloor.acts); otherwise it goes out as it always has, as a murmur.
+	prefix := backchannelPrefix
+	if a.audioFloor.acts() {
+		prefix = ownPrefix
+	}
+	turnID := prefix + turnStamp()
 	a.mu.Lock()
 	if a.tts == nil {
 		a.mu.Unlock()
@@ -3962,10 +3968,15 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 // what the voice was already sent can be seconds of speech, all of it playing on.
 const shortenTail = 250 * time.Millisecond
 
-// shorten has the agent add nothing more to turnID, the reply it is saying, and stop saying it
-// shortenTail later, once the item the caller added is to be answered (respondQueued). A line
-// the agent said of its own accord answers no request, so it is stopped at once.
+// shorten has the agent add nothing more to turnID, the reply it is saying, and, acting on
+// chorus-asr, stop saying it shortenTail later, once the item the caller added is to be
+// answered (respondQueued). A line the agent said of its own accord answers no request, so it
+// is stopped at once. Otherwise the reply is shortened as it always was (closeReply).
 func (a *Agent) shorten(participant stt.Participant, turnID string, why interruption) {
+	if !a.audioFloor.acts() {
+		a.closeReply()
+		return
+	}
 	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) {
 		return
 	}
@@ -3996,6 +4007,22 @@ func (a *Agent) shorten(participant stt.Participant, turnID string, why interrup
 		case <-ctx.Done():
 		}
 	}()
+}
+
+// closeReply stops the model from adding more to the reply being said while allowing speech
+// already sent to the voice to finish: a shortening, but for an agent acting on chorus-asr.
+func (a *Agent) closeReply() {
+	a.mu.Lock()
+	turnID := a.speakingTurn
+	reply := a.streams[turnID]
+	a.mu.Unlock()
+	if turnID == "" || strings.HasPrefix(turnID, backchannelPrefix) || reply == nil {
+		return
+	}
+	a.logger.Debug("cutting the reply short, letting the audio already sent finish", "turn", turnID)
+	if err := reply.Close(); err != nil {
+		a.fail(err, "llm")
+	}
 }
 
 // ownLine reports whether a turn is a line the agent said of its own accord, rather than a

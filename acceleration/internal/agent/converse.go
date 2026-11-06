@@ -37,7 +37,8 @@ const (
 	ActHold ActionKind = "hold"
 	// ActInterrupt abandons the reply being spoken.
 	ActInterrupt ActionKind = "interrupt"
-	// ActShorten stops the model adding more, and the reply being said shortenTail later.
+	// ActShorten stops the model adding more, and, acting on chorus-asr, the reply being said
+	// shortenTail later (Agent.shorten).
 	ActShorten ActionKind = "shorten"
 	// ActBackchannel makes a short listening noise.
 	ActBackchannel ActionKind = "backchannel"
