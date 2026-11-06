@@ -74,20 +74,21 @@ var providerCredential = regexp.MustCompile(`\bsk-[a-zA-Z0-9_-]{8,}`)
 // (internal/stt/gemini, internal/sts/gemini) and token for ipinfo (internal/locate);
 // credentialText already takes api_key, access_token and client_secret. A parameter is
 // matched whole after its ? or &, raw or percent-encoded (%3F, %26, %3D, RFC 3986 section
-// 2.1), so keyterm, tokens or max_tokens stay. The value runs to the next raw &, so an
-// encoded one also takes the encoded parameters after it.
-var queryCredential = regexp.MustCompile(`(?i)((?:[?&]|%3F|%26)(?:key|token)(?:=|%3D))[^&\s"\x27#]+`)
+// 2.1), once or twice, or written as an HTML (&amp;) or JSON (\u0026) escape, so keyterm,
+// tokens or max_tokens stay. The value runs to the next raw &, a backslash (the start of a JSON
+// escape) or a quote, so an encoded one also takes the encoded parameters after it.
+var queryCredential = regexp.MustCompile(`(?i)((?:[?&]|&amp;|\\u0026|%(?:25)*3F|%(?:25)*26)(?:key|token)(?:=|\\u003d|%(?:25)*3D))[^&\s"\x27#\\]+`)
 
 // encodedAuthorization is an authorization or cookie header (proxy-authorization and
 // set-cookie end in those names) written into a URL: the name, an optional encoded quote
 // (%22, %27) and an encoded colon or equals sign (%3A, %3D), then the value to the end of its
 // query parameter. It takes no word boundary, which the hex digits of an encoded character
 // before the name (%22, %3F) would hide.
-var encodedAuthorization = regexp.MustCompile(`(?i)(?:authorization|cookie)(?:%22|%27)?%3[AD][^\s"\x27&#]+`)
+var encodedAuthorization = regexp.MustCompile(`(?i)(?:authorization|cookie)(?:%(?:25)*2[27])?%(?:25)*3[AD][^\s"\x27&#\\]+`)
 
 // encodedBearer is a bearer token whose space is encoded as %20, or as + the way a form
 // encodes it (url.QueryEscape), with no word boundary for the same reason.
-var encodedBearer = regexp.MustCompile(`(?i)bearer(?:%20|\+)+[^\s"\x27&#]+`)
+var encodedBearer = regexp.MustCompile(`(?i)bearer(?:%(?:25)*20|\+)+[^\s"\x27&#\\]+`)
 
 func SafeLogText(text string) string {
 	text = bearerCredential.ReplaceAllString(text, "[redacted]")
