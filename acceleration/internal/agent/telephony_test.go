@@ -2110,6 +2110,10 @@ func (s *AgentSuite) TestACallerSpeakingOverTheGoodbyeKeepsTheCallAndTheModelIsT
 	s.says(participant, "that's all, thanks")
 	s.eventually(func() bool { return s.spokenText("Thanks, goodbye!") }, "the goodbye was never said")
 	s.replyWentOut()
+	// The goodbye is said as the model writes it, and the call to end_call comes after it in
+	// the same reply: words over the goodbye before the call is taken up cut a reply that
+	// never asked to hang up.
+	s.eventually(func() bool { return countOf[ToolStarted](s.reported()) == 1 }, "end_call never began")
 
 	s.flow.then = []string{`{"disposition":"wait","floor":"stop"}`}
 	s.mutters(participant, "oh wait, one more thing")
