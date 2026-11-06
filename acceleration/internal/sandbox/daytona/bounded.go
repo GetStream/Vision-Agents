@@ -214,9 +214,14 @@ func (c *cutOutput) settle(over bool) error {
 	return c.emit(cut...)
 }
 
-// cutText is text, longer than sandbox.MaxOutputBytes, cut to fit it with sandbox.OutputCut
-// after it, never splitting a UTF-8 sequence. A decoded JSON string is valid UTF-8.
+// cutText is text when it fits sandbox.MaxOutputBytes, and otherwise as much of it as fits with
+// sandbox.OutputCut after it, never splitting a UTF-8 sequence. The reader cuts a "result" it
+// finds with it, and so does Run for the output the SDK decoded, which Go's decode takes from a
+// key the reader does not know as "result": "Result", or one written with escapes.
 func cutText(text string) string {
+	if len(text) <= sandbox.MaxOutputBytes {
+		return text
+	}
 	kept := text[:sandbox.MaxOutputBytes-len(sandbox.OutputCut)]
 	for !utf8.ValidString(kept) {
 		kept = kept[:len(kept)-1]

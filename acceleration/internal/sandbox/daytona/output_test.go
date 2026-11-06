@@ -238,6 +238,27 @@ func (s *OutputSuite) TestARepeatedResultIsReadAsTheSDKReadsIt() {
 	s.Equal("short\n", result.Output)
 }
 
+func (s *OutputSuite) TestAnOutputUnderAnotherSpellingOfResultIsCut() {
+	// Go's JSON decode takes "Result", and a key written with an escape, for "result", and keeps
+	// the last: the reader does not know them, so Run cuts what the SDK decoded.
+	long := strings.Repeat("a", 2*sandbox.MaxOutputBytes)
+	cut := strings.Repeat("a", sandbox.MaxOutputBytes-len(sandbox.OutputCut)) + sandbox.OutputCut
+	for name, answer := range map[string]string{
+		"capitalised":   `{"result":"x","Result":"` + long + `","exitCode":0}`,
+		"escaped key":   `{"res\u0075lt":"` + long + `","exitCode":0}`,
+		"upper escaped": `{"result":"x","R\u0045SULT":"` + long + `","exitCode":0}`,
+	} {
+		s.Run(name, func() {
+			s.daytona.Answers(func(w io.Writer) { _, _ = io.WriteString(w, answer) })
+
+			result, err := s.box.Run(s.ctx, "print(it)", nil)
+
+			s.Require().NoError(err)
+			s.Equal(cut, result.Output)
+		})
+	}
+}
+
 func (s *OutputSuite) TestAKeyThatOnlyStartsWithResultIsNotTheOutput() {
 	body := `{"results":"` + strings.Repeat("a", 2*sandbox.MaxOutputBytes) + `","exitCode":0}`
 

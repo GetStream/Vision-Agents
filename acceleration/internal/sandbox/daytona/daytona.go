@@ -300,7 +300,7 @@ func (s *Sandbox) Run(ctx context.Context, code string, outputs []string) (sandb
 	// Daytona's default one, whose sandbox's timeout is defaultTimeout.
 	fetch, cancel := context.WithTimeout(ctx, s.check)
 	defer cancel()
-	result := sandbox.Result{Output: ran.Result, ExitCode: ran.ExitCode}
+	result := sandbox.Result{Output: cutText(ran.Result), ExitCode: ran.ExitCode}
 	outputs = distinct(outputs)
 	for i, wanted := range outputs {
 		if i == sandbox.MaxFiles {
