@@ -38,10 +38,10 @@ jobs:
 
       - name: The tag names a version on main
         run: |
-          case "${TAG#sdks/go/}" in
-            v[0-9]*.[0-9]*.[0-9]*) ;;
-            *) echo "$TAG is not sdks/go/vX.Y.Z"; exit 1 ;;
-          esac
+          if ! printf '%s' "$TAG" | grep -Eq '^sdks/go/v[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "$TAG is not sdks/go/vX.Y.Z"
+            exit 1
+          fi
           git merge-base --is-ancestor HEAD origin/main || { echo "$TAG is not on main"; exit 1; }
 
       - uses: actions/setup-go@v5

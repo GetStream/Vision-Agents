@@ -102,7 +102,8 @@ module-level `logger = logging.getLogger(__name__)`. Use `debug` for lifecycle, 
 ## Go SDK
 
 - `sdks/go` is the Go SDK, module `github.com/GetStream/Vision-Agents/sdks/go`. It is developed on the `accelerate` branch and copied here from one `accelerate` commit for each release, so `go get ...@latest` and pkg.go.dev see it. Never edit it on `main`: change it on `accelerate`, then copy it again.
-- A version is a tag `sdks/go/vX.Y.Z` on the `main` commit that holds the copy. `.github/workflows/release-sdk-go.yml` verifies it through the Go proxy. Never create a GitHub Release for it, and never move or delete a released tag: retract it in `sdks/go/go.mod` and release the next patch.
+- `main` and `accelerate` share no history under `sdks/go`, so merging `accelerate` into `main` conflicts on every file there. Resolve it by taking `accelerate`'s tree: `git checkout accelerate -- sdks/go`.
+- A version is a tag `sdks/go/vX.Y.Z` on the `main` commit that holds the copy: the release PR's merge commit, named by its SHA (`gh pr view <n> --json mergeCommit`), not whatever `main` is by then. `.github/workflows/release-sdk-go.yml` verifies it through the Go proxy. Never create a GitHub Release for it, and never move or delete a released tag: retract it in `sdks/go/go.mod` and release the next patch.
 - The steps are in the `sdk-go` skill on `accelerate` (`.claude/skills/sdk-go/SKILL.md`).
 
 ## Plugins
