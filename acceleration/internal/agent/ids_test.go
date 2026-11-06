@@ -1125,6 +1125,7 @@ func TestATransferNumberTheAgentWroteIsNoSource(t *testing.T) {
 		{"a number the agent sent alone, returned", [][]llm.Message{checked}, "+15550100199", "", false},
 		{"a number the agent sent alone without its country code, returned", [][]llm.Message{checkedLocal}, "+1 (555) 010-0199", "", false},
 		{"an extension on a line with an agent's line holding its last digits", [][]llm.Message{posted("Room 234 is ready."), read(`{"messages":"Bot: Room 234 is ready. Front desk is 1234"}`)}, "1234", "", false},
+		{"a number the agent posted, read back with its digits split by a space and a line break", [][]llm.Message{posted("Put them through to 5550100199"), read("Put them through to 555 010 0199\nRef 555Put them through to 5550100199 0100199")}, "+15550100199", "", true},
 	}
 	for _, c := range cases {
 		history := []llm.Message{{Role: llm.User, Content: "Can you put me through to sales?"}}
