@@ -523,6 +523,133 @@ func (s *DataMoveSuite) TestACursorRightBeforeTheOldestChangeKeptIsAnswered() {
 	s.Contains(string(changes[0].Key), next)
 }
 
+// lapse lets a customer's capture expire, as it does when nobody reads their changes for longer
+// than the retention.
+func (s *DataMoveSuite) lapse(customerID string) {
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE data_change_capture SET expires_at = now() - interval '1 minute' WHERE customer_id = ?", customerID)
+	s.Require().NoError(err)
+}
+
+// Nothing is recorded while a capture is off, so a cursor from before it lapsed is refused once
+// the recording starts again, whatever was recorded after the start.
+func (s *DataMoveSuite) TestACursorFromBeforeTheCaptureLapsedSaysToExportAgain() {
+	cases := []struct {
+		name string
+		// between runs while the capture is off, after acme's write there.
+		between func()
+		// since runs after the capture is started again.
+		since func()
+	}{
+		{name: "nothing recorded since", between: func() {}, since: func() {}},
+		{name: "a change recorded since", between: func() {},
+			since: func() { s.seedAgentConfig(s.source, "acme", "after") }},
+		{name: "a prune while it was off", since: func() {}, between: func() {
+			_, err := s.source.PruneDataChanges(s.ctx, 7*24*time.Hour)
+			s.Require().NoError(err)
+		}},
+	}
+	for _, c := range cases {
+		s.Run(c.name, func() {
+			s.SetupTest()
+			s.capture("acme")
+			s.seedAgentConfig(s.source, "acme", "followed")
+			_, cursor, err := s.source.Changes(s.ctx, "acme", s.export("acme").cursor, 100)
+			s.Require().NoError(err)
+			s.lapse("acme")
+			s.seedAgentConfig(s.source, "acme", "written while nothing was recorded")
+			c.between()
+			s.capture("acme")
+			c.since()
+
+			for _, after := range []int64{0, cursor} {
+				_, _, err = s.source.Changes(s.ctx, "acme", after, 100)
+				s.ErrorIs(err, ErrChangesExpired, "after %d", after)
+			}
+		})
+	}
+}
+
+// A follower reading within the retention pushes the capture out, which is no lapse: it is
+// answered every change since its cursor, as before.
+func (s *DataMoveSuite) TestACursorFollowedWithinTheRetentionIsAnsweredEveryChange() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	first := s.seedAgentConfig(s.source, "acme", "first")
+	s.capture("acme")
+	second := s.seedAgentConfig(s.source, "acme", "second")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 2)
+	s.Contains(string(changes[0].Key), first)
+	s.Contains(string(changes[1].Key), second)
+}
+
+// A capture renewed in the last moments before it expires may have missed a write whose trigger
+// ran after the expiry and before the renewal committed, so it counts as lapsed.
+func (s *DataMoveSuite) TestACaptureRenewedJustBeforeItExpiresCountsAsLapsed() {
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	_, err := s.source.DB().ExecContext(s.ctx,
+		"UPDATE data_change_capture SET expires_at = now() + interval '1 second' WHERE customer_id = ?", "acme")
+	s.Require().NoError(err)
+	s.capture("acme")
+
+	_, _, err = s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.ErrorIs(err, ErrChangesExpired)
+}
+
+// One customer's lapse does not touch another's follower.
+func (s *DataMoveSuite) TestAnotherCustomersLapseLeavesAFollowerAlone() {
+	s.capture("other")
+	s.capture("acme")
+	cursor := s.export("acme").cursor
+	s.lapse("other")
+	s.capture("other")
+	seeded := s.seedAgentConfig(s.source, "acme", "after")
+
+	changes, _, err := s.source.Changes(s.ctx, "acme", cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), seeded)
+}
+
+// An export after a lapse carries on from where the recording started again, even with no change
+// kept at that number and the number after it rolled back.
+func (s *DataMoveSuite) TestAnExportAfterALapseIsFollowedFromItsCursor() {
+	s.capture("other")
+	s.capture("acme")
+	stale := s.export("acme").cursor
+	s.seedAgentConfig(s.source, "acme", "followed")
+	s.lapse("acme")
+	lost := s.seedAgentConfig(s.source, "acme", "written while nothing was recorded")
+	s.age()
+	s.prune()
+	s.capture("acme")
+	_, _, err := s.source.Changes(s.ctx, "acme", stale, 100)
+	s.Require().ErrorIs(err, ErrChangesExpired)
+
+	exported := s.export("acme")
+	rolledBack := s.begin()
+	s.writeIn(rolledBack, "other", "rolled back")
+	s.Require().NoError(rolledBack.Rollback())
+	next := s.seedAgentConfig(s.source, "acme", "next")
+	changes, _, err := s.source.Changes(s.ctx, "acme", exported.cursor, 100)
+
+	s.Require().NoError(err)
+	s.Require().Len(changes, 1)
+	s.Contains(string(changes[0].Key), next)
+	var ids []any
+	for _, row := range exported.of("agent_configs") {
+		ids = append(ids, row["id"])
+	}
+	s.Contains(ids, lost, "the write made while nothing was recorded is in the new export")
+}
+
 // afterQuery runs a function once, after the first query mentioning a phrase.
 type afterQuery struct {
 	mu     sync.Mutex
