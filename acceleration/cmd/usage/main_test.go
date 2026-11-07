@@ -53,3 +53,28 @@ func TestTheServicesLogTakesTheKeyOutOfAFailure(t *testing.T) {
 	require.NotContains(t, stderr.String(), key)
 	require.Contains(t, stderr.String(), `msg="usage stopped" error="open `+strings.TrimSuffix(filepath.Dir(path), "/")+`/[redacted] no such file or directory"`)
 }
+
+// What main prints for a healthcheck or tiers failure has a key taken out of it: an address or
+// a tiers command that names one is refused, and the refusal is printed without it.
+func TestTheServicesPrintedFailuresTakeTheKeyOut(t *testing.T) {
+	if command := os.Getenv("USAGE_MAIN_TEST_COMMAND"); command != "" {
+		os.Args = []string{"usage", command, os.Getenv("USAGE_MAIN_TEST_ARGUMENT")}
+		main()
+		return
+	}
+	key := rand.Text()
+	for command, want := range map[string]string{
+		"healthcheck": "usage: healthcheck: address [redacted] missing port in address\n",
+		"tiers":       "usage: unknown tiers command \"[redacted]\": check or sync\n",
+	} {
+		run := exec.Command(os.Args[0], "-test.run=^TestTheServicesPrintedFailuresTakeTheKeyOut$")
+		run.Env = append(os.Environ(), "USAGE_MAIN_TEST_COMMAND="+command, "USAGE_ADDR=Bearer sk-test-"+key,
+			"USAGE_MAIN_TEST_ARGUMENT=Bearer sk-test-"+key)
+		var stderr bytes.Buffer
+		run.Stderr = &stderr
+		require.Error(t, run.Run(), command)
+
+		require.NotContains(t, stderr.String(), key, command)
+		require.Equal(t, want, stderr.String(), command)
+	}
+}

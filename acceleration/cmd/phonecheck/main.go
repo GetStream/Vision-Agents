@@ -45,7 +45,7 @@ const usage = "usage: phonecheck outbound|inbound -provider NAME -agent-number E
 
 func main() {
 	if err := runCommand(os.Args[1:]); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		fmt.Fprintln(os.Stderr, store.RedactLogText(fmt.Sprint(err)))
 		os.Exit(1)
 	}
 }

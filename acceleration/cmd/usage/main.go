@@ -116,13 +116,13 @@ func main() {
 		return
 	case "healthcheck":
 		if err := healthcheck(os.Getenv("USAGE_ADDR")); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, store.RedactLogText(fmt.Sprint(err)))
 			os.Exit(1)
 		}
 		return
 	case "tiers":
 		if err := tiers(context.Background(), args, os.Environ, os.Stdout); err != nil {
-			fmt.Fprintln(os.Stderr, err)
+			fmt.Fprintln(os.Stderr, store.RedactLogText(fmt.Sprint(err)))
 			os.Exit(1)
 		}
 		return

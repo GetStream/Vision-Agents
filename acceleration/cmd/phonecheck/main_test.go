@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"crypto/rand"
 	"errors"
+	"os"
+	"os/exec"
 	"testing"
 	"time"
 
@@ -130,4 +132,23 @@ func TestTheLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
 		require.NotContains(t, out.String(), key, format)
 		require.Contains(t, out.String(), want, format)
 	}
+}
+
+// What main prints for a failure has a key taken out of it: a provider that names one is
+// unknown, and the refusal is printed without it.
+func TestTheFailureIsPrintedWithoutTheKeyInIt(t *testing.T) {
+	if provider := os.Getenv("PHONECHECK_MAIN_TEST_PROVIDER"); provider != "" {
+		os.Args = []string{"phonecheck", "outbound", "-provider", provider}
+		main()
+		return
+	}
+	key := rand.Text()
+	command := exec.Command(os.Args[0], "-test.run=^TestTheFailureIsPrintedWithoutTheKeyInIt$")
+	command.Env = append(os.Environ(), "PHONECHECK_MAIN_TEST_PROVIDER=Bearer sk-test-"+key)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	require.Error(t, command.Run(), "phonecheck took a provider it does not know")
+
+	require.NotContains(t, stderr.String(), key)
+	require.Equal(t, "unknown provider \"[redacted]\"\n", stderr.String())
 }

@@ -63,7 +63,7 @@ func main() {
 		tags:       tags.Tags,
 	}
 	if err := run(options, logger); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		logger.Error("say stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -266,7 +266,7 @@ func (s *speaker) consume() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
 			if err := s.sink.Write(typed.Audio); err != nil {
-				fmt.Fprintf(os.Stderr, "playback failed: %v\n", err)
+				fmt.Fprintf(os.Stderr, "playback failed: %s\n", store.RedactLogText(fmt.Sprint(err)))
 			}
 		case tts.SynthesisComplete:
 			select {
@@ -274,7 +274,7 @@ func (s *speaker) consume() {
 			default:
 			}
 		case tts.Error:
-			fmt.Fprintf(os.Stderr, "provider error (%s): %v\n", typed.Provider, typed.Err)
+			fmt.Fprintf(os.Stderr, "provider error (%s): %s\n", typed.Provider, store.RedactLogText(fmt.Sprint(typed.Err)))
 		}
 	}
 }

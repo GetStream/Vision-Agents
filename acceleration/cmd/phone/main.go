@@ -66,7 +66,7 @@ func main() {
 	arguments := os.Args[2:]
 
 	if err := run(command, arguments); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		fmt.Fprintf(os.Stderr, "error: %s\n", store.RedactLogText(fmt.Sprint(err)))
 		os.Exit(1)
 	}
 }

@@ -54,7 +54,7 @@ func main() {
 		limits: ingest.Limits{MinChunk: *minChunk, MaxHeading: *maxHeading},
 	}
 	if err := run(options, flag.Args(), logger); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		logger.Error("knowledge stopped", "error", err)
 		os.Exit(1)
 	}
 }
