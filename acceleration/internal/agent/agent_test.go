@@ -6443,12 +6443,9 @@ func (s *AgentSuite) TestAReplyLeftUnsaidWhenTheCallEndsIsReportedCutOff() {
 	s.Empty(s.replacement.spoken())
 }
 
-func (s *AgentSuite) TestAnAnswerNoVoiceSaidIsOwedAgain() {
-	// Handed over and then lost with no voice to say it, what the answer told is still
-	// owed to the caller.
-	s.delegates()
-	s.replacementErr = errors.New("no voice left")
-	s.join(true)
+// answerToSilentVoice has a subagent's answer written whole and sent to a voice that says none
+// of it, after the reply that handed the work over was heard.
+func (s *AgentSuite) answerToSilentVoice() {
 	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
 	s.model.then = []string{"That comes to 12.63."}
 	s.subagent.reply = nil
@@ -6473,8 +6470,51 @@ func (s *AgentSuite) TestAnAnswerNoVoiceSaidIsOwedAgain() {
 		return countOf[Responded](s.reported()) == 2 && !s.agent.generating
 	}, "the answer was never written")
 	s.Require().False(s.agent.harness.Pending())
+}
+
+func (s *AgentSuite) TestAnAnswerNoVoiceSaidIsOwedAgain() {
+	// Handed over and then lost with no voice to say it, what the answer told is still
+	// owed to the caller.
+	s.delegates()
+	s.replacementErr = errors.New("no voice left")
+	s.join(true)
+	s.answerToSilentVoice()
 
 	s.refusesVoice()
+
+	s.eventually(func() bool { return s.agent.harness.Pending() }, "the answer nobody heard is not owed again")
+}
+
+func (s *AgentSuite) TestAnAnswerTheNextVoiceSaidIsNotOwedAgainByAnInterrupt() {
+	// Heard in full from the voice that replaced the lost one, it was passed on.
+	s.delegates()
+	s.replacement = newStubTTS(true)
+	s.join(true)
+	s.answerToSilentVoice()
+
+	s.refusesVoice()
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the answer was not said again")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the answer was never said")
+	s.agent.Interrupt()
+
+	s.False(s.agent.harness.Pending(), "an answer the caller heard in full is not owed again")
+}
+
+func (s *AgentSuite) TestAnAnswerTheCallerTalkedOverWhileTheVoiceWasReplacedIsOwedAgain() {
+	// They heard none of it, so it is owed as when the voice took it with it.
+	s.delegates()
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	s.join(true)
+	s.answerToSilentVoice()
+
+	s.refusesVoice()
+	<-started
+	s.agent.Interrupt()
+	opened()
 
 	s.eventually(func() bool { return s.agent.harness.Pending() }, "the answer nobody heard is not owed again")
 }

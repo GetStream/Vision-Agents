@@ -221,6 +221,19 @@ type unsaidUtterance struct {
 	message     MessageSpan
 }
 
+// heldReply is a reply a lost voice said none of, which the voice that replaces it says,
+// and what of it that voice has still to be sent, in the order of the reply's message.
+type heldReply struct {
+	turnID string
+	unsaid []unsaidUtterance
+}
+
+// heldLocked reports whether a turn is held for the voice that replaces a lost one.
+// Agent.mu must be held.
+func (a *Agent) heldLocked(turnID string) bool {
+	return a.held != nil && a.held.turnID == turnID
+}
+
 // unsaidLocked is every utterance of a turn the voice has not finished, in the order of the
 // reply's message. Agent.mu must be held.
 func (a *Agent) unsaidLocked(turnID string) []unsaidUtterance {

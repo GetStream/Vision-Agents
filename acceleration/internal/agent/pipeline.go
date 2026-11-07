@@ -705,6 +705,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 		return ""
 	}
 	a.utterances = 0
+	a.held = nil
 	// What a reply cut off with the voice had been heard of, and what it had been sent,
 	// before it is forgotten.
 	var cutShort cutShort
@@ -739,6 +740,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 		!strings.HasPrefix(a.speakingTurn, backchannelPrefix) {
 		if replace && a.voiced != a.speakingTurn && len(unsaid) > 0 {
 			again = a.speakingTurn
+			a.held = &heldReply{turnID: again, unsaid: unsaid}
 		} else {
 			cut = a.speakingTurn
 			a.abandoned[cut] = struct{}{}
@@ -863,6 +865,11 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, turnID string, unsaid []unsai
 			return
 		}
 	}
+	a.mu.Lock()
+	if a.heldLocked(turnID) {
+		a.held = nil
+	}
+	a.mu.Unlock()
 }
 
 // unsay reports a reply a lost voice left unsaid cut off once no other voice will say it,
@@ -870,6 +877,9 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, turnID string, unsaid []unsai
 // took the floor from it first.
 func (a *Agent) unsay(turnID string) {
 	a.mu.Lock()
+	if a.heldLocked(turnID) {
+		a.held = nil
+	}
 	owed := a.owedLocked(turnID)
 	if owed {
 		a.abandoned[turnID] = struct{}{}

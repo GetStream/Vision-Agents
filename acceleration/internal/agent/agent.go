@@ -457,6 +457,9 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
+	// held is the reply a voice replacing a lost one is to say, and what of it that voice
+	// has still to be sent. Nil while no voice is replaced or it has been sent all of it.
+	held *heldReply
 	// saying is the reply as the caller has heard it so far, so a controller ruling on
 	// words that overlap it can tell a correction from the line echoing back. It is the
 	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
@@ -3967,7 +3970,9 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	now := time.Now()
 	voiced, played := a.voiced, now.Sub(a.voicedAt)
 	cut := a.cutShortLocked(turnID, now)
-	outstanding := a.generating || a.audioOutstandingLocked(turnID)
+	// A reply held for the voice replacing a lost one has none of its speech in flight, and
+	// none of it was heard.
+	outstanding := a.generating || a.audioOutstandingLocked(turnID) || a.heldLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
 	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
 	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
