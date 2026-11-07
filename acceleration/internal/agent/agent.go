@@ -3325,8 +3325,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// handedOver is the turn the voice that replaced this one says again, whose audio and
 	// completions from this voice are no longer the turn's.
 	handedOver := ""
-	// Every synthesis is named by its request, so none is a turn when nothing was handed over.
-	handed := func(synthesisID string) bool { return turnOf(synthesisID) == handedOver }
+	handed := func(synthesisID string) bool { return handedOver != "" && turnOf(synthesisID) == handedOver }
 	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
 	// caller hears as the agent trailing off and their phone hears as it having finished.
 	leveller := audio.NewLeveller()
@@ -3342,6 +3341,8 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
 			if handed(typed.SynthesisID) {
+				// Paid for and never published, as audio of an abandoned turn is.
+				a.turns.dropped(handedOver, typed.Audio.DurationMs())
 				continue
 			}
 			// Audio from an abandoned turn is dropped here rather than published, so

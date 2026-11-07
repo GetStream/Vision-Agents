@@ -6544,6 +6544,39 @@ func (s *AgentSuite) TestAudioTheLostVoiceSendsForAReplyTheNextSaysIsNotHeard() 
 	}, "the lost voice's audio of the reply was heard")
 }
 
+func (s *AgentSuite) TestAudioTheLostVoiceSendsForAReplyTheNextSaysIsCountedDropped() {
+	// Synthesised and paid for, it is never heard: the turn's dropped audio says so.
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.writtenToSilentVoice()
+
+	s.refusesVoice()
+	<-started
+	// 200 samples at 16 kHz.
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: turn,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+	opened()
+
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn was never reported")
+	reported, _ := s.turnReported(turn)
+	s.Equal(12.5, reported.AudioDroppedMs)
+}
+
+func (s *AgentSuite) TestAudioNamingNoSynthesisIsHeardWhileTheVoiceIsKept() {
+	// Nothing was handed over, so nothing of it is the next voice's to say.
+	s.join(true)
+	s.voice.emitter.Send(tts.AudioChunk{
+		Audio: audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "audio naming no synthesis was not heard")
+}
+
 func (s *AgentSuite) TestADirectionTheNextVoiceCannotActIsTakenOutOfTheReplyItSaysAgain() {
 	// Left in, the caller would hear the word "laughs" read out.
 	s.performing = "Act the directions in brackets."
