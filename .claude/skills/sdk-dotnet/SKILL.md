@@ -19,12 +19,12 @@ with the repo mounted and the NuGet cache in the `va-nuget` volume:
 
 ```bash
 D="docker run --rm -v /path/to/Vision-Agents:/repo -v va-nuget:/root/.nuget -w /repo/sdks/dotnet mcr.microsoft.com/dotnet/sdk:10.0"
-$D dotnet build GetStream.VisionAgents.slnx
-$D dotnet test --project tests/GetStream.VisionAgents.Tests
+$D dotnet build GetStream.Agents.slnx
+$D dotnet test --project tests/GetStream.Agents.Tests
 $D dotnet run --project tools/Generate              # regenerate the models
 $D dotnet run --project tools/Generate -- --check   # what CI runs
 docker run ... -e VISION_AGENTS_LIVE_URL=http://host.docker.internal:8091 ... \
-  dotnet test --project tests/GetStream.VisionAgents.Tests -- --filter-class GetStream.VisionAgents.Tests.LiveTests
+  dotnet test --project tests/GetStream.Agents.Tests -- --filter-class GetStream.Agents.Tests.LiveTests
 ```
 
 Build output (`bin/`, `obj/`, `TestResults/`) is ignored by `sdks/dotnet/.gitignore`, nowhere
@@ -34,9 +34,11 @@ else.
 
 Stream's .NET packages are `getstream-net` (the current generated server SDK, namespace
 `GetStream`), `stream-chat-net` and `stream-feed-net`. This one is Stream Agents, so the package id is
-**`stream-agents`** and the namespace **`GetStream.VisionAgents`**, with the
-generated DTOs under `GetStream.VisionAgents.Models`. Do not rename to `StreamIO.*`; nothing
-Stream ships to NuGet is called that.
+**`stream-agents`** and the namespace **`GetStream.Agents`**, with the
+generated DTOs under `GetStream.Agents.Models`. Not `GetStream.StreamAgents`: the main class
+will be `StreamAgents`, and a namespace must not share the name of a type inside it (the .NET
+design guidelines rule it out). Do not rename to `StreamIO.*`; nothing Stream ships to NuGet is
+called that.
 
 Public types are named after what they are to a caller (`Agent`, `Session`, `Dispatch`,
 `Router`, `Folder`), async methods end in `Async` and take a `CancellationToken` last,
@@ -45,7 +47,7 @@ defaulted. Options are `sealed record`s with `init` properties.
 ## The generator: NSwag, DTOs only
 
 `tools/Generate` uses NSwag 14.7.1 **as a library**, writing
-`src/GetStream.VisionAgents/Generated/Models.cs`. The output is committed, so a restore needs no
+`src/GetStream.Agents/Generated/Models.cs`. The output is committed, so a restore needs no
 code generation, and `--check` fails CI when the spec has moved without it.
 
 Why NSwag, and why DTOs only:

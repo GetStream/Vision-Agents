@@ -1,0 +1,626 @@
+namespace GetStream.Agents.Tests;
+
+public sealed class FolderTests : IDisposable
+{
+    private readonly string _root = Path.Combine(Path.GetTempPath(), "va-folder-" + Guid.NewGuid().ToString("N"), "jean");
+
+    public void Dispose()
+    {
+        if (Directory.Exists(Path.GetDirectoryName(_root)))
+        {
+            Directory.Delete(Path.GetDirectoryName(_root)!, recursive: true);
+        }
+    }
+
+    [Fact]
+    public void ADirectoryIsReadAsInstructionsSkillsAndKnowledge()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work something out before answering\ndeadline: 30s\n---\nTake your time and reason it through.\n");
+        Write("knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n");
+
+        var folder = Folder.Load(_root);
+
+        Assert.Equal("jean", folder.Name);
+        Assert.Equal("You are Jean.", folder.Instructions);
+        var skill = Assert.Single(folder.Skills);
+        Assert.Equal("think", skill.Name);
+        Assert.Equal("Work something out before answering", skill.Description);
+        Assert.Equal(TimeSpan.FromSeconds(30), skill.Deadline);
+        Assert.Equal("Take your time and reason it through.", skill.Instructions);
+        Assert.Equal("pricing.md", Assert.Single(folder.Knowledge).Source);
+        Assert.Equal("jean", folder.KnowledgeNamespace);
+    }
+
+    [Fact]
+    public void ADirectoryWithOnlyInstructionsIsAnAgent()
+    {
+        Write("agent.yaml", "");
+        Write("instructions.md", "Say little.\n");
+
+        var folder = Folder.Load(_root);
+
+        Assert.Empty(folder.Skills);
+        Assert.Empty(folder.Knowledge);
+        Assert.Equal("", folder.KnowledgeNamespace);
+    }
+
+    [Fact]
+    public void NestedKnowledgeKeepsThePathItWasFoundAt()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("knowledge/reference/api.md", "# API\n\nthe endpoints\n");
+        Write("knowledge/logo.png", "not a document");
+        Write("knowledge/empty.md", "   \n");
+
+        Assert.Equal("reference/api.md", Assert.Single(Folder.Load(_root).Knowledge).Source);
+    }
+
+    [Fact]
+    public void DeclaredPagesAreReadWithoutBeingIngested()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n");
+        Write("knowledge/urls.yaml", "- https://example.com/pricing\n- url: https://example.com/plans\n  title: Plans\n  description: What each plan includes.\n");
+        Write("knowledge/reference/urls.yaml", "the urls we used to have\n");
+
+        var folder = Folder.Load(_root);
+
+        Assert.Equal(["pricing.md", "reference/urls.yaml"], folder.Knowledge.Select(document => document.Source));
+        Assert.Equal(
+            [new KnowledgePage("https://example.com/pricing"), new KnowledgePage("https://example.com/plans", "Plans", "What each plan includes.")],
+            folder.KnowledgeUrls);
+    }
+
+    [Fact]
+    public void ADirectoryWithOnlyPagesHasSomewhereToLookThingsUpIn()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("knowledge/urls.yaml", "- https://example.com/pricing\n");
+
+        var folder = Folder.Load(_root);
+
+        Assert.Empty(folder.Knowledge);
+        Assert.Equal("jean", folder.KnowledgeNamespace);
+    }
+
+    [Theory]
+    [InlineData("- example.com/pricing\n")]
+    [InlineData("- url: https://example.com/plans\n  heading: Plans\n")]
+    [InlineData("- [https://example.com/plans]\n")]
+    public void APageThatCannotBeFetchedOrDescribedIsRefused(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("knowledge/urls.yaml", declaration);
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Fact]
+    public void ASkillWithoutADescriptionIsRefused()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/think.md", "Just a body, with nothing saying when to use it.\n");
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Fact]
+    public void ASkillFolderBringsItsNestedFiles()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        Write("skills/pdf/reference/forms.md", "# Forms\n");
+        Write("skills/pdf/scripts/lib/fill.py", "print('filled')\n");
+
+        var skill = Assert.Single(Folder.Load(_root).Skills);
+
+        Assert.Equal(("pdf", "Fill PDF forms", "Fill the form."), (skill.Name, skill.Description, skill.Instructions));
+        Assert.Equal(new Dictionary<string, string> { ["reference/forms.md"] = "# Forms\n", ["scripts/lib/fill.py"] = "print('filled')\n" }, skill.Files);
+    }
+
+    [Fact]
+    public void HiddenFilesAndPycacheAreLeftBehind()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        Write("skills/pdf/fill.py", "print('filled')\n");
+        WriteBytes("skills/pdf/.DS_Store", [0x00, 0xff]);
+        Write("skills/pdf/.hidden/notes.md", "secret\n");
+        WriteBytes("skills/pdf/__pycache__/fill.cpython-313.pyc", [0xcb, 0x0d, 0xff]);
+
+        Assert.Equal(["fill.py"], Assert.Single(Folder.Load(_root).Skills).Files.Keys);
+    }
+
+    [Fact]
+    public void AFolderWithoutASkillFileIsRefused()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/reference/forms.md", "# Forms\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+        Assert.Equal($"{Path.Combine(_root, "skills", "pdf")} has no SKILL.md, so it is not a skill", refused.Message);
+    }
+
+    [Fact]
+    public void ASkillWrittenBothAsAFileAndAFolderIsRefused()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+
+        Assert.Equal("skill \"pdf\" is both pdf and pdf.md", Assert.Throws<ConfigurationException>(() => Folder.Load(_root)).Message);
+    }
+
+    [Fact]
+    public void ASkillFileThatIsNotTextIsRefused()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n");
+        WriteBytes("skills/pdf/form.pdf", [0x25, 0x50, 0xff, 0xfe]);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+        Assert.Equal($"{Path.Combine(_root, "skills", "pdf", "form.pdf")} is not text, and a skill brings only text files", refused.Message);
+    }
+
+    [Fact]
+    public void ASkillCanBeNamedSomethingOtherThanItsFile()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/01-think.md", "---\nname: think\ndescription: Work something out\ncapture_video: true\n---\nReason it through.\n");
+
+        var skill = Assert.Single(Folder.Load(_root).Skills);
+
+        Assert.Equal("think", skill.Name);
+        Assert.True(skill.CaptureVideo);
+        Assert.Null(skill.Deadline);
+    }
+
+    [Theory]
+    [InlineData("30s", 30_000)]
+    [InlineData("1m30s", 90_000)]
+    [InlineData("250ms", 250)]
+    [InlineData("2.5", 2_500)]
+    public void ADeadlineIsAGoDurationOrSeconds(string written, int milliseconds)
+    {
+        Assert.Equal(TimeSpan.FromMilliseconds(milliseconds), Folder.ParseDeadline(written));
+    }
+
+    [Fact]
+    public void ADirectoryWithoutADeclarationIsNotAnAgent()
+    {
+        Write("instructions.md", "You are Jean.\n");
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Fact]
+    public void TheDeclarationSaysWhatTheAgentIsCalledAndRunsOn()
+    {
+        Write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\ngreeting:\n  text: Hello.\n  mode: variation\nharness: default\nkeyterms: [Vision Agents]\nvideo:\n  source: camera\ndispatch:\n  incoming_call: disabled\n  text: enabled\n");
+
+        var folder = Folder.Load(_root);
+
+        Assert.Equal("receptionist", folder.Name);
+        Assert.Equal("openai/gpt-5.6", folder.Declaration.Llm);
+        Assert.Equal((new GreetingDeclaration("Hello.", "variation"), "default"), (folder.Declaration.Greeting, folder.Declaration.Harness));
+        Assert.Equal(["Vision Agents"], folder.Declaration.Keyterms);
+        Assert.Equal("", folder.Declaration.Sts);
+        Assert.Equal(new VideoDeclaration("camera", 1), folder.Declaration.Video);
+        Assert.Equal(new DispatchDeclaration("disabled", "enabled"), folder.Declaration.Dispatch);
+    }
+
+    [Fact]
+    public void SayingNothingAboutSpeechToSpeechIsNotTurningItOff()
+    {
+        Write("agent.yaml", "name: jean\n");
+
+        Assert.Null(Folder.Load(_root).Declaration.Sts);
+        Assert.Null(Folder.Load(_root).Declaration.Dispatch);
+    }
+
+    [Theory]
+    [InlineData("name: jean\nlmm: openai/gpt-5.6\n")]
+    [InlineData("video:\n  max_frames: 9\n")]
+    [InlineData("dispatch:\n  sms: enabled\n")]
+    [InlineData("keyterms: Vision Agents\n")]
+    [InlineData("sandbox_options:\n  memory: 4\n")]
+    [InlineData("sandbox_options:\n  timeout: 2h\n")]
+    [InlineData("sandbox_options:\n  cpu: two\n")]
+    [InlineData("sandbox_options:\n  network: maybe\n")]
+    [InlineData("end_of_turn:\n  max_wait_ms: 900\n")]
+    [InlineData("end_of_turn: {}\n")]
+    public void ADeclarationKeyNobodyKnowsIsRefused(string declaration)
+    {
+        Write("agent.yaml", declaration);
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    /// <summary>end_of_turn is gone: its one knob is floor_control's max_wait_ms.</summary>
+    [Fact]
+    public void AnEndOfTurnIsRefusedByName()
+    {
+        Write("agent.yaml", "end_of_turn:\n  max_wait_ms: 900\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Contains("end_of_turn", refused.Message);
+    }
+
+    /// <summary>
+    /// floor_control is read as written, an empty one included; which models there are, and
+    /// whether a wait names one, is the router's to say.
+    /// </summary>
+    [Theory]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n", "stream/chorus-asr", 800L)]
+    [InlineData("floor_control: {model: stream/chorus-asr}\n", "stream/chorus-asr", null)]
+    [InlineData("floor_control:\n  model: \"stream/chorus-asr\"\n  max_wait_ms: ~\n", "stream/chorus-asr", null)]
+    [InlineData("floor_control: {max_wait_ms: 800}\n", null, 800L)]
+    [InlineData("floor_control: {}\n", null, null)]
+    public void AFloorControlIsReadAsWritten(string declaration, string? model, long? maxWaitMs)
+    {
+        Write("agent.yaml", declaration);
+
+        var chosen = Folder.Load(_root).Declaration.FloorControl!;
+
+        Assert.Equal((model, maxWaitMs), (chosen.Model, chosen.MaxWaitMs));
+    }
+
+    [Theory]
+    [InlineData("floor_control:\n")]
+    [InlineData("floor_control: ~\n")]
+    [InlineData("llm: openai/gpt-5.6\n")]
+    public void AFileNamingNoFloorControlHasNone(string declaration)
+    {
+        Write("agent.yaml", declaration);
+
+        Assert.Null(Folder.Load(_root).Declaration.FloorControl);
+    }
+
+    [Theory]
+    [InlineData("floor_control: stream/chorus-asr\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control: \"stream/chorus-asr\"\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control: [stream/chorus-asr]\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control: true\n", "floor_control is a mapping of model and, optionally, max_wait_ms")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  mode: act\n", "\"mode\" is not a floor_control setting; model and max_wait_ms are")]
+    [InlineData("floor_control:\n  model: {name: stream/chorus-asr}\n", "floor_control.model must be a string")]
+    [InlineData("floor_control:\n  model: 1\n", "floor_control.model must be a string")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: soon\n", "floor_control.max_wait_ms must be an integer")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800.5\n", "floor_control.max_wait_ms must be an integer")]
+    [InlineData("floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: \"800\"\n", "floor_control.max_wait_ms must be an integer")]
+    public void AFloorControlThatCannotBeReadIsRefusedNamingWhy(string declaration, string reason)
+    {
+        Write("agent.yaml", declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
+    }
+
+    [Fact]
+    public void ConnectorsAreReadAsAliasesAndAsObjects()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - linear\n  - name: issues\n    connector: linear\n    tools: [list_*]\n    connection: work\n    required: true\n  - name: slack\n    tools: null\n");
+
+        var connectors = Folder.Load(_root).Declaration.Connectors!;
+
+        Assert.Equal(
+            [
+                new ConnectorDeclaration("linear"),
+                new ConnectorDeclaration("issues", "linear", ["list_*"], "work", true),
+                new ConnectorDeclaration("slack"),
+            ],
+            connectors,
+            new ConnectorComparer());
+    }
+
+    [Fact]
+    public void ConnectorsLeftOutAreNullAndAnEmptyListIsEmpty()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Assert.Null(Folder.Load(_root).Declaration.Connectors);
+
+        Write("agent.yaml", "name: jean\nconnectors:\n");
+        Assert.Null(Folder.Load(_root).Declaration.Connectors);
+
+        Write("agent.yaml", "name: jean\nconnectors: []\n");
+        Assert.Empty(Folder.Load(_root).Declaration.Connectors!);
+    }
+
+    [Theory]
+    [InlineData("connectors:\n  - ~\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - # linear\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - \"\"\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - connector: linear\n", "a connector needs a name")]
+    [InlineData("connectors:\n  - name: github\n    tools: []\n", "connector \"github\": tools: [] grants nothing; leave tools out for every tool")]
+    [InlineData("connectors:\n  - name: github\n    connection: \"\"\n", "connector \"github\": connection must be a connection id or label")]
+    public void AConnectorEntryThatCannotBeUsedIsRefusedWithItsReason(string declaration, string reason)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
+    }
+
+    [Theory]
+    [InlineData("plugins: [linear]\n")]
+    [InlineData("plugins:\n  - sentry\n  - linear\n")]
+    [InlineData("plugins: sentry\n")]
+    [InlineData("plugins: [linear]\nconnectors:\n  - linear\n")]
+    public void PluginsAreRefusedWithAPointerToConnectors(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": plugins is no longer read: plugins were replaced by connectors, so name the provider under connectors", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("")]
+    [InlineData("plugins: []\n")]
+    [InlineData("plugins:\n")]
+    [InlineData("plugins: ~\n")]
+    public void NoPluginsOrAnEmptyListLoadsWithItsConnectors(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration + "connectors:\n  - linear\n");
+
+        Assert.Equal("linear", Assert.Single(Folder.Load(_root).Declaration.Connectors!).Name);
+    }
+
+    [Fact]
+    public void AConnectorKeyNobodyKnowsIsRefusedByName()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - name: github\n    plugin: github\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Contains("'plugin'", refused.Message);
+    }
+
+    [Theory]
+    [InlineData("connectors:\n  - name: github\n    connection:\n      id: c-1\n")]
+    [InlineData("connectors:\n  - name: github\n    tools: github\n")]
+    [InlineData("connectors:\n  - [github]\n")]
+    [InlineData("connectors: linear\n")]
+    public void AConnectorsShapeYamlCannotReadIsRefused(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Fact]
+    public void AnAgentWithConnectorsStillHashesTheFileAsWritten()
+    {
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n");
+        Write("knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+        var without = Folder.Load(_root).Hash();
+        Assert.Equal("02a7b2c8428f31e3a2b93ca2f5a6ec70", without);
+
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\nconnectors:\n  - linear\n");
+
+        Assert.NotEqual(without, Folder.Load(_root).Hash());
+    }
+
+    [Fact]
+    public void ADirectoryHashesTheWayTheGoAndPythonSdksHashIt()
+    {
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n");
+        Write("knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+
+        var folder = Folder.Load(_root);
+        Assert.Equal("02a7b2c8428f31e3a2b93ca2f5a6ec70", folder.Hash());
+
+        Write("knowledge/urls.yaml", "- https://example.com/plans\n");
+        Assert.NotEqual(folder.Hash(), Folder.Load(_root).Hash());
+    }
+
+    [Fact]
+    public void ASkillFolderHashesTheWayTheGoAndPythonSdksHashIt()
+    {
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\nsandbox: daytona\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n");
+        Write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\ndeadline: 2m\n---\nFill the form.\n");
+        Write("skills/pdf/reference/forms.md", "# Forms\n");
+        Write("skills/pdf/scripts/fill.py", "print('filled')\n");
+        Write("skills/pdf/scripts/lib/fill_lib.py", "def fill():\n    return 1\n");
+        WriteBytes("skills/pdf/scripts/__pycache__/fill.cpython-313.pyc", [0xcb, 0x0d, 0xff]);
+        WriteBytes("skills/pdf/.DS_Store", [0x00, 0xff]);
+        Write("knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+
+        Assert.Equal("e47f7807b97bbcbdee683c6c481d1d36", Folder.Load(_root).Hash());
+    }
+
+    [Fact]
+    public void MovingASkillIntoAFolderKeepsTheHashAndAddingAFileChangesIt()
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("skills/think.md", "---\ndescription: Work it out\n---\nReason it through.\n");
+        var asFile = Folder.Load(_root).Hash();
+
+        File.Move(Path.Combine(_root, "skills", "think.md"), Path.Combine(Directory.CreateDirectory(Path.Combine(_root, "skills", "think")).FullName, "SKILL.md"));
+        Assert.Equal(asFile, Folder.Load(_root).Hash());
+
+        Write("skills/think/notes.md", "Check twice.\n");
+        Assert.NotEqual(asFile, Folder.Load(_root).Hash());
+    }
+
+    [Fact]
+    public void RefreshHoursAndSimulationsHashTheWayGoHashesThem()
+    {
+        Write("agent.yaml", "name: jean\nllm: openai/gpt-5.6\n");
+        Write("instructions.md", "You are Jean.\n");
+        Write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n");
+        Write("knowledge/pricing.md", "# Pricing\n\nA penny.\n");
+        Write("knowledge/urls.yaml", "- https://example.com/pricing\n- url: https://example.com/plans\n  title: Plans\n  refresh_hours: 24\n");
+        Write("simulations/b.yaml",
+            "- name: lunch\n  scenario: \"Order a <club> & say \\\"hi\\\"\\n\\tthen café\"\n  assertion: One wrap.\n  variations: 3\n  tags:\n    z: \"1\"\n    a: \"2\"\n" +
+            "- name: quiet\n  scenario: Say nothing.\n  assertion: Nothing said.\n  mode: audio\n");
+        Write("simulations/a.yaml", "- name: first\n  scenario: Hi.\n  assertion: Hello.\n  tags: {}\n");
+
+        var folder = Folder.Load(_root);
+        Assert.Equal("d242f7b676d98e6335567dd98c2e44af", folder.Hash());
+        Assert.Equal(["first", "lunch", "quiet"], folder.Simulations!.Select(simulation => simulation.Name));
+        Assert.Equal(24, folder.KnowledgeUrls[1].RefreshHours);
+
+        Directory.Delete(Path.Combine(_root, "simulations"), recursive: true);
+        Assert.Equal("3ddc02964f8d54f4b6e3fb5ce58b37ef", Folder.Load(_root).Hash());
+
+        Write("knowledge/urls.yaml", "- https://example.com/pricing\n");
+        Directory.CreateDirectory(Path.Combine(_root, "simulations"));
+        var empty = Folder.Load(_root);
+        Assert.Empty(empty.Simulations!);
+        Assert.Equal("922c062197206e70c42ae6d98b484fc0", empty.Hash());
+    }
+
+    [Fact]
+    public void ADirectoryWithoutSimulationsLeavesTheStoredOnesAlone()
+    {
+        Write("agent.yaml", "name: jean\n");
+
+        Assert.Null(Folder.Load(_root).Simulations);
+    }
+
+    [Theory]
+    [InlineData("- name: lunch\n  scenario: Order.\n")]
+    [InlineData("- name: lunch\n  scenario: Order.\n  assertion: Done.\n  mode: video\n")]
+    [InlineData("- name: lunch\n  scenario: Order.\n  assertion: Done.\n  turns: 3\n")]
+    [InlineData("- name: lunch\n  scenario: Order.\n  assertion: Done.\n- name: lunch\n  scenario: Again.\n  assertion: Done.\n")]
+    public void ASimulationThatCannotRunOrIsNamedTwiceIsRefused(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("simulations/lunch.yaml", declaration);
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Theory]
+    [InlineData("0")]
+    [InlineData("1.5")]
+    [InlineData("daily")]
+    public void ARefreshThatIsNotAWholeNumberOfHoursIsRefused(string hours)
+    {
+        Write("agent.yaml", "name: jean\n");
+        Write("knowledge/urls.yaml", $"- url: https://example.com/plans\n  refresh_hours: {hours}\n");
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Theory]
+    [InlineData("speed: 0.9\n")]
+    [InlineData("thinking_llm: openai/gpt-5.6-sol\n")]
+    [InlineData("agent_plugins: [sentry]\n")]
+    [InlineData("user_plugins: [linear]\n")]
+    [InlineData("progressive_tools: true\n")]
+    [InlineData("greeting: Hello.\n")]
+    public void TheOldConfigKeysAreRefused(string declaration)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+    }
+
+    [Fact]
+    public void AStampRecordsTheHashAndWhenItWasSynced()
+    {
+        Write("agent.yaml", "name: jean\n");
+        var folder = Folder.Load(_root);
+        Assert.Equal("", folder.ReadStamp());
+
+        folder.WriteStamp("abc");
+
+        Assert.Equal("abc", folder.ReadStamp());
+        Assert.Matches("""^\{"hash":"abc","synced_at":"\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d\+00:00"\}\n$""",
+            File.ReadAllText(Path.Combine(_root, Folder.StampFile)));
+    }
+
+    [Fact]
+    public void SomethingThatIsNotADirectoryIsNotAnAgent()
+    {
+        Write("jean.md", "You are Jean.");
+
+        Assert.Throws<ConfigurationException>(() => Folder.Load(Path.Combine(_root, "jean.md")));
+    }
+
+    [Fact]
+    public void AnAgentIsFoundByNameUnderAgentsOrExamples()
+    {
+        var workspace = Path.GetDirectoryName(_root)!;
+        Directory.CreateDirectory(Path.Combine(workspace, "agents", "support"));
+        File.WriteAllText(Path.Combine(workspace, "agents", "support", "agent.yaml"), "");
+        Directory.CreateDirectory(Path.Combine(workspace, "examples", "voice", "docs"));
+        File.WriteAllText(Path.Combine(workspace, "examples", "voice", "docs", "agent.yaml"), "");
+        var deeper = Directory.CreateDirectory(Path.Combine(workspace, "src", "app")).FullName;
+
+        Assert.Equal(Path.Combine(workspace, "agents", "support"), Folder.Find("support", deeper));
+        Assert.Equal(Path.Combine(workspace, "examples", "voice", "docs"), Folder.Find("docs", deeper));
+        Assert.Null(Folder.Find("stored-only", deeper));
+    }
+
+    private sealed class ConnectorComparer : IEqualityComparer<ConnectorDeclaration>
+    {
+        public bool Equals(ConnectorDeclaration? x, ConnectorDeclaration? y) =>
+            x is not null && y is not null
+            && (x.Name, x.Connector, x.Connection, x.Required) == (y.Name, y.Connector, y.Connection, y.Required)
+            && (x.Tools is null ? y.Tools is null : y.Tools is not null && x.Tools.SequenceEqual(y.Tools));
+
+        public int GetHashCode(ConnectorDeclaration obj) => obj.Name.GetHashCode(StringComparison.Ordinal);
+    }
+
+    private void Write(string name, string content)
+    {
+        var path = Path.Combine(_root, name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllText(path, content);
+    }
+
+    private void WriteBytes(string name, byte[] content)
+    {
+        var path = Path.Combine(_root, name);
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        File.WriteAllBytes(path, content);
+    }
+
+    [Theory]
+    [InlineData("connectors: {}\n", "connectors must be a list")]
+    [InlineData("connectors: {a: b}\n", "connectors must be a list")]
+    [InlineData("connectors: linear\n", "connectors must be a list")]
+    public void ANonListConnectorsValueIsRefusedWithGoWording(string declaration, string reason)
+    {
+        Write("agent.yaml", "name: jean\n" + declaration);
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        Assert.Equal(Path.Combine(_root, "agent.yaml") + ": " + reason, refused.Message);
+    }
+
+    [Fact]
+    public void AToolsMappingIsRefusedByYamlDotNet()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - name: github\n    tools: {}\n");
+
+        var refused = Assert.Throws<ConfigurationException>(() => Folder.Load(_root));
+
+        // Go: yaml-library error "cannot unmarshal !!map into []string"; .NET keeps its own wording
+        Assert.Contains("Expected 'SequenceStart', got 'MappingStart'", refused.Message);
+    }
+
+    [Fact]
+    public void AQuotedNullAliasIsANameNotANullEntry()
+    {
+        Write("agent.yaml", "name: jean\nconnectors:\n  - \"null\"\n");
+
+        var connectors = Folder.Load(_root).Declaration.Connectors!;
+
+        Assert.Equal("null", Assert.Single(connectors).Name);
+    }
+}

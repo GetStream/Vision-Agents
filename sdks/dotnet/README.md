@@ -14,7 +14,7 @@ Stream calls and tokens, and on YamlDotNet for `agent.yaml`.
 ## Who is calling
 
 ```csharp
-using GetStream.VisionAgents;
+using GetStream.Agents;
 
 // A router with nothing in front of it, which is a laptop.
 using var api = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://localhost:8080", CustomerId = "examples" });
@@ -285,9 +285,9 @@ Everything runs in Docker; nothing is installed on the host.
 
 ```bash
 docker run --rm -v "$PWD/../..":/repo -v va-nuget:/root/.nuget -w /repo/sdks/dotnet \
-  mcr.microsoft.com/dotnet/sdk:10.0 dotnet test --project tests/GetStream.VisionAgents.Tests
+  mcr.microsoft.com/dotnet/sdk:10.0 dotnet test --project tests/GetStream.Agents.Tests
 
-# regenerate src/GetStream.VisionAgents/Generated/Models.cs from the spec; --check in CI
+# regenerate src/GetStream.Agents/Generated/Models.cs from the spec; --check in CI
 docker run --rm -v "$PWD/../..":/repo -v va-nuget:/root/.nuget -w /repo/sdks/dotnet \
   mcr.microsoft.com/dotnet/sdk:10.0 dotnet run --project tools/Generate
 ```

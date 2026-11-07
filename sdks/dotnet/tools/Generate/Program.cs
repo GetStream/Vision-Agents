@@ -1,4 +1,4 @@
-// Writes src/GetStream.VisionAgents/Generated/Models.cs from acceleration/api/openapi.yaml.
+// Writes src/GetStream.Agents/Generated/Models.cs from acceleration/api/openapi.yaml.
 //
 //   dotnet run --project tools/Generate            regenerate
 //   dotnet run --project tools/Generate -- --check fail if the committed file is stale
@@ -15,7 +15,7 @@ using NSwag.CodeGeneration.CSharp;
 // Run from sdks/dotnet, which is where both paths are relative to.
 var here = Directory.GetCurrentDirectory();
 var spec = Path.GetFullPath(Path.Combine(here, "../../acceleration/api/openapi.yaml"));
-var output = Path.GetFullPath(Path.Combine(here, "src/GetStream.VisionAgents/Generated/Models.cs"));
+var output = Path.GetFullPath(Path.Combine(here, "src/GetStream.Agents/Generated/Models.cs"));
 
 var document = await OpenApiYamlDocument.FromFileAsync(spec);
 new EnumsAsStrings().Visit(document);
@@ -28,7 +28,7 @@ var settings = new CSharpClientGeneratorSettings
     GenerateDtoTypes = true,
 };
 var types = settings.CSharpGeneratorSettings;
-types.Namespace = "GetStream.VisionAgents.Models";
+types.Namespace = "GetStream.Agents.Models";
 types.JsonLibrary = CSharpJsonLibrary.SystemTextJson;
 types.ClassStyle = CSharpClassStyle.Poco;
 types.GenerateNullableReferenceTypes = true;

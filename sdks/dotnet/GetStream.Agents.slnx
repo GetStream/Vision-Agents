@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/src/">
+    <Project Path="src/GetStream.Agents/GetStream.Agents.csproj" />
+  </Folder>
+  <Folder Name="/tests/">
+    <Project Path="tests/GetStream.Agents.Tests/GetStream.Agents.Tests.csproj" />
+  </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Generate/Generate.csproj" />
+  </Folder>
+</Solution>
