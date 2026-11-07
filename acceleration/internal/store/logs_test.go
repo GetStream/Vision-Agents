@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -492,6 +493,197 @@ func TestRedactSentryEventKeepsTheReasonAndNotTheKey(t *testing.T) {
 	}
 	if event.Exception[0].Type != "*errors.errorString" || strings.Contains(fmt.Sprint(event.Breadcrumbs[0]), key) {
 		t.Fatalf("the event changed what it should keep: %+v", event)
+	}
+}
+
+// A usage alert carries a provider's error in a context (internal/alerts), and a tag can name
+// what failed: every string in them is redacted, at any depth and in a value of any type, and
+// the reason before the key is kept.
+func TestRedactSentryEventTakesTheKeyOutOfContextsAndTags(t *testing.T) {
+	err, key := echoedKey()
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	type reading struct {
+		Error string
+		Rows  int64
+	}
+	event := RedactSentryEvent(&sentry.Event{
+		Tags: map[string]string{"item": err.Error()},
+		Contexts: map[string]sentry.Context{"usage_alert": {
+			"reading": err.Error(),
+			"nested":  map[string]any{"error": err.Error()},
+			"listing": []any{err.Error()},
+			"typed":   map[string][]reading{"apps": {{Error: err.Error(), Rows: 1<<60 + 1}}},
+		}},
+	}, nil)
+	if sent, _ := json.Marshal(event); strings.Contains(string(sent), key) {
+		t.Fatalf("the event Sentry is sent keeps the key: %s", sent)
+	}
+	context := event.Contexts["usage_alert"]
+	if event.Tags["item"] != reason || context["reading"] != reason {
+		t.Fatalf("a tag or a context kept the key or lost the reason: %+v", event)
+	}
+	if context["nested"].(map[string]any)["error"] != reason || context["listing"].([]any)[0] != reason {
+		t.Fatalf("a nested map or slice kept the key or lost the reason: %+v", context)
+	}
+	typed, _ := json.Marshal(context["typed"])
+	if want := `{"apps":[{"Error":` + strconv.Quote(reason) + `,"Rows":1152921504606846977}]}`; string(typed) != want {
+		t.Fatalf("a typed value kept the key or lost the reason:\n got %s\nwant %s", typed, want)
+	}
+}
+
+// The scope an event came from shares its contexts' nested values with the next event, so
+// redacting one event leaves them as they were.
+func TestRedactSentryEventLeavesTheScopesContextsAlone(t *testing.T) {
+	err, key := echoedKey()
+	shared := map[string]any{"error": err.Error()}
+	listed := []any{err.Error()}
+	context := sentry.Context{"nested": shared, "listing": listed}
+	RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"scope": context}}, nil)
+	if !strings.Contains(shared["error"].(string), key) || !strings.Contains(listed[0].(string), key) {
+		t.Fatalf("the scope's own context was changed: %+v %+v", shared, listed)
+	}
+	if context["nested"].(map[string]any)["error"] != err.Error() {
+		t.Fatalf("the context the event shares with its scope was changed: %+v", context)
+	}
+}
+
+// A context that holds itself would overflow the stack, which ends the process where Sentry's
+// own encoding of it only fails: the walk stops at its budget, and the strings it met are
+// redacted as before.
+func TestRedactSentryEventReturnsFromAContextThatHoldsItself(t *testing.T) {
+	err, key := echoedKey()
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	loop := map[string]any{"error": err.Error()}
+	loop["self"] = loop
+	listing := []any{err.Error()}
+	listing = append(listing, listing)
+	listing[1] = listing
+
+	// Two events: the budget is one event's, so the loop must not spend the listing's.
+	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"usage_alert": {"loop": loop}}}, nil)
+	listed := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"usage_alert": {"listing": listing}}}, nil)
+
+	context := event.Contexts["usage_alert"]
+	if got := context["loop"].(map[string]any)["error"]; got != reason {
+		t.Fatalf("a context that holds itself kept the key or lost the reason: %v", got)
+	}
+	if got := listed.Contexts["usage_alert"]["listing"].([]any)[0]; got != reason {
+		t.Fatalf("a slice that holds itself kept the key or lost the reason: %v", got)
+	}
+	if strings.Contains(fmt.Sprint(context["loop"].(map[string]any)["error"]), key) {
+		t.Fatal("the key is kept")
+	}
+}
+
+// A context that holds itself twice has about 2^64 paths: the walk spends a budget of nodes on
+// the event and returns, with the strings it met redacted.
+func TestRedactSentryEventReturnsFromAContextThatHoldsItselfTwice(t *testing.T) {
+	err, _ := echoedKey()
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	loop := map[string]any{"error": err.Error()}
+	loop["a"] = loop
+	loop["b"] = loop
+
+	done := make(chan *sentry.Event)
+	go func() {
+		done <- RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"usage_alert": {"loop": loop}}}, nil)
+	}()
+	select {
+	case event := <-done:
+		if got := event.Contexts["usage_alert"]["loop"].(map[string]any)["error"]; got != reason {
+			t.Fatalf("a context that holds itself twice kept the key or lost the reason: %v", got)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("a context that holds itself twice did not return")
+	}
+}
+
+// A container two paths reach, one deep and one shallow, is redacted on both: no walk
+// remembers it as it was first met.
+func TestRedactSentryEventRedactsAContainerOnEveryPathThatReachesIt(t *testing.T) {
+	err, key := echoedKey()
+	for range 20 {
+		shared := map[string]any{"error": err.Error()}
+		var deep any = shared
+		for range 70 {
+			deep = map[string]any{"in": deep}
+		}
+
+		event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{
+			"c": {"deep": deep, "shallow": shared, "listed": []any{shared}},
+		}}, nil)
+
+		sent, marshalErr := json.Marshal(event.Contexts)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if strings.Contains(string(sent), key) {
+			t.Fatalf("a container reached by two paths kept the key on one: %s", sent)
+		}
+	}
+}
+
+// A value nested far deeper than any context is, but within the budget, is kept whole.
+func TestRedactSentryEventKeepsAValueNestedDeep(t *testing.T) {
+	var deep any = map[string]any{"note": "plain", "n": []any{"a", 1}}
+	for range 80 {
+		deep = map[string]any{"in": deep}
+	}
+
+	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"c": {"deep": deep}}}, nil)
+
+	var at any = event.Contexts["c"]["deep"]
+	for range 80 {
+		at = at.(map[string]any)["in"]
+	}
+	leaf := at.(map[string]any)
+	if leaf["note"] != "plain" || len(leaf["n"].([]any)) != 2 {
+		t.Fatalf("what lies deep was lost: %+v", leaf)
+	}
+}
+
+// What lies past the budget is left as it was, not dropped.
+func TestRedactSentryEventKeepsWhatLiesPastTheBudget(t *testing.T) {
+	rows := make([]any, 3*maxContextNodes)
+	for i := range rows {
+		rows[i] = map[string]any{"n": i}
+	}
+
+	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"c": {"rows": rows}}}, nil)
+
+	got := event.Contexts["c"]["rows"].([]any)
+	if len(got) != len(rows) {
+		t.Fatalf("rows lost: %d of %d", len(got), len(rows))
+	}
+	for i, row := range got {
+		if row == nil {
+			t.Fatalf("row %d past the budget was dropped", i)
+		}
+	}
+}
+
+// What an event says with no key in it reaches Sentry as it did before: the same text and
+// the same values, of the same types. A typed value is the very value, not a copy of it.
+func TestRedactSentryEventLeavesAnEventWithNoKeyAsItWas(t *testing.T) {
+	type reading struct{ Rows int }
+	typed := &reading{Rows: 3}
+	event := RedactSentryEvent(&sentry.Event{
+		Tags: map[string]string{"usage_alert": "sandbox_mismatch", "source": "router"},
+		Contexts: map[string]sentry.Context{"usage_alert": {
+			"day": "2026-11-06", "rows": 3, "increase": 1.5, "over": nil, "rerun": "router usage sandboxes --day 2026-11-06",
+			"nested": map[string]any{"value": int64(1) << 60}, "listing": []any{"apps", true}, "typed": typed,
+		}},
+	}, nil)
+	want := map[string]any{
+		"day": "2026-11-06", "rows": 3, "increase": 1.5, "over": nil, "rerun": "router usage sandboxes --day 2026-11-06",
+		"nested": map[string]any{"value": int64(1) << 60}, "listing": []any{"apps", true}, "typed": typed,
+	}
+	context := event.Contexts["usage_alert"]
+	if fmt.Sprintf("%#v", map[string]any(context)) != fmt.Sprintf("%#v", want) || context["typed"] != any(typed) {
+		t.Fatalf("the context changed:\n got %#v\nwant %#v", context, want)
+	}
+	if event.Tags["usage_alert"] != "sandbox_mismatch" || event.Tags["source"] != "router" || len(event.Tags) != 2 {
+		t.Fatalf("the tags changed: %+v", event.Tags)
 	}
 }
 

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -250,8 +251,9 @@ func redactedAttr(attr slog.Attr, text string) slog.Attr {
 }
 
 // RedactSentryEvent is a sentry BeforeSend that puts an event's message, its exceptions'
-// values and its breadcrumbs' messages through RedactLogText: they are an error's text, which
-// can echo the key a provider was sent.
+// values, its breadcrumbs' messages, its tags and every string in its contexts through
+// RedactLogText: they are an error's text, which can echo the key a provider was sent, as a
+// usage alert's context does (internal/alerts).
 func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	event.Message = RedactLogText(event.Message)
 	for i := range event.Exception {
@@ -260,8 +262,82 @@ func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	for _, breadcrumb := range event.Breadcrumbs {
 		breadcrumb.Message = RedactLogText(breadcrumb.Message)
 	}
+	for key, value := range event.Tags {
+		event.Tags[key] = RedactLogText(value)
+	}
+	walk := &contextWalk{budget: maxContextNodes}
+	for name, context := range event.Contexts {
+		event.Contexts[name] = walk.context(context)
+	}
 	return event
 }
+
+// maxContextNodes is how many maps, slices and typed values a contextWalk takes apart in one
+// event. A value that holds itself is a cycle that would otherwise overflow the stack and end
+// the process, and one that holds itself twice has more paths than could ever be walked, where
+// Sentry's own encoding of it only fails. 1,000 is some fifty times what any context holds
+// (a usage alert's has a dozen values), and each node of a cycle redacts the strings beside it
+// (about 0.1 ms each under -race), so a cycle ends in tens of milliseconds, not seconds. Past
+// it a container is left as it is, so a string inside it is not reached and not redacted. Every
+// string the walk does reach is redacted, and a string costs no budget, being a leaf.
+const maxContextNodes = 1000
+
+// contextWalk redacts the maps and slices of an event's contexts, spending one budget of nodes
+// on the whole event. It keeps no record of what it has walked: a container reached by two
+// paths is redacted on each, as far as the budget goes.
+type contextWalk struct {
+	budget int
+}
+
+// context is a copy of context with every string in it redacted. It is a copy, at every
+// depth, because the event shares its contexts' values with the scope it came from, which the
+// next event reads too.
+func (w *contextWalk) context(context map[string]any) map[string]any {
+	out := make(map[string]any, len(context))
+	for key, value := range context {
+		out[key] = w.value(value)
+	}
+	return out
+}
+
+// value is value with every string in it redacted, in maps and slices at any depth. A value of
+// another type is read as the JSON Sentry sends of it and, when that JSON holds a credential,
+// replaced by it decoded and redacted. Decoded, it holds only maps, slices, strings and
+// numbers, booleans and nulls, whose JSON no rule matches, so none is read as JSON again.
+func (w *contextWalk) value(value any) any {
+	if text, ok := value.(string); ok {
+		return RedactLogText(text)
+	}
+	if w.budget <= 0 {
+		return value
+	}
+	w.budget--
+	switch typed := value.(type) {
+	case map[string]any:
+		return w.context(typed)
+	case []any:
+		if len(typed) == 0 {
+			return value
+		}
+		out := make([]any, len(typed))
+		for i, inner := range typed {
+			out[i] = w.value(inner)
+		}
+		return out
+	}
+	text, err := json.Marshal(value)
+	if err != nil || RedactLogText(string(text)) == string(text) {
+		return value
+	}
+	decoder := json.NewDecoder(bytes.NewReader(text))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return value
+	}
+	return w.value(decoded)
+}
+
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}
 	// Explicitly allow metadata; arbitrary tool arguments/results and request headers never enter storage.

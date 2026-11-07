@@ -8,10 +8,12 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	dto "github.com/prometheus/client_model/go"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 )
 
 // turnLatencyLegs are the legs of router_agent_turn_latency_seconds, each with the Turn field
@@ -624,6 +626,50 @@ func (s *AgentSuite) TestAScheduledTaskAnsweredWithWordsIsNotObserved() {
 	for leg, series := range observedSince(pipelineCascade, before) {
 		s.Zero(series.count, leg)
 	}
+}
+
+// Audio the lost voice sends late for a reply the next voice says again is dropped, so nobody
+// hears it and it does not end the caller's wait: the one observation is at the next voice's
+// audio. Catches the dropped audio taken as the turn's first audio.
+func (s *AgentSuite) TestLateAudioOfALostVoiceDoesNotEndTheCallersWait() {
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	s.join(true)
+	s.voice.silent = true
+	before := turnLatencies(pipelineCascade)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	saidAt := time.Now()
+	s.says(participant, "what is the capital of France")
+	s.eventually(func() bool {
+		sent := s.voice.spoken()
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(sent) > 0 && sent[len(sent)-1].Final && !s.agent.generating
+	}, "the whole reply never reached the voice")
+	turnID := s.callerTurn()
+	synthesis := s.voice.spoken()[0].ID
+
+	s.refusesVoice()
+	<-started
+	lateAt := time.Now()
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: synthesis,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+	// The next voice opens 200 ms after the late audio, so a wait ended by it is that much short.
+	time.Sleep(200 * time.Millisecond)
+	opened()
+
+	s.eventually(func() bool { _, ok := s.turnReported(turnID); return ok }, "the turn was never reported")
+	turn, _ := s.turnReported(turnID)
+	gained := observedSince(pipelineCascade, before)
+	s.Equal(uint64(1), gained["roundtrip"].count)
+	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+	s.Greater(turn.RoundtripMs, msBetween(saidAt, lateAt)+150, "timed at the lost voice's unheard audio")
 }
 
 // How far the work a native caller turn hands to the subagent has gone when its reply completes.
