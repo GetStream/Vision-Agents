@@ -83,7 +83,8 @@ type cadence struct {
 	// endedBy is the transcriber whose finals are the model's end of the turn, the
 	// chorus-asr transcriber an agent acting on the model has ask about each pause, empty
 	// when there is none. Its final is the end the agent's end-of-turn point ruled, and the
-	// words never change after it, so it is put at once (endedLocked).
+	// words never change after it, so it is put at once (endedLocked). So is a final of
+	// another transcriber's words chorus-asr's floor ended (stt.Transcript.Floor).
 	endedBy string
 }
 
@@ -524,10 +525,10 @@ func (c *cadence) Close() {
 
 // endedLocked reports whether transcript is a final the model ended its turn on, which is put
 // at once: the end-of-turn policy has had its wait, a number dictated with pauses included,
-// which its points were measured on, and the transcriber writes one final an utterance, so
-// the words will not change. The caller holds the lock.
+// which its points were measured on, and the floor sends one final an utterance, so the words
+// will not change, whichever transcriber wrote them. The caller holds the lock.
 func (c *cadence) endedLocked(transcript stt.Transcript) bool {
-	return c.endedBy != "" && transcript.Final() && transcript.Provider == c.endedBy
+	return c.endedBy != "" && transcript.Final() && (transcript.Provider == c.endedBy || transcript.Floor)
 }
 
 // finalGapLocked is the wait for words a transcriber has finalized, with any grace still owed
