@@ -808,6 +808,32 @@ func (s *PausesSuite) TestAFinalWithNoWordsKeepsWhatACheckOverTheAgentWrote() {
 	s.Len(s.agent.rulings(), 1)
 }
 
+// A pause whose words the server wrote none of on purpose, saying why, keeps none of what a
+// check over the agent wrote either. The pause heard the whole utterance, a voice in another
+// language; the check over the agent heard less of it and wrote it as words in the caller's
+// ("They got ill."), which were the final and answered.
+func (s *PausesSuite) TestAFinalTheServerBlankedOnPurposeKeepsNothingACheckOverTheAgentWrote() {
+	over := "They got ill."
+	s.server.mu.Lock()
+	s.server.unfinishedDecision, s.server.unfinishedWords = continuing, &over
+	s.server.words = ""
+	s.server.mu.Unlock()
+	s.agent.speaks(true)
+	s.say(800, true)
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return s.transcriber.over.words == over
+	}, 5*time.Second, time.Millisecond, "the check over the agent never wrote its words")
+	s.server.mu.Lock()
+	s.server.blanked = "language"
+	s.server.mu.Unlock()
+	s.agent.speaks(false)
+	s.pausing(200)
+	s.none()
+	s.Empty(s.agent.rulings())
+}
+
 // A noise the model hears no words in ends nothing it sends: no final, no ruling.
 func (s *PausesSuite) TestNoWordsAreNothingHeard() {
 	s.server.mu.Lock()

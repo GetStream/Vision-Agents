@@ -111,9 +111,13 @@ that check rightly let pass ("okay, stop"). Words the model rules `continue` at 
 the agent, as it ruled "I hope that's all right." (0.51, where with the floor free it rules
 `respond` 1.00), end as `ignore`, and are not answered: at that pause if the caller began them
 over the agent, and at the cap if they began them before hearing it and the agent talks on
-through it. The server writes no words of what it rules `ignore` over the agent, so words a
-caller began over the agent that are ruled so are lost unless a check over the agent without
-a pause wrote them.
+through it. The server writes no words of an utterance of four words or fewer, heard whole,
+that it rules `continue` or `ignore` over the agent (a murmur, "uh-huh", a piece of the
+agent's echo), and says why (`ignored`). Words a caller began over the agent that are ruled so
+are lost unless a check over the agent without a pause wrote them, and those are kept only
+where the server gave no reason for writing none at the pause: where it said the pause was a
+voice in another language or a murmur, the check over the agent heard less of it, and may
+have taken a room's voice for words in the caller's language.
 
 ## Configure
 

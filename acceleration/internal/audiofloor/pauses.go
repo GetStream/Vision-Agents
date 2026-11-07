@@ -772,7 +772,10 @@ func (t *Transcriber) finish(epoch int64) {
 	ruled.Words, ruled.AudioMs, ruled.WordsMs = *p.words, p.audioMs, p.wordsMs
 	// The words of the pause that ended the utterance may come back empty where a check over
 	// the agent wrote some of it: the utterance is those words, as far as that check heard it.
-	if ruled.Words == "" && t.over.utterance == utterance && t.over.words != "" {
+	// Not where the server said why it wrote none (a voice in another language, a murmur it
+	// ruled ignored): the pause heard the whole of it, and a check over the agent that heard
+	// less may have taken a room's voice for words in the caller's language.
+	if ruled.Words == "" && noise == "" && t.over.utterance == utterance && t.over.words != "" {
 		ruled.Words = t.over.words
 	}
 	t.mu.Unlock()
