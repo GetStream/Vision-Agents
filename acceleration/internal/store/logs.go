@@ -11,7 +11,6 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/uptrace/bun"
 	"log/slog"
-	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -266,41 +265,36 @@ func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	for key, value := range event.Tags {
 		event.Tags[key] = RedactLogText(value)
 	}
-	walk := contextWalk{done: map[containerID]any{}}
+	walk := &contextWalk{budget: maxContextNodes}
 	for name, context := range event.Contexts {
-		event.Contexts[name] = walk.context(context, 0)
+		event.Contexts[name] = walk.context(context)
 	}
 	return event
 }
 
-// maxContextDepth is how deep a contextWalk goes into maps and slices. A value that holds
-// itself is a cycle that would otherwise overflow the stack and end the process, where
-// Sentry's own encoding of it only fails; no context nests anywhere near this far, and what
-// lies deeper is left as it is.
-const maxContextDepth = 64
+// maxContextNodes is how many maps, slices and typed values a contextWalk takes apart in one
+// event. A value that holds itself is a cycle that would otherwise overflow the stack and end
+// the process, and one that holds itself twice has more paths than could ever be walked, where
+// Sentry's own encoding of it only fails. 1,000 is some fifty times what any context holds
+// (a usage alert's has a dozen values), and each node of a cycle redacts the strings beside it
+// (about 0.1 ms each under -race), so a cycle ends in tens of milliseconds, not seconds. Past
+// it a container is left as it is; a string is still redacted, being a leaf that costs no budget.
+const maxContextNodes = 1000
 
-// containerID is the identity of a map or a slice: the same one is the same container.
-type containerID struct {
-	isMap bool
-	ptr   uintptr
-	len   int
-}
-
-// contextWalk redacts the maps and slices of an event's contexts. It walks each container
-// once: done holds what a container was redacted to, or the container itself while it is
-// being walked, so a container that holds itself, however many times, is left at the point it
-// is met again, and one reached by two paths is walked once, not once per path.
+// contextWalk redacts the maps and slices of an event's contexts, spending one budget of nodes
+// on the whole event. It keeps no record of what it has walked: a container reached by two
+// paths is redacted on each, as far as the budget goes.
 type contextWalk struct {
-	done map[containerID]any
+	budget int
 }
 
 // context is a copy of context with every string in it redacted. It is a copy, at every
 // depth, because the event shares its contexts' values with the scope it came from, which the
-// next event reads too. depth is how many maps and slices lie above it.
-func (w contextWalk) context(context map[string]any, depth int) map[string]any {
+// next event reads too.
+func (w *contextWalk) context(context map[string]any) map[string]any {
 	out := make(map[string]any, len(context))
 	for key, value := range context {
-		out[key] = w.value(value, depth+1)
+		out[key] = w.value(value)
 	}
 	return out
 }
@@ -309,36 +303,25 @@ func (w contextWalk) context(context map[string]any, depth int) map[string]any {
 // another type is read as the JSON Sentry sends of it and, when that JSON holds a credential,
 // replaced by it decoded and redacted. Decoded, it holds only maps, slices, strings and
 // numbers, booleans and nulls, whose JSON no rule matches, so none is read as JSON again.
-func (w contextWalk) value(value any, depth int) any {
-	if depth > maxContextDepth {
+func (w *contextWalk) value(value any) any {
+	if text, ok := value.(string); ok {
+		return RedactLogText(text)
+	}
+	if w.budget <= 0 {
 		return value
 	}
+	w.budget--
 	switch typed := value.(type) {
-	case string:
-		return RedactLogText(typed)
 	case map[string]any:
-		id := containerID{isMap: true, ptr: reflect.ValueOf(typed).Pointer(), len: len(typed)}
-		if seen, ok := w.done[id]; ok {
-			return seen
-		}
-		w.done[id] = value
-		out := w.context(typed, depth)
-		w.done[id] = out
-		return out
+		return w.context(typed)
 	case []any:
 		if len(typed) == 0 {
 			return value
 		}
-		id := containerID{ptr: reflect.ValueOf(typed).Pointer(), len: len(typed)}
-		if seen, ok := w.done[id]; ok {
-			return seen
-		}
-		w.done[id] = value
 		out := make([]any, len(typed))
 		for i, inner := range typed {
-			out[i] = w.value(inner, depth+1)
+			out[i] = w.value(inner)
 		}
-		w.done[id] = out
 		return out
 	}
 	text, err := json.Marshal(value)
@@ -351,7 +334,7 @@ func (w contextWalk) value(value any, depth int) any {
 	if err := decoder.Decode(&decoded); err != nil {
 		return value
 	}
-	return w.value(decoded, depth+1)
+	return w.value(decoded)
 }
 
 func safeLogDetails(details map[string]any) map[string]any {

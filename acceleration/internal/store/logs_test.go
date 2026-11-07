@@ -548,7 +548,7 @@ func TestRedactSentryEventLeavesTheScopesContextsAlone(t *testing.T) {
 }
 
 // A context that holds itself would overflow the stack, which ends the process where Sentry's
-// own encoding of it only fails: the walk stops at a depth, and what it reached above that is
+// own encoding of it only fails: the walk stops at its budget, and the strings it met are
 // redacted as before.
 func TestRedactSentryEventReturnsFromAContextThatHoldsItself(t *testing.T) {
 	err, key := echoedKey()
@@ -559,15 +559,15 @@ func TestRedactSentryEventReturnsFromAContextThatHoldsItself(t *testing.T) {
 	listing = append(listing, listing)
 	listing[1] = listing
 
-	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{
-		"usage_alert": {"loop": loop, "listing": listing},
-	}}, nil)
+	// Two events: the budget is one event's, so the loop must not spend the listing's.
+	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"usage_alert": {"loop": loop}}}, nil)
+	listed := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"usage_alert": {"listing": listing}}}, nil)
 
 	context := event.Contexts["usage_alert"]
 	if got := context["loop"].(map[string]any)["error"]; got != reason {
 		t.Fatalf("a context that holds itself kept the key or lost the reason: %v", got)
 	}
-	if got := context["listing"].([]any)[0]; got != reason {
+	if got := listed.Contexts["usage_alert"]["listing"].([]any)[0]; got != reason {
 		t.Fatalf("a slice that holds itself kept the key or lost the reason: %v", got)
 	}
 	if strings.Contains(fmt.Sprint(context["loop"].(map[string]any)["error"]), key) {
@@ -575,8 +575,8 @@ func TestRedactSentryEventReturnsFromAContextThatHoldsItself(t *testing.T) {
 	}
 }
 
-// A context that holds itself twice has about 2^64 paths to the depth bound: it is walked once
-// per container, so it returns at once with its values redacted.
+// A context that holds itself twice has about 2^64 paths: the walk spends a budget of nodes on
+// the event and returns, with the strings it met redacted.
 func TestRedactSentryEventReturnsFromAContextThatHoldsItselfTwice(t *testing.T) {
 	err, _ := echoedKey()
 	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
@@ -593,13 +593,38 @@ func TestRedactSentryEventReturnsFromAContextThatHoldsItselfTwice(t *testing.T) 
 		if got := event.Contexts["usage_alert"]["loop"].(map[string]any)["error"]; got != reason {
 			t.Fatalf("a context that holds itself twice kept the key or lost the reason: %v", got)
 		}
-	case <-time.After(5 * time.Second):
+	case <-time.After(time.Second):
 		t.Fatal("a context that holds itself twice did not return")
 	}
 }
 
-// A value nested deeper than the bound is left as it was, not dropped.
-func TestRedactSentryEventKeepsWhatLiesBelowTheDepthBound(t *testing.T) {
+// A container two paths reach, one deep and one shallow, is redacted on both: no walk
+// remembers it as it was first met.
+func TestRedactSentryEventRedactsAContainerOnEveryPathThatReachesIt(t *testing.T) {
+	err, key := echoedKey()
+	for range 20 {
+		shared := map[string]any{"error": err.Error()}
+		var deep any = shared
+		for range 70 {
+			deep = map[string]any{"in": deep}
+		}
+
+		event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{
+			"c": {"deep": deep, "shallow": shared, "listed": []any{shared}},
+		}}, nil)
+
+		sent, marshalErr := json.Marshal(event.Contexts)
+		if marshalErr != nil {
+			t.Fatal(marshalErr)
+		}
+		if strings.Contains(string(sent), key) {
+			t.Fatalf("a container reached by two paths kept the key on one: %s", sent)
+		}
+	}
+}
+
+// A value nested far deeper than any context is, but within the budget, is kept whole.
+func TestRedactSentryEventKeepsAValueNestedDeep(t *testing.T) {
 	var deep any = map[string]any{"note": "plain", "n": []any{"a", 1}}
 	for range 80 {
 		deep = map[string]any{"in": deep}
@@ -613,7 +638,7 @@ func TestRedactSentryEventKeepsWhatLiesBelowTheDepthBound(t *testing.T) {
 	}
 	leaf := at.(map[string]any)
 	if leaf["note"] != "plain" || len(leaf["n"].([]any)) != 2 {
-		t.Fatalf("what lies below the depth bound was lost: %+v", leaf)
+		t.Fatalf("what lies deep was lost: %+v", leaf)
 	}
 }
 
