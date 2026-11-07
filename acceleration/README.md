@@ -2631,7 +2631,8 @@ which no SDK is generated from. Render it from the service's binary, whose error
 describes: `go run ./cmd/usage openapi`.
 
 The Swift client is generated from a filter rather than from the whole spec, and
-`generate.py --check` fails if anything in that filter is not marked `x-client-accessible`.
+`generate.py --check` fails if anything in that filter is not marked `x-client-accessible`,
+or if the committed client was generated from another version of the spec's client part.
 Dropping that mark is therefore the whole of removing an operation from the iOS SDK.
 
 The JavaScript client generates types and no runtime, because one package has to work in a
