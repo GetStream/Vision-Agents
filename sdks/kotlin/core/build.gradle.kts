@@ -5,7 +5,7 @@ plugins {
 }
 
 android {
-    namespace = "io.getstream.visionagents.android.core"
+    namespace = "io.getstream.agents.android.core"
     compileSdk = 37
     defaultConfig {
         minSdk = 24

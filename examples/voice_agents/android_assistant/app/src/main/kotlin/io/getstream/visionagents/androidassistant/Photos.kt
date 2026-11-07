@@ -7,7 +7,7 @@ import android.graphics.ImageDecoder
 import android.net.Uri
 import android.os.Build
 import android.util.Base64
-import io.getstream.visionagents.android.core.ImageSource
+import io.getstream.agents.android.core.ImageSource
 import java.io.ByteArrayOutputStream
 import java.io.IOException
 import kotlin.math.max

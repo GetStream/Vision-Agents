@@ -2,9 +2,9 @@ package io.getstream.visionagents.androidassistant
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
-import io.getstream.visionagents.android.core.AgentsException
-import io.getstream.visionagents.android.core.Session
-import io.getstream.visionagents.android.core.SessionQuery
+import io.getstream.agents.android.core.AgentsException
+import io.getstream.agents.android.core.Session
+import io.getstream.agents.android.core.SessionQuery
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow

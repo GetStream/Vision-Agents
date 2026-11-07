@@ -16,7 +16,7 @@ Assume Kotlin 2.4, JVM 17 bytecode, AGP 9, Gradle with the version catalogue in
 ## The module, and what it is called
 
 ```
-core  io.getstream:stream-agents  io.getstream.visionagents.android.core  Android library: HTTP, socket, state, Stream Chat, Stream Video
+core  io.getstream:stream-agents  io.getstream.agents.android.core  Android library: HTTP, socket, state, Stream Chat, Stream Video
 ```
 
 One module, as Swift is one package (`StreamAgents`). The artifact is named after it,

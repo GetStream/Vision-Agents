@@ -1,9 +1,9 @@
 package io.getstream.visionagents.android.demo
 
-import io.getstream.visionagents.android.core.AgentTool
-import io.getstream.visionagents.android.core.AgentsException
-import io.getstream.visionagents.android.core.User
-import io.getstream.visionagents.android.core.VisionAgents
+import io.getstream.agents.android.core.AgentTool
+import io.getstream.agents.android.core.AgentsException
+import io.getstream.agents.android.core.User
+import io.getstream.agents.android.core.VisionAgents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json

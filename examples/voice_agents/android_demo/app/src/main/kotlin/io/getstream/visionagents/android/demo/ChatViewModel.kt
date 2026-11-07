@@ -3,8 +3,8 @@ package io.getstream.visionagents.android.demo
 import android.app.Application
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
-import io.getstream.visionagents.android.core.AgentsException
-import io.getstream.visionagents.android.core.SessionOptions
+import io.getstream.agents.android.core.AgentsException
+import io.getstream.agents.android.core.SessionOptions
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
