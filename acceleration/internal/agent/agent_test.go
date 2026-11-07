@@ -6758,6 +6758,14 @@ func (s *AgentSuite) TestAudioTheLostVoiceSendsForAReplyTheNextSaysIsCountedDrop
 		SynthesisID: turn,
 		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
 	})
+	// The lost voice's consumer takes the chunk on its own goroutine. It arrives while the next
+	// voice is still opening, so it is taken before the next voice can say the turn and report it.
+	s.eventually(func() bool {
+		s.agent.turns.mu.Lock()
+		defer s.agent.turns.mu.Unlock()
+		current, ok := s.agent.turns.open[turn]
+		return ok && current.audioDroppedMs > 0
+	}, "the lost voice's audio of the reply was never taken")
 	opened()
 
 	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn was never reported")
