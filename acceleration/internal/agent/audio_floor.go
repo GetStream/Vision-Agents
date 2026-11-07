@@ -274,6 +274,21 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.answerHeardBefore(ruled.Began), a.floor()))
 }
 
+// GivenWay says the agent has given the floor up to the caller over the turn it is on: it
+// stopped it (abandonReply), and is on none, or shortened it (shorten) and is playing out the
+// tail. A turn it takes after gives the floor back to it.
+func (p pauseAsker) GivenWay() bool {
+	a := p.a
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.gaveWay != "" && (a.speakingTurn == "" || a.speakingTurn == a.gaveWay)
+}
+
+// HeardBefore says the caller had heard the agent when they began at, as a stop over it is
+// spent by (answerHeardBefore): some of its answer to their turn, as its voice played it, or
+// a line of its own.
+func (p pauseAsker) HeardBefore(at time.Time) bool { return p.a.answerHeardBefore(at) }
+
 // answerHeardBefore says whether the caller had heard any of the agent's answer to their turn, the
 // speech a stop over it silences, before at, when they began the utterance the stop was ruled
 // in: the reply, or what the agent went on to say of a tool's result. A caller who began before
