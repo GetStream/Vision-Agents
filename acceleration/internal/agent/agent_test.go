@@ -569,6 +569,13 @@ type stubTTS struct {
 	// synthesisRelease.
 	synthesizing     chan struct{}
 	synthesisRelease <-chan struct{}
+	// closing, if set, is closed when Close is entered, which then ends the voice's events
+	// and waits for closeRelease, the way ElevenLabs waits for its server to close the socket.
+	// Its events ended, nothing reading them holds the agent's Close: only the close does.
+	// closes counts the Closes that returned.
+	closing      chan struct{}
+	closeRelease <-chan struct{}
+	closes       int
 }
 
 func newStubTTS(streaming bool) *stubTTS {
@@ -675,8 +682,39 @@ func (s *stubTTS) Interrupt() error {
 func (s *stubTTS) Events() <-chan tts.Event { return s.emitter.Events() }
 
 func (s *stubTTS) Close() error {
+	s.mu.Lock()
+	closing, release := s.closing, s.closeRelease
+	s.closing = nil
+	s.mu.Unlock()
+	if closing != nil {
+		s.emitter.Close()
+		close(closing)
+		<-release
+	}
 	s.emitter.Close()
+	s.mu.Lock()
+	s.closes++
+	s.mu.Unlock()
 	return nil
+}
+
+func (s *stubTTS) closed() int {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.closes
+}
+
+// holdsClose has the voice's Close wait until the test ends or calls the release it returns.
+// The channel it returns is closed once Close is entered.
+func (s *AgentSuite) holdsClose(voice *stubTTS) (<-chan struct{}, func()) {
+	closing, release := make(chan struct{}), make(chan struct{})
+	voice.mu.Lock()
+	voice.closing, voice.closeRelease = closing, release
+	voice.mu.Unlock()
+	var once sync.Once
+	let := func() { once.Do(func() { close(release) }) }
+	s.T().Cleanup(let)
+	return closing, let
 }
 
 func (s *stubTTS) Provider() string { return "stub" }
@@ -6363,6 +6401,88 @@ func (s *AgentSuite) TestAReplyNoneOfWhichWasHeardIsSaidInTheVoiceThatReplacesTh
 	s.eventually(func() bool { return !s.agent.Busy() }, "the agent never finished saying the reply")
 }
 
+func (s *AgentSuite) TestTheVoiceThatReplacesALostOneSaysTheReplyWhileTheLostOneIsStillClosing() {
+	s.replacement = newStubTTS(true)
+	// A lost ElevenLabs voice takes up to its 2 s close timeout to close: the caller, who
+	// heard nothing of their answer, is not kept waiting for it.
+	turn := s.writtenToSilentVoice()
+	sent := said(s.voice.spoken())
+	closing, release := s.holdsClose(s.voice)
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return said(s.replacement.spoken()) == sent },
+		"the reply waited for the lost voice to close")
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok },
+		"the turn waited for the lost voice to close")
+	s.eventually(func() bool { return isClosed(closing) }, "the lost voice was never closed")
+
+	release()
+	s.eventually(func() bool { return s.voice.closed() == 1 }, "the lost voice never finished closing")
+	s.Zero(s.replacement.closed(), "the voice that replaced the lost one was closed")
+}
+
+func (s *AgentSuite) TestTheAgentClosesOnlyOnceItsLostVoiceHasClosed() {
+	s.replacement = newStubTTS(true)
+	s.writtenToSilentVoice()
+	closing, release := s.holdsClose(s.voice)
+	s.refusesVoice()
+	s.eventually(func() bool { return isClosed(closing) }, "the lost voice was never closed")
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the reply was not said again")
+
+	closed := make(chan error, 1)
+	go func() { closed <- s.agent.Close() }()
+
+	s.never(func() bool { return len(closed) > 0 }, "the agent closed while its lost voice was still closing")
+	release()
+	s.eventually(func() bool { return len(closed) > 0 }, "the agent never closed")
+	s.NoError(<-closed)
+	s.Equal(1, s.voice.closed(), "the lost voice was not closed once")
+	s.Equal(1, s.replacement.closed(), "the voice that replaced the lost one was not closed once")
+}
+
+func (s *AgentSuite) TestStoppingThePipelineWaitsForItsLostVoiceToClose() {
+	// A restart or a move onto speech-to-speech stops the pipeline without closing the agent.
+	s.replacement = newStubTTS(true)
+	s.writtenToSilentVoice()
+	closing, release := s.holdsClose(s.voice)
+	s.refusesVoice()
+	s.eventually(func() bool { return isClosed(closing) }, "the lost voice was never closed")
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the reply was not said again")
+
+	stopped := make(chan struct{})
+	go func() {
+		s.agent.stopPipeline(false)
+		close(stopped)
+	}()
+
+	s.never(func() bool { return isClosed(stopped) }, "the pipeline stopped while its lost voice was still closing")
+	release()
+	s.eventually(func() bool { return isClosed(stopped) }, "the pipeline never stopped")
+}
+
+func (s *AgentSuite) TestAVoiceNeverLostIsClosedOnlyWithTheAgent() {
+	s.replacement = newStubTTS(true)
+	turn := s.writtenToSilentVoice()
+	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: turn, AudioDurationMs: 10})
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn was never reported")
+	s.Zero(s.voice.closed(), "a voice still speaking for the agent was closed")
+
+	s.Require().NoError(s.agent.Close())
+	s.Equal(1, s.voice.closed(), "the voice was not closed once with the agent")
+	s.Empty(s.replacement.spoken(), "a voice never lost was replaced")
+}
+
+// isClosed reports whether a channel nothing is sent on has been closed.
+func isClosed(ch <-chan struct{}) bool {
+	select {
+	case <-ch:
+		return true
+	default:
+		return false
+	}
+}
+
 func (s *AgentSuite) TestEachSentenceALostVoiceSaidNoneOfIsSaidAgainInOrder() {
 	// A voice that cannot take deltas was sent each sentence as an utterance of its own, and
 	// the turn is over once each has been said.
@@ -6638,6 +6758,14 @@ func (s *AgentSuite) TestAudioTheLostVoiceSendsForAReplyTheNextSaysIsCountedDrop
 		SynthesisID: turn,
 		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
 	})
+	// The lost voice's consumer takes the chunk on its own goroutine. It arrives while the next
+	// voice is still opening, so it is taken before the next voice can say the turn and report it.
+	s.eventually(func() bool {
+		s.agent.turns.mu.Lock()
+		defer s.agent.turns.mu.Unlock()
+		current, ok := s.agent.turns.open[turn]
+		return ok && current.audioDroppedMs > 0
+	}, "the lost voice's audio of the reply was never taken")
 	opened()
 
 	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn was never reported")
