@@ -211,7 +211,7 @@ func (t *turnTracker) giveUp() {
 func (t *turnTracker) giveUpLocked() []settledTurn {
 	var given []settledTurn
 	for id, current := range t.open {
-		if current.owed && current.firstAudioAt.IsZero() {
+		if current.owed {
 			current.owed = false
 			given = append(given, settledTurn{id: id, current: current, finished: t.settleLocked(id, current)})
 		}
