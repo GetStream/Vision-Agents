@@ -144,6 +144,9 @@ type floorHarness struct {
 	lines map[string][]int16
 	// portuguese is somebody else in the room, talking in another language.
 	portuguese []int16
+	// writer, when set, is the transcriber that writes the callers' words in place of
+	// chorus-asr's, chorus-asr ruling on their floor alone.
+	writer func() stt.STT
 
 	mu        sync.Mutex
 	latencies []turnLatency
@@ -748,6 +751,8 @@ type call struct {
 	events *timeline
 	words  *wordLog
 	logs   *logBook
+	// trail is what became of the caller's words, none of which may be lost (noWordLost).
+	trail *wordTrail
 }
 
 // start joins an agent to a new call: the chorus-asr model transcribing, and asked as mode,
@@ -795,7 +800,12 @@ func (h *floorHarness) startWith(t *testing.T, setup callSetup) *call {
 	})
 	config, err := routing.DefaultConfig()
 	require.NoError(t, err)
-	transcriber, err := sttrouter.New(sttrouter.Options{Config: config[routing.STT], Registry: transcribers, Logger: logger})
+	transcribing, target := config[routing.STT], audiofloor.ProviderName+"/"+audiofloor.DefaultModel
+	if h.writer != nil {
+		transcribers.Register("stub", func(routing.Spec) (stt.STT, error) { return h.writer(), nil })
+		transcribing, target = stubConfig(), "stub/stub-model"
+	}
+	transcriber, err := sttrouter.New(sttrouter.Options{Config: transcribing, Registry: transcribers, Logger: logger})
 	require.NoError(t, err)
 	t.Cleanup(transcriber.Close)
 
@@ -835,7 +845,7 @@ func (h *floorHarness) startWith(t *testing.T, setup callSetup) *call {
 		LLM:            reasoner,
 		LLMTarget:      "en-low-latency",
 		STT:            transcriber,
-		STTTarget:      audiofloor.ProviderName + "/" + audiofloor.DefaultModel,
+		STTTarget:      target,
 		TTS:            speaker,
 		TTSTarget:      "en-low-latency",
 		AudioFloor:     client,
@@ -846,6 +856,8 @@ func (h *floorHarness) startWith(t *testing.T, setup callSetup) *call {
 	})
 	require.NoError(t, err)
 	c.agent = agent
+	// Every check holds the call to the account of its caller's words too: none is lost.
+	c.trail = tracksWords(agent)
 	require.NoError(t, agent.Join(context.Background()))
 	c.events = record(agent)
 	t.Cleanup(func() {
@@ -857,6 +869,7 @@ func (h *floorHarness) startWith(t *testing.T, setup callSetup) *call {
 		}()
 		select {
 		case <-closed:
+			noWordLost(t, c.trail)
 		case <-time.After(30 * time.Second):
 			t.Errorf("the agent did not close")
 		}

@@ -293,6 +293,41 @@ func (s *AssemblyAISocketSuite) TestAChunkLongerThanTheServerTakesIsSplit() {
 	s.Equal(500, s.nextAudio(conn))
 }
 
+// Told to settle the turn in progress (stt.Finalizer), the provider sends the audio still
+// waiting to fill a frame, padded to the shortest the server takes, then ForceEndpoint, whose
+// Turn is the turn's final; the session goes on.
+func (s *AssemblyAISocketSuite) TestFinalizingSendsTheWaitingAudioThenForcesTheEndpoint() {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer func() { _ = provider.Close() }()
+	var _ stt.Finalizer = provider
+
+	s.speak(provider, 20)
+	s.Require().NoError(provider.Finalize())
+	s.Equal(minChunkMs, s.nextAudio(conn), "the waiting audio, padded to the shortest frame")
+	messageType, raw := s.nextFrame(conn)
+	s.Equal(websocket.TextMessage, messageType)
+	s.JSONEq(`{"type":"ForceEndpoint"}`, string(raw))
+
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"Turn","turn_order":0,"end_of_turn":true,"transcript":"Two tickets to Bilbao."}`)))
+	var final stt.Transcript
+	for final.Text == "" {
+		select {
+		case event := <-provider.Events():
+			if transcript, ok := event.(stt.Transcript); ok {
+				final = transcript
+			}
+		case <-time.After(5 * time.Second):
+			s.FailNow("no final")
+		}
+	}
+	s.True(final.Final())
+	s.Equal("Two tickets to Bilbao.", final.Text)
+	s.speak(provider, 60)
+	s.Equal(60, s.nextAudio(conn), "the session goes on")
+}
+
 func (s *AssemblyAISocketSuite) TestClosingSendsTheLastAudioAndAsksForTheTurnToSettle() {
 	fake := newFakeSTT()
 	defer fake.close()
