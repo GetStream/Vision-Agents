@@ -3,6 +3,8 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
@@ -68,4 +70,19 @@ func TestTheAgentsFloorControlIsItsOwn(t *testing.T) {
 		_, err = floorControlOf(named, nil)
 		require.ErrorContains(t, err, "stream/chorus-asr, or empty")
 	}
+}
+
+// A provider that echoes the request's headers in its error puts the key the agent sent into the
+// failure; the agent's log keeps the provider's reason and not the key, and still logs at its level.
+func TestTheAgentsLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	var out bytes.Buffer
+	logger := newLogger(&out, slog.LevelInfo)
+	logger.Debug("below the level")
+	logger.Error("agent failure", "error", errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n"+
+		"request headers: Authorization: Bearer sk-test-"+key))
+
+	require.NotContains(t, out.String(), key)
+	require.NotContains(t, out.String(), "below the level")
+	require.Contains(t, out.String(), `msg="agent failure" error="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`)
 }

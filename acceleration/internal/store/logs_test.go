@@ -1,9 +1,17 @@
 package store
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
+	"errors"
+	"fmt"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 func TestSafeLogTextCredentials(t *testing.T) {
@@ -174,5 +182,89 @@ func TestSafeLogDetailsKeepsTheBridgeMediaKeys(t *testing.T) {
 	})
 	if len(details) != 2 || details["stream_media_addr"] != "203.0.113.10" || details["customer_media_addr"] != "198.51.100.7" {
 		t.Fatalf("details = %v, want only the two media addresses", details)
+	}
+}
+
+// logged is what a text handler with RedactLogAttr, or with no ReplaceAttr when redact is
+// false, prints for one record at a pinned time, so two runs of it can be compared byte for
+// byte.
+func logged(t *testing.T, redact bool, message string, args ...any) string {
+	t.Helper()
+	var out bytes.Buffer
+	options := &slog.HandlerOptions{}
+	if redact {
+		options.ReplaceAttr = RedactLogAttr
+	}
+	record := slog.NewRecord(time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC), slog.LevelError, message, 0)
+	record.Add(args...)
+	if err := slog.NewTextHandler(&out, options).Handle(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+// echoedKey is a provider's 502 that echoes the Authorization header it was sent, and the key
+// in it.
+func echoedKey() (error, string) {
+	key := rand.Text()
+	return errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n" +
+		"request headers: Authorization: Bearer sk-test-" + key), key
+}
+
+func TestRedactLogAttrKeepsAnErrorsReasonAndNotTheKeyItEchoed(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "agent failure", "context", "llm", "error", fmt.Errorf("gemma: %w", err))
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	want := `error="gemma: 502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`
+	if !strings.Contains(line, want) || !strings.Contains(line, "context=llm") {
+		t.Fatalf("the line lost the rest of the error: %s", line)
+	}
+}
+
+// A string attribute and the message are what a line holds when its caller logged err.Error()
+// or formatted the error into the message.
+func TestRedactLogAttrTakesTheKeyOutOfAStringAndTheMessage(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "refused: "+err.Error(), "reason", err.Error())
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	if strings.Count(line, `failed to connect to local service\nrequest headers: [redacted]`) != 2 {
+		t.Fatalf("the line lost the rest of the error: %s", line)
+	}
+}
+
+func TestRedactLogAttrTakesTheKeyOutOfAGroup(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "agent failure", slog.Group("turn", "error", err))
+	if strings.Contains(line, key) || !strings.Contains(line, `turn.error="502 Bad Gateway`) {
+		t.Fatalf("the group kept the key or lost the error: %s", line)
+	}
+}
+
+// The text handler prints an error as %+v, which for a stack.Wrap error is the error and its
+// stack; the redacted error keeps the stack.
+func TestRedactLogAttrKeepsTheStackOfAnErrorItRedacts(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "agent failure", "error", stack.Wrap(err))
+	if strings.Contains(line, key) || !strings.Contains(line, "TestRedactLogAttrKeepsTheStackOfAnErrorItRedacts") {
+		t.Fatalf("the redacted error kept the key or lost its stack: %s", line)
+	}
+}
+
+// The control is the line a text handler with no ReplaceAttr prints, which is the line the
+// router printed before RedactLogAttr: with nothing to redact, it is the same byte for byte.
+func TestRedactLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
+	args := []any{
+		"error", stack.Wrap(errors.New("502 Bad Gateway: upstream error: failed to connect to local service")),
+		"reason", "perplexity: PERPLEXITY_API_KEY is required",
+		"tokens", 42,
+		"took", 1500 * time.Millisecond,
+	}
+	want := logged(t, false, "agent failure", args...)
+	if got := logged(t, true, "agent failure", args...); got != want {
+		t.Fatalf("the line changed:\n got %s\nwant %s", got, want)
 	}
 }

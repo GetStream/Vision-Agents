@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"errors"
 	"log/slog"
 	"os"
 	"testing"
@@ -112,4 +115,19 @@ func TestKnowledgeURLsAreNotServedWithoutRedis(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Nil(t, pages)
+}
+
+// A provider that echoes the request's headers in its error puts the key the router sent into the
+// failure; the router's log keeps the provider's reason and not the key, and still logs at its level.
+func TestTheRoutersLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	var out bytes.Buffer
+	logger := newLogger(&out, slog.LevelInfo)
+	logger.Debug("below the level")
+	logger.Error("agent failure", "error", errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n"+
+		"request headers: Authorization: Bearer sk-test-"+key))
+
+	require.NotContains(t, out.String(), key)
+	require.NotContains(t, out.String(), "below the level")
+	require.Contains(t, out.String(), `msg="agent failure" error="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`)
 }

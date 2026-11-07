@@ -1130,7 +1130,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 
 	logger := slog.New(slog.DiscardHandler)
 	if s.logs != nil {
-		logger = slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+		logger = slog.New(slog.NewJSONHandler(s.logs, &slog.HandlerOptions{Level: slog.LevelDebug, ReplaceAttr: store.RedactLogAttr}))
 	}
 
 	transcription := sttrouter.NewRegistry()
