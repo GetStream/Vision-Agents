@@ -575,6 +575,48 @@ func TestRedactSentryEventReturnsFromAContextThatHoldsItself(t *testing.T) {
 	}
 }
 
+// A context that holds itself twice has about 2^64 paths to the depth bound: it is walked once
+// per container, so it returns at once with its values redacted.
+func TestRedactSentryEventReturnsFromAContextThatHoldsItselfTwice(t *testing.T) {
+	err, _ := echoedKey()
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	loop := map[string]any{"error": err.Error()}
+	loop["a"] = loop
+	loop["b"] = loop
+
+	done := make(chan *sentry.Event)
+	go func() {
+		done <- RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"usage_alert": {"loop": loop}}}, nil)
+	}()
+	select {
+	case event := <-done:
+		if got := event.Contexts["usage_alert"]["loop"].(map[string]any)["error"]; got != reason {
+			t.Fatalf("a context that holds itself twice kept the key or lost the reason: %v", got)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("a context that holds itself twice did not return")
+	}
+}
+
+// A value nested deeper than the bound is left as it was, not dropped.
+func TestRedactSentryEventKeepsWhatLiesBelowTheDepthBound(t *testing.T) {
+	var deep any = map[string]any{"note": "plain", "n": []any{"a", 1}}
+	for range 80 {
+		deep = map[string]any{"in": deep}
+	}
+
+	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"c": {"deep": deep}}}, nil)
+
+	var at any = event.Contexts["c"]["deep"]
+	for range 80 {
+		at = at.(map[string]any)["in"]
+	}
+	leaf := at.(map[string]any)
+	if leaf["note"] != "plain" || len(leaf["n"].([]any)) != 2 {
+		t.Fatalf("what lies below the depth bound was lost: %+v", leaf)
+	}
+}
+
 // What an event says with no key in it reaches Sentry as it did before: the same text and
 // the same values, of the same types. A typed value is the very value, not a copy of it.
 func TestRedactSentryEventLeavesAnEventWithNoKeyAsItWas(t *testing.T) {

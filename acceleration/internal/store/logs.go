@@ -11,6 +11,7 @@ import (
 	"github.com/getsentry/sentry-go"
 	"github.com/uptrace/bun"
 	"log/slog"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -265,47 +266,79 @@ func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	for key, value := range event.Tags {
 		event.Tags[key] = RedactLogText(value)
 	}
+	walk := contextWalk{done: map[containerID]any{}}
 	for name, context := range event.Contexts {
-		event.Contexts[name] = redactedContext(context, 0)
+		event.Contexts[name] = walk.context(context, 0)
 	}
 	return event
 }
 
-// maxContextDepth is how deep redactedValue goes into maps and slices. A value that holds
+// maxContextDepth is how deep a contextWalk goes into maps and slices. A value that holds
 // itself is a cycle that would otherwise overflow the stack and end the process, where
 // Sentry's own encoding of it only fails; no context nests anywhere near this far, and what
 // lies deeper is left as it is.
 const maxContextDepth = 64
 
-// redactedContext is a copy of context with every string in it redacted. It is a copy, at
-// every depth, because the event shares its contexts' values with the scope it came from,
-// which the next event reads too. depth is how many maps and slices lie above it.
-func redactedContext(context map[string]any, depth int) map[string]any {
+// containerID is the identity of a map or a slice: the same one is the same container.
+type containerID struct {
+	isMap bool
+	ptr   uintptr
+	len   int
+}
+
+// contextWalk redacts the maps and slices of an event's contexts. It walks each container
+// once: done holds what a container was redacted to, or the container itself while it is
+// being walked, so a container that holds itself, however many times, is left at the point it
+// is met again, and one reached by two paths is walked once, not once per path.
+type contextWalk struct {
+	done map[containerID]any
+}
+
+// context is a copy of context with every string in it redacted. It is a copy, at every
+// depth, because the event shares its contexts' values with the scope it came from, which the
+// next event reads too. depth is how many maps and slices lie above it.
+func (w contextWalk) context(context map[string]any, depth int) map[string]any {
 	out := make(map[string]any, len(context))
 	for key, value := range context {
-		out[key] = redactedValue(value, depth+1)
+		out[key] = w.value(value, depth+1)
 	}
 	return out
 }
 
-// redactedValue is value with every string in it redacted, in maps and slices at any depth. A
-// value of another type is read as the JSON Sentry sends of it and, when that JSON holds a
-// credential, replaced by it decoded and redacted. Decoded, it holds only maps, slices, strings
-// and numbers, booleans and nulls, whose JSON no rule matches, so none is read as JSON again.
-func redactedValue(value any, depth int) any {
+// value is value with every string in it redacted, in maps and slices at any depth. A value of
+// another type is read as the JSON Sentry sends of it and, when that JSON holds a credential,
+// replaced by it decoded and redacted. Decoded, it holds only maps, slices, strings and
+// numbers, booleans and nulls, whose JSON no rule matches, so none is read as JSON again.
+func (w contextWalk) value(value any, depth int) any {
 	if depth > maxContextDepth {
 		return value
 	}
-	switch value := value.(type) {
+	switch typed := value.(type) {
 	case string:
-		return RedactLogText(value)
+		return RedactLogText(typed)
 	case map[string]any:
-		return redactedContext(value, depth)
-	case []any:
-		out := make([]any, len(value))
-		for i, inner := range value {
-			out[i] = redactedValue(inner, depth+1)
+		id := containerID{isMap: true, ptr: reflect.ValueOf(typed).Pointer(), len: len(typed)}
+		if seen, ok := w.done[id]; ok {
+			return seen
 		}
+		w.done[id] = value
+		out := w.context(typed, depth)
+		w.done[id] = out
+		return out
+	case []any:
+		if len(typed) == 0 {
+			return value
+		}
+		id := containerID{ptr: reflect.ValueOf(typed).Pointer(), len: len(typed)}
+		if seen, ok := w.done[id]; ok {
+			return seen
+		}
+		w.done[id] = value
+		out := make([]any, len(typed))
+		for i, inner := range typed {
+			out[i] = w.value(inner, depth+1)
+		}
+		w.done[id] = out
 		return out
 	}
 	text, err := json.Marshal(value)
@@ -318,8 +351,9 @@ func redactedValue(value any, depth int) any {
 	if err := decoder.Decode(&decoded); err != nil {
 		return value
 	}
-	return redactedValue(decoded, depth+1)
+	return w.value(decoded, depth+1)
 }
+
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}
 	// Explicitly allow metadata; arbitrary tool arguments/results and request headers never enter storage.
