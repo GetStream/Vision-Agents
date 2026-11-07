@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -431,6 +432,35 @@ func TestRedactJSONLogAttrReadsAnErrorAsTheHandlerPrintsIt(t *testing.T) {
 		if !strings.Contains(line, want) {
 			t.Fatalf("the line lost %s: %s", want, line)
 		}
+	}
+}
+
+// A message and a string attribute are redacted too, whatever their key.
+func TestRedactJSONLogAttrRedactsAMessageAndAStringAttribute(t *testing.T) {
+	err, key := echoedKey()
+	line := loggedJSON(t, true, err.Error(), "reason", err.Error())
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	if !strings.Contains(line, `"reason":"502 Bad Gateway`) {
+		t.Fatalf("the line lost the reason: %s", line)
+	}
+}
+
+// marshalsOtherText is an error whose Error() is clean and whose JSON is not: the handler
+// prints the JSON.
+type marshalsOtherText struct{ text string }
+
+func (e marshalsOtherText) Error() string { return "provider failed" }
+func (e marshalsOtherText) MarshalJSON() ([]byte, error) {
+	return json.Marshal(e.text)
+}
+
+func TestRedactJSONLogAttrRedactsWhatAMarshalingErrorPrints(t *testing.T) {
+	err, key := echoedKey()
+	line := loggedJSON(t, true, "agent failure", "error", marshalsOtherText{err.Error()})
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
 	}
 }
 
