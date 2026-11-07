@@ -4374,6 +4374,44 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnUnlessActingOnChorusASR() {
 	s.Zero(s.voice.interrupted(), "the voice was stopped")
 }
 
+// Acting on chorus-asr, an agent that shortened the reply it is on has given the floor up to
+// the caller (pauseAsker.GivenWay), through the tail it plays out and once it has stopped, and
+// takes it back with its next turn: a ruling at the caller's pause that they take the floor
+// then ends their turn.
+func (s *AgentSuite) TestAShortenedReplyGivesWayUntilTheNextTurn() {
+	s.actsOnChorusASR()
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon this week")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	turnID := s.agent.floor().Speaking
+	s.Require().NotEmpty(turnID)
+	asker := pauseAsker{s.agent}
+	s.False(asker.GivenWay(), "the agent is holding the floor")
+
+	s.agent.shorten(participant, turnID, interruption{cause: causeShortened, words: "and in Porto"})
+	s.True(asker.GivenWay(), "playing out the tail of a reply it shortened")
+	time.Sleep(shortenTail + 100*time.Millisecond)
+	s.True(asker.GivenWay(), "past the tail")
+
+	s.model.reply = []string{"In Porto, cloudy."}
+	s.says(participant, "and in Porto")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, "the next turn never started")
+	s.False(asker.GivenWay(), "the next turn takes the floor back")
+
+	// A line the voice would not take leaves the agent on no turn, and gave nobody the floor:
+	// the turn it gave way on before is long gone.
+	s.voice.mu.Lock()
+	s.voice.refuses = errors.New("text too long")
+	s.voice.mu.Unlock()
+	s.Require().Error(s.agent.Say(s.ctx, "One moment, checking."))
+	s.False(asker.GivenWay(), "a line never heard gave way to nobody")
+}
+
 // A reply that ends within its shortened tail, its last audio out before the tail is up, is not
 // cut when the tail is: the caller heard it whole. Cut, the reply was reported interrupted, and
 // a transcript kept it as one, as soon as the caller's added item had not yet been answered.
