@@ -109,6 +109,7 @@ func (s *StoreSuite) TestATranscriptsToolResultIsKeptWithoutTheKeyItEchoed() {
 	for result, kept := range map[string]string{
 		"401 Unauthorized\nAuthorization: Bearer " + key: "401 Unauthorized\n[redacted]",
 		`{"status":"shipped","eta":"2026-11-09"}`:        `{"status":"shipped","eta":"2026-11-09"}`,
+		strings.Repeat("x", 9000):                        strings.Repeat("x", 2048) + "… [truncated]",
 	} {
 		run := s.startedRun("app", time.Now().Add(time.Minute))
 		cases, err := s.store.SimulationCases(s.ctx, run.ID)
