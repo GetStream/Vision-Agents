@@ -502,14 +502,17 @@ func TestRedactSentryEventKeepsTheReasonAndNotTheKey(t *testing.T) {
 func TestRedactSentryEventTakesTheKeyOutOfContextsAndTags(t *testing.T) {
 	err, key := echoedKey()
 	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
-	type reading struct{ Error string }
+	type reading struct {
+		Error string
+		Rows  int64
+	}
 	event := RedactSentryEvent(&sentry.Event{
 		Tags: map[string]string{"item": err.Error()},
 		Contexts: map[string]sentry.Context{"usage_alert": {
 			"reading": err.Error(),
 			"nested":  map[string]any{"error": err.Error()},
 			"listing": []any{err.Error()},
-			"typed":   map[string][]reading{"apps": {{Error: err.Error()}}},
+			"typed":   map[string][]reading{"apps": {{Error: err.Error(), Rows: 1<<60 + 1}}},
 		}},
 	}, nil)
 	if sent, _ := json.Marshal(event); strings.Contains(string(sent), key) {
@@ -523,7 +526,7 @@ func TestRedactSentryEventTakesTheKeyOutOfContextsAndTags(t *testing.T) {
 		t.Fatalf("a nested map or slice kept the key or lost the reason: %+v", context)
 	}
 	typed, _ := json.Marshal(context["typed"])
-	if want := `{"apps":[{"Error":` + strconv.Quote(reason) + `}]}`; string(typed) != want {
+	if want := `{"apps":[{"Error":` + strconv.Quote(reason) + `,"Rows":1152921504606846977}]}`; string(typed) != want {
 		t.Fatalf("a typed value kept the key or lost the reason:\n got %s\nwant %s", typed, want)
 	}
 }

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -186,6 +187,7 @@ func (s *RecordSuite) TestAToolsErrorIsRecordedWithoutTheKeyItEchoed() {
 		agent.ToolRan{TurnID: "turn-1", ID: "call-1", Tool: "cart",
 			Err: errors.New("cart: 401 Unauthorized\nAuthorization: Bearer " + key)},
 		agent.ToolRan{TurnID: "turn-1", ID: "call-2", Tool: "cart", Err: errors.New("cart: the service timed out")},
+		agent.ToolRan{TurnID: "turn-1", ID: "call-3", Tool: "cart", Err: errors.New(strings.Repeat("x", 9000))},
 		agent.Responded{TurnID: "turn-1", Text: "I could not read it."},
 	)
 
@@ -195,7 +197,9 @@ func (s *RecordSuite) TestAToolsErrorIsRecordedWithoutTheKeyItEchoed() {
 			failures = append(failures, item.Payload["error"])
 		}
 	}
-	s.Equal([]any{"cart: 401 Unauthorized\n[redacted]", "cart: the service timed out"}, failures)
+	// Cut as the requests table cuts an error (store.SafeLogText), so one tool cannot fill the row.
+	s.Equal([]any{"cart: 401 Unauthorized\n[redacted]", "cart: the service timed out",
+		strings.Repeat("x", 2048) + "… [truncated]"}, failures)
 }
 
 func (s *RecordSuite) TestATurnThatDelegatesStaysOpenUntilItComesBack() {

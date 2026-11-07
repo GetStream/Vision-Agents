@@ -284,7 +284,8 @@ func redactedContext(context map[string]any) map[string]any {
 
 // redactedValue is value with every string in it redacted, in maps and slices at any depth. A
 // value of another type is read as the JSON Sentry sends of it and, when that JSON holds a
-// credential, replaced by it decoded and redacted.
+// credential, replaced by it decoded and redacted. Decoded, it holds only maps, slices, strings
+// and numbers, booleans and nulls, whose JSON no rule matches, so none is read as JSON again.
 func redactedValue(value any) any {
 	switch value := value.(type) {
 	case string:

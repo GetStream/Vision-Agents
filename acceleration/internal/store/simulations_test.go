@@ -4,6 +4,7 @@ package store
 
 import (
 	"crypto/rand"
+	"strings"
 	"time"
 )
 
@@ -77,12 +78,14 @@ func (s *StoreSuite) TestAnotherCustomerCannotStopARun() {
 }
 
 // A case's error is the agent's when it stopped answering, which can be a provider's text
-// echoing the key it was sent: it is kept without the key. One with no key is kept as it was.
+// echoing the key it was sent: it is kept without the key, and cut as the requests table cuts
+// an error. One with no key is kept as it was.
 func (s *StoreSuite) TestACasesErrorIsKeptWithoutTheKeyItEchoed() {
 	key := "sk-test-" + rand.Text()
 	for failure, kept := range map[string]string{
 		"simulation: the agent did not answer: 401 Unauthorized\nAuthorization: Bearer " + key: "simulation: the agent did not answer: 401 Unauthorized\n[redacted]",
 		"simulation: the agent did not answer: 503 Service Unavailable":                        "simulation: the agent did not answer: 503 Service Unavailable",
+		strings.Repeat("x", 9000): strings.Repeat("x", 2048) + "… [truncated]",
 	} {
 		run := s.startedRun("app", time.Now().Add(time.Minute))
 		cases, err := s.store.SimulationCases(s.ctx, run.ID)
