@@ -3,6 +3,7 @@ package session
 import (
 	"errors"
 	"strconv"
+	"time"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -121,6 +122,12 @@ func (s *Session) fault() Fault {
 
 // createFailure is the reason a session Create gave up on, by whose fault err is.
 func createFailure(err error) EndReason {
+	if errors.Is(err, agent.ErrNoVideo) {
+		return EndCreateNoVideo
+	}
+	if reason, refused := setupRefusal(err); refused {
+		return reason
+	}
 	fault, _ := faultOf(err)
 	switch fault {
 	case FaultCustomerCredit:
@@ -131,6 +138,29 @@ func createFailure(err error) EndReason {
 		return EndCreateVendorFailed
 	}
 	return EndCreateFailed
+}
+
+// setupRefusal is the reason Create refuses a session for a Stream app of the customer's own
+// that lacks the call type or the channel type the agent works in, and false for any other err.
+func setupRefusal(err error) (EndReason, bool) {
+	switch {
+	case errors.Is(err, ErrNoAgentCallType):
+		return EndCreateNoCallType, true
+	case errors.Is(err, ErrNoAgentChannelType), errors.Is(err, ErrUnsafeAgentChannelType):
+		return EndCreateNoChannelType, true
+	}
+	return "", false
+}
+
+// refusedAtStart counts a Create refused before anything was opened, when it is the customer's
+// Stream app setup that refused it, as the create failure and start-up failure it is, and
+// returns err. Any other refusal is left uncounted, as before.
+func refusedAtStart(spec Spec, began time.Time, err error) error {
+	if reason, refused := setupRefusal(err); refused {
+		endCounter(reason).Inc()
+		newStartup(spec, began).Failed()
+	}
+	return err
 }
 
 // faultOf is whose doing a failure was, and false when err does not say. Money that could not
