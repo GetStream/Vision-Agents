@@ -490,6 +490,10 @@ func (s *VoiceNotesSuite) TestTextOverTheDefaultLimitWithoutAVoiceNoteIsRefusedA
 		"respond with a request id": func(opened Session) (int, []byte) {
 			return s.serverClient.call(http.MethodPost, s.respond(opened), map[string]any{"text": big, "request_id": s.utils.uuid()})
 		},
+		"respond with a photo": func(opened Session) (int, []byte) {
+			return s.serverClient.call(http.MethodPost, s.respond(opened), RespondRequest{
+				Text: big[:1<<20], RequestId: pointerTo(s.utils.uuid()), Images: &[]ImageSource{{Url: "data:image/png;base64," + big[:1<<10]}}})
+		},
 		"createResponse": func(opened Session) (int, []byte) {
 			return s.serverClient.call(http.MethodPost, s.responses(opened), CreateResponseRequest{Text: big})
 		},

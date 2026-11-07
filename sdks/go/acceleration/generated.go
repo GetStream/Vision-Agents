@@ -8002,10 +8002,13 @@ type RespondRequest struct {
 	// ClientId The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
 	ClientId *string `json:"client_id,omitempty"`
 
-	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
+	// Images Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images.
+	Images *[]ImageSource `json:"images,omitempty"`
+
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference.
 	RequestId *string `json:"request_id,omitempty"`
 
-	// Text What to answer, as though it had been said. May be empty when audio carries the question.
+	// Text What to answer, as though it had been said. May be empty when photos or audio carry the question.
 	Text string `json:"text"`
 }
 
@@ -8683,7 +8686,7 @@ type SessionQuery struct {
 type SessionRespondCommand struct {
 	Images *[]ImageSource `json:"images,omitempty"`
 
-	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+	// RequestId Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message.
 	RequestId *string                   `json:"request_id,omitempty"`
 	Text      string                    `json:"text"`
 	Type      SessionRespondCommandType `json:"type"`
