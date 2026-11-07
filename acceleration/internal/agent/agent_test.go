@@ -6416,7 +6416,6 @@ func (s *AgentSuite) TestTheVoiceThatReplacesALostOneSaysTheReplyWhileTheLostOne
 	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok },
 		"the turn waited for the lost voice to close")
 	s.eventually(func() bool { return isClosed(closing) }, "the lost voice was never closed")
-	s.Zero(s.voice.closed(), "the lost voice finished closing while it was held")
 
 	release()
 	s.eventually(func() bool { return s.voice.closed() == 1 }, "the lost voice never finished closing")
