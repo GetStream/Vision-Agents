@@ -238,15 +238,17 @@ func (t *Transcriber) interim(participant stt.Participant, heard int64) {
 	t.spoken = 0
 	t.interimOut.Store(true)
 	t.running.Add(1)
-	go t.writeInterim(participant, utterance, t.heard.Last(length), languages, spoken)
+	go t.writeInterim(participant, utterance, heard, t.talked, t.heard.Last(length), languages, spoken)
 }
 
 // writeInterim asks for the words of audio, the utterance so far, in languages, and sends
 // them as an interim of the utterance unless newer words of it, or its final, have gone out
 // meanwhile, or they are in a language other than spoken, the utterance's own, when that is
 // known. A server that is busy or fails costs nothing but this request: it is not asked
-// again.
-func (t *Transcriber) writeInterim(participant stt.Participant, utterance int64, audio harness.Audio, languages []string, spoken string) {
+// again. Words it wrote, none included, move the clock of a pause the speech gate can't hear,
+// as of frame at with talked voiced frames (stillWords); words blanked as another language
+// say nothing of whether the caller went on.
+func (t *Transcriber) writeInterim(participant stt.Participant, utterance, at, talked int64, audio harness.Audio, languages []string, spoken string) {
 	defer t.running.Done()
 	defer t.interimOut.Store(false)
 	start := time.Now()
@@ -263,6 +265,9 @@ func (t *Transcriber) writeInterim(participant stt.Participant, utterance int64,
 		return
 	}
 	words := strings.TrimSpace(said.Text)
+	if said.Noise == "" && (spoken == "" || said.Language == "" || said.Language == spoken) {
+		t.wrote(utterance, at, talked, words)
+	}
 	switch {
 	case said.Noise == "language", spoken != "" && said.Language != "" && said.Language != spoken:
 		interims.WithLabelValues("foreign").Inc()

@@ -344,6 +344,24 @@ last frame, and a pause costs one request:
   a pause, where the item is answered. 350 ms is most of an "uh-huh", so the model rules on a
   murmur, which it was trained to let the agent talk through, rather than on the first
   syllable of anything, and a word that stops the agent, "no" or "stop", is said inside it.
+- **A pause the gate can't hear.** A room (a TV, a street, people talking) can keep the
+  speech gate voiced after the caller has finished, so that no pause begins, or one begins
+  again at every burst of the room, and the turn waits for the caller to speak again. The
+  level can't tell such a room from the caller, nor can the detector, but the words can: the
+  server writes nothing of the room. With the floor free, every request that writes the
+  utterance's words (a pause's first check, an interim) moves a clock, and while the gate
+  holds the line voiced and nothing has written the words for 1.1 s of speech, the
+  transcriber asks a held check, a pause's first check in all but the pause. A held check
+  whose words, not none, are the same as they have been for 1.1 s, or the agent's point's
+  `max_wait_ms` if longer, with the gate voiced for at least half of that time, ends the turn
+  on its own ruling, as `cap_ms` ends one: the model's disposition and floor, whatever p_eot
+  says. It is logged on the `chorus-asr checked` line with `held=true` and `still_ms`, and
+  counted in `router_chorus_asr_still_ends_total`. A quiet line is as it was: after the
+  caller the gate is quiet and the pause's checks rule; a held check is asked there only in a
+  voiced stretch with no pause and no interim for 1.1 s, and words that change end nothing.
+  Nothing is held over the agent, nor for a transcriber of its own
+  ([Transcription alone](#transcription-alone)). Words a room's voice is written as (a TV
+  read as the caller) keep the clock going, as they keep any transcriber's words changing.
 - **Live words, acted on at the end.** While the caller talks the transcriber shows the
   words so far, as interims ([Live words](#live-words)), and the agent shows them and acts
   on none: nothing supersedes a ruling or interrupts a reply about audio already ruled on.

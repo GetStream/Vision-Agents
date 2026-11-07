@@ -123,12 +123,9 @@ func (h *Hearer) check(ctx context.Context, turn harness.FlowTurn) (Check, error
 // rule reads the model's answer about turn by policy and the agent's choice of a point: the
 // ruling of the Hearer's own checks and of a transcriber asking for the agent (Asker).
 func (h *Hearer) rule(policy Policy, turn harness.FlowTurn, answer Answer) (Check, error) {
-	r := answer.Ruling
-	check := Check{Answer: answer, Ended: true, Ruling: harness.Decided{
-		Disposition: harness.Disposition(r.Disposition), Floor: harness.Floor(r.Floor),
-	}}
-	if !check.Ruling.Disposition.Valid() || !check.Ruling.Floor.Valid() {
-		return Check{}, stack.Wrap(fmt.Errorf("audiofloor: a ruling the flow controller has no word for: %+v", *r))
+	check, err := ended(answer)
+	if err != nil {
+		return Check{}, err
 	}
 	if turn.Speaking {
 		return check, nil
@@ -142,6 +139,31 @@ func (h *Hearer) rule(policy Policy, turn harness.FlowTurn, answer Answer) (Chec
 	check.Ended = check.InARow >= check.Ending.ChecksInARow || turn.Paused >= policy.Cap()
 	if !check.Ended {
 		check.Ruling = harness.Decided{Disposition: harness.Wait, Floor: harness.Continue, Again: policy.Interval()}
+	}
+	return check, nil
+}
+
+// ruleStill reads the model's answer about a turn whose words have held still as the policy's
+// cap reads one (heldStill): the turn has ended with the floor free, on the model's own ruling,
+// whatever p_eot says. It counts no check in a row: the run is a pause's, and this is no pause the
+// speech gate heard.
+func (h *Hearer) ruleStill(policy Policy, answer Answer) (Check, error) {
+	check, err := ended(answer)
+	if err != nil {
+		return Check{}, err
+	}
+	check.Ending = h.ending(policy)
+	return check, nil
+}
+
+// ended is the model's answer as a check that ended the turn on its ruling.
+func ended(answer Answer) (Check, error) {
+	r := answer.Ruling
+	check := Check{Answer: answer, Ended: true, Ruling: harness.Decided{
+		Disposition: harness.Disposition(r.Disposition), Floor: harness.Floor(r.Floor),
+	}}
+	if !check.Ruling.Disposition.Valid() || !check.Ruling.Floor.Valid() {
+		return Check{}, stack.Wrap(fmt.Errorf("audiofloor: a ruling the flow controller has no word for: %+v", *r))
 	}
 	return check, nil
 }
