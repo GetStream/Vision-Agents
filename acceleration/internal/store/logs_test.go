@@ -56,6 +56,8 @@ func TestSafeLogTextQueryAndEncodedCredentials(t *testing.T) {
 		"twice-encoded bearer":                       `h=Bearer%2520` + secret,
 		"twice-encoded authorization":                `h=Authorization%253A%2520Basic%2520` + secret,
 		"key first (gemini stt and sts)":             `Get "wss://live.example/ws?key=` + secret + `": dial tcp: i/o timeout`,
+		"key at the start of a json query":           `{"method":"GET","query":"key=` + secret + backslash + `u0026echo_status=404"}`,
+		"token at the start of a quoted query":       `query="token=` + secret + `"`,
 		"key after another parameter":                `wss://live.example/ws?alt=sse&key=` + secret + `&model=m`,
 		"key in upper case":                          `wss://live.example/ws?KEY=` + secret,
 		"key in an encoded url":                      `redirect=https%3A%2F%2Flive.example%2Fws%3Fkey%3D` + secret,
@@ -109,6 +111,7 @@ func TestSafeLogTextKeepsTheRestOfTheURL(t *testing.T) {
 		`Get "wss://live.example/ws?alt=sse&key=` + secret + `&model=m": EOF`:        `Get "wss://live.example/ws?alt=sse&key=[redacted]&model=m": EOF`,
 		`h=Authorization%3A%20Basic%20` + secret + `&model=m`:                        `h=[redacted]&model=m`,
 		`h=Bearer%20` + secret + `&model=m`:                                          `h=[redacted]&model=m`,
+		`{"query":"key=` + secret + backslash + `u0026echo_status=404"}`:             `{"query":"key=[redacted]` + backslash + `u0026echo_status=404"}`,
 	} {
 		if result := SafeLogText(message); result != want {
 			t.Errorf("SafeLogText(%q) = %q, want %q", message, result, want)
