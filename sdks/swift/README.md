@@ -29,7 +29,7 @@ is new after that. The examples reach the package by path, so they build against
 ## Using them
 
 ```swift
-let agents = VisionAgents(apiKey: "your_api_key")
+let agents = StreamAgents(apiKey: "your_api_key")
 agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 
 // In writing. No call is joined, nothing is transcribed or spoken.
@@ -50,12 +50,12 @@ await voice.join()
 let channel = try await session.chat()
 ```
 
-`VisionAgents(apiKey:)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
+`StreamAgents(apiKey:)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
 region, pass `url: try Backend.regionURL("europe-west4")`. The token
 comes from a closure because your backend mints it and it expires: it is asked for once, then
 again after a 401. The key goes in the query string and the token in the `Authorization`
 header, never in a URL. A router running locally with nothing in front of it is reached by
-customer id instead: `VisionAgents(url: URL(string: "http://localhost:8080")!, customerID: "acme")`.
+customer id instead: `StreamAgents(url: URL(string: "http://localhost:8080")!, customerID: "acme")`.
 
 Stream is set up once. The key, the user and the token from `setUser` are the one identity for
 the router, Stream Chat and Stream Video, so `join()` and `chat()` need nothing more. Each

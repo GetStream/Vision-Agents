@@ -36,8 +36,8 @@ enum Demo {
     /// Who this device is. A call waiting for approval is addressed to them.
     static let user = User(id: "demo-caller", name: "Demo caller")
 
-    static let agents: VisionAgents = {
-        let agents = VisionAgents(url: routerURL, customerID: customerID, apiKey: streamAPIKey)
+    static let agents: StreamAgents = {
+        let agents = StreamAgents(url: routerURL, customerID: customerID, apiKey: streamAPIKey)
         agents.setUser(user) { try await streamToken() }
         return agents
     }()

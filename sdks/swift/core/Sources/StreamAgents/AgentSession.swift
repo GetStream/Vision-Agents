@@ -137,7 +137,7 @@ public final class AgentSession: ObservableObject {
     /// on there. Starting voice that is already on does nothing.
     @discardableResult
     public func startVoice() async throws -> Session {
-        session = try await VisionAgents(backend: backend).sessions.startVoice(session.id)
+        session = try await StreamAgents(backend: backend).sessions.startVoice(session.id)
         return session
     }
 
@@ -145,7 +145,7 @@ public final class AgentSession: ObservableObject {
     /// that is off does nothing.
     @discardableResult
     public func stopVoice() async throws -> Session {
-        session = try await VisionAgents(backend: backend).sessions.stopVoice(session.id)
+        session = try await StreamAgents(backend: backend).sessions.stopVoice(session.id)
         return session
     }
 
@@ -155,15 +155,15 @@ public final class AgentSession: ObservableObject {
     public func update(
         title: String? = nil, description: String? = nil, custom: [String: RawJSON]? = nil
     ) async throws -> Session {
-        session = try await VisionAgents(backend: backend).sessions.update(
+        session = try await StreamAgents(backend: backend).sessions.update(
             session.id, title: title, description: description, custom: custom)
         return session
     }
 
     /// Continues this conversation as a new session held in writing, leaving this one as it
-    /// was. Follow the fork with `VisionAgents.attach(sessionID:)`.
+    /// was. Follow the fork with `StreamAgents.attach(sessionID:)`.
     public func fork(_ options: ForkOptions = ForkOptions()) async throws -> Session {
-        try await VisionAgents(backend: backend).fork(sessionID: session.id, options)
+        try await StreamAgents(backend: backend).fork(sessionID: session.id, options)
     }
 
     /// Answers a call waiting in `approvals`.
@@ -218,7 +218,7 @@ public final class AgentSession: ObservableObject {
     /// Deletes this conversation: it is stopped, and its turns and what it remembered go with
     /// it.
     public func delete() async throws {
-        try await VisionAgents(backend: backend).sessions.delete(session.id)
+        try await StreamAgents(backend: backend).sessions.delete(session.id)
         await close()
     }
 

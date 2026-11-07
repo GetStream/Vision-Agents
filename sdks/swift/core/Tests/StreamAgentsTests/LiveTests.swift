@@ -18,8 +18,8 @@ struct Live {
 
     static var available: Bool { url != nil }
 
-    static var agents: VisionAgents {
-        VisionAgents(url: URL(string: url!)!, customerID: customerID)
+    static var agents: StreamAgents {
+        StreamAgents(url: URL(string: url!)!, customerID: customerID)
     }
 }
 

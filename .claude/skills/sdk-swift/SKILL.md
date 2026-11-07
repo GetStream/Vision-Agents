@@ -214,14 +214,14 @@ hands over its body.
 
 ## Public API
 
-`VisionAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
+`StreamAgents(apiKey:)`, defaulting to Stream's hosted router, then `setUser` with a token
 provider: the shape [sdk](../sdk/SKILL.md) gives every client SDK. `ID` and `URL` are
-capitalised as Swift does. The initialiser does no I/O. `VisionAgents(url:customerID:)` is
+capitalised as Swift does. The initialiser does no I/O. `StreamAgents(url:customerID:)` is
 only for a router running locally with nothing in front of it; an `apiKey:` beside it is
 Stream's alone, for chat and video, and the router is still reached by customer id.
 
 ```swift
-let agents = VisionAgents(apiKey: "your_api_key")
+let agents = StreamAgents(apiKey: "your_api_key")
 agents.setUser(User(id: "jlahey")) { try await yourBackend.agentToken() }
 let session = try await agents.agent("myagent").sessions.create()
 let turn = try await session.responses.create("Where is order 1042?")

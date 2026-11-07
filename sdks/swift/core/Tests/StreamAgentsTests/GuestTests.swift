@@ -16,7 +16,7 @@ import Testing
         let server = try SessionServer(
             answer: Self.minted(#"{"id":"guest-1","token":"tok","name":"Guest","expires_at":"2999-01-01T00:00:00Z"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let first = try await agents.guestUser(GuestOptions(name: "Guest"), store: store)
         let again = try await agents.guestUser(GuestOptions(name: "Guest"), store: store)
@@ -32,7 +32,7 @@ import Testing
         let server = try SessionServer(
             answer: Self.minted(#"{"id":"guest-1","token":"tok","refresh_secret":"s1"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         _ = try await agents.guestUser(store: store)
 
@@ -47,7 +47,7 @@ import Testing
             answer: Self.minted(
                 #"{"id":"guest-1","token":"new","expires_at":"2999-01-01T00:00:00Z","refresh_secret":"s2"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let guest = try await agents.guestUser(store: store)
 
@@ -66,7 +66,7 @@ import Testing
             answer: Self.minted(
                 #"{"id":"guest-2","token":"new","expires_at":"2999-01-01T00:00:00Z","refresh_secret":"s9"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let guest = try await agents.guestUser(store: store)
         let again = try await agents.guestUser(store: store)
@@ -82,7 +82,7 @@ import Testing
         try store.write(#"{"id":"guest-1","token":"old","expires_at":"2020-01-01T00:00:00Z"}"#)
         let server = try SessionServer(answer: Self.minted(#"{"id":"guest-2","token":"new"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let guest = try await agents.guestUser(GuestOptions(name: "Guest"), store: store)
 
@@ -94,7 +94,7 @@ import Testing
         try store.write(#"{"id":"guest-1","token":"tok"}"#)
         let server = try SessionServer(answer: Self.minted(#"{"id":"guest-2","token":"t"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let guest = try await agents.guestUser(GuestOptions(fresh: true), store: store)
         agents.setUser(guest)
@@ -109,7 +109,7 @@ import Testing
     @Test func aDeviceWithOnlyTheAppKeyAsksForAGuestAnonymously() async throws {
         let server = try SessionServer(answer: Self.minted(#"{"id":"guest-1","token":"t"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(apiKey: "key", url: try await server.url())
+        let agents = StreamAgents(apiKey: "key", url: try await server.url())
 
         let guest = try await agents.guestUser()
 
@@ -126,7 +126,7 @@ import Testing
                 status: 401, headers: ["Content-Type": "application/json"],
                 body: #"{"code":2,"message":"anonymous access is not available on the acceleration api","StatusCode":401}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(apiKey: "key", url: try await server.url())
+        let agents = StreamAgents(apiKey: "key", url: try await server.url())
 
         let error = try await #require(throws: AgentsError.self) { try await agents.guestUser() }
 
@@ -141,7 +141,7 @@ import Testing
         try store.write("{truncated")
         let server = try SessionServer(answer: Self.minted(#"{"id":"guest-1","token":"t"}"#))
         defer { server.listener.cancel() }
-        let agents = VisionAgents(url: try await server.url(), customerID: "acme")
+        let agents = StreamAgents(url: try await server.url(), customerID: "acme")
 
         let guest = try await agents.guestUser(store: store)
 

@@ -106,7 +106,7 @@ import Testing
         let first = try await backend.shared("chat", open: open, disconnect: disconnect)
         backend.setUser(User(id: "john"), token: "another-token")
         let second = try await backend.shared("chat", open: open, disconnect: disconnect)
-        await VisionAgents(backend: backend).disconnect()
+        await StreamAgents(backend: backend).disconnect()
 
         #expect(first === mine)
         #expect(second === mine)
@@ -125,7 +125,7 @@ import Testing
         let disconnect: @Sendable (Peer) async -> Void = { _ in _ = await disconnected.add() }
 
         let first = try await backend.shared("chat", open: open, disconnect: disconnect)
-        await VisionAgents(backend: backend).disconnect()
+        await StreamAgents(backend: backend).disconnect()
         let second = try await backend.shared("chat", open: open, disconnect: disconnect)
 
         #expect(first !== second)

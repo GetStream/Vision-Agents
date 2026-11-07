@@ -107,7 +107,7 @@ public struct Backend: Sendable {
     public func streamCredentials(refresh: Bool = false) async throws -> StreamCredentials {
         guard !apiKey.isEmpty, let user = identity.user else {
             throw AgentsError.configuration(
-                "Stream Chat and Video need the app's Stream key and a user: build VisionAgents "
+                "Stream Chat and Video need the app's Stream key and a user: build StreamAgents "
                     + "with apiKey and call setUser")
         }
         if refresh {
@@ -137,7 +137,7 @@ public struct Backend: Sendable {
         guard !apiKey.isEmpty, let user = identity.user else {
             throw AgentsError.configuration(
                 "\(kind) connects to Stream rather than to the router, so it needs the app's "
-                    + "Stream key and a user: build VisionAgents with apiKey and call setUser")
+                    + "Stream key and a user: build StreamAgents with apiKey and call setUser")
         }
         return try await identity.built(
             "\(kind):\(apiKey):\(user.id)",
