@@ -169,6 +169,9 @@ type Transcriber struct {
 	pauses  int
 	over    overChecks
 	running sync.WaitGroup
+	// noise is why the words of an utterance last came back empty, which an asker is told
+	// if it ends with no final (unwritten).
+	noise emptyWords
 	// unruled counts the checks in a row the server did not rule on, for a floor that rules
 	// alone, and unruledSince is when the first of them was asked (checked).
 	unruled      int
@@ -330,6 +333,7 @@ func (t *Transcriber) ask(r request) {
 		if r.final {
 			// The utterance is over with its final lost, and nothing more of it is to come.
 			t.sent.ended(r.utterance)
+			t.unwritten(r.participant, r.utterance, "behind")
 		}
 	}
 }
@@ -351,6 +355,8 @@ func (t *Transcriber) transcribe() {
 	var failed int
 	var failedSince time.Time
 	var owed int64
+	// why is why the utterance's words last came back empty: the server's noise, or failed.
+	var why string
 	for {
 		var r request
 		select {
@@ -364,7 +370,7 @@ func (t *Transcriber) transcribe() {
 		if r.utterance != lastOf {
 			// An utterance whose final was dropped leaves its words behind, which are
 			// not the next one's.
-			last, lastOf = "", r.utterance
+			last, lastOf, why = "", r.utterance, ""
 		}
 		start := time.Now()
 		var words string
@@ -395,7 +401,7 @@ func (t *Transcriber) transcribe() {
 				transcribeFailures.WithLabelValues(failure(err)).Inc()
 				t.logger.Warn("the chorus-asr server did not write an utterance's words, they are asked for again",
 					"participant", r.participant.ID, "utterance", r.utterance, "final", r.final, "error", err)
-				owed = r.utterance
+				owed, why = r.utterance, "failed"
 				if Unreachable(err) && failed >= failoverAfter && down >= failoverWindow {
 					t.emitter.Send(stt.Error{Provider: ProviderName, Model: t.model, Context: "transcribe", Fatal: true,
 						Err: stack.Wrap(fmt.Errorf("audiofloor: the server answered none of %d requests for words in %s, the last: %w",
@@ -408,6 +414,7 @@ func (t *Transcriber) transcribe() {
 				if words != "" {
 					t.sent.establish(r.utterance, said.Language)
 				}
+				why = said.Noise
 			}
 		}
 		if words != "" {
@@ -417,6 +424,7 @@ func (t *Transcriber) transcribe() {
 			if r.final {
 				// Over with nothing heard, or its final lost: nothing more of it is to come.
 				t.sent.ended(r.utterance)
+				t.unwritten(r.participant, r.utterance, why)
 			}
 			continue
 		}

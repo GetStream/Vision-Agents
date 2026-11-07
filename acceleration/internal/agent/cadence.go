@@ -86,6 +86,10 @@ type cadence struct {
 	// words never change after it, so it is put at once (endedLocked). So is a final of
 	// another transcriber's words chorus-asr's floor ended (stt.Transcript.Floor).
 	endedBy string
+	// restated is told of a final set aside as the transcriber restating an utterance the
+	// agent already dealt with (wordLedger.repeated). Nil tells nobody. It is called under
+	// the lock.
+	restated func(participant string, utterance int64, text string)
 }
 
 type cadenceSpeaker struct {
@@ -289,6 +293,9 @@ func (c *cadence) Observe(transcript stt.Transcript) (superseded string, saying 
 		c.logger.Debug("ignoring the transcriber restating an answered utterance",
 			"participant", transcript.Participant.ID, "text", text,
 			"utterance", transcript.Utterance, "since", time.Since(current.committedAt))
+		if c.restated != nil && transcript.Final() {
+			c.restated(transcript.Participant.ID, transcript.Utterance, transcript.Text)
+		}
 		return "", ""
 	}
 

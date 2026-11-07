@@ -322,7 +322,17 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return
 	}
-	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.answerHeardBefore(ruled.Began), a.floor()))
+	heard := a.answerHeardBefore(ruled.Began)
+	actions := a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, heard, a.floor())
+	silenced := a.silenced.Load()
+	a.act(actions)
+	a.overheardWords(participant.ID, ruled.Utterance, left, actions, heard, a.silenced.Load() != silenced)
+}
+
+// Unwritten accounts for what checks over the agent wrote of an utterance the transcriber
+// ended with no final (audiofloor.Unwritten).
+func (p pauseAsker) Unwritten(participant stt.Participant, utterance int64, why string) {
+	p.a.words.unwritten(participant.ID, utterance, why)
 }
 
 // GivenWay says the agent has given the floor up to the caller over the turn it is on: it

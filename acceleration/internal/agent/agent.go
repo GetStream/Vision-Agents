@@ -578,6 +578,12 @@ type Agent struct {
 	// converse makes every judgement about how to handle the call, and reports each one
 	// so the reasoning behind a conversation can be read back rather than inferred.
 	converse *converse
+	// words accounts for every word of the callers' finals: answered, or set aside for a
+	// named reason (wordLedger).
+	words *wordLedger
+	// silenced counts the replies abandonReply abandoned, which says whether a ruling acted
+	// on silenced the agent (pauseAsker.Overheard).
+	silenced atomic.Int64
 
 	// duplex tracks listening acknowledgements and transcript confidence.
 	duplex *duplex
@@ -768,6 +774,9 @@ func New(options Options) (*Agent, error) {
 	}
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
 	agent.converse.onHeard = options.OnHeard
+	agent.words = newWordLedger(logger)
+	agent.converse.words = agent.words
+	settling.restated = agent.words.repeated
 	agent.turns = newTurnTracker(owner, agent.finishTurn)
 	agent.nativeMode.Store(native)
 
@@ -1465,6 +1474,7 @@ func (a *Agent) Close() error {
 }
 
 func (a *Agent) close() error {
+	a.words.closing()
 	a.mu.Lock()
 	a.closed = true
 	cancel := a.cancel
@@ -1502,6 +1512,7 @@ func (a *Agent) close() error {
 	a.forgetUtterancesLocked()
 	a.mu.Unlock()
 	a.logHeardFromEveryone("end")
+	a.words.end(a.converse.holds)
 
 	// The writers are drained after the consumers have stopped, so a turn that finished
 	// on the way out is still recorded and still remembered.
@@ -1667,6 +1678,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	// A new transcriber numbers the participant's utterances from one again: a stop ruled
 	// in one of the last one's is spent, and is forgotten before this one can rule another.
 	a.converse.forgetStop(participant.ID)
+	a.words.closed(participant.ID)
 	// Acting on chorus-asr, it times the caller's pauses from the audio and asks about each,
 	// and about the caller talking over the agent, whatever transcriber writes the words. As
 	// chorus-asr's transcriber, it writes the words of each pause in the same pass. With
@@ -1797,6 +1809,7 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session, flo
 				floor.FailedOver()
 			} else {
 				a.converse.forgetStop(participantID)
+				a.words.closed(participantID)
 			}
 			a.logger.Warn("the transcriber refused the session, the next model took it over",
 				"from", typed.From, "provider", typed.Provider, "model", typed.Model, "error", typed.Err)
@@ -1850,6 +1863,9 @@ func (a *Agent) transcribed(typed stt.Transcript, count func(stt.Transcript)) {
 		// has ended: shown, and acted on when the final comes.
 		a.converse.Glimpsed(typed)
 		return
+	}
+	if typed.Final() {
+		a.words.final(typed.Participant.ID, typed.Utterance, typed.Text)
 	}
 	a.act(a.converse.Observe(typed, a.floor()))
 }
@@ -2420,6 +2436,9 @@ func (a *Agent) userTurnLocked(participant stt.Participant, text string) llm.Mes
 func (a *Agent) keepTurnLocked(participant stt.Participant, text string, photos int, images []llm.ImagePart, typed bool) {
 	turn := a.userTurnLocked(participant, text)
 	turn.Typed = typed
+	if !typed {
+		a.words.answered(participant.ID, text)
+	}
 	a.turnSaid = turn.Content
 	turn.Content = PhotoNote(turn.Content, photos)
 	a.turnKept = turn.Content
@@ -4016,6 +4035,7 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	cut := a.cutShortLocked(turnID, now)
 	outstanding := a.generating || a.audioOutstandingLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
+	a.silenced.Add(1)
 	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
 	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
 	// takes a turn of its own, to say what a tool came back with, while the reply before is

@@ -84,6 +84,9 @@ func (a *Agent) droppingEcho(transcript stt.Transcript, who string) (string, boo
 		"text", transcript.Text, "echo_words", echo, "left", left)
 	heard := strings.TrimSpace(left) != ""
 	echoes.WithLabelValues(strconv.FormatBool(heard)).Inc()
+	if transcript.Final() {
+		a.echoedWords(transcript, echo)
+	}
 	return left, heard
 }
 

@@ -763,6 +763,7 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 		asker.Overheard(c.participant, *stopping)
 	}
 	if text == "" {
+		t.noted(c.utterance, words.Noise)
 		t.finish(c.epoch)
 		return
 	}
@@ -821,6 +822,7 @@ func (t *Transcriber) finish(epoch int64) {
 			"participant", participant.ID, "utterance", utterance, "speaking", ruled.Speaking, "paused_ms", ruled.Paused.Milliseconds(),
 			"disposition", ruled.Ruling.Disposition, "floor", ruled.Ruling.Floor, "noise", noise)
 		t.sent.ended(utterance)
+		t.unwritten(participant, utterance, "")
 		return
 	}
 	asker.Ruled(participant, ruled)

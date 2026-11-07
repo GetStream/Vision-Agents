@@ -941,6 +941,9 @@ type AgentSuite struct {
 
 	agent  *Agent
 	events *collector
+	// words is what became of the words of the agent's callers, which no test may lose
+	// (noWordLost).
+	words *wordTrail
 	// over is closed when the test ends, before its agent closes, so a fake tool still
 	// holding a call lets it go rather than hold the agent's shutdown.
 	over chan struct{}
@@ -1092,6 +1095,7 @@ func (s *AgentSuite) joinText() {
 	})
 	s.Require().NoError(err)
 	s.agent = agent
+	s.words = tracksWords(agent)
 
 	s.Require().NoError(agent.Join(s.ctx))
 
@@ -1253,6 +1257,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 	})
 	s.Require().NoError(err)
 	s.agent = agent
+	s.words = tracksWords(agent)
 
 	s.Require().NoError(agent.Join(s.ctx))
 
@@ -1267,7 +1272,7 @@ func (s *AgentSuite) joinWithVoice(streamingVoice bool, wrapVoice func(*stubTTS)
 // fails the test that left it instead of holding the package until go test's 10 m timeout.
 // The test's own T is kept, because the suite has moved back to the parent by cleanup.
 func (s *AgentSuite) closesAtEnd(agent *Agent) {
-	t, over, events := s.T(), s.over, s.events
+	t, over, events, words := s.T(), s.over, s.events, s.words
 	t.Cleanup(func() {
 		select {
 		case <-over:
@@ -1282,6 +1287,7 @@ func (s *AgentSuite) closesAtEnd(agent *Agent) {
 		}()
 		select {
 		case <-closed:
+			noWordLost(t, words)
 		case <-time.After(closeFor):
 			t.Errorf("the agent did not close within %s: one of its goroutines waits on something nothing will end", closeFor)
 		}
