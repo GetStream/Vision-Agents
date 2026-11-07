@@ -11,12 +11,7 @@
     "noEmit": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "types": ["vite/client"],
-    // The SDK comes from this checkout with its own node_modules: its types name the app's copies.
-    "paths": {
-      "@stream-io/video-client": ["./node_modules/@stream-io/video-client"],
-      "stream-chat": ["./node_modules/stream-chat"]
-    }
+    "types": ["vite/client"]
   },
   "include": ["src", "tests", "vite.config.ts"]
 }

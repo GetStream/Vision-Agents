@@ -3,9 +3,6 @@ import { defineConfig, searchForWorkspaceRoot } from "vite";
 
 export default defineConfig({
   plugins: [react()],
-  // The SDK comes from this checkout, with its own node_modules beside it: one copy of each
-  // Stream client and of React, or chat and video would each be loaded twice.
-  resolve: { dedupe: ["react", "react-dom", "stream-chat", "@stream-io/video-client"] },
   server: {
     // The router takes a sign-in's return page only on the origin the session named, and an
     // http one only on localhost, so the page is always served here.
@@ -23,5 +20,5 @@ export default defineConfig({
       },
     },
   },
-  build: { rollupOptions: { input: { main: "index.html", connected: "connected.html" } } },
+  build: { rolldownOptions: { input: { main: "index.html", connected: "connected.html" } } },
 });
