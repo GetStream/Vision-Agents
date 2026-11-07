@@ -855,11 +855,12 @@ func (a *Agent) murmurLocked(turnID string) bool {
 }
 
 // talkedOverLocked reports whether a check-in held for the next voice was overtaken by the
-// caller: they were heard after its voice was lost. A reply they talk over is abandoned,
-// which lets go of it, but hearing them is no interruption of a line under a murmur's
-// prefix, so the next voice would say it over them. Agent.mu must be held.
+// caller: they said more than a murmur (takesFloor, the rule overlap holds a reply to) after
+// its voice was lost. A reply they talk over is abandoned, which lets go of it, but talking is
+// no interruption of a line under a murmur's prefix, so the next voice would say it over them.
+// Agent.mu must be held.
 func (a *Agent) talkedOverLocked(held *heldReply) bool {
-	return strings.HasPrefix(held.turnID, backchannelPrefix) && a.lastHeardAt.After(held.lostAt)
+	return strings.HasPrefix(held.turnID, backchannelPrefix) && a.talkedAt.After(held.lostAt)
 }
 
 // lostWith reports a reply the voice was lost under as cut off, and owes the caller again

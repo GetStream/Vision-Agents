@@ -7053,6 +7053,47 @@ func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsNotSaidOverACallerWhoStart
 	}, "a held check-in was said over a caller who started talking")
 }
 
+func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidAfterAMurmurOfTheCallers() {
+	// A murmur is the caller listening, as it is to a reply: the check-in is still said.
+	s.checkInSaidAfterTheCallerSays("mm-hm")
+}
+
+func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidAfterTheCallerSaysOkay() {
+	// Assent, like a murmur, takes no floor.
+	s.checkInSaidAfterTheCallerSays("okay")
+}
+
+// checkInSaidAfterTheCallerSays holds an idle check-in for the next voice, has the caller say
+// text while that voice opens, and asserts the check-in is said and not reported cut off.
+func (s *AgentSuite) checkInSaidAfterTheCallerSays(text string) {
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	s.model.composes = []string{"Is there anything else I can help with?"}
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	checkIn, _ := firstOf[Responded](s.reported())
+	s.Require().True(strings.HasPrefix(checkIn.TurnID, backchannelPrefix), "the check-in is not the case under test")
+
+	s.refusesVoice()
+	<-started
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.mutters(alice, text)
+	s.eventually(func() bool { return !s.agent.floor().LastHeardAt.IsZero() }, "the caller was never heard")
+	opened()
+
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == checkIn.TurnID
+	}, "a check-in the caller only murmured over was not said in the next voice")
+	s.False(s.cutOff(checkIn.TurnID), "a check-in the next voice says was reported cut off")
+}
+
 func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidWhenTheCallerWasLastHeardBeforeTheLoss() {
 	// A check-in follows a silence of the caller's: heard before its voice went, they did not
 	// start talking over it.
