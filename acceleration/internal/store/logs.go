@@ -102,8 +102,8 @@ func SafeLogText(text string) string {
 }
 
 // RedactLogText is text with every credential shape taken out, at whatever length. A caller
-// that must send the whole text, such as a refusal naming what the caller sent, uses this;
-// everything stored or logged uses SafeLogText.
+// that must send the whole text, such as a refusal naming what the caller sent, or a log line,
+// which has no cap (RedactLogAttr), uses this; everything stored uses SafeLogText.
 func RedactLogText(text string) string {
 	text = bearerCredential.ReplaceAllString(text, "[redacted]")
 	text = authorizationHeader.ReplaceAllString(text, "[redacted]")
