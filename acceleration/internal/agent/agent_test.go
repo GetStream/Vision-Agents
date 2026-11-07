@@ -1343,14 +1343,8 @@ func (s *AgentSuite) replyWentOut() {
 // never answers, so the flow controller rules every turn the model is asked about, with the
 // stub transcriber standing in for chorus-asr's (pausingSTT).
 func (s *AgentSuite) actsOnChorusASR() {
-	s.actsWithAnotherTranscriber()
-	s.earsPause = true
-}
-
-// actsWithAnotherTranscriber has the agent joined next act on the chorus-asr model, at a server
-// that never answers, while another transcriber hears its callers.
-func (s *AgentSuite) actsWithAnotherTranscriber() {
 	s.floor, s.floorMode = audiofloor.New("http://127.0.0.1:1", audiofloor.Opus, nil), audiofloor.Act
+	s.earsPause = true
 }
 
 // pausingSTT is the stub transcriber standing in for chorus-asr's, which an acting agent has
@@ -4412,10 +4406,10 @@ func (s *AgentSuite) TestAReplyThatEndsWithinItsShortenedTailIsNotCut() {
 	s.Zero(s.voice.interrupted(), "the voice was stopped")
 }
 
-// The loop's contract is kept while chorus-asr hears the callers, and no longer once another
-// transcriber does, as when a session's transcriber is changed mid-call: kept, a check-in said
-// over another transcriber's line was stopped by its own echo.
-func (s *AgentSuite) TestTheContractIsKeptWhileChorusASRHearsTheCaller() {
+// The loop's contract is kept while chorus-asr rules on the callers' floor, whichever
+// transcriber writes their words: as when a session's transcriber is changed mid-call to
+// another, which a floor of chorus-asr's own hears beside.
+func (s *AgentSuite) TestTheContractIsKeptWhicheverTranscriberHearsTheCaller() {
 	s.actsOnChorusASR()
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
@@ -4435,19 +4429,17 @@ func (s *AgentSuite) TestTheContractIsKeptWhileChorusASRHearsTheCaller() {
 	s.eventually(func() bool { return countOf[ParticipantJoined](s.reported()) == 1 }, "the caller never came back")
 	s.speak(participant)
 	s.eventually(listening, "the caller who came back is not listened to")
-	s.False(s.agent.actsOnChorusASR(), "the contract was kept with another transcriber hearing the caller")
+	s.True(s.agent.actsOnChorusASR(), "the contract was dropped with another transcriber writing the caller's words")
 }
 
-// Acting on chorus-asr while another transcriber hears the callers, the loop's contract, which
-// is that of chorus-asr transcribing, isn't kept: a shortened reply plays on what the voice was
-// sent, as with every transcriber but chorus-asr.
-func (s *AgentSuite) TestAShortenedReplyPlaysOnActingWithAnotherTranscriber() {
-	s.actsWithAnotherTranscriber()
+// Acting on chorus-asr while another transcriber writes the callers' words, the loop's contract
+// is kept as it is with chorus-asr's: a shortened reply stops shortenTail after the ruling.
+func (s *AgentSuite) TestAShortenedReplyStopsWithinItsTailActingWithAnotherTranscriber() {
+	s.floorRules(endsAtOnce)
 	s.join(true)
 	participant := stt.Participant{ID: "alice"}
 	s.model.reply = nil
-	s.speak(participant)
-	s.says(participant, "what's the weather like in Lisbon this week")
+	s.asksOverTheFloor(participant, "what's the weather like in Lisbon this week")
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
 	s.heardSomeOf(s.model.requests()[0].ID)
 	s.replyWentOut()
@@ -4455,11 +4447,12 @@ func (s *AgentSuite) TestAShortenedReplyPlaysOnActingWithAnotherTranscriber() {
 	turnID := s.agent.floor().Speaking
 	s.Require().NotEmpty(turnID)
 
+	shortened := time.Now()
 	s.agent.perform(Action{Kind: ActShorten, Participant: participant, TurnID: turnID,
 		Interruption: interruption{cause: causeShortened, words: "and in Porto"}})
-	time.Sleep(shortenTail + 500*time.Millisecond)
-	s.Zero(countOf[Interrupted](s.reported()), "the shortened reply was cut")
-	s.Zero(s.voice.interrupted(), "the voice was stopped")
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the shortened reply played on")
+	s.GreaterOrEqual(time.Since(shortened), shortenTail, "the reply was cut before its tail")
+	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept saying the reply")
 }
 
 func (s *AgentSuite) TestAShortenedCheckInStopsAtOnce() {
@@ -7054,4 +7047,84 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	overlap, _ := firstOf[OverlapDecided](s.reported())
 	s.Equal(string(harness.Stop), overlap.Action)
 	s.Len(s.model.requests(), 1, "nothing answered: the caller's turn has not ended")
+}
+
+// endedOnAPause has the chorus-asr transcriber end participant's utterance at a pause its
+// check ruled on, as it does (Transcriber.finish): the ruling to the agent, then the words
+// as the utterance's final.
+func (s *AgentSuite) endedOnAPause(participant stt.Participant, words string, disposition harness.Disposition) {
+	pauseAsker{s.agent}.Ruled(participant, audiofloor.Ruled{
+		Check: audiofloor.Check{Ruling: harness.Decided{Disposition: disposition, Floor: harness.Continue}, Ended: true},
+		Words: words, AudioMs: 1500, WordsMs: 100,
+	})
+	s.ears.emitter.Send(stt.Transcript{Participant: participant, Mode: stt.ModeFinal, Text: words,
+		Provider: audiofloor.ProviderName, Language: "en", Confidence: 1})
+}
+
+// ignoredWords reports whether words were set aside as not meant for the agent.
+func (s *AgentSuite) ignoredWords(words string) bool {
+	return slices.ContainsFunc(s.reported(), func(event Event) bool {
+		d, ok := event.(Decided)
+		return ok && d.Kind == string(ActIgnore) && d.Text == words
+	})
+}
+
+// Acting on chorus-asr, the model's ruling at the pause that ended a turn is whether its words
+// were meant for the agent: words it ruled ignore are set aside, and the flow controller, at a
+// server that would rule otherwise, is not asked about them.
+func (s *AgentSuite) TestWordsChorusASRRuledIgnoreAreSetAsideUnasked() {
+	s.actsOnChorusASR()
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	for _, said := range []string{"Mom, where's my backpack?", "Hang on, I'm on the phone with them."} {
+		s.endedOnAPause(participant, said, harness.Ignore)
+		s.eventually(func() bool { return s.ignoredWords(said) }, "words chorus-asr ruled ignore were not set aside")
+	}
+	s.Empty(s.flow.requests(), "the flow controller was asked about words chorus-asr had ruled on")
+	s.Empty(s.model.requests(), "words chorus-asr ruled ignore were answered")
+}
+
+// Acting on chorus-asr, a turn the model ruled respond at the pause that ended it is answered,
+// with no flow controller's round trip in between.
+func (s *AgentSuite) TestATurnChorusASRRuledRespondIsAnsweredUnasked() {
+	s.actsOnChorusASR()
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.endedOnAPause(participant, "What's the weather in Lisbon tomorrow?", harness.Respond)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "a turn chorus-asr ruled respond was not answered")
+	s.Empty(s.flow.requests(), "the flow controller was asked about a turn chorus-asr had ruled on")
+}
+
+// Acting on chorus-asr, a turn the model could not rule on, its server failing, is the flow
+// controller's as before: its ruling stands, and an ignore is not answered for want of
+// chorus-asr's.
+func (s *AgentSuite) TestATurnChorusASRCouldNotRuleOnIsTheFlowControllers() {
+	s.actsOnChorusASR()
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "Mom, where's my backpack?")
+	s.eventually(func() bool { return s.ignoredWords("Mom, where's my backpack?") }, "the flow controller's ignore was not followed")
+	s.Len(s.flow.requests(), 1, "the flow controller was not asked about a turn chorus-asr could not rule on")
+	s.Empty(s.model.requests(), "a turn the flow controller ruled ignore was answered")
+}
+
+// An agent that does not act on chorus-asr has the flow controller rule on every turn.
+func (s *AgentSuite) TestATurnIsTheFlowControllersWithoutChorusASR() {
+	s.join(true)
+	s.flow.reply = []string{`{"disposition":"ignore","floor":"continue"}`}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+
+	s.says(participant, "Hang on, I'm on the phone with them.")
+	s.eventually(func() bool { return s.ignoredWords("Hang on, I'm on the phone with them.") }, "the flow controller's ignore was not followed")
+	s.Len(s.flow.requests(), 1, "the flow controller was not asked")
+	s.Empty(s.model.requests())
 }
