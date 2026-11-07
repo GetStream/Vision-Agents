@@ -73,6 +73,9 @@ type Options struct {
 	HTTPClient *http.Client
 
 	Logger *slog.Logger
+
+	// clientOptions are the SDK's, for a test to point the client at a coordinator of its own.
+	clientOptions []rtc.Option
 }
 
 // User is who the agent is in the call.
@@ -395,7 +398,8 @@ func (e *Edge) connect() (*rtc.Client, error) {
 	}
 
 	if e.options.UserToken != "" {
-		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken))
+		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken),
+			e.options.clientOptions...)
 		if err != nil {
 			return nil, stack.Wrap(fmt.Errorf("streamedge: connect: %w", err))
 		}

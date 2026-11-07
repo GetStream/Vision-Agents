@@ -49,6 +49,29 @@ func (s *StreamEdgeSuite) joinAt(ctx context.Context, address string) error {
 	return err
 }
 
+func (s *StreamEdgeSuite) TestTheEdgesJoinMarksAServerWithNoVideo() {
+	// Catches Join calling the SDK's join directly, so the refusal never gets its mark, however
+	// well the classification itself works.
+	coordinatorAPI := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusForbidden)
+		_, _ = w.Write([]byte(`{"code":17,"message":"` + noVideoRefusal + `","StatusCode":403}`))
+	}))
+	s.T().Cleanup(coordinatorAPI.Close)
+	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, APIKey: "key", UserToken: "token",
+		clientOptions: []rtc.Option{rtc.WithoutCoordinatorWS(), rtc.WithoutLocationDiscovery(),
+			rtc.WithCoordinatorOptions(coordinator.ApiURL(coordinatorAPI.URL))}})
+	s.Require().NoError(err)
+
+	err = edge.Join(s.ctx)
+
+	s.Require().Error(err)
+	s.T().Cleanup(func() { _ = edge.client.Close() })
+	s.ErrorIs(err, agent.ErrNoVideo)
+	s.Equal(`streamedge: join agent:call-1: join call agent:call-1: code: , message: JoinCall failed with error: `+
+		`"video is not enabled on this server"`, err.Error())
+}
+
 func (s *StreamEdgeSuite) TestAJoinRefusedForAServerWithNoVideoIsNoVideoInStreamsOwnWords() {
 	// Catches the refusal of an app whose server runs no video counted as the router failing,
 	// and its mark changing the words the caller is answered with.
@@ -90,6 +113,11 @@ func (s *StreamEdgeSuite) TestTheNoVideoWordsUnderAnotherCodeAreNotNoVideo() {
 
 	s.NotErrorIs(err, agent.ErrNoVideo)
 	s.ErrorContains(err, "video is not enabled on this server")
+
+	// A code past the Not Allowed one is not it either.
+	err = s.joinAnswered(http.StatusBadRequest, `{"code":99,"message":"`+noVideoRefusal+`","StatusCode":400}`)
+
+	s.NotErrorIs(err, agent.ErrNoVideo)
 }
 
 func (s *StreamEdgeSuite) TestAJoinThatNeverReachedStreamIsNotNoVideo() {
