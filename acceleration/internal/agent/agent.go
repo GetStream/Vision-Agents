@@ -803,8 +803,9 @@ func (a *Agent) finishTurn(turn Turn) {
 		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
 	// Only a caller's turn is timed from when they stopped: the agent's own lines, a tool's
-	// answer among them, start the clock when the agent starts them.
-	if started.kind == kindCaller {
+	// answer among them, start the clock when the agent starts them. A turn a scheduled task
+	// fired answers nobody's silence either.
+	if started.kind == kindCaller && !started.scheduled {
 		observeTurnLatency(turn, started.pipeline)
 	}
 	a.emitter.Send(turn)

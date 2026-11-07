@@ -606,3 +606,21 @@ func (s *AgentSuite) TestAScheduledTaskThatHandsWorkToTheSubagentIsNotObserved()
 		s.Zero(series.count, leg)
 	}
 }
+
+// Catches a scheduled task's turn answered with words observed: a turn the agent starts on its
+// own answers nobody's silence. Its turn event keeps its timings (AI-2969 R1.5).
+func (s *AgentSuite) TestAScheduledTaskAnsweredWithWordsIsNotObserved() {
+	s.join(true)
+	s.model.reply = []string{"Your order ships tomorrow."}
+	before := turnLatencies(pipelineCascade)
+
+	scheduled, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind the caller about order 12", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { _, ok := turnFor(s.reported(), scheduled); return ok }, "the task's turn was never reported")
+	turn, _ := turnFor(s.reported(), scheduled)
+	s.Positive(turn.RoundtripMs, "the task's turn event lost its wait")
+	for leg, series := range observedSince(pipelineCascade, before) {
+		s.Zero(series.count, leg)
+	}
+}
