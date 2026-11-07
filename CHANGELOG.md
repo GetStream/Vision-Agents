@@ -478,7 +478,7 @@ A voice session whose call Stream refuses with `video is not enabled for your ac
 
 ### A tool's error and a Sentry alert's details no longer keep a key a provider echoed
 
-A failed tool's error is now stored through the same redactor as its `tool_ran` frame: in the `tool_result` item that `GET /v1/agents/sessions/{id}/responses/items` lists, in a simulation transcript's tools, and in a device tool's step summary in Chat; a simulation case's `error` is redacted too. The router's and usage service's Sentry events now also redact their tags and every string in their contexts, such as the provider error a usage alert carries. Text with nothing to redact is unchanged, and rows written before are not rewritten (AI-2975).
+A failed tool's error is now stored through the same redactor as its `tool_ran` frame: in the `tool_result` item that `GET /v1/agents/sessions/{id}/responses/items` lists, in a simulation transcript's tools, and in a device tool's step summary in Chat; a simulation case's `error` and each tool `result` in its transcript, a recording's `error` (stored, and in an inline answer) and a voice binding's `error` are redacted too. The router's and usage service's Sentry events now also redact their tags and every string in their contexts, such as the provider error a usage alert carries. Text with nothing to redact is unchanged, except that a tool or case error, a recording's error and a voice binding's error longer than 8192 bytes is cut to 2048 characters and `… [truncated]`, as the requests table cuts an error. Rows written before are not rewritten (AI-2975).
 
 ### The router's log no longer prints a key a provider echoed in its error
 
