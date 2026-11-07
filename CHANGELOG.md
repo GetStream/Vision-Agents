@@ -453,6 +453,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A caller turn answered through the subagent or a tool counts in the turn latency
+
+A caller turn whose reply said nothing and handed the work to the subagent or a tool is timed to the first audio of the first line said for it: a hold or update line while the work runs, or the answer it came back with. `router_agent_turn_latency_seconds` observes it once, and its `SpeechEndToAudioMs` in the session's turn events shows the same wait; before, both left the slowest turns out. A filler in the turn's own reply still ends the wait, so the answer after it adds nothing (AI-2969).
+
 ### The router's log no longer prints a key a provider echoed in its error
 
 Every value the router, the usage service and the command-line tools log, the message included, goes through the redactor the requests table uses, uncapped, and so do the failures the tools print and the router's and usage service's Sentry events: a provider error that echoes `Authorization: Bearer <key>`, such as in the `agent failure` and `could not review the call` lines, keeps its text with the key shown as `[redacted]`. A line with nothing to redact is unchanged. The redactor now keeps a word after `bearer`, `secret` or `password`, as in "no bearer token" or a `Bearer error="insufficient_scope"` challenge, and takes a `key=` or `token=` that starts a quoted query (AI-2966, #1838).
