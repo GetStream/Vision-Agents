@@ -631,7 +631,7 @@ func release(ctx context.Context, arguments []string) error {
 // build wires the service from the environment. Everything but the vendor registry is
 // optional, so searching for a number works with nothing but a vendor key.
 func build(ctx context.Context) (*phone.Service, func(), error) {
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelWarn, ReplaceAttr: store.RedactLogAttr}))
 
 	registry, _, err := registry()
 	if err != nil {

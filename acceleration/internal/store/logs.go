@@ -4,8 +4,10 @@ import (
 	"context"
 	"database/sql"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"github.com/getsentry/sentry-go"
 	"github.com/uptrace/bun"
 	"log/slog"
 	"regexp"
@@ -213,10 +215,52 @@ func RedactLogAttr(_ []string, attr slog.Attr) slog.Attr {
 	default:
 		return attr
 	}
+	return redactedAttr(attr, text)
+}
+
+// RedactJSONLogAttr is RedactLogAttr for slog's JSON handler, which prints an error as its
+// Error() and any other value as json.Marshal does: those are the texts it redacts, since an
+// error's %+v can hide the text Error() shows, or add a stack. A []byte is read as its string,
+// not the base64 json.Marshal would print, which keeps the key in it.
+func RedactJSONLogAttr(_ []string, attr slog.Attr) slog.Attr {
+	if attr.Value.Kind() != slog.KindAny {
+		return RedactLogAttr(nil, attr)
+	}
+	value := attr.Value.Any()
+	_, marshals := value.(json.Marshaler)
+	if err, ok := value.(error); ok && !marshals {
+		return redactedAttr(attr, err.Error())
+	}
+	if bytes, ok := value.([]byte); ok {
+		return redactedAttr(attr, string(bytes))
+	}
+	text, err := json.Marshal(value)
+	if err != nil {
+		return attr
+	}
+	return redactedAttr(attr, string(text))
+}
+
+// redactedAttr is attr with its value replaced by text redacted, if that took anything out.
+func redactedAttr(attr slog.Attr, text string) slog.Attr {
 	if redacted := RedactLogText(text); redacted != text {
 		return slog.String(attr.Key, redacted)
 	}
 	return attr
+}
+
+// RedactSentryEvent is a sentry BeforeSend that puts an event's message, its exceptions'
+// values and its breadcrumbs' messages through RedactLogText: they are an error's text, which
+// can echo the key a provider was sent.
+func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
+	event.Message = RedactLogText(event.Message)
+	for i := range event.Exception {
+		event.Exception[i].Value = RedactLogText(event.Exception[i].Value)
+	}
+	for _, breadcrumb := range event.Breadcrumbs {
+		breadcrumb.Message = RedactLogText(breadcrumb.Message)
+	}
+	return event
 }
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}

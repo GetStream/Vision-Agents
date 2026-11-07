@@ -12,6 +12,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/getsentry/sentry-go"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
@@ -385,6 +387,78 @@ func TestRedactLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
 	want := logged(t, false, "agent failure", args...)
 	if got := logged(t, true, "agent failure", args...); got != want {
 		t.Fatalf("the line changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// loggedJSON is what a JSON handler with RedactJSONLogAttr, or with no ReplaceAttr when redact
+// is false, prints for one record at a pinned time.
+func loggedJSON(t *testing.T, redact bool, message string, args ...any) string {
+	t.Helper()
+	var out bytes.Buffer
+	options := &slog.HandlerOptions{}
+	if redact {
+		options.ReplaceAttr = RedactJSONLogAttr
+	}
+	record := slog.NewRecord(time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC), slog.LevelError, message, 0)
+	record.Add(args...)
+	if err := slog.NewJSONHandler(&out, options).Handle(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+// hiddenText is an error whose %v and %+v show less than its Error(), which is what the JSON
+// handler prints.
+type hiddenText struct{ text string }
+
+func (e hiddenText) Error() string                 { return e.text }
+func (e hiddenText) Format(f fmt.State, verb rune) { fmt.Fprint(f, "provider failed") }
+
+// The JSON handler prints an error's Error(): the key is taken out of that, though %+v hides
+// it, and a stack.Wrap error stays its Error(), with no stack added.
+func TestRedactJSONLogAttrReadsAnErrorAsTheHandlerPrintsIt(t *testing.T) {
+	err, key := echoedKey()
+	line := loggedJSON(t, true, "agent failure", "hidden", hiddenText{err.Error()}, "wrapped", stack.Wrap(err),
+		"body", []byte(err.Error()), "extra", map[string]any{"listing": err.Error()})
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	reason := `502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]`
+	for _, want := range []string{`"hidden":"` + reason + `"`, `"wrapped":"` + reason + `"`, `"body":"` + reason + `"`, `listing`} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the line lost %s: %s", want, line)
+		}
+	}
+}
+
+func TestRedactJSONLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
+	args := []any{
+		"error", stack.Wrap(errors.New("502 Bad Gateway: upstream error: failed to connect to local service")),
+		"reason", "perplexity: PERPLEXITY_API_KEY is required",
+		"tokens", 42,
+		"extra", map[string]any{"day": "2026-11-06", "rows": 3},
+		"payload", []byte(`{"type":"ping"}`),
+	}
+	want := loggedJSON(t, false, "agent failure", args...)
+	if got := loggedJSON(t, true, "agent failure", args...); got != want {
+		t.Fatalf("the line changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// A Sentry event carries an error's text in its message, its exceptions and its breadcrumbs.
+func TestRedactSentryEventKeepsTheReasonAndNotTheKey(t *testing.T) {
+	err, key := echoedKey()
+	event := RedactSentryEvent(&sentry.Event{
+		Message:     "router stopped: " + err.Error(),
+		Exception:   []sentry.Exception{{Type: "*errors.errorString", Value: err.Error()}},
+		Breadcrumbs: []*sentry.Breadcrumb{{Message: err.Error()}},
+	}, nil)
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	if event.Message != "router stopped: "+reason || event.Exception[0].Value != reason || event.Breadcrumbs[0].Message != reason {
+		t.Fatalf("the event kept the key or lost the reason: %+v", event)
+	}
+	if event.Exception[0].Type != "*errors.errorString" || strings.Contains(fmt.Sprint(event.Breadcrumbs[0]), key) {
+		t.Fatalf("the event changed what it should keep: %+v", event)
 	}
 }
 

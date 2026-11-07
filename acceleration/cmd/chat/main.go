@@ -53,7 +53,7 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
 	slog.SetDefault(logger)
 
 	options := options{

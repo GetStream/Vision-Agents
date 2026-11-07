@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person/telnyx"
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person/twilio"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/locate"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
 
 type Config struct {
@@ -173,7 +174,7 @@ func (c Config) validate() error {
 
 func newLogger(format string, w io.Writer) *slog.Logger {
 	if format == "json" {
-		return slog.New(slog.NewJSONHandler(w, nil))
+		return slog.New(slog.NewJSONHandler(w, &slog.HandlerOptions{ReplaceAttr: store.RedactJSONLogAttr}))
 	}
-	return slog.New(slog.NewTextHandler(w, nil))
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{ReplaceAttr: store.RedactLogAttr}))
 }

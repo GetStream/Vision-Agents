@@ -1,6 +1,9 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"errors"
 	"testing"
 	"time"
 
@@ -8,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/cmd/phonecheck/person"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 // fakeProviders offers the fake adapter and hands back the one parseRun made.
@@ -109,4 +113,21 @@ func TestAnUnknownSIPLookupPlaceIsRefused(t *testing.T) {
 
 func TestAProviderWordThatIsAFlagValueIsNotTheProvider(t *testing.T) {
 	assert.Equal(t, "fake", providerName([]string{"-region", "provider", "-provider", "fake"}))
+}
+
+// A provider that echoes the request's headers in its error puts the key into what phonecheck
+// logs; in either format the line keeps the reason and not the key, and the stack only where
+// the handler prints it: text does, JSON prints an error's Error().
+func TestTheLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	failure := stack.Wrap(errors.New("telnyx: 401 Unauthorized\nrequest headers: Authorization: Bearer KEY" + key))
+	for format, want := range map[string]string{
+		"text": `error="telnyx: 401 Unauthorized\nrequest headers: [redacted]\n`,
+		"json": `"error":"telnyx: 401 Unauthorized\nrequest headers: [redacted]"}`,
+	} {
+		var out bytes.Buffer
+		newLogger(format, &out).Error("run failed", "error", failure)
+		require.NotContains(t, out.String(), key, format)
+		require.Contains(t, out.String(), want, format)
+	}
 }

@@ -204,11 +204,7 @@ func main() {
 	//
 	// A failed Init is logged, not fatal: a malformed DSN is a configuration
 	// mistake, but it is a bad reason to refuse to serve calls.
-	if err := sentry.Init(sentry.ClientOptions{
-		Release:          release,
-		ServerName:       "acceleration-router",
-		AttachStacktrace: true,
-	}); err != nil {
+	if err := sentry.Init(sentryOptions()); err != nil {
 		logger.Error("sentry is disabled", "error", err)
 	}
 
@@ -301,6 +297,17 @@ func logLevel(settings config.Config) slog.Level {
 // what it prints: a provider's error can echo the key the router sent it.
 func newLogger(w io.Writer, level slog.Level) *slog.Logger {
 	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
+}
+
+// sentryOptions are the router's Sentry options. An event carries an error's text, which can
+// echo the key a provider was sent, so it is redacted as the log is.
+func sentryOptions() sentry.ClientOptions {
+	return sentry.ClientOptions{
+		Release:          release,
+		ServerName:       "acceleration-router",
+		AttachStacktrace: true,
+		BeforeSend:       store.RedactSentryEvent,
+	}
 }
 
 // newSecretSealer builds the keyring the secrets the router holds for its customers are

@@ -8,6 +8,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
@@ -130,4 +131,29 @@ func TestTheRoutersLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
 	require.NotContains(t, out.String(), key)
 	require.NotContains(t, out.String(), "below the level")
 	require.Contains(t, out.String(), `msg="agent failure" error="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`)
+}
+
+// The router's Sentry events carry a failure's text: the key a provider echoed in it is taken
+// out of the exception and the breadcrumbs, and the reason is kept.
+func TestTheRoutersSentryEventsKeepAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	options := sentryOptions()
+	require.NotNil(t, options.BeforeSend, "the router's events are sent as they are")
+	var sent []*sentry.Event
+	redact := options.BeforeSend
+	options.BeforeSend = func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+		sent = append(sent, redact(event, hint))
+		return nil
+	}
+	client, err := sentry.NewClient(options)
+	require.NoError(t, err)
+	hub := sentry.NewHub(client, sentry.NewScope())
+	echoed := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: Authorization: Bearer sk-test-" + key
+	hub.AddBreadcrumb(&sentry.Breadcrumb{Message: echoed}, nil)
+	hub.CaptureException(errors.New(echoed))
+
+	require.Len(t, sent, 1)
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	require.Equal(t, reason, sent[0].Exception[len(sent[0].Exception)-1].Value)
+	require.Equal(t, reason, sent[0].Breadcrumbs[0].Message)
 }
