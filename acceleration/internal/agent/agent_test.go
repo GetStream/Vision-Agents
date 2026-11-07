@@ -6577,6 +6577,112 @@ func (s *AgentSuite) TestAudioNamingNoSynthesisIsHeardWhileTheVoiceIsKept() {
 	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "audio naming no synthesis was not heard")
 }
 
+// sentencesToSilentVoice has the agent write a whole reply of n sentences and send each to a
+// voice that cannot take deltas and says none of them, and returns the turn.
+func (s *AgentSuite) sentencesToSilentVoice(n int) string {
+	s.join(false)
+	s.model.reply = nil
+	for i := range n {
+		s.model.reply = append(s.model.reply, fmt.Sprintf("Sentence %d is here. ", i))
+	}
+	s.voice.silent = true
+	_, err := s.agent.RespondTo(s.ctx, "what is the capital of France", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(s.voice.spoken()) == n && !s.agent.generating
+	}, "the whole reply never reached the voice")
+	return s.model.requests()[0].ID
+}
+
+func (s *AgentSuite) TestAudioAVoiceThatDroppedSendsForAReplyTheNextSaysIsNotHeard() {
+	// A socket dropping loses the voice as a fatal error does.
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.writtenToSilentVoice()
+
+	s.voice.emitter.Send(tts.Disconnected{Provider: "stub", Model: "stub-tts", Reason: "socket closed"})
+	<-started
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: turn,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+	opened()
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the next voice was never heard")
+	s.never(func() bool {
+		return slices.ContainsFunc(s.edge.heard(), func(chunk audio.PcmData) bool { return len(chunk.Samples) == 200 })
+	}, "the lost voice's audio of the reply was heard")
+}
+
+func (s *AgentSuite) TestAReplySaidAgainIsWhereItWasInTheMessage() {
+	// A transcript places what was spoken by it.
+	s.replacement = newStubTTS(true)
+	turn := s.writtenToSilentVoice()
+	s.agent.mu.Lock()
+	want := s.agent.heard[turn].message
+	s.agent.mu.Unlock()
+	s.Require().NotZero(want.End)
+
+	s.refusesVoice()
+
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == turn
+	}, "the reply was never reported spoken")
+	spoke, _ := firstOf[Spoke](s.reported())
+	s.Require().NotNil(spoke.Message)
+	s.Equal(want, *spoke.Message)
+}
+
+func (s *AgentSuite) TestTheAgentIsTalkingUntilTheLastSentenceSaidAgainHasFinished() {
+	// Taken for quiet after the first, it would answer the caller over the rest.
+	s.replacement = newStubTTS(false)
+	s.replacement.silent = true
+	s.sentencesToSilentVoice(3)
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) == 3 }, "the reply was not said again")
+	again := s.replacement.spoken()
+	s.replacement.emitter.Send(tts.SynthesisComplete{SynthesisID: again[0].ID, Characters: 10, AudioDurationMs: 10})
+	s.never(func() bool { return !s.agent.floor().Talking }, "the agent was quiet with two sentences left")
+	for _, request := range again[1:] {
+		s.replacement.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID, Characters: 10, AudioDurationMs: 10})
+	}
+	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
+}
+
+func (s *AgentSuite) TestASentenceTheLostVoiceSendsForAReplyTheNextSaysIsNotTheTurns() {
+	// Its audio would be heard before the reply is said again, and counted as the turn's.
+	s.replacement = newStubTTS(false)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.sentencesToSilentVoice(3)
+	first := s.voice.spoken()[0].ID
+
+	s.refusesVoice()
+	<-started
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: first,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+	opened()
+
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn was never reported")
+	reported, _ := s.turnReported(turn)
+	// The next voice's three sentences, 10 ms each.
+	s.Equal(30.0, reported.AudioOutMs)
+	s.False(slices.ContainsFunc(s.edge.heard(), func(chunk audio.PcmData) bool { return len(chunk.Samples) == 200 }),
+		"the lost voice's audio of the reply was heard")
+}
+
 func (s *AgentSuite) TestADirectionTheNextVoiceCannotActIsTakenOutOfTheReplyItSaysAgain() {
 	// Left in, the caller would hear the word "laughs" read out.
 	s.performing = "Act the directions in brackets."
