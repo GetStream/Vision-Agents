@@ -463,7 +463,7 @@ When a voice fails before any of a finished reply's audio went out (staging: Ele
 
 ### A check-in the voice lost before any of it was heard is said in the next voice
 
-An agent not acting on chorus-asr says its check-ins and updates as murmurs, and a lost voice let go of every murmur, so such a line refused on its first word was dropped and the caller heard nothing until the next check-in (staging: 2.8 s later). It is now said once in the voice that replaces the lost one, under its own id, as a greeting is; one partly heard is reported cut off. A murmur ("mhm") is still never said again (AI-2973).
+An agent not acting on chorus-asr says its check-ins, updates and hold lines as murmurs, and a lost voice let go of every murmur, so such a line refused on its first word was dropped and the caller heard nothing until the next check-in (staging: 2.8 s later). It is now said once in the voice that replaces the lost one, under its own id, as a greeting is; one partly heard, or one the caller starts talking over while that voice opens, is reported cut off and not said. A murmur ("mhm") is still never said again (AI-2973).
 
 ### A call refused because the app has no Stream Video is the customer's setup, not the router's fault
 
