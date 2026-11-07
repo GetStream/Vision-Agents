@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"crypto/rand"
+	"errors"
 	"os"
 	"os/exec"
 	"testing"
@@ -27,4 +28,17 @@ func TestTheFailureIsPrintedWithoutTheKeyInIt(t *testing.T) {
 
 	require.NotContains(t, stderr.String(), key)
 	require.Contains(t, stderr.String(), `error: unknown command "[redacted]"`)
+}
+
+// The command's logger keeps a vendor's reason and not the key it echoed, and logs a warning.
+func TestTheLoggerKeepsAVendorsReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	var out bytes.Buffer
+	logger := newLogger(&out)
+	logger.Info("below the level")
+	logger.Warn("vendor search failed", "error", errors.New("502 Bad Gateway: request headers: Authorization: Bearer sk-test-"+key))
+
+	require.NotContains(t, out.String(), key)
+	require.NotContains(t, out.String(), "below the level")
+	require.Contains(t, out.String(), `msg="vendor search failed" error="502 Bad Gateway: request headers: [redacted]"`)
 }
