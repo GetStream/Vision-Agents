@@ -3,6 +3,7 @@
 package store
 
 import (
+	"crypto/rand"
 	"time"
 )
 
@@ -73,6 +74,28 @@ func (s *StoreSuite) TestAnotherCustomerCannotStopARun() {
 	s.Require().NoError(err)
 
 	s.Empty(stop)
+}
+
+// A case's error is the agent's when it stopped answering, which can be a provider's text
+// echoing the key it was sent: it is kept without the key. One with no key is kept as it was.
+func (s *StoreSuite) TestACasesErrorIsKeptWithoutTheKeyItEchoed() {
+	key := "sk-test-" + rand.Text()
+	for failure, kept := range map[string]string{
+		"simulation: the agent did not answer: 401 Unauthorized\nAuthorization: Bearer " + key: "simulation: the agent did not answer: 401 Unauthorized\n[redacted]",
+		"simulation: the agent did not answer: 503 Service Unavailable":                        "simulation: the agent did not answer: 503 Service Unavailable",
+	} {
+		run := s.startedRun("app", time.Now().Add(time.Minute))
+		cases, err := s.store.SimulationCases(s.ctx, run.ID)
+		s.Require().NoError(err)
+		kase := cases[0]
+		kase.State, kase.Error = SimulationErrored, failure
+
+		s.Require().NoError(s.store.FinishSimulationCase(s.ctx, kase))
+
+		cases, err = s.store.SimulationCases(s.ctx, run.ID)
+		s.Require().NoError(err)
+		s.Equal(kept, cases[0].Error)
+	}
 }
 
 // startedRun starts a run of one conversation for a customer, held until a given time.
