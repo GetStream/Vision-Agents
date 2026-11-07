@@ -7210,6 +7210,7 @@ func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidWhenOnlyTheAgentsOwnEc
 		Text: "Is there anything else I can help with", Language: "en", AudioDurationMs: 1500})
 	s.eventually(func() bool { return testutil.ToFloat64(echoes.WithLabelValues("false")) > droppedBefore },
 		"the agent's own words heard back were not taken for an echo")
+	s.True(s.agent.floor().LastHeardAt.IsZero(), "an echo alone was taken for the caller being heard")
 	opened()
 
 	s.eventually(func() bool {
