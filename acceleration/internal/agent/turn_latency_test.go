@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"sync"
 	"time"
 
@@ -687,6 +688,69 @@ func (s *AgentSuite) TestANativeCallerTurnAnsweredThroughADelegateIsObservedAtTh
 			_, measured := turnFor(events, "r2")
 			s.False(measured, "the reply after the hand-over answers nobody's silence of its own")
 		})
+	}
+}
+
+// typedWhileOwed has a native caller turn r1 hand work to the subagent without a word, then a
+// turn typed in with ctx, before r1 completes when early is set and after it otherwise, and the
+// reply r2 to the typed turn say a line while the work still runs.
+func (s *AgentSuite) typedWhileOwed(ctx context.Context, early bool) {
+	peer := s.joinNativeDelegating()
+	s.nativeFrame(peer, "session.update")
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.stoppedSpeaking(peer)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	typed := func() {
+		_, err := s.agent.RespondTo(ctx, "Remind me to call the venue", nil, options.LLM{})
+		s.Require().NoError(err)
+		s.nativeFrame(peer, "response.create")
+	}
+	if early {
+		s.eventually(func() bool { return s.agent.turns.originOf("r1").kind == kindCaller }, "the caller's turn never started")
+		typed()
+	}
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the caller's reply never completed")
+	if !early {
+		typed()
+	}
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the typed turn's reply was never spoken")
+}
+
+// Catches the reply to a scheduled reminder, or to a message typed in, ending the wait of a
+// native caller turn still waiting on the subagent: it answers the typed turn, so the caller
+// turn is reported at once without a wait, as the cascade reports it (AI-2969 R2.1).
+func (s *AgentSuite) TestANativeCallerTurnWaitingOnTheSubagentIsNotAnsweredByATypedTurnsReply() {
+	for name, ctx := range map[string]context.Context{"scheduled": routing.WithScheduledTurn(s.ctx), "typed": s.ctx} {
+		s.Run(name, func() {
+			before := turnLatencies(pipelineNative)
+
+			s.typedWhileOwed(ctx, false)
+
+			s.eventually(func() bool { _, ok := turnFor(s.reported(), "r1"); return ok }, "the caller's turn was held past the typed turn")
+			turn, _ := turnFor(s.reported(), "r1")
+			s.Zero(turn.RoundtripMs, "the caller's turn was timed to the typed turn's reply")
+			for leg, series := range observedSince(pipelineNative, before) {
+				s.Zero(series.count, leg)
+			}
+		})
+	}
+}
+
+// Catches the reply to a turn typed in while a native caller turn was still being said ending
+// that turn's wait once it hands work on without a word (AI-2969 R2.1).
+func (s *AgentSuite) TestANativeCallerTurnTypedOverBeforeItHandsWorkOnIsNotAnsweredByTheTypedTurnsReply() {
+	before := turnLatencies(pipelineNative)
+
+	s.typedWhileOwed(s.ctx, true)
+
+	for leg, series := range observedSince(pipelineNative, before) {
+		s.Zero(series.count, leg)
 	}
 }
 

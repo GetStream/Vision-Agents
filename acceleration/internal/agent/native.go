@@ -89,6 +89,7 @@ func (a *Agent) respondNative(ctx context.Context, text string, images []llm.Ima
 	a.lastParticipant = caller
 	a.scheduled = routing.ScheduledTurn(ctx)
 	a.mu.Unlock()
+	a.turns.typedTurn()
 	return session.SendText(text, caller)
 }
 

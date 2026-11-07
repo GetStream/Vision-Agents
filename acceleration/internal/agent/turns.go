@@ -221,6 +221,18 @@ func (t *turnTracker) giveUpLocked() []settledTurn {
 	return given
 }
 
+// typedTurn records a turn typed into a native session, which the model answers as a turn of
+// its own, as when the caller speaks again (started): a caller turn still waiting for a line
+// said for it is reported without one, and no reply after this answers it.
+func (t *turnTracker) typedTurn() {
+	t.mu.Lock()
+	t.caller = ""
+	given := t.giveUpLocked()
+	t.mu.Unlock()
+
+	t.reportAll(given)
+}
+
 // settledTurn is a turn settled under the lock, to be reported once it is let go.
 type settledTurn struct {
 	id       string
