@@ -222,4 +222,3 @@ func (s *streamingSTT) Close() error {
 
 func (s *streamingSTT) Provider() string { return "stub" }
 func (s *streamingSTT) Model() string    { return "stub-model" }
-
