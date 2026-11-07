@@ -1,6 +1,6 @@
-//! Against a real router, when `VISION_AGENTS_URL` names one. Skipped otherwise.
+//! Against a real router, when `STREAM_AGENTS_URL` names one. Skipped otherwise.
 //!
-//! `VISION_AGENTS_CUSTOMER_ID` is who the work is billed to (`examples` by default). The
+//! `STREAM_AGENTS_CUSTOMER_ID` is who the work is billed to (`examples` by default). The
 //! call test also needs `STREAM_API_KEY` and `STREAM_API_SECRET`.
 
 use std::time::Duration;
@@ -8,11 +8,11 @@ use std::time::Duration;
 use stream_agents::{Agent, Ask, Client, ClientOptions, StreamApp, WatchOptions, types};
 
 fn client() -> Option<Client> {
-    let url = std::env::var("VISION_AGENTS_URL")
+    let url = std::env::var("STREAM_AGENTS_URL")
         .ok()
         .filter(|url| !url.is_empty())?;
     let customer_id =
-        std::env::var("VISION_AGENTS_CUSTOMER_ID").unwrap_or_else(|_| "examples".into());
+        std::env::var("STREAM_AGENTS_CUSTOMER_ID").unwrap_or_else(|_| "examples".into());
     Some(
         Client::new(ClientOptions {
             url: Some(url),
@@ -28,7 +28,7 @@ macro_rules! live {
         match client() {
             Some(client) => client,
             None => {
-                eprintln!("VISION_AGENTS_URL is not set; skipping");
+                eprintln!("STREAM_AGENTS_URL is not set; skipping");
                 return;
             }
         }

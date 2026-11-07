@@ -18,7 +18,7 @@ android {
         unitTests.all { test ->
             test.useJUnitPlatform()
             // Pointing the live tests at a router is a different test run, not an up-to-date one.
-            test.inputs.property("live", providers.environmentVariable("VISION_AGENTS_URL").orElse(""))
+            test.inputs.property("live", providers.environmentVariable("STREAM_AGENTS_URL").orElse(""))
             // A socket bug otherwise hangs the build instead of failing it.
             test.systemProperty("junit.jupiter.execution.timeout.default", "60s")
             test.testLogging {

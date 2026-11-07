@@ -307,12 +307,12 @@ something and wait for a tool call to come back:
 
 ```bash
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
-  -e VISION_AGENTS_URL=http://host.docker.internal:8080 -e VISION_AGENTS_CUSTOMER_ID=examples \
-  -e VISION_AGENTS_AGENT=simple_voice_ai \
+  -e STREAM_AGENTS_URL=http://host.docker.internal:8080 -e STREAM_AGENTS_CUSTOMER_ID=examples \
+  -e STREAM_AGENTS_AGENT=simple_voice_ai \
   -w /repo/sdks/dart/core dart:stable dart test -t live
 ```
 
-Without `VISION_AGENTS_URL` they are skipped.
+Without `STREAM_AGENTS_URL` they are skipped.
 
 `posture_test.dart` checks offline that every request the SDK makes is one the spec marks
 `x-client-accessible`. `keyed_router_posture_test.dart` checks a real router in `api_key` mode

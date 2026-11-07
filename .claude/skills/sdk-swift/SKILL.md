@@ -319,7 +319,7 @@ Three layers, in order of how much they cost to run:
 1. **The state machine.** `Conversation` is a value type, so what a stream of real router
    frames means for a transcript is tested in milliseconds with no network. Most new behaviour
    belongs here.
-2. **Live tests.** `LiveTests` is gated on `VISION_AGENTS_URL`, which is the Swift answer to
+2. **Live tests.** `LiveTests` is gated on `STREAM_AGENTS_URL`, which is the Swift answer to
    `@pytest.mark.integration`. It creates a real session, asks the model something and waits
    for a real tool call. Mark the suite `@MainActor`, because `AgentSession` is.
    `PostureTests` fails offline if the generated client holds an operation the spec does not
@@ -331,7 +331,7 @@ Three layers, in order of how much they cost to run:
 
 The package is iOS only, so the tests run on a simulator, from the root of the repository:
 `xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone
-18 Pro'`, with `TEST_RUNNER_VISION_AGENTS_URL` for the live tests and
+18 Pro'`, with `TEST_RUNNER_STREAM_AGENTS_URL` for the live tests and
 `TEST_RUNNER_INTEGRATION_ROUTER_KEY` and `_SECRET` for the keyed posture checks.
 
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,

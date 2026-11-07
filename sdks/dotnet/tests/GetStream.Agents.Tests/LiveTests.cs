@@ -4,7 +4,7 @@ using GetStream.Agents.Models;
 namespace GetStream.Agents.Tests;
 
 /// <summary>
-/// The SDK against a real router, run only when <c>VISION_AGENTS_LIVE_URL</c> names one.
+/// The SDK against a real router, run only when <c>STREAM_AGENTS_LIVE_URL</c> names one.
 /// </summary>
 /// <remarks>
 /// A local router with auth off takes a customer id at face value, which is what makes this
@@ -13,8 +13,8 @@ namespace GetStream.Agents.Tests;
 /// </remarks>
 public sealed class LiveTests : IAsyncLifetime
 {
-    private static readonly string? Url = Environment.GetEnvironmentVariable("VISION_AGENTS_LIVE_URL");
-    private static readonly string Customer = Environment.GetEnvironmentVariable("VISION_AGENTS_LIVE_CUSTOMER") ?? "examples";
+    private static readonly string? Url = Environment.GetEnvironmentVariable("STREAM_AGENTS_LIVE_URL");
+    private static readonly string Customer = Environment.GetEnvironmentVariable("STREAM_AGENTS_LIVE_CUSTOMER") ?? "examples";
 
     private readonly List<string> _opened = [];
     private StreamAgents _client = null!;
@@ -22,7 +22,7 @@ public sealed class LiveTests : IAsyncLifetime
 
     public async ValueTask InitializeAsync()
     {
-        Assert.SkipWhen(Url is null, "VISION_AGENTS_LIVE_URL names no router");
+        Assert.SkipWhen(Url is null, "STREAM_AGENTS_LIVE_URL names no router");
         _client = new StreamAgents(new StreamAgentsOptions { Url = Url, CustomerId = Customer });
         _model = await ConversationModelAsync();
     }

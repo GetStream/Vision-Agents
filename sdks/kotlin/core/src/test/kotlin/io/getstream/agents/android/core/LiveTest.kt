@@ -17,20 +17,20 @@ import kotlinx.coroutines.flow.first
 /**
  * Tests that need a router running.
  *
- * The Kotlin answer to `@pytest.mark.integration`: skipped unless `VISION_AGENTS_URL` is set, so
+ * The Kotlin answer to `@pytest.mark.integration`: skipped unless `STREAM_AGENTS_URL` is set, so
  * the ordinary test run stays offline and fast.
  *
- *     VISION_AGENTS_URL=http://localhost:8080 VISION_AGENTS_CUSTOMER_ID=examples ./gradlew :core:testDebugUnitTest
+ *     STREAM_AGENTS_URL=http://localhost:8080 STREAM_AGENTS_CUSTOMER_ID=examples ./gradlew :core:testDebugUnitTest
  *
- * `VISION_AGENTS_AGENT` names an agent config to talk to; without one the router's defaults answer.
+ * `STREAM_AGENTS_AGENT` names an agent config to talk to; without one the router's defaults answer.
  */
-@EnabledIfEnvironmentVariable(named = "VISION_AGENTS_URL", matches = ".+")
+@EnabledIfEnvironmentVariable(named = "STREAM_AGENTS_URL", matches = ".+")
 class LiveTest {
     private val agents = StreamAgents(
-        url = System.getenv("VISION_AGENTS_URL"),
-        customerId = System.getenv("VISION_AGENTS_CUSTOMER_ID") ?: "acme",
+        url = System.getenv("STREAM_AGENTS_URL"),
+        customerId = System.getenv("STREAM_AGENTS_CUSTOMER_ID") ?: "acme",
     )
-    private val options = SessionOptions(agent = System.getenv("VISION_AGENTS_AGENT")?.ifEmpty { null })
+    private val options = SessionOptions(agent = System.getenv("STREAM_AGENTS_AGENT")?.ifEmpty { null })
 
     @AfterTest
     fun stop() {

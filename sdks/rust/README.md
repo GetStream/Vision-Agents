@@ -435,7 +435,7 @@ The live suite talks to a running router and skips without one:
 
 ```bash
 docker run --rm --add-host=host.docker.internal:host-gateway --env-file ../../.env \
-  -e VISION_AGENTS_URL=http://host.docker.internal:8080 -e VISION_AGENTS_CUSTOMER_ID=examples \
+  -e STREAM_AGENTS_URL=http://host.docker.internal:8080 -e STREAM_AGENTS_CUSTOMER_ID=examples \
   -e STREAM_ACCELERATION_URL= \
   -v "$PWD/../..":/repo -v va-rust-cargo:/usr/local/cargo/registry \
   -v va-rust-rustup:/usr/local/rustup -v va-rust-target:/repo/sdks/rust/target \

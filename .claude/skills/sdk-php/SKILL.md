@@ -120,8 +120,8 @@ tests/Unit tests/Live tests/Support tests/server/router.php
   answers from a JSON script and records every request; assertions are on what was sent.
   Socket tests run a real `amphp/websocket-server` on the same Revolt loop
   (`tests/Support/LocalSocketServer`), playing the router's side.
-- Live tests (`tests/Live`) are skipped unless `VISION_AGENTS_URL` is set;
-  `VISION_AGENTS_CUSTOMER_ID` defaults to `examples`. Never start or restart the router for
+- Live tests (`tests/Live`) are skipped unless `STREAM_AGENTS_URL` is set;
+  `STREAM_AGENTS_CUSTOMER_ID` defaults to `examples`. Never start or restart the router for
   them.
 - PHPStan at `level: max` with `phpstan-strict-rules`, over `src`, `tests` and `bin`
   (`tests/server` excluded: it is a script for `php -S`).
@@ -136,7 +136,7 @@ docker run --rm -v "$PWD":/repo -v "$PWD/sdks/php/build/composer-cache":/tmp/com
 docker run --rm -v "$PWD":/repo -w /repo/sdks/php php:8.4-cli vendor/bin/phpunit --testsuite unit
 docker run --rm -v "$PWD":/repo -w /repo/sdks/php php:8.4-cli vendor/bin/phpstan analyse --memory-limit=1G
 docker run --rm -v "$PWD":/repo -w /repo/sdks/php php:8.4-cli php bin/generate.php ../../acceleration/api/openapi.yaml --check
-docker run --rm -v "$PWD":/repo -w /repo/sdks/php -e VISION_AGENTS_URL=http://host.docker.internal:8091 \
+docker run --rm -v "$PWD":/repo -w /repo/sdks/php -e STREAM_AGENTS_URL=http://host.docker.internal:8091 \
   php:8.4-cli vendor/bin/phpunit --testsuite live
 ```
 

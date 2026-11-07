@@ -23,7 +23,7 @@ $D dotnet build GetStream.Agents.slnx
 $D dotnet test --project tests/GetStream.Agents.Tests
 $D dotnet run --project tools/Generate              # regenerate the models
 $D dotnet run --project tools/Generate -- --check   # what CI runs
-docker run ... -e VISION_AGENTS_LIVE_URL=http://host.docker.internal:8091 ... \
+docker run ... -e STREAM_AGENTS_LIVE_URL=http://host.docker.internal:8091 ... \
   dotnet test --project tests/GetStream.Agents.Tests -- --filter-class GetStream.Agents.Tests.LiveTests
 ```
 
@@ -174,5 +174,5 @@ xUnit v3 (4.0.1) on the Microsoft Testing Platform (`global.json` sets the runne
   records what arrived and lets a test script frames. Assert on what reached the far end.
 - Getstream-net is pointed at the same server through `EdgeOptions.BaseUrl`, so a test can
   assert that no Stream call is created.
-- `LiveTests` skip unless `VISION_AGENTS_LIVE_URL` is set. They hold real conversations and
+- `LiveTests` skip unless `STREAM_AGENTS_LIVE_URL` is set. They hold real conversations and
   wait for what the router writes behind a request instead of sleeping.

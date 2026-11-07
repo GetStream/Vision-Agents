@@ -293,6 +293,6 @@ docker run --rm -v "$PWD/../..":/repo -v va-nuget:/root/.nuget -w /repo/sdks/dot
 ```
 
 The tests run against a real Kestrel server and a real WebSocket upgrade, with no mocks.
-`LiveTests` talk to a running router and skip unless `VISION_AGENTS_LIVE_URL` names one
-(`http://host.docker.internal:8091` from inside Docker); `VISION_AGENTS_LIVE_CUSTOMER`
+`LiveTests` talk to a running router and skip unless `STREAM_AGENTS_LIVE_URL` names one
+(`http://host.docker.internal:8091` from inside Docker); `STREAM_AGENTS_LIVE_CUSTOMER`
 defaults to `examples`. They hold real conversations, so they spend tokens.

@@ -306,7 +306,7 @@ docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
 # the same, plus the live tests against a running router
 docker run --rm --platform linux/amd64 -u root -v "$PWD":/repo \
   -v ~/.cache/vision-agents-kotlin/gradle-android:/gradle-home -e GRADLE_USER_HOME=/gradle-home \
-  -e VISION_AGENTS_URL=http://host.docker.internal:8091 -e VISION_AGENTS_CUSTOMER_ID=examples \
+  -e STREAM_AGENTS_URL=http://host.docker.internal:8091 -e STREAM_AGENTS_CUSTOMER_ID=examples \
   -w /repo/sdks/kotlin cimg/android:2026.08.1 ./gradlew :core:testDebugUnitTest
 
 # the same, plus a device token's 403s against a router in api_key mode

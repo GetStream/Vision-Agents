@@ -17,8 +17,8 @@ use PHPUnit\Framework\TestCase;
 use Revolt\EventLoop;
 
 /**
- * Against a running router. Skipped unless VISION_AGENTS_URL names one; the customer is
- * VISION_AGENTS_CUSTOMER_ID, `examples` by default.
+ * Against a running router. Skipped unless STREAM_AGENTS_URL names one; the customer is
+ * STREAM_AGENTS_CUSTOMER_ID, `examples` by default.
  */
 final class LiveTest extends TestCase
 {
@@ -29,11 +29,11 @@ final class LiveTest extends TestCase
 
     protected function setUp(): void
     {
-        $url = getenv('VISION_AGENTS_URL');
+        $url = getenv('STREAM_AGENTS_URL');
         if (!is_string($url) || $url === '') {
-            self::markTestSkipped('set VISION_AGENTS_URL to run against a router');
+            self::markTestSkipped('set STREAM_AGENTS_URL to run against a router');
         }
-        $customer = getenv('VISION_AGENTS_CUSTOMER_ID');
+        $customer = getenv('STREAM_AGENTS_CUSTOMER_ID');
         $this->client = new Client(new Backend(url: $url, customerId: is_string($customer) && $customer !== '' ? $customer : 'examples'));
     }
 

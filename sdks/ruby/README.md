@@ -364,7 +364,7 @@ The live suite is opt-in and talks to a running router:
 
 ```bash
 docker run --rm -v "$PWD/../..:/repo" -v va-ruby-bundle:/usr/local/bundle -w /repo/sdks/ruby \
-  -e VISION_AGENTS_URL=http://host.docker.internal:8091 ruby:4.0 sh -c "bundle install && bundle exec rake live"
+  -e STREAM_AGENTS_URL=http://host.docker.internal:8091 ruby:4.0 sh -c "bundle install && bundle exec rake live"
 ```
 
 It holds real conversations, so it spends the deployment's token allowance.

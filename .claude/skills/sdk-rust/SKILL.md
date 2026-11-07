@@ -146,8 +146,8 @@ nothing lands on the host.
 - `StreamApp::with_base_url` points call creation at the test server; tokens are checked by
   verifying the HS256 signature.
 - Test agents use names no real directory has, or `Agent::new` will find and sync one.
-- `tests/live.rs` runs only when `VISION_AGENTS_URL` is set (optional
-  `VISION_AGENTS_CUSTOMER_ID`, default `examples`). Add `--add-host=host.docker.internal:host-gateway`,
+- `tests/live.rs` runs only when `STREAM_AGENTS_URL` is set (optional
+  `STREAM_AGENTS_CUSTOMER_ID`, default `examples`). Add `--add-host=host.docker.internal:host-gateway`,
   `--env-file .env` and `-e STREAM_ACCELERATION_URL=` so the host's value does not win.
 
 ## Reviewing a change

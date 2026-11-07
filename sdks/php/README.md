@@ -352,6 +352,6 @@ docker run --rm -v "$PWD":/repo -v "$PWD/sdks/php/build/composer-cache":/tmp/com
 docker run --rm -v "$PWD":/repo -w /repo/sdks/php php:8.4-cli php bin/generate.php ../../acceleration/api/openapi.yaml --check
 docker run --rm -v "$PWD":/repo -w /repo/sdks/php php:8.4-cli vendor/bin/phpunit --testsuite unit
 docker run --rm -v "$PWD":/repo -w /repo/sdks/php php:8.4-cli vendor/bin/phpstan analyse --memory-limit=1G
-docker run --rm -v "$PWD":/repo -w /repo/sdks/php -e VISION_AGENTS_URL=http://host.docker.internal:8091 \
+docker run --rm -v "$PWD":/repo -w /repo/sdks/php -e STREAM_AGENTS_URL=http://host.docker.internal:8091 \
   php:8.4-cli vendor/bin/phpunit --testsuite live
 ```

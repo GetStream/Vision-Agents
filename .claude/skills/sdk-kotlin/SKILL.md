@@ -142,7 +142,7 @@ JUnit 5 through `kotlin-test`. Never mock; assert on state and outputs, never on
    closes only what was built. `PostureTest` drives every operation the SDK has against
    `TestRouter` and fails if one is not `x-client-accessible` in the spec. Add to both when a
    new operation or a new Stream client appears.
-4. **Live.** `LiveTest` is gated on `VISION_AGENTS_URL` (`@EnabledIfEnvironmentVariable`), the
+4. **Live.** `LiveTest` is gated on `STREAM_AGENTS_URL` (`@EnabledIfEnvironmentVariable`), the
    Kotlin answer to `@pytest.mark.integration`. `KeyedRouterPostureTest` is gated on
    `INTEGRATION_ROUTER_KEY` and checks a device token's 403s against a router in `api_key` mode.
 

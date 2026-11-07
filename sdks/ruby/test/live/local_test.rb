@@ -2,17 +2,17 @@
 
 require_relative "../test_helper"
 
-# The SDK against a router that is actually running. Opt in with VISION_AGENTS_URL; the
+# The SDK against a router that is actually running. Opt in with STREAM_AGENTS_URL; the
 # customer defaults to "examples". Run with `bundle exec rake live`.
 #
 # What it proves is the part the local router in the unit tests cannot: that the requests
 # this gem builds are ones a real router accepts.
 class TestLiveRouter < Minitest::Test
-  URL = ENV.fetch("VISION_AGENTS_URL", "")
-  CUSTOMER = ENV.fetch("VISION_AGENTS_CUSTOMER_ID", "examples")
+  URL = ENV.fetch("STREAM_AGENTS_URL", "")
+  CUSTOMER = ENV.fetch("STREAM_AGENTS_CUSTOMER_ID", "examples")
 
   def setup
-    skip "set VISION_AGENTS_URL to run against a router" if URL.empty?
+    skip "set STREAM_AGENTS_URL to run against a router" if URL.empty?
     @api = SA::Client.new(url: URL, customer_id: CUSTOMER)
     @opened = []
   end

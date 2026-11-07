@@ -6,15 +6,15 @@ import Testing
 /// Tests that need a router running.
 ///
 /// The Swift answer to `@pytest.mark.integration`: they are skipped unless
-/// `VISION_AGENTS_URL` is set, so the ordinary `swift test` stays offline and fast.
+/// `STREAM_AGENTS_URL` is set, so the ordinary `swift test` stays offline and fast.
 ///
-///     VISION_AGENTS_URL=http://localhost:8080 VISION_AGENTS_CUSTOMER_ID=acme VISION_AGENTS_AGENT=myagent swift test
+///     STREAM_AGENTS_URL=http://localhost:8080 STREAM_AGENTS_CUSTOMER_ID=acme STREAM_AGENTS_AGENT=myagent swift test
 struct Live {
-    static let url = ProcessInfo.processInfo.environment["VISION_AGENTS_URL"]
+    static let url = ProcessInfo.processInfo.environment["STREAM_AGENTS_URL"]
     static let customerID =
-        ProcessInfo.processInfo.environment["VISION_AGENTS_CUSTOMER_ID"] ?? "acme"
+        ProcessInfo.processInfo.environment["STREAM_AGENTS_CUSTOMER_ID"] ?? "acme"
     /// The name an agent config was synced under.
-    static let agent = ProcessInfo.processInfo.environment["VISION_AGENTS_AGENT"] ?? ""
+    static let agent = ProcessInfo.processInfo.environment["STREAM_AGENTS_AGENT"] ?? ""
 
     static var available: Bool { url != nil }
 

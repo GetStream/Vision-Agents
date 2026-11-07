@@ -1,10 +1,10 @@
 // Tests that need a router running.
 //
 // The Dart answer to @pytest.mark.integration: tagged `live`, and skipped unless
-// VISION_AGENTS_URL is set, so the ordinary `dart test` stays offline and fast.
+// STREAM_AGENTS_URL is set, so the ordinary `dart test` stays offline and fast.
 //
-//     VISION_AGENTS_URL=http://localhost:8080 VISION_AGENTS_CUSTOMER_ID=examples \
-//       VISION_AGENTS_AGENT=simple_voice_ai dart test -t live
+//     STREAM_AGENTS_URL=http://localhost:8080 STREAM_AGENTS_CUSTOMER_ID=examples \
+//       STREAM_AGENTS_AGENT=simple_voice_ai dart test -t live
 @Tags(['live'])
 library;
 
@@ -14,12 +14,12 @@ import 'dart:io';
 import 'package:test/test.dart';
 import 'package:stream_agents_core/stream_agents_core.dart';
 
-final _url = Platform.environment['VISION_AGENTS_URL'];
-final _customerId = Platform.environment['VISION_AGENTS_CUSTOMER_ID'] ?? 'acme';
+final _url = Platform.environment['STREAM_AGENTS_URL'];
+final _customerId = Platform.environment['STREAM_AGENTS_CUSTOMER_ID'] ?? 'acme';
 
 /// An agent config name. Empty opens a session with no config, which the router answers
 /// with its own defaults.
-final _agent = Platform.environment['VISION_AGENTS_AGENT'] ?? '';
+final _agent = Platform.environment['STREAM_AGENTS_AGENT'] ?? '';
 
 /// A user of our own per run, so what one run lists is not another's.
 final _user = 'dart-live-${DateTime.now().millisecondsSinceEpoch}';
@@ -275,7 +275,7 @@ void main() {
         expect(found.results, isNotEmpty);
       });
     },
-    skip: _url == null ? 'set VISION_AGENTS_URL to run against a router' : false,
+    skip: _url == null ? 'set STREAM_AGENTS_URL to run against a router' : false,
     timeout: const Timeout(Duration(seconds: 90)),
   );
 }

@@ -218,7 +218,7 @@ never on a call happening.
 1. **The state machine**, on real frames, with no network.
 2. **The client** against a real HTTP and WebSocket server on loopback (`test/support/router.dart`
    in core; rtc has its own small one), recording what arrived.
-3. **Live tests**, tagged `live` and skipped unless `VISION_AGENTS_URL` is set: real sessions, a
+3. **Live tests**, tagged `live` and skipped unless `STREAM_AGENTS_URL` is set: real sessions, a
    real model answer, a real tool call, rewind and fork, guests, search.
 4. **The posture**: `posture_test.dart` drives every public operation against the loopback
    router and checks each request against `x-client-accessible` in the spec;
@@ -246,8 +246,8 @@ docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cach
   sh -c 'flutter pub get && flutter analyze && flutter test'
 # live, against a router on the host
 docker run --rm -v "$PWD":/repo -v va-dart-pub:/pub-cache -e PUB_CACHE=/pub-cache \
-  -e VISION_AGENTS_URL=http://host.docker.internal:8080 -e VISION_AGENTS_CUSTOMER_ID=examples \
-  -e VISION_AGENTS_AGENT=simple_voice_ai -w /repo/sdks/dart/core dart:stable dart test -t live
+  -e STREAM_AGENTS_URL=http://host.docker.internal:8080 -e STREAM_AGENTS_CUSTOMER_ID=examples \
+  -e STREAM_AGENTS_AGENT=simple_voice_ai -w /repo/sdks/dart/core dart:stable dart test -t live
 ```
 
 ## Reviewing a change

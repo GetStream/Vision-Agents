@@ -349,13 +349,13 @@ quoted verbatim from `frameOf`, so a change to the wire format on that side fail
 Against a running router:
 
 ```bash
-TEST_RUNNER_VISION_AGENTS_URL=http://localhost:8080 TEST_RUNNER_VISION_AGENTS_CUSTOMER_ID=examples \
+TEST_RUNNER_STREAM_AGENTS_URL=http://localhost:8080 TEST_RUNNER_STREAM_AGENTS_CUSTOMER_ID=examples \
   xcodebuild test -scheme stream-agents -destination 'platform=iOS Simulator,name=iPhone 17 Pro'
 ```
 
 That enables `LiveTests`, which creates a real session, asks the model something and waits for
 a tool call to come back. `xcodebuild` hands a variable to the tests without its `TEST_RUNNER_`
-prefix. Without `VISION_AGENTS_URL` they are skipped, which is the Swift answer to
+prefix. Without `STREAM_AGENTS_URL` they are skipped, which is the Swift answer to
 `@pytest.mark.integration`.
 
 `PostureTests` checks offline that every operation in the generated client is one the spec

@@ -156,15 +156,15 @@ is pointed at the same server with `base_url:`, so creating a call is tested too
 
 Wait with a deadline (`eventually`, `receive(timeout:)`), never a bare `sleep` guess.
 
-The live suite, `test/live`, runs with `rake live` and skips unless `VISION_AGENTS_URL` is
-set (customer `VISION_AGENTS_CUSTOMER_ID`, default `examples`). From Docker the local router
+The live suite, `test/live`, runs with `rake live` and skips unless `STREAM_AGENTS_URL` is
+set (customer `STREAM_AGENTS_CUSTOMER_ID`, default `examples`). From Docker the local router
 is `http://host.docker.internal:8091`. It holds real conversations and spends tokens.
 
 ```bash
 docker run --rm -v "$PWD:/repo" -v va-ruby-bundle:/usr/local/bundle -w /repo/sdks/ruby ruby:4.0 \
   sh -c "bundle install && bundle exec rake"
 docker run --rm -v "$PWD:/repo" -v va-ruby-bundle:/usr/local/bundle -w /repo/sdks/ruby \
-  -e VISION_AGENTS_URL=http://host.docker.internal:8091 ruby:4.0 sh -c "bundle install && bundle exec rake live"
+  -e STREAM_AGENTS_URL=http://host.docker.internal:8091 ruby:4.0 sh -c "bundle install && bundle exec rake live"
 ```
 
 Run from the repo root. The full image, not `-slim`: `websocket-driver` has a C extension.

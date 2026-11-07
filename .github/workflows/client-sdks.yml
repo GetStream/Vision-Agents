@@ -32,7 +32,7 @@ permissions:
   pull-requests: read
 
 # The live posture tests are left out: they skip without INTEGRATION_ROUTER_KEY and
-# VISION_AGENTS_URL, which nothing here sets.
+# STREAM_AGENTS_URL, which nothing here sets.
 jobs:
   # A pull request builds only the SDKs it touches, so a Dart change does not wait on the
   # macOS runner. A push to main or accelerate builds them all.
