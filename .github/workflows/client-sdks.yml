@@ -155,10 +155,14 @@ jobs:
         with:
           version: "0.13.6"
 
-      # The client is generated with Stream's generator, which lives in the chat repository
-      # and is not checked out here, so this checks only that every operation it calls is
-      # still one a device may reach. PostureTests reads the committed client against the spec.
-      - name: Client operations are still client-side
+      # The client is generated with Stream's generator, which lives in the private chat
+      # repository and is not checked out here, so this does not regenerate. It checks that
+      # every operation the client calls is still one a device may reach, and that the
+      # committed client was generated from the spec's client part as it is now: generate.py
+      # records a hash of that part in sdks/swift/core/generated.json. A spec-only PR runs
+      # this job too (the swift filter lists openapi.yaml). PostureTests reads the committed
+      # client against the spec.
+      - name: Client operations are still client-side and the client is up to date
         run: uv run sdks/swift/generate.py --check
 
       # Both builds resolve into one checkout directory and compile into one DerivedData, so

@@ -163,6 +163,9 @@ generator ignores `nullable` and the null would fail to decode, and a model whos
 hand-written type has is renamed (`RENAMED`: `Session` is `SessionPayload`). A collision `RENAMED` misses fails the build.
 `DefaultEndpoints.swift` is discarded: it is Stream Chat's request path, written against its
 internals.
+Each run writes `sdks/swift/core/generated.json`: the sha256 of the spec copy it handed the
+generator, the options and the generator's `chat` commit. `--check` fails ("Swift client is
+stale") when the spec's client part no longer hashes to it, so commit that file with the client.
 
 **Generated code is `internal`.** Every type crossing the public API is hand-written in
 `Models.swift`. Leaking one generated type couples the SDK's semantic version to the schema and
@@ -337,7 +340,7 @@ The package is iOS only, so the tests run on a simulator, from the root of the r
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
 on any change under `sdks/swift`, the demo's app or the spec. It runs `generate.py --check`
 (the generator is in the `chat` repository, which CI does not check out, so it cannot
-regenerate), runs the core tests on the first iPhone simulator the runner has, and builds
+regenerate, and compares the spec against `generated.json` instead), runs the core tests on the first iPhone simulator the runner has, and builds
 `swift_demo`. Regenerate locally after a spec change.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:

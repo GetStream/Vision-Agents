@@ -313,7 +313,7 @@ source of truth. The generated Swift is committed, like the Python and Go client
 needs no code generation and no build-tool plugin to be trusted in Xcode.
 
 ```bash
-uv run sdks/swift/generate.py --check   # does the filter still agree with the spec?
+uv run sdks/swift/generate.py --check   # does the filter agree with the spec, is the client up to date?
 uv run sdks/swift/generate.py           # regenerate
 ```
 
