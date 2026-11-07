@@ -167,6 +167,24 @@ func (s *GrokSocketSuite) TestAudioArrivesAsTheRawPcmItWasGiven() {
 	s.Equal(want.Bytes(), raw)
 }
 
+// Told to settle the utterance in progress (stt.Finalizer), the provider asks the server to
+// finalize it, and the session goes on.
+func (s *GrokSocketSuite) TestFinalizingAsksTheServerToSettleTheUtterance() {
+	fake := newFakeSTT()
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{})
+	defer func() { _ = provider.Close() }()
+	var _ stt.Finalizer = provider
+
+	s.Require().NoError(provider.Finalize())
+	messageType, raw := s.nextFrame(conn)
+	s.Equal(websocket.TextMessage, messageType)
+	s.JSONEq(`{"type":"finalize"}`, string(raw))
+	s.speak(provider, []int16{1, -2})
+	messageType, _ = s.nextFrame(conn)
+	s.Equal(websocket.BinaryMessage, messageType, "the session goes on")
+}
+
 func (s *GrokSocketSuite) TestStartWaitsForTheServerToBeReady() {
 	// Audio sent before the recogniser is up is audio nobody is listening to.
 	fake := newFakeSTT()

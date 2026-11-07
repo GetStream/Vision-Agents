@@ -2,6 +2,10 @@
 
 ## Features
 
+### A server sends a person's photos on respond
+
+`POST /v1/agents/sessions/{id}/respond` takes `images`, as `createResponse` and the session socket's `respond` already did. With a `request_id` they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and the model sees them with that question alone. A retry with the same id, text and photos is the same question. Unlike `createResponse`, the answer is still the command's receipt with the person's and the reply's message ids, and `client_id` still addresses the install's tools, so a server that sends what a person typed on their behalf can now send what they photographed too. Text and photos together are held to the same 1 MiB as on `createResponse` when no voice note is sent. In the PHP and Python SDKs, whose generated request classes take positional arguments, `images` comes after `request_id`: their generators now keep each parameter where it was released and add new ones after, so `new RespondRequest('question', null, 'device-1', 'request-1')` and `RespondRequest("question", UNSET, "device-1", "request-1")` still mean what they did.
+
 ### Work is sold at its cost × 1.08
 
 `pricing.PriceFactorBps` is 10800, down from 12000. Every entry written without a price of its own is priced at its vendor's rates × 1.08: a price list's first load and the items a release adds that the list has never priced. An amount a vendor quotes outright, such as a number's monthly rental, is charged at it × 1.08 too. A million tokens that cost the vendor $1 are $1.08, and still $0.20 on the customer's own key (`pricing.BYOKFeeBps` is unchanged). No price already in a list moves with the factor: each deployment's stored prices are lowered through the management API, by a price change of their own (AI-2946).
@@ -410,6 +414,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 `Folder.load`, and so `Agent.new(folder: "…")`, raise a `ConfigurationError` for a folder whose agent.yaml names `plugins:`, with an error that names the file and points to `connectors:`. An empty or null `plugins` still loads and sends nothing, as before. Folder sync no longer sends `plugins`, and the warning that plugins are deprecated is gone, as is the check that no name is under both `connectors` and `plugins`. Move each plugin to a `connectors:` entry (AI-2528).
 
 ## Bug Fixes
+
+### Photos an agent cannot see are refused before they are uploaded
+
+A question with photos and a `request_id`, on `createResponse` or the session socket's `respond`, sent to an agent with neither a vision skill nor a conversation model that accepts images, was refused only after its photos were uploaded and the person's message written, leaving a message in the channel that nothing would answer. It is now refused first, with the same 400 `not_configured`, and nothing is uploaded or written. A retry of a photo question already taken is still answered with its receipt, also after the session's model changed to one that cannot see, since it starts no turn.
 
 ### The Python and Rust clients read an enum value they do not list
 

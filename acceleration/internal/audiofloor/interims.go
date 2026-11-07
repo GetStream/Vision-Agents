@@ -86,6 +86,8 @@ func (t *Transcriber) send(transcript stt.Transcript) string {
 	if transcript.Final() {
 		s.final = transcript.Utterance
 	}
+	// Whoever wrote the words, the session timed them: it ended the utterance.
+	transcript.Floor = true
 	if transcript.Utterance >= s.utterance {
 		s.stable = same && !transcript.Final() && carriesOn(s.text, transcript.Text)
 		s.utterance, s.upTo, s.text = transcript.Utterance, upTo, transcript.Text
@@ -109,6 +111,13 @@ func (s *sentWords) over(utterance int64) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return utterance <= s.final
+}
+
+// wrote says words of utterance have gone out: an interim shown while the caller talked.
+func (s *sentWords) wrote(utterance int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.utterance == utterance && s.text != ""
 }
 
 // establish keeps language as the one utterance is spoken in, unless its first words have

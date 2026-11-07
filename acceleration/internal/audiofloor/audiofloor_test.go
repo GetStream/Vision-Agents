@@ -100,6 +100,14 @@ type fakeServer struct {
 	agents    []string
 	decision  string
 	words     string
+	// speakingDecision and speakingWords, when set, answer a check at a pause over the agent
+	// (speaking), and unfinishedDecision and unfinishedWords one over the agent without a
+	// pause (unfinished), in place of decision and words: the server's other frames.
+	speakingDecision, unfinishedDecision string
+	speakingWords, unfinishedWords       *string
+	// blanked is the reason a decision's words give for being none, as the server says why
+	// it wrote nothing of a murmur it ruled ignored.
+	blanked string
 }
 
 // requests is how many decisions the server was asked for.
@@ -207,7 +215,14 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			time.Sleep(after)
 			f.mu.Lock()
 		}
-		_, _ = w.Write([]byte(f.decision + "\n"))
+		decision, words := f.decision, f.words
+		switch {
+		case turn.Unfinished:
+			decision, words = cmp.Or(f.unfinishedDecision, decision), *cmp.Or(f.unfinishedWords, &words)
+		case turn.Speaking:
+			decision, words = cmp.Or(f.speakingDecision, decision), *cmp.Or(f.speakingWords, &words)
+		}
+		_, _ = w.Write([]byte(decision + "\n"))
 		if r.URL.Query().Get("transcript") == "true" {
 			f.withWords++
 			if f.wordsAfter > 0 {
@@ -216,7 +231,7 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 				time.Sleep(f.wordsAfter)
 				f.mu.Lock()
 			}
-			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q},"transcript_ms":3}`+"\n", f.words, f.spoken())
+			_, _ = fmt.Fprintf(w, `{"transcript":{"text":%q,"language":%q,"noise":%q},"transcript_ms":3}`+"\n", words, f.spoken(), f.blanked)
 		}
 	}
 }
@@ -724,6 +739,10 @@ type transcribing struct {
 	wordsAlone bool
 	interims   bool
 	languages  []string
+	// rulesAlone opens each as a floor that rules alone (NewFloor), whose words another
+	// transcriber writes, asking it for its final with finalize.
+	rulesAlone bool
+	finalize   func() (bool, error)
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -765,12 +784,16 @@ func (s *transcribing) reopen(now func() time.Time) {
 }
 
 func (s *transcribing) openReading(now func() time.Time) {
-	s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
+	if s.rulesAlone {
+		s.transcriber = NewFloor(s.client, s.languages, s.finalize, slog.New(slog.DiscardHandler))
+	} else {
+		s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
+		s.transcriber.interims = s.interims
+	}
 	s.transcriber.now = now
 	if s.wordsAlone {
 		s.transcriber.AskOnPauses(nil)
 	}
-	s.transcriber.interims = s.interims
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })

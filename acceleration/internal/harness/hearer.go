@@ -48,7 +48,9 @@ func (f *flow) runHearer(asked *candidate) bool {
 		return true
 	}
 	if err != nil {
-		f.logger.Debug("the hearer did not rule, the flow controller will", "candidate", asked.turn.ID, "error", err)
+		// The flow controller then rules on what the hearer should have: its round trip is
+		// the caller's to wait through, and its outage theirs to be answered regardless.
+		f.logger.Warn("the hearer did not rule, the flow controller will", "candidate", asked.turn.ID, "error", err)
 		return false
 	}
 	if f.forget(asked.turn.ID) == nil {

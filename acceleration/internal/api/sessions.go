@@ -255,7 +255,7 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 	// the turn's cost.
 	leaveUncosted(ctx)
 	if request.Body != nil {
-		if err := refuseOversizeWithoutAudio(request.Body.Audio, len(request.Body.Text)); err != nil {
+		if err := refuseOversizeWithoutAudio(request.Body.Audio, sizeOfRespond(request.Body)); err != nil {
 			return nil, err
 		}
 	}
@@ -264,32 +264,47 @@ func (s *Server) respondSession(ctx context.Context, request *respondSessionRequ
 		return nil, failure
 	}
 	defer sent()
-	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil) {
+	if request.Body == nil || (request.Body.Text == "" && request.Body.Audio == nil && len(value(request.Body.Images)) == 0) {
 		return nil, invalidRequest("there is nothing to answer")
+	}
+	wires := make([]wireImage, 0, len(value(request.Body.Images)))
+	for _, sent := range value(request.Body.Images) {
+		wires = append(wires, wireImage{URL: sent.Url, Detail: string(value(sent.Detail))})
+	}
+	images, err := imagesFromWire(wires)
+	if err != nil {
+		return nil, invalidRequest(err.Error())
 	}
 
 	id := value(request.Body.RequestId)
-	text, notes, failure := s.withHeardNote(ctx, found, id, request.Body.Text, request.Body.Audio, false, options.LLM{})
+	text, notes, failure := s.withHeardNote(ctx, found, id, request.Body.Text, request.Body.Audio, len(images) > 0, options.LLM{})
 	if failure != nil {
 		return nil, failure
 	}
 	if id != "" && found.Durable() {
-		receipt, _, err := found.RespondCommand(ctx, id, text, value(request.Body.ClientId), nil, options.LLM{}, notes...)
-		if errors.Is(err, conversation.ErrCommandConflict) {
-			return nil, conflict(err.Error())
-		}
+		receipt, _, err := found.RespondCommand(ctx, id, text, value(request.Body.ClientId), images, options.LLM{}, notes...)
 		if err != nil {
-			return nil, invalidRequest(err.Error())
+			return nil, refusedResponse(err)
 		}
 		return &respondSessionResponse{Status: http.StatusOK, Body: &CommandReceipt{
 			RequestId: receipt.CommandID, UserMessageId: receipt.UserMessageID,
 			AssistantMessageId: receipt.AssistantMessageID, State: receipt.State, Duplicate: receipt.Duplicate,
 		}}, nil
 	}
-	if _, err := found.Respond(ctx, text, nil, options.LLM{}); err != nil {
-		return nil, invalidRequest(err.Error())
+	if _, err := found.Respond(ctx, text, images, options.LLM{}, images...); err != nil {
+		return nil, refusedResponse(err)
 	}
 	return &respondSessionResponse{Status: http.StatusNoContent}, nil
+}
+
+// sizeOfRespond is what a respond body holds besides a voice note, counted as sizeOfResponse
+// counts a createResponse body.
+func sizeOfRespond(body *RespondRequest) int {
+	size := len(body.Text)
+	for _, image := range value(body.Images) {
+		size += len(image.Url)
+	}
+	return size
 }
 
 // respondSessionResponse is a durable command's receipt, or nothing when the text named no
@@ -1474,10 +1489,11 @@ func (e ModelOverwritesVerbosity) Valid() bool {
 
 // RespondRequest is the RespondRequest schema.
 type RespondRequest struct {
-	ClientId  *string      `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
-	RequestId *string      `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
-	Audio     *AudioSource `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
-	Text      string       `json:"text" doc:"What to answer, as though it had been said. May be empty when audio carries the question."`
+	ClientId  *string        `json:"client_id,omitempty" doc:"The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it." pattern:"^[A-Za-z0-9_.:-]{1,128}$"`
+	RequestId *string        `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	Audio     *AudioSource   `json:"audio,omitempty" doc:"A voice note to answer, as on createResponse. The router transcribes it and answers what was said, after text when both are sent; text may then be empty. Refused before any turn starts when it is not audio, has no words in it, or the deployment transcribes nothing in the agent's region."`
+	Images    *[]ImageSource `json:"images,omitempty" doc:"Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images."`
+	Text      string         `json:"text" doc:"What to answer, as though it had been said. May be empty when photos or audio carry the question."`
 }
 
 // RewindSessionRequest is the RewindSessionRequest schema.

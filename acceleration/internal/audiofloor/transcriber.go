@@ -151,6 +151,14 @@ type Transcriber struct {
 	// toldAt is when the asker was last told the caller is in an utterance (Hearing), in
 	// frames.
 	toldAt int64
+	// words, for a floor that rules alone (NewFloor), are what another transcriber writes of
+	// the participant's audio, which its utterances are made of, and finalize asks that
+	// transcriber for the final of the run it has open. Nil has the server write the words.
+	// stepped says the floor has stepped aside, its server down for the call (checked).
+	words    *spoken
+	finalize func() (bool, error)
+	stepped  atomic.Bool
+	closed   atomic.Bool
 
 	// The checks of the pause going on, asked for asker, the agent's (AskOnPauses) or the
 	// transcriber's own, each run on a goroutine of its own, and how many of the utterance's
@@ -164,6 +172,10 @@ type Transcriber struct {
 	// noise is why the words of an utterance last came back empty, which an asker is told
 	// if it ends with no final (unwritten).
 	noise emptyWords
+	// unruled counts the checks in a row the server did not rule on, for a floor that rules
+	// alone, and unruledSince is when the first of them was asked (checked).
+	unruled      int
+	unruledSince time.Time
 }
 
 // request is an utterance's words to write, or its end. An end carries the whole
@@ -209,6 +221,11 @@ func (t *Transcriber) Start(context.Context) error {
 func (t *Transcriber) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 	if t.ctx == nil {
 		return stack.Wrap(errors.New("audiofloor: the session is not open"))
+	}
+	if t.closed.Load() || t.stepped.Load() {
+		// A floor's audio comes on the listener's goroutine, which may not have heard yet that
+		// it is closed or has stepped aside.
+		return nil
 	}
 	if err := pcm.Validate(stt.SampleRate); err != nil {
 		return err
@@ -260,17 +277,25 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		t.start = max(heard-int64(preroll/frame), t.ended)
 	case t.checksPause(participant, heard):
 		// An agent's checks of the pause end the utterance, with its words.
-	case t.quiet >= endAfter || heard-t.start >= int64(maxUtterance/frame):
-		// Whether the words last asked for were written is transcribe's to know, which may
-		// not have asked for them yet, so the end takes the audio either way.
-		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance(), final: true, fresh: t.fresh})
+	case t.quiet >= endAfter || heard-t.start >= int64(maxUtterance/frame) || t.wordsEnded():
+		if t.words != nil {
+			// A floor that rules alone ends it on the other transcriber's words.
+			t.endOnWords(participant, heard)
+		} else {
+			// Whether the words last asked for were written is transcribe's to know, which
+			// may not have asked for them yet, so the end takes the audio either way.
+			t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance(), final: true, fresh: t.fresh})
+		}
 		t.utterance++
 		t.start, t.ended, t.voiced, t.fresh, t.quiet, t.spoken, t.talked = heard, heard, false, false, 0, 0, 0
 		t.mu.Lock()
 		t.newUtteranceLocked()
 		t.mu.Unlock()
 	case t.quiet >= writeAfter && t.fresh:
-		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
+		// A floor that rules alone shows the other transcriber's words as they come.
+		if t.words == nil {
+			t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
+		}
 		t.fresh, t.spoken = false, 0
 	}
 	if speech && !t.checksOver(participant, heard) {
@@ -428,6 +453,7 @@ func (t *Transcriber) Events() <-chan stt.Event { return t.emitter.Events() }
 
 // Close stops a request still out and waits for it.
 func (t *Transcriber) Close() error {
+	t.closed.Store(true)
 	if t.cancel != nil {
 		t.cancel()
 		<-t.done

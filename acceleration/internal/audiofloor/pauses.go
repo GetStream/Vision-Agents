@@ -39,6 +39,13 @@ type Asker interface {
 	// words are its own voice heard back, which is no reason to stop. The utterance goes on,
 	// and ends by its pause checks.
 	Overheard(participant stt.Participant, ruled Ruled)
+	// GivenWay says the agent has given the floor up to the caller over what it was saying:
+	// it stopped it, or shortened it and is playing out the tail.
+	GivenWay() bool
+	// HeardBefore says the caller had heard the agent when they began at: some of its answer
+	// to them, as its voice played it, or a line of its own. One who had not was going on
+	// with their own turn, which the agent began to answer over.
+	HeardBefore(at time.Time) bool
 	// Hearing says the caller is in an utterance, voiced or in a pause no check has ended,
 	// whether or not any words of it have been written: the line is not silent. It is said
 	// every interval of the policy while the utterance lasts, on the session's goroutine,
@@ -107,6 +114,12 @@ func (neutralAgent) Speaking() bool { return false }
 // Overheard is never asked, as nobody talks over an agent that says nothing.
 func (neutralAgent) Overheard(stt.Participant, Ruled) {}
 
+// GivenWay is never asked either: an agent that says nothing has no floor to give up.
+func (neutralAgent) GivenWay() bool { return false }
+
+// HeardBefore is never asked: nobody talks over an agent that says nothing.
+func (neutralAgent) HeardBefore(time.Time) bool { return false }
+
 // Hearing tells nobody: the transcriber's own agent fills no silence.
 func (neutralAgent) Hearing(stt.Participant) {}
 
@@ -127,9 +140,24 @@ type pause struct {
 	// that check ended the turn.
 	resumed bool
 	// words are the first check's, once written, and audioMs and wordsMs how much audio
-	// they are of and how long they took.
+	// they are of and how long they took. noise is why the server wrote none, if it said.
 	words            *string
 	audioMs, wordsMs float64
+	noise            string
+	// counted says a check of the pause with the floor free has been read against its bar,
+	// which the checks in a row are counted from (Hearer.rule). One asked over the agent is
+	// not: it has no p_eot.
+	counted bool
+	// stopping is a check's ruling over the agent to stop or shorten, to hand over once the
+	// pause's words are written (Overheard).
+	stopping *Ruled
+	// standing is a check's ruling over the agent that ended nothing, which stands for the
+	// pause while the agent talks on (standsOver), and polled how far into the pause the
+	// agent was last asked whether it still is. recheck says it is not any more: the pause
+	// is asked about again at once, with the floor free.
+	standing *Ruled
+	polled   time.Duration
+	recheck  bool
 	// ended is the check that ended the turn, and endedAt where its audio ended, in frames.
 	// done says the words have gone out, and the session is to begin the next utterance.
 	ended   *Ruled
@@ -144,12 +172,13 @@ type pauseCheck struct {
 	utterance      int64
 	first          bool
 	firstPause     bool
+	counted        bool
 	paused         time.Duration
 	voiced, length time.Duration
 	at             int64
 	participant    stt.Participant
 	audio          harness.Audio
-	asked          time.Time
+	asked, began   time.Time
 }
 
 // AskOnPauses has the transcriber ask about each pause for agent, from the next on, in place
@@ -178,33 +207,44 @@ func (t *Transcriber) checkTimes() (first, every, cap time.Duration) {
 // It says whether the pause is the checks' to end, which it is until one fails, or none has
 // ended it by the policy's cap and checkGrace, or the utterance has run to maxUtterance. A
 // check that ended it is waited on for its words, which a long utterance takes seconds to
-// write.
+// write. A ruling over the agent that stands asks nothing more of the pause (standsOver).
 func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool {
 	first, every, cap := t.checkTimes()
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	p := &t.pause
-	switch {
-	case t.asker == nil || p.failed || heard-t.start >= int64(maxUtterance/frame):
+	if t.asker == nil || p.failed || heard-t.start >= int64(maxUtterance/frame) {
+		t.mu.Unlock()
 		return false
-	case t.quiet >= cap+checkGrace && p.ended == nil:
+	}
+	if p.standing != nil {
+		t.mu.Unlock()
+		if t.standsOver(heard, cap) {
+			return true
+		}
+		t.mu.Lock()
+	}
+	defer t.mu.Unlock()
+	if t.quiet >= cap+checkGrace && p.ended == nil {
 		t.logger.Warn("no check of a pause ended it, its words are asked for alone", "participant", participant.ID)
 		p.failed = true
 		return false
 	}
-	if p.inFlight || p.ended != nil || t.quiet < first || (p.checks > 0 && t.quiet < p.asked+every) {
+	if p.inFlight || p.ended != nil || p.standing != nil || t.quiet < first ||
+		(p.checks > 0 && !p.recheck && t.quiet < p.asked+every) {
 		return true
 	}
 	p.checks++
+	p.recheck = false
 	p.asked, p.inFlight, p.participant, p.utterance = t.quiet, true, participant, t.utterance+1
 	if p.checks == 1 {
 		// The first check writes the words so far, so no interim is due for a while.
 		t.pauses++
 		t.spoken = 0
 	}
-	c := pauseCheck{epoch: p.epoch, utterance: p.utterance, first: p.checks == 1, firstPause: t.pauses == 1, paused: t.quiet, at: heard,
-		voiced: time.Duration(t.talked) * frame, length: time.Duration(heard-t.start) * frame,
+	c := pauseCheck{epoch: p.epoch, utterance: p.utterance, first: p.checks == 1, firstPause: t.pauses == 1, counted: p.counted,
+		paused: t.quiet, at: heard, voiced: time.Duration(t.talked) * frame, length: time.Duration(heard-t.start) * frame,
 		participant: participant, asked: time.Now()}
+	c.began = c.asked.Add(-time.Duration(heard-t.voicedFrom) * frame)
 	// The check that asks for words sends the whole utterance: the model decides on its
 	// last 16 s and writes all of it. The others send what a decision hears.
 	length := c.length
@@ -215,6 +255,52 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 	t.running.Add(1)
 	go t.check(t.asker, c)
 	return true
+}
+
+// standsOver keeps a ruling over the agent standing through the pause (check): nothing more
+// is asked of it while the agent talks on, and at the policy's cap the turn ends on that
+// ruling, with no request. The agent is asked every overPoll whether it is still talking:
+// once it is not, the pause is the caller's, and it is asked about at once with the floor
+// free. It runs on the session's goroutine, and says whether the ruling still stands.
+func (t *Transcriber) standsOver(heard int64, cap time.Duration) bool {
+	t.mu.Lock()
+	p := &t.pause
+	switch {
+	case p.standing == nil:
+		t.mu.Unlock()
+		return false
+	case t.quiet >= cap:
+		ended := *p.standing
+		ended.Ended, ended.Paused = true, t.quiet
+		p.ended, p.endedAt, p.standing = &ended, heard, nil
+		epoch := p.epoch
+		if t.words != nil {
+			t.cutLocked(pauseCheck{epoch: epoch, utterance: p.utterance, participant: p.participant,
+				length: time.Duration(heard-t.start) * frame, asked: time.Now()}, time.Now().Add(-t.quiet))
+		}
+		t.mu.Unlock()
+		t.running.Add(1)
+		go func() {
+			defer t.running.Done()
+			t.finish(epoch)
+		}()
+		return true
+	case p.polled > 0 && t.quiet < p.polled+overPoll:
+		t.mu.Unlock()
+		return true
+	}
+	p.polled = t.quiet
+	asker, epoch := t.asker, p.epoch
+	t.mu.Unlock()
+	if asker.Speaking() {
+		return true
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if p := &t.pause; p.epoch == epoch && p.standing != nil {
+		p.standing, p.recheck = nil, true
+	}
+	return false
 }
 
 // resumed is speech in the utterance: a pause that had been asked about is over, unless a
@@ -278,6 +364,9 @@ type overChecks struct {
 	speaking bool
 	// utterance is the utterance the checks are of: a new one starts them again.
 	utterance int64
+	// words are the last the checks wrote of it, which its final falls back on if its own
+	// come back empty (finish).
+	words string
 }
 
 // overPoll is how often the agent is asked whether it is speaking while the caller is
@@ -376,17 +465,18 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 		}
 		agent := Agent{Instructions: turn.Instructions, Tools: turn.Tools, Languages: t.languages}
 		var answer Answer
-		answer, said, err = t.client.DecideWords(ctx, agent, turnOf(turn), turn.Audio)
+		answer, said, err = t.decideWords(ctx, agent, turnOf(turn), turn.Audio)
 		if err != nil {
 			return Check{}, err
 		}
 		return asker.Hearer().rule(policy, turn, answer)
 	}()
+	t.checked(err)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(c.asked).Seconds())
 	}
-	t.logCheck(turn, pauseCheck{first: true, voiced: c.voiced, length: c.length, participant: c.participant, asked: c.asked}, checked, err)
+	t.logCheck(turn, pauseCheck{first: true, voiced: c.voiced, length: c.length, participant: c.participant, asked: c.asked}, checked, false, err)
 	if err != nil {
 		return
 	}
@@ -408,6 +498,13 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 	}
 	audioMs, wordsMs := float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
 	spoken := t.sent.establish(c.utterance, words.Language)
+	if words.Language == "" || words.Language == spoken {
+		t.mu.Lock()
+		if t.over.utterance == c.utterance {
+			t.over.words = text
+		}
+		t.mu.Unlock()
+	}
 	if c.whole && t.interims && (words.Language == "" || words.Language == spoken) && t.sent.over(c.utterance-1) {
 		t.send(stt.Transcript{
 			Participant:      c.participant,
@@ -432,6 +529,15 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 	asker.Overheard(c.participant, Ruled{Check: checked, Words: text, Speaking: true, Overheard: true, Began: c.began, AudioMs: audioMs, WordsMs: wordsMs, Utterance: c.utterance})
 }
 
+// wroteWords says words of utterance have been written: an interim shown while the caller
+// talked, or a check over the agent's in the utterance's language (over.words).
+func (t *Transcriber) wroteWords(utterance int64) bool {
+	t.mu.Lock()
+	over := t.over.utterance == utterance && t.over.words != ""
+	t.mu.Unlock()
+	return over || t.sent.wrote(utterance)
+}
+
 // overtaken says the utterance a check over the agent asked about has ended since, a pause
 // check having ended it with a ruling of its own: the check is about an utterance that is
 // over, and that ruling is the one that stands.
@@ -446,22 +552,26 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	defer t.running.Done()
 	turn := asker.Moment(c.participant)
 	// The checks in a row a point asks for are counted by participant, by the ID that is
-	// theirs alone, from each pause's first.
+	// theirs alone, from each pause's first check with the floor free: one over the agent has
+	// no p_eot to count.
 	turn.ParticipantID = c.participant.ID
-	turn.Audio, turn.Paused, turn.FirstPause, turn.Waited = c.audio, c.paused, c.firstPause, !c.first
+	turn.Audio, turn.Paused, turn.FirstPause, turn.Waited = c.audio, c.paused, c.firstPause, c.counted
 	ctx, cancel := context.WithTimeout(t.ctx, harness.HearDeadline(turn))
 	defer cancel()
 	var said <-chan Words
+	var policy Policy
 	checked, err := func() (Check, error) {
-		policy, err := t.client.Policy(ctx)
-		if err != nil {
+		var err error
+		if policy, err = t.client.Policy(ctx); err != nil {
 			return Check{}, err
 		}
 		agent := Agent{Instructions: turn.Instructions, Tools: turn.Tools, Languages: t.languages}
 		var answer Answer
-		if c.first {
+		if c.first && t.words == nil {
 			answer, said, err = t.client.DecideWords(ctx, agent, turnOf(turn), turn.Audio)
 		} else {
+			// The others' words are written already, and a floor that rules alone has the
+			// other transcriber's.
 			answer, err = t.client.Decide(ctx, agent, turnOf(turn), turn.Audio)
 		}
 		if err != nil {
@@ -469,11 +579,60 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		}
 		return asker.Hearer().rule(policy, turn, answer)
 	}()
+	t.checked(err)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(c.asked).Seconds())
 	}
-	t.logCheck(turn, c, checked, err)
+	// Over the agent the model says what to do about the floor, and not whether the caller
+	// has finished: its answer has no p_eot. Whose the pause is says what the ruling means.
+	//
+	// The caller's, where they began the utterance before they had heard the agent: they
+	// were going on with their own turn, which the agent began to answer over, and a ruling
+	// that the agent may talk on says nothing of whether they have finished. Ended at once, a
+	// pause of 200 ms in "Last four 9821, 14 Cedar Lane", begun 2 s before the reply could be
+	// heard, ended the utterance on its first half, its words written as nothing. The check
+	// ends nothing before the policy's cap, where the turn has ended whatever the model says,
+	// and its ruling stands while the agent talks on (standsOver). That is for a caller who was
+	// saying words, some of them written by then (wroteWords). An utterance none of which has
+	// been written is a noise the speech gate opened on before the reply, a room's babble, and
+	// ends as one begun over the agent does: left standing, babble that never paused for the
+	// cap ran on through the reply and took the caller's next line in with it, which was
+	// answered a babble cycle late or cut at the utterance limit.
+	//
+	// The agent's, where they began over it, while they could hear it: a ruling that it may
+	// talk on ends the utterance, as the model let the agent talk through it (a murmur, a
+	// cough, the agent's own voice heard back), and what the caller says next is an utterance
+	// of its own. Run on, the agent's echo took the caller's question in with it.
+	//
+	// Either way a ruling to stop or shorten is acted on at once, as a check over the agent
+	// without a pause is (Overheard), and the ruling stands. Once the agent has given way,
+	// stopped or playing out the tail of a reply it shortened, the floor is the caller's: a
+	// ruling that they take it, made with the conversation in view, ends their turn ("And in
+	// Lisbon." over a forecast the agent shortened is answered at once, where with the floor
+	// free the model waited on it for 2 s), and one that the agent go on ends nothing.
+	var stopping *Ruled
+	standing, heard := false, false
+	if err == nil && turn.Speaking {
+		floor := checked.Ruling.Floor
+		takes := checked.Ruling.Disposition != harness.Ignore && (floor == harness.Stop || floor == harness.Shorten)
+		given := asker.GivenWay()
+		heard = asker.HeardBefore(c.began)
+		switch {
+		case c.paused >= policy.Cap():
+			checked.Ended = true
+		case takes && given:
+			checked.Ended = true
+		case !takes && !given && (heard || !t.wroteWords(c.utterance)):
+			checked.Ended = true
+		default:
+			checked.Ended, standing = false, true
+			if takes {
+				stopping = &Ruled{Check: checked, Speaking: true, Overheard: true, Began: c.began, Paused: c.paused, Utterance: c.utterance}
+			}
+		}
+	}
+	t.logCheck(turn, c, checked, heard, err)
 	t.mu.Lock()
 	p := &t.pause
 	if p.epoch != c.epoch {
@@ -503,14 +662,38 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 			"participant", c.participant.ID, "error", err)
 		return
 	}
+	if !turn.Speaking {
+		p.counted = true
+	}
+	// A stop is handed over with the pause's words, which the agent tells its own echo by:
+	// the first check's, now if they are written, and otherwise once they are (await). A floor
+	// that rules alone has the other transcriber's so far.
+	if stopping != nil {
+		switch {
+		case t.words != nil:
+			stopping.Words, stopping.AudioMs, stopping.WordsMs = t.words.soFar().Text, milliseconds(c.length), milliseconds(time.Since(c.asked))
+		case p.words == nil:
+			p.stopping, stopping = stopping, nil
+		default:
+			stopping.Words, stopping.AudioMs, stopping.WordsMs = *p.words, p.audioMs, p.wordsMs
+		}
+	}
 	if checked.Ended && p.ended == nil {
 		p.ended, p.endedAt = &Ruled{Check: checked, Speaking: turn.Speaking, Paused: c.paused, Utterance: c.utterance}, c.at
+		if t.words != nil {
+			t.cutLocked(c, c.asked.Add(-c.paused))
+		}
 	} else if !checked.Ended && p.resumed {
 		// Speech came while the check was out, and it did not end the turn: the pause is
 		// over. Its words, if asked for, are still the utterance's so far (await).
 		t.pause = pause{epoch: p.epoch + 1}
+	} else if standing {
+		p.standing, p.polled = &Ruled{Check: checked, Speaking: true, Paused: c.paused, Utterance: c.utterance}, 0
 	}
 	t.mu.Unlock()
+	if stopping != nil && stopping.Words != "" {
+		asker.Overheard(c.participant, *stopping)
+	}
 	if said != nil {
 		t.running.Add(1)
 		go t.await(c, said)
@@ -519,11 +702,12 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 }
 
 // logCheck says what a check asked and what came of it, for a call's debug log: no audio
-// and no words.
-func (t *Transcriber) logCheck(turn harness.FlowTurn, c pauseCheck, checked Check, err error) {
+// and no words. heardBefore says, over the agent, whether the caller had heard it when they
+// began the utterance.
+func (t *Transcriber) logCheck(turn harness.FlowTurn, c pauseCheck, checked Check, heardBefore bool, err error) {
 	attributes := []any{"participant", c.participant.ID, "speaking", turn.Speaking, "paused_ms", c.paused.Milliseconds(),
 		"voiced_ms", c.voiced.Milliseconds(), "utterance_ms", c.length.Milliseconds(), "first", c.first, "first_pause", c.firstPause,
-		"took_ms", time.Since(c.asked).Milliseconds()}
+		"heard_before", heardBefore, "took_ms", time.Since(c.asked).Milliseconds()}
 	if err != nil {
 		t.logger.Debug("chorus-asr did not rule on a check", append(attributes, "error", err)...)
 		return
@@ -565,11 +749,19 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	}
 	text := strings.TrimSpace(words.Text)
 	waiting := true
+	var stopping *Ruled
+	asker := t.asker
 	if same {
-		p.words, p.audioMs, p.wordsMs = &text, audioMs, wordsMs
+		p.words, p.audioMs, p.wordsMs, p.noise = &text, audioMs, wordsMs, words.Noise
 		waiting = p.ended == nil
+		if stopping, p.stopping = p.stopping, nil; stopping != nil {
+			stopping.Words, stopping.AudioMs, stopping.WordsMs = text, audioMs, wordsMs
+		}
 	}
 	t.mu.Unlock()
+	if stopping != nil && text != "" && asker != nil {
+		asker.Overheard(c.participant, *stopping)
+	}
 	if text == "" {
 		t.noted(c.utterance, words.Noise)
 		t.finish(c.epoch)
@@ -606,22 +798,42 @@ func (t *Transcriber) finish(epoch int64) {
 		return
 	}
 	p.done = true
-	ruled, asker, participant, utterance := *p.ended, t.asker, p.participant, p.utterance
+	ruled, asker, participant, utterance, noise := *p.ended, t.asker, p.participant, p.utterance, p.noise
 	ruled.Words, ruled.AudioMs, ruled.WordsMs = *p.words, p.audioMs, p.wordsMs
+	// The words of the pause that ended the utterance may come back empty where a check over
+	// the agent wrote some of it: the utterance is those words, as far as that check heard it.
+	// Not where the server said why it wrote none (a voice in another language, a murmur it
+	// ruled ignored): the pause heard the whole of it, and a check over the agent that heard
+	// less may have taken a room's voice for words in the caller's language.
+	if ruled.Words == "" && noise == "" && t.over.utterance == utterance && t.over.words != "" {
+		ruled.Words = t.over.words
+	}
 	t.mu.Unlock()
 	if ruled.Words == "" {
+		// Nothing is lost where the server wrote no words on purpose, saying why (a murmur over
+		// the agent, "uh-huh", ruled ignored; a voice in another language), or the model ruled
+		// there was nothing to answer. Words it ruled were to be answered, and that came back
+		// as nothing with no reason, were.
+		log := t.logger.Debug
+		if d := ruled.Ruling.Disposition; noise == "" && (d == harness.Respond || d == harness.Clarify) {
+			log = t.logger.Warn
+		}
+		log("an utterance a check ended came back with no words, so nothing of it is sent",
+			"participant", participant.ID, "utterance", utterance, "speaking", ruled.Speaking, "paused_ms", ruled.Paused.Milliseconds(),
+			"disposition", ruled.Ruling.Disposition, "floor", ruled.Ruling.Floor, "noise", noise)
 		t.sent.ended(utterance)
 		t.unwritten(participant, utterance, "")
 		return
 	}
 	asker.Ruled(participant, ruled)
+	provider, model := t.writer()
 	t.send(stt.Transcript{
 		Participant:      participant,
 		Mode:             stt.ModeFinal,
 		Utterance:        utterance,
 		Text:             ruled.Words,
-		Provider:         ProviderName,
-		Model:            t.model,
+		Provider:         provider,
+		Model:            model,
 		ProcessingTimeMs: ruled.WordsMs,
 		AudioDurationMs:  ruled.AudioMs,
 	})
