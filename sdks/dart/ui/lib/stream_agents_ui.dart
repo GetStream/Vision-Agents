@@ -1,4 +1,4 @@
-/// Flutter widgets for a conversation with a Stream Vision Agent.
+/// Flutter widgets for a conversation with a Stream agent.
 library;
 
 export 'src/agent_status_view.dart';

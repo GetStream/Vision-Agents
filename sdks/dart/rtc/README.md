@@ -1,6 +1,6 @@
 # stream_agents_rtc
 
-Talk to a Stream Vision Agent out loud: joins the call the agent is on with Stream Video.
+Talk to a Stream agent out loud: joins the call the agent is on with Stream Video.
 
 ```dart
 final voice = await VoiceSession.start(agents, agent: 'support');

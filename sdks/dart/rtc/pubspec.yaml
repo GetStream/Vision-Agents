@@ -1,6 +1,6 @@
 name: stream_agents_rtc
 description: >-
-  Talk to a Stream Vision Agent out loud: joins the call the agent is on with Stream Video,
+  Talk to a Stream agent out loud: joins the call the agent is on with Stream Video,
   and renders the agent's video beside the device camera.
 version: 0.1.0
 repository: https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart/rtc
