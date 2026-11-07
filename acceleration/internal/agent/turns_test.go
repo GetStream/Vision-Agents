@@ -465,3 +465,22 @@ func (s *TurnRecorderSuite) TestANativeReplyAnswersOnlyACallerTurnOwedALine() {
 	s.Equal(origin{}, tracker.originOf("r2"), "a reply was recorded for a turn that waited for nothing")
 	s.Equal(origin{kind: kindTool, parent: "r1", pipeline: pipelineNative}, tracker.originOf("r3"))
 }
+
+// Catches a caller turn answered by a later line timed from when its words were ready rather
+// than from their last revision, as a turn answered by its own reply is (AI-2969 R1.4).
+func (s *TurnRecorderSuite) TestACallerTurnAnsweredByALaterLineIsTimedFromTheLastRevision() {
+	var finished Turn
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, func(turn Turn) { finished = turn })
+	revisedAt := time.Now()
+	tracker.started("turn-caller", kindCaller)
+	tracker.begin("turn-caller", stt.Participant{ID: "alice"}, revisedAt.Add(300*time.Millisecond), revisedAt, 50)
+	tracker.owes("turn-caller")
+	tracker.completed("turn-caller", 0, 0)
+	tracker.started("reply-follow", kindFollowUp)
+
+	tracker.firstAudio("reply-follow", revisedAt.Add(time.Second))
+
+	s.Equal("turn-caller", finished.TurnID)
+	s.InDelta(1000, finished.RoundtripMs, 1e-9)
+	s.InDelta(1050, finished.SpeechEndToAudioMs, 1e-9)
+}

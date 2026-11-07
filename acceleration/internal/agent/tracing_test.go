@@ -180,3 +180,18 @@ func (s *TurnTracingSuite) TestATurnThatNeverStartedIsNotRecorded() {
 
 	s.Empty(s.recorded.Ended())
 }
+
+// Catches a caller turn answered by a later line traced under the line's id (AI-2969 R1.4).
+func (s *TurnTracingSuite) TestACallerTurnAnsweredByALaterLineIsTracedUnderItsOwnID() {
+	tracker := newTurnTracker(s.owner, nil)
+	at := time.Now()
+	tracker.started("turn-caller", kindCaller)
+	tracker.begin("turn-caller", stt.Participant{ID: "alice"}, at, at, 50)
+	tracker.owes("turn-caller")
+	tracker.completed("turn-caller", 0, 0)
+	tracker.started("reply-follow", kindFollowUp)
+
+	tracker.firstAudio("reply-follow", at.Add(400*time.Millisecond))
+
+	s.Contains(s.attributes(), "turn.id=turn-caller")
+}

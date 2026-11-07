@@ -703,3 +703,31 @@ func (s *AgentSuite) TestANativeCallerTurnThatSpokeBeforeItDelegatedIsObservedOn
 	s.Equal(uint64(1), gained["roundtrip"].count)
 	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
 }
+
+// Catches an update said while the turn waits out its playout grace after a filler moving the
+// turn's first audio from the filler to the update (AI-2969 R1.4).
+func (s *AgentSuite) TestAnUpdateSaidWhileTheFillerWaitsOnTheTrackKeepsTheFillersWait() {
+	s.edgeFactory = func(base *loopbackEdge) Edge { return &markedEdge{loopbackEdge: base, neverTakes: true} }
+	s.duplex = DuplexOptions{updateGaps: []time.Duration{10 * time.Millisecond}}
+	s.delegates()
+	held := make(chan struct{})
+	s.subagent.holdCreate = held
+	defer close(held)
+	s.join(true)
+	s.model.reply = []string{`One moment. <ask skill="think">work through the itinerary</ask>`}
+	s.model.composes = []string{"Still mapping out your itinerary."}
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	saidAt := time.Now()
+	before := turnLatencies(pipelineCascade)
+
+	s.says(participant, "please work through the itinerary")
+
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 1 }, "the filler never went out")
+	fillerAt := time.Now()
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "the update never went out")
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the turn never reported")
+	turn, _ := firstOf[Turn](s.reported())
+	s.LessOrEqual(turn.RoundtripMs, msBetween(saidAt, fillerAt), "timed to the update, past the filler")
+	s.Equal(uint64(1), observedSince(pipelineCascade, before)["roundtrip"].count)
+}
