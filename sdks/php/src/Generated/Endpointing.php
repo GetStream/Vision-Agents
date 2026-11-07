@@ -4,7 +4,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
 /**
  * What decides a turn is over: a long enough pause, or a model reading the words and judging

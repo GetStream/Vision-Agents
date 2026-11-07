@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Exception;
+namespace GetStream\StreamAgents\Exception;
 
 use RuntimeException;
 
@@ -10,7 +10,7 @@ use RuntimeException;
  * A routed stream sent an `error` frame: the model was refused, every provider failed, or the
  * start frame asked for something the modality cannot do.
  */
-final class RealtimeException extends RuntimeException implements VisionAgentsException
+final class RealtimeException extends RuntimeException implements StreamAgentsException
 {
     /**
      * @param array<string, mixed> $frame the error frame as sent

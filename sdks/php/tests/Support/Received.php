@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Support;
+namespace GetStream\StreamAgents\Tests\Support;
 
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 
 /**
  * One request the local router received.

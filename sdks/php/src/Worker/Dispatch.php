@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Worker;
+namespace GetStream\StreamAgents\Worker;
 
 use Amp\DeferredFuture;
 use Amp\Future;
@@ -10,22 +10,22 @@ use Amp\Sync\LocalKeyedMutex;
 use Amp\TimeoutCancellation;
 use Amp\CancelledException;
 use Closure;
-use GetStream\VisionAgents\Agent;
-use GetStream\VisionAgents\AgentHandle;
-use GetStream\VisionAgents\AgentResponse;
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\HostingRefusedException;
-use GetStream\VisionAgents\Generated\ImageSource;
-use GetStream\VisionAgents\Generated\SessionTool;
-use GetStream\VisionAgents\Inbound\InboundCall;
-use GetStream\VisionAgents\Inbound\InboundImage;
-use GetStream\VisionAgents\Inbound\InboundMessage;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Responses;
-use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\ToolCall;
-use GetStream\VisionAgents\Tools;
+use GetStream\StreamAgents\Agent;
+use GetStream\StreamAgents\AgentHandle;
+use GetStream\StreamAgents\AgentResponse;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\HostingRefusedException;
+use GetStream\StreamAgents\Generated\ImageSource;
+use GetStream\StreamAgents\Generated\SessionTool;
+use GetStream\StreamAgents\Inbound\InboundCall;
+use GetStream\StreamAgents\Inbound\InboundImage;
+use GetStream\StreamAgents\Inbound\InboundMessage;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Responses;
+use GetStream\StreamAgents\Session;
+use GetStream\StreamAgents\ToolCall;
+use GetStream\StreamAgents\Tools;
 use Revolt\EventLoop;
 use Throwable;
 

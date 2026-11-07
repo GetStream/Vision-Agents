@@ -4,7 +4,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
 /**
  * Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what

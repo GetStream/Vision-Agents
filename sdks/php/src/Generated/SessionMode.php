@@ -4,7 +4,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
 /**
  * How the session hears and speaks: a transcriber, a conversation model and a voice; one

@@ -4,9 +4,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 
 /**
  * What this deployment is billed for the model, in US dollars. A rate is absent when the model

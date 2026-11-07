@@ -4,7 +4,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
 /**
  * Whether the pictures were drawn. A failed generation says why in error_code and error.

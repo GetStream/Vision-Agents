@@ -4,9 +4,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 
 /**
  * The quota a user is held to: each number is the first set of the user's own, the app's, the

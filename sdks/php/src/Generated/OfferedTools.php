@@ -4,9 +4,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 
 /**
  * The tools a session's conversation model is offered, as they are sent to it.

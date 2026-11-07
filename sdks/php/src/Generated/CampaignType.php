@@ -4,7 +4,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Generated;
+namespace GetStream\StreamAgents\Generated;
 
 /**
  * What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Worker;
+namespace GetStream\StreamAgents\Worker;
 
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 
 /**
  * One thing the conversation did: `heard`, `responded`, `spoke`, `tool_ran`, `left`, and the

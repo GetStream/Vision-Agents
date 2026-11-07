@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Worker;
+namespace GetStream\StreamAgents\Worker;
 
 use Amp\DeferredFuture;
 use Amp\Future;

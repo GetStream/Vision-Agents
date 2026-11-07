@@ -2,16 +2,16 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Generated\CreateSessionRequest;
-use GetStream\VisionAgents\Generated\ModelOverwrites;
-use GetStream\VisionAgents\Generated\Session as SessionRow;
-use GetStream\VisionAgents\Generated\SessionFilter;
-use GetStream\VisionAgents\Generated\SessionPage;
-use GetStream\VisionAgents\Generated\SessionQuery;
-use GetStream\VisionAgents\Generated\TextMatch;
-use GetStream\VisionAgents\Generated\UpdateSessionRequest;
+use GetStream\StreamAgents\Generated\CreateSessionRequest;
+use GetStream\StreamAgents\Generated\ModelOverwrites;
+use GetStream\StreamAgents\Generated\Session as SessionRow;
+use GetStream\StreamAgents\Generated\SessionFilter;
+use GetStream\StreamAgents\Generated\SessionPage;
+use GetStream\StreamAgents\Generated\SessionQuery;
+use GetStream\StreamAgents\Generated\TextMatch;
+use GetStream\StreamAgents\Generated\UpdateSessionRequest;
 
 /**
  * An agent's conversations: the one being held and the ones that were.

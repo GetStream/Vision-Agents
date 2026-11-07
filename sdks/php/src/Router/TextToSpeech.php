@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Router;
+namespace GetStream\StreamAgents\Router;
 
-use GetStream\VisionAgents\Generated\RecordingStatus;
-use GetStream\VisionAgents\Generated\Speech;
-use GetStream\VisionAgents\Generated\SpeechRequest;
-use GetStream\VisionAgents\Generated\TtsOptions;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Router;
-use GetStream\VisionAgents\Worker\Realtime;
+use GetStream\StreamAgents\Generated\RecordingStatus;
+use GetStream\StreamAgents\Generated\Speech;
+use GetStream\StreamAgents\Generated\SpeechRequest;
+use GetStream\StreamAgents\Generated\TtsOptions;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Router;
+use GetStream\StreamAgents\Worker\Realtime;
 
 /**
  * A voice, live or recorded.
@@ -33,7 +33,7 @@ final readonly class TextToSpeech
      * Speaks a whole text into one file. Nothing is listening while it is made, so this asks
      * for the file rather than the stream. It waits for the job unless a callback is given.
      *
-     * @throws \GetStream\VisionAgents\Exception\RecordingFailedException when the job failed
+     * @throws \GetStream\StreamAgents\Exception\RecordingFailedException when the job failed
      */
     public function recording(string $text, ?TtsOptions $options = null, string $callback = ''): Speech
     {

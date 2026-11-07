@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
 use FilesystemIterator;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Folder\Declaration;
-use GetStream\VisionAgents\Folder\Document;
-use GetStream\VisionAgents\Folder\KnowledgeUrl;
-use GetStream\VisionAgents\Folder\Simulation;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Folder\Declaration;
+use GetStream\StreamAgents\Folder\Document;
+use GetStream\StreamAgents\Folder\KnowledgeUrl;
+use GetStream\StreamAgents\Folder\Simulation;
 use JsonException;
 use RecursiveDirectoryIterator;
 use RecursiveIteratorIterator;

@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Generated\AgentResponse as ResponseRow;
+use GetStream\StreamAgents\Generated\AgentResponse as ResponseRow;
 
 /**
  * One turn, and a way to read what it was made of.

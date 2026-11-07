@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Exception;
+namespace GetStream\StreamAgents\Exception;
 
 use Throwable;
 
 /**
  * Everything this SDK throws on purpose implements this, so one catch covers it.
  */
-interface VisionAgentsException extends Throwable
+interface StreamAgentsException extends Throwable
 {
 }

@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Folder;
+namespace GetStream\StreamAgents\Folder;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\KnowledgeUrlDeclaration;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\KnowledgeUrlDeclaration;
 
 /**
  * One page from knowledge/urls.yaml. A page is a subscription rather than a copy: what a

@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Exception;
+namespace GetStream\StreamAgents\Exception;
 
 use RuntimeException;
 
 /**
  * A socket closed while something was still being sent or waited for on it.
  */
-final class SocketClosedException extends RuntimeException implements VisionAgentsException
+final class SocketClosedException extends RuntimeException implements StreamAgentsException
 {
     public function __construct(string $message, public readonly int $closeCode = 0)
     {

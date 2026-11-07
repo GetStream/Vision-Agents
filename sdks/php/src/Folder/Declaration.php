@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Folder;
+namespace GetStream\StreamAgents\Folder;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Folder;
-use GetStream\VisionAgents\Generated\AgentDispatch;
-use GetStream\VisionAgents\Generated\DispatchSetting;
-use GetStream\VisionAgents\Generated\FloorControl;
-use GetStream\VisionAgents\Generated\Greeting;
-use GetStream\VisionAgents\Generated\GreetingMode;
-use GetStream\VisionAgents\Generated\SandboxOptions;
-use GetStream\VisionAgents\Generated\SessionVideo;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Folder;
+use GetStream\StreamAgents\Generated\AgentDispatch;
+use GetStream\StreamAgents\Generated\DispatchSetting;
+use GetStream\StreamAgents\Generated\FloorControl;
+use GetStream\StreamAgents\Generated\Greeting;
+use GetStream\StreamAgents\Generated\GreetingMode;
+use GetStream\StreamAgents\Generated\SandboxOptions;
+use GetStream\StreamAgents\Generated\SessionVideo;
 
 /**
  * What agent.yaml declares: what the agent is called and what it runs on.

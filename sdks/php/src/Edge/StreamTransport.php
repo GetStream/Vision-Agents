@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Edge;
+namespace GetStream\StreamAgents\Edge;
 
 use GetStream\Exceptions\StreamApiException;
 use GetStream\Exceptions\StreamTransportException;
 use GetStream\Http\HttpClientInterface;
+use GetStream\StreamAgents\Json;
 use GetStream\StreamResponse;
-use GetStream\VisionAgents\Json;
 use JsonException;
 use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;

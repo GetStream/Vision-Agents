@@ -2,16 +2,16 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Router;
+namespace GetStream\StreamAgents\Router;
 
-use GetStream\VisionAgents\Generated\RecordingSource;
-use GetStream\VisionAgents\Generated\RecordingStatus;
-use GetStream\VisionAgents\Generated\SttOptions;
-use GetStream\VisionAgents\Generated\Transcription;
-use GetStream\VisionAgents\Generated\TranscriptionRequest;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Router;
-use GetStream\VisionAgents\Worker\Realtime;
+use GetStream\StreamAgents\Generated\RecordingSource;
+use GetStream\StreamAgents\Generated\RecordingStatus;
+use GetStream\StreamAgents\Generated\SttOptions;
+use GetStream\StreamAgents\Generated\Transcription;
+use GetStream\StreamAgents\Generated\TranscriptionRequest;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Router;
+use GetStream\StreamAgents\Worker\Realtime;
 
 /**
  * Transcription, live or from a recording.
@@ -40,7 +40,7 @@ final readonly class SpeechToText
      * @param RecordingSource|string $source a URL for the provider to fetch, or a source with
      *     the audio inline
      *
-     * @throws \GetStream\VisionAgents\Exception\RecordingFailedException when the job failed
+     * @throws \GetStream\StreamAgents\Exception\RecordingFailedException when the job failed
      */
     public function recording(RecordingSource|string $source, ?SttOptions $options = null, string $callback = ''): Transcription
     {

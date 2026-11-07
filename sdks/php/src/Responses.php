@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\AgentResponse as ResponseRow;
-use GetStream\VisionAgents\Generated\AgentResponseItem;
-use GetStream\VisionAgents\Generated\AgentResponsePage;
-use GetStream\VisionAgents\Generated\CreateResponseRequest;
-use GetStream\VisionAgents\Generated\ImageSource;
-use GetStream\VisionAgents\Generated\RewindSessionRequest;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\AgentResponse as ResponseRow;
+use GetStream\StreamAgents\Generated\AgentResponseItem;
+use GetStream\StreamAgents\Generated\AgentResponsePage;
+use GetStream\StreamAgents\Generated\CreateResponseRequest;
+use GetStream\StreamAgents\Generated\ImageSource;
+use GetStream\StreamAgents\Generated\RewindSessionRequest;
 
 /**
  * A session's turns.

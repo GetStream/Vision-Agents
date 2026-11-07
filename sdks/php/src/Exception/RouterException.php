@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Exception;
+namespace GetStream\StreamAgents\Exception;
 
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 use JsonException;
 use RuntimeException;
 use Throwable;
@@ -16,7 +16,7 @@ use Throwable;
  * 500 are different decisions. The status is not the exception code: PHP's integer code is for
  * the caller's own use and means nothing here.
  */
-final class RouterException extends RuntimeException implements VisionAgentsException
+final class RouterException extends RuntimeException implements StreamAgentsException
 {
     /**
      * @param int $status the HTTP status, or 0 when no response arrived

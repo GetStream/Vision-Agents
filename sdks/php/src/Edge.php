@@ -2,16 +2,16 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
 use GetStream\Exceptions\StreamApiException;
 use GetStream\Exceptions\StreamException;
 use GetStream\GeneratedModels\CallRequest;
 use GetStream\GeneratedModels\GetOrCreateCallRequest;
+use GetStream\StreamAgents\Edge\StreamTransport;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\RouterException;
 use GetStream\VideoClient;
-use GetStream\VisionAgents\Edge\StreamTransport;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\RouterException;
 use Psr\Http\Client\ClientInterface;
 
 /**

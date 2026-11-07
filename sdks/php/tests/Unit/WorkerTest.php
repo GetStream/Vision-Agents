@@ -2,27 +2,27 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
 use Amp\Websocket\WebsocketClient;
-use GetStream\VisionAgents\Agent;
-use GetStream\VisionAgents\Backend;
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\HostingRefusedException;
-use GetStream\VisionAgents\Exception\RealtimeException;
-use GetStream\VisionAgents\Exception\RouterException;
-use GetStream\VisionAgents\Generated\Session as SessionRow;
-use GetStream\VisionAgents\Generated\SttOptions;
-use GetStream\VisionAgents\Inbound\InboundCall;
-use GetStream\VisionAgents\Inbound\InboundImage;
-use GetStream\VisionAgents\Inbound\InboundMessage;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\Tests\Support\LocalRouter;
-use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
-use GetStream\VisionAgents\Tests\Support\Rows;
-use GetStream\VisionAgents\Worker\Dispatch;
+use GetStream\StreamAgents\Agent;
+use GetStream\StreamAgents\Backend;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\HostingRefusedException;
+use GetStream\StreamAgents\Exception\RealtimeException;
+use GetStream\StreamAgents\Exception\RouterException;
+use GetStream\StreamAgents\Generated\Session as SessionRow;
+use GetStream\StreamAgents\Generated\SttOptions;
+use GetStream\StreamAgents\Inbound\InboundCall;
+use GetStream\StreamAgents\Inbound\InboundImage;
+use GetStream\StreamAgents\Inbound\InboundMessage;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Session;
+use GetStream\StreamAgents\Tests\Support\LocalRouter;
+use GetStream\StreamAgents\Tests\Support\LocalSocketServer;
+use GetStream\StreamAgents\Tests\Support\Rows;
+use GetStream\StreamAgents\Worker\Dispatch;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use RuntimeException;

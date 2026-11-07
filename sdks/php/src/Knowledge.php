@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\KnowledgeUrl;
-use GetStream\VisionAgents\Generated\KnowledgeUrlRequest;
-use GetStream\VisionAgents\Generated\KnowledgeUrlState;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\KnowledgeUrl;
+use GetStream\StreamAgents\Generated\KnowledgeUrlRequest;
+use GetStream\StreamAgents\Generated\KnowledgeUrlState;
 
 /**
  * An agent's knowledge base, as somewhere to put more of it.

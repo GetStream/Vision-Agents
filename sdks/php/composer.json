@@ -31,12 +31,12 @@
     },
     "autoload": {
         "psr-4": {
-            "GetStream\\VisionAgents\\": "src/"
+            "GetStream\\StreamAgents\\": "src/"
         }
     },
     "autoload-dev": {
         "psr-4": {
-            "GetStream\\VisionAgents\\Tests\\": "tests/"
+            "GetStream\\StreamAgents\\Tests\\": "tests/"
         }
     },
     "scripts": {

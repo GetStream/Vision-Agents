@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Folder;
-use GetStream\VisionAgents\Generated\GreetingMode;
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Folder;
+use GetStream\StreamAgents\Generated\GreetingMode;
+use GetStream\StreamAgents\Json;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 

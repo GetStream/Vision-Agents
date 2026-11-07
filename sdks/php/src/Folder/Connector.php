@@ -2,15 +2,15 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Folder;
+namespace GetStream\StreamAgents\Folder;
 
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\AgentConnectorBinding;
-use GetStream\VisionAgents\Generated\AgentConnectorSelection;
-use GetStream\VisionAgents\Generated\AgentConnectorSelectionType;
-use GetStream\VisionAgents\Generated\ConnectionPage;
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\AgentConnectorBinding;
+use GetStream\StreamAgents\Generated\AgentConnectorSelection;
+use GetStream\StreamAgents\Generated\AgentConnectorSelectionType;
+use GetStream\StreamAgents\Generated\ConnectionPage;
+use GetStream\StreamAgents\Json;
 
 /**
  * One connector agent.yaml binds: the alias alone, or a mapping naming it with the connector,

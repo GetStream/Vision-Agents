@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\AgentConfig;
-use GetStream\VisionAgents\Generated\AgentConfigPatch;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\AgentConfig;
+use GetStream\StreamAgents\Generated\AgentConfigPatch;
 
 /**
  * An agent configured in the backend, addressed by name, and its conversations.

@@ -9,7 +9,7 @@ The per-language half of [sdk](../sdk/SKILL.md), for the server side only. It re
 decisions [`sdks/php`](../../../sdks/php) already follows, so a change lands consistently
 rather than re-litigating them.
 
-One Composer package, `getstream/stream-agents`, namespace `GetStream\VisionAgents`. PHP ^8.4,
+One Composer package, `getstream/stream-agents`, namespace `GetStream\StreamAgents`. PHP ^8.4,
 tested on 8.4 and 8.5. Strict types everywhere, `final readonly` classes, backed enums.
 
 ## Layout

@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
-use GetStream\VisionAgents\Backend;
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Backend;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Exception\ConfigurationException;
 use Nyholm\Psr7\Response;
 use PHPUnit\Framework\TestCase;
 use Psr\Http\Client\ClientInterface;

@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Router;
+namespace GetStream\StreamAgents\Router;
 
-use GetStream\VisionAgents\Generated\LlmOptions;
-use GetStream\VisionAgents\Router;
-use GetStream\VisionAgents\Worker\Realtime;
+use GetStream\StreamAgents\Generated\LlmOptions;
+use GetStream\StreamAgents\Router;
+use GetStream\StreamAgents\Worker\Realtime;
 
 /**
  * The model that answers. There is no recording here: what the socket buys is the answer

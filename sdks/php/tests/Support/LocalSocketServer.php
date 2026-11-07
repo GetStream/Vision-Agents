@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Support;
+namespace GetStream\StreamAgents\Tests\Support;
 
 use Amp\Http\Server\DefaultErrorHandler;
 use Amp\Http\Server\Request;
@@ -15,9 +15,9 @@ use Amp\Websocket\Server\WebsocketAcceptor;
 use Amp\Websocket\Server\WebsocketClientHandler;
 use Amp\Websocket\WebsocketClient;
 use Closure;
-use GetStream\VisionAgents\Backend;
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Backend;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Json;
 use Psr\Log\NullLogger;
 
 /**

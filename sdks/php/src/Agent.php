@@ -2,30 +2,30 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\RouterException;
-use GetStream\VisionAgents\Folder\Connector;
-use GetStream\VisionAgents\Folder\Declaration;
-use GetStream\VisionAgents\Folder\Document;
-use GetStream\VisionAgents\Folder\KnowledgeUrl;
-use GetStream\VisionAgents\Folder\Simulation;
-use GetStream\VisionAgents\Generated\AgentConfig;
-use GetStream\VisionAgents\Generated\AgentMode;
-use GetStream\VisionAgents\Generated\CreateSessionRequest;
-use GetStream\VisionAgents\Generated\Harness as HarnessName;
-use GetStream\VisionAgents\Generated\ModelOverwrites;
-use GetStream\VisionAgents\Generated\PlaceCallRequest;
-use GetStream\VisionAgents\Generated\PlacedCall;
-use GetStream\VisionAgents\Generated\Sandbox;
-use GetStream\VisionAgents\Generated\Session as SessionRow;
-use GetStream\VisionAgents\Generated\SessionMemory;
-use GetStream\VisionAgents\Generated\SessionPhone;
-use GetStream\VisionAgents\Generated\SyncAgentRequest;
-use GetStream\VisionAgents\Generated\SyncAgentResult;
-use GetStream\VisionAgents\Inbound\InboundCall;
-use GetStream\VisionAgents\Inbound\InboundMessage;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\RouterException;
+use GetStream\StreamAgents\Folder\Connector;
+use GetStream\StreamAgents\Folder\Declaration;
+use GetStream\StreamAgents\Folder\Document;
+use GetStream\StreamAgents\Folder\KnowledgeUrl;
+use GetStream\StreamAgents\Folder\Simulation;
+use GetStream\StreamAgents\Generated\AgentConfig;
+use GetStream\StreamAgents\Generated\AgentMode;
+use GetStream\StreamAgents\Generated\CreateSessionRequest;
+use GetStream\StreamAgents\Generated\Harness as HarnessName;
+use GetStream\StreamAgents\Generated\ModelOverwrites;
+use GetStream\StreamAgents\Generated\PlaceCallRequest;
+use GetStream\StreamAgents\Generated\PlacedCall;
+use GetStream\StreamAgents\Generated\Sandbox;
+use GetStream\StreamAgents\Generated\Session as SessionRow;
+use GetStream\StreamAgents\Generated\SessionMemory;
+use GetStream\StreamAgents\Generated\SessionPhone;
+use GetStream\StreamAgents\Generated\SyncAgentRequest;
+use GetStream\StreamAgents\Generated\SyncAgentResult;
+use GetStream\StreamAgents\Inbound\InboundCall;
+use GetStream\StreamAgents\Inbound\InboundMessage;
 
 /**
  * A configured agent, before and between the calls it holds.

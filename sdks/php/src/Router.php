@@ -2,21 +2,21 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\RouterConfig;
-use GetStream\VisionAgents\Generated\RouterConfigRequest;
-use GetStream\VisionAgents\Generated\SearchAnswer;
-use GetStream\VisionAgents\Generated\SearchOptions;
-use GetStream\VisionAgents\Generated\SearchRequest;
-use GetStream\VisionAgents\Generated\StsOptions;
-use GetStream\VisionAgents\Generated\SttOptions;
-use GetStream\VisionAgents\Generated\TtsOptions;
-use GetStream\VisionAgents\Router\Completions;
-use GetStream\VisionAgents\Router\SpeechToSpeech;
-use GetStream\VisionAgents\Router\SpeechToText;
-use GetStream\VisionAgents\Router\TextToSpeech;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\RouterConfig;
+use GetStream\StreamAgents\Generated\RouterConfigRequest;
+use GetStream\StreamAgents\Generated\SearchAnswer;
+use GetStream\StreamAgents\Generated\SearchOptions;
+use GetStream\StreamAgents\Generated\SearchRequest;
+use GetStream\StreamAgents\Generated\StsOptions;
+use GetStream\StreamAgents\Generated\SttOptions;
+use GetStream\StreamAgents\Generated\TtsOptions;
+use GetStream\StreamAgents\Router\Completions;
+use GetStream\StreamAgents\Router\SpeechToSpeech;
+use GetStream\StreamAgents\Router\SpeechToText;
+use GetStream\StreamAgents\Router\TextToSpeech;
 
 /**
  * Everything the backend routes, configured once, for a pipeline that is not an agent.

@@ -2,19 +2,19 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
-use GetStream\VisionAgents\Agent;
-use GetStream\VisionAgents\Exception\RecordingFailedException;
-use GetStream\VisionAgents\Generated\KnowledgeUrlState;
-use GetStream\VisionAgents\Generated\RecordingStatus;
-use GetStream\VisionAgents\Generated\SearchOptions;
-use GetStream\VisionAgents\Generated\SttOptions;
-use GetStream\VisionAgents\Generated\TtsOptions;
-use GetStream\VisionAgents\Knowledge;
-use GetStream\VisionAgents\Router;
-use GetStream\VisionAgents\Tests\Support\LocalRouter;
-use GetStream\VisionAgents\Tests\Support\Rows;
+use GetStream\StreamAgents\Agent;
+use GetStream\StreamAgents\Exception\RecordingFailedException;
+use GetStream\StreamAgents\Generated\KnowledgeUrlState;
+use GetStream\StreamAgents\Generated\RecordingStatus;
+use GetStream\StreamAgents\Generated\SearchOptions;
+use GetStream\StreamAgents\Generated\SttOptions;
+use GetStream\StreamAgents\Generated\TtsOptions;
+use GetStream\StreamAgents\Knowledge;
+use GetStream\StreamAgents\Router;
+use GetStream\StreamAgents\Tests\Support\LocalRouter;
+use GetStream\StreamAgents\Tests\Support\Rows;
 use PHPUnit\Framework\TestCase;
 
 final class RouterTest extends TestCase

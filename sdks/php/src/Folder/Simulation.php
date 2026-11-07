@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Folder;
+namespace GetStream\StreamAgents\Folder;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\SimulationDeclaration;
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\SimulationDeclaration;
+use GetStream\StreamAgents\Json;
 
 /**
  * One conversation a simulations/*.yaml file declares, run against the agent the directory is.

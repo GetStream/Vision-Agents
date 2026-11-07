@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\ConfigurationException;
 
 /**
  * What agents remember about the app's users between conversations.

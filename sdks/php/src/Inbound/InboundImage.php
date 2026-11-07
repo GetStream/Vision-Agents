@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Inbound;
+namespace GetStream\StreamAgents\Inbound;
 
 /**
  * A photo sent with an inbound message, as a URL to fetch.

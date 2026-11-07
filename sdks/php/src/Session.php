@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\RouterException;
-use GetStream\VisionAgents\Generated\ForkSessionRequest;
-use GetStream\VisionAgents\Generated\SayRequest;
-use GetStream\VisionAgents\Generated\Session as SessionRow;
-use GetStream\VisionAgents\Worker\Watch;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\RouterException;
+use GetStream\StreamAgents\Generated\ForkSessionRequest;
+use GetStream\StreamAgents\Generated\SayRequest;
+use GetStream\StreamAgents\Generated\Session as SessionRow;
+use GetStream\StreamAgents\Worker\Watch;
 
 /**
  * One conversation, held in the acceleration backend.

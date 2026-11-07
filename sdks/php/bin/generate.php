@@ -16,7 +16,7 @@ require __DIR__ . '/../vendor/autoload.php';
 use Symfony\Component\Yaml\Yaml;
 
 const TARGET = __DIR__ . '/../src/Generated';
-const NS = 'GetStream\\VisionAgents\\Generated';
+const NS = 'GetStream\\StreamAgents\\Generated';
 
 /** @var list<string> $args */
 $args = $_SERVER['argv'];
@@ -122,7 +122,7 @@ function classOf(string $name, array $schema, array $schemas): array
     }
 
     $source = fileHeader()
-        . "use GetStream\\VisionAgents\\Json;\n\n"
+        . "use GetStream\\StreamAgents\\Json;\n\n"
         . docblock(str($schema['description'] ?? ''), '')
         . "final readonly class {$name}\n{\n"
         . "    public function __construct(\n" . implode(",\n", $params) . ",\n    ) {\n    }\n\n"

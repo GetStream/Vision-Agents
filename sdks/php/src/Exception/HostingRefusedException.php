@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Exception;
+namespace GetStream\StreamAgents\Exception;
 
 use RuntimeException;
 
 /**
  * The router refused the tools a worker offered to host. Reconnecting would only be told again.
  */
-final class HostingRefusedException extends RuntimeException implements VisionAgentsException
+final class HostingRefusedException extends RuntimeException implements StreamAgentsException
 {
     public function __construct(public readonly string $agentId, public readonly string $reason)
     {

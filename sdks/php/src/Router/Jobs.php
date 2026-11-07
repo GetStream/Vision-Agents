@@ -2,12 +2,12 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Router;
+namespace GetStream\StreamAgents\Router;
 
-use GetStream\VisionAgents\Exception\RecordingFailedException;
-use GetStream\VisionAgents\Generated\RecordingStatus;
-use GetStream\VisionAgents\Pause;
-use GetStream\VisionAgents\Router;
+use GetStream\StreamAgents\Exception\RecordingFailedException;
+use GetStream\StreamAgents\Generated\RecordingStatus;
+use GetStream\StreamAgents\Pause;
+use GetStream\StreamAgents\Router;
 
 /**
  * @internal

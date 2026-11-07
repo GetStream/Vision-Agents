@@ -2,20 +2,20 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
 use Amp\Websocket\WebsocketClient;
-use GetStream\VisionAgents\Agent;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\Session as SessionRow;
-use GetStream\VisionAgents\Generated\SessionTool;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\Tests\Support\LocalSocketServer;
-use GetStream\VisionAgents\Tests\Support\Rows;
-use GetStream\VisionAgents\ToolCall;
-use GetStream\VisionAgents\Tools;
-use GetStream\VisionAgents\Worker\Dispatch;
+use GetStream\StreamAgents\Agent;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\Session as SessionRow;
+use GetStream\StreamAgents\Generated\SessionTool;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Session;
+use GetStream\StreamAgents\Tests\Support\LocalSocketServer;
+use GetStream\StreamAgents\Tests\Support\Rows;
+use GetStream\StreamAgents\ToolCall;
+use GetStream\StreamAgents\Tools;
+use GetStream\StreamAgents\Worker\Dispatch;
 use PHPUnit\Framework\TestCase;
 
 use function Amp\delay;

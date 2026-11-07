@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Generated\AgentResponseItem;
-use GetStream\VisionAgents\Generated\AgentResponseItemPage;
+use GetStream\StreamAgents\Generated\AgentResponseItem;
+use GetStream\StreamAgents\Generated\AgentResponseItemPage;
 use Generator;
 
 /**

@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Worker;
+namespace GetStream\StreamAgents\Worker;
 
 use Amp\Future;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\ToolCall;
-use GetStream\VisionAgents\Tools;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Session;
+use GetStream\StreamAgents\ToolCall;
+use GetStream\StreamAgents\Tools;
 use Generator;
 use IteratorAggregate;
 use Throwable;

@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\RouterException;
-use GetStream\VisionAgents\Generated\ClaimGuestRequest;
-use GetStream\VisionAgents\Generated\ClaimGuestResult;
-use GetStream\VisionAgents\Generated\GuestUser;
-use GetStream\VisionAgents\Generated\GuestUserRequest;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\RouterException;
+use GetStream\StreamAgents\Generated\ClaimGuestRequest;
+use GetStream\StreamAgents\Generated\ClaimGuestResult;
+use GetStream\StreamAgents\Generated\GuestUser;
+use GetStream\StreamAgents\Generated\GuestUserRequest;
 use JsonException;
 use Psr\Http\Client\ClientExceptionInterface;
 use Psr\Http\Client\ClientInterface;

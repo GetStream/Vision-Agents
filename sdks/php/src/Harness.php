@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Generated\Harness as HarnessName;
+use GetStream\StreamAgents\Generated\Harness as HarnessName;
 
 /**
  * What stands between what a caller said and the model that answers them.

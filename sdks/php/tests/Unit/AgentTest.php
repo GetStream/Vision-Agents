@@ -2,23 +2,23 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
-use GetStream\VisionAgents\Agent;
-use GetStream\VisionAgents\Edge;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Folder;
-use GetStream\VisionAgents\Generated\AgentConfigPatch;
-use GetStream\VisionAgents\Generated\AgentReview;
-use GetStream\VisionAgents\Generated\Sandbox;
-use GetStream\VisionAgents\Harness;
-use GetStream\VisionAgents\Inbound\InboundCall;
-use GetStream\VisionAgents\Inbound\InboundMessage;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Pipeline;
-use GetStream\VisionAgents\Skill;
-use GetStream\VisionAgents\Tests\Support\LocalRouter;
-use GetStream\VisionAgents\Tests\Support\Rows;
+use GetStream\StreamAgents\Agent;
+use GetStream\StreamAgents\Edge;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Folder;
+use GetStream\StreamAgents\Generated\AgentConfigPatch;
+use GetStream\StreamAgents\Generated\AgentReview;
+use GetStream\StreamAgents\Generated\Sandbox;
+use GetStream\StreamAgents\Harness;
+use GetStream\StreamAgents\Inbound\InboundCall;
+use GetStream\StreamAgents\Inbound\InboundMessage;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Pipeline;
+use GetStream\StreamAgents\Skill;
+use GetStream\StreamAgents\Tests\Support\LocalRouter;
+use GetStream\StreamAgents\Tests\Support\Rows;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 

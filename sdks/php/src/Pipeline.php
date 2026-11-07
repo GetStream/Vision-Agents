@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Generated\Greeting;
-use GetStream\VisionAgents\Generated\GreetingMode;
-use GetStream\VisionAgents\Generated\SessionVideo;
+use GetStream\StreamAgents\Generated\Greeting;
+use GetStream\StreamAgents\Generated\GreetingMode;
+use GetStream\StreamAgents\Generated\SessionVideo;
 
 /**
  * Which models hold the conversation.

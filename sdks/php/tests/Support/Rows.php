@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Support;
+namespace GetStream\StreamAgents\Tests\Support;
 
 /**
  * Bodies the router answers with, as little of each as the spec requires.

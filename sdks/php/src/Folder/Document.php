@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Folder;
+namespace GetStream\StreamAgents\Folder;
 
-use GetStream\VisionAgents\Generated\KnowledgeDocument;
+use GetStream\StreamAgents\Generated\KnowledgeDocument;
 
 /**
  * One file from an agent's knowledge directory, as it will be ingested.

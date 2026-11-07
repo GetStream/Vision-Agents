@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\ConfigurationException;
 
 /**
  * Where the router is and who is calling it.

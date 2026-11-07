@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Live;
+namespace GetStream\StreamAgents\Tests\Live;
 
-use GetStream\VisionAgents\Agent;
-use GetStream\VisionAgents\Backend;
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Exception\RouterException;
-use GetStream\VisionAgents\Folder;
-use GetStream\VisionAgents\Generated\ForkSessionRequest;
-use GetStream\VisionAgents\Generated\KnowledgeUrlState;
-use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\Worker\Dispatch;
+use GetStream\StreamAgents\Agent;
+use GetStream\StreamAgents\Backend;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Exception\RouterException;
+use GetStream\StreamAgents\Folder;
+use GetStream\StreamAgents\Generated\ForkSessionRequest;
+use GetStream\StreamAgents\Generated\KnowledgeUrlState;
+use GetStream\StreamAgents\Session;
+use GetStream\StreamAgents\Worker\Dispatch;
 use PHPUnit\Framework\TestCase;
 use Revolt\EventLoop;
 

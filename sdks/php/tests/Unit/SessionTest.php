@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\RouterException;
-use GetStream\VisionAgents\Generated\ForkSessionRequest;
-use GetStream\VisionAgents\Generated\ImageSource;
-use GetStream\VisionAgents\Generated\SessionState;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Session;
-use GetStream\VisionAgents\Tests\Support\LocalRouter;
-use GetStream\VisionAgents\Tests\Support\Rows;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\RouterException;
+use GetStream\StreamAgents\Generated\ForkSessionRequest;
+use GetStream\StreamAgents\Generated\ImageSource;
+use GetStream\StreamAgents\Generated\SessionState;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Session;
+use GetStream\StreamAgents\Tests\Support\LocalRouter;
+use GetStream\StreamAgents\Tests\Support\Rows;
 use PHPUnit\Framework\TestCase;
 
 final class SessionTest extends TestCase

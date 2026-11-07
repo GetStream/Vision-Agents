@@ -2,17 +2,17 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Tests\Unit;
+namespace GetStream\StreamAgents\Tests\Unit;
 
-use GetStream\VisionAgents\Backend;
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Exception\RouterException;
-use GetStream\VisionAgents\Generated\ErrorType;
-use GetStream\VisionAgents\Generated\SimulationRequest;
-use GetStream\VisionAgents\Json;
-use GetStream\VisionAgents\Tests\Support\LocalRouter;
-use GetStream\VisionAgents\Tests\Support\Rows;
+use GetStream\StreamAgents\Backend;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\RouterException;
+use GetStream\StreamAgents\Generated\ErrorType;
+use GetStream\StreamAgents\Generated\SimulationRequest;
+use GetStream\StreamAgents\Json;
+use GetStream\StreamAgents\Tests\Support\LocalRouter;
+use GetStream\StreamAgents\Tests\Support\Rows;
 use GuzzleHttp\Client as Guzzle;
 use GuzzleHttp\Psr7\HttpFactory;
 use PHPUnit\Framework\Attributes\DataProvider;

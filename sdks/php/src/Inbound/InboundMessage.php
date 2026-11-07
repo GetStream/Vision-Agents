@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Inbound;
+namespace GetStream\StreamAgents\Inbound;
 
 use DateTimeImmutable;
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 
 /**
  * A message written to an agent that is not running, or to a running session whose agent

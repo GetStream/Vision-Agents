@@ -2,13 +2,13 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
 use Amp\Cancellation;
 use Amp\DeferredCancellation;
 use Closure;
-use GetStream\VisionAgents\Exception\CallNotHeldException;
-use GetStream\VisionAgents\Worker\Holds;
+use GetStream\StreamAgents\Exception\CallNotHeldException;
+use GetStream\StreamAgents\Worker\Holds;
 
 /**
  * One call of one of the caller's tools: who it is for, and its line back to them.

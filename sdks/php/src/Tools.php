@@ -2,14 +2,14 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
 use Amp\CancelledException;
 use Amp\TimeoutCancellation;
 use Closure;
-use GetStream\VisionAgents\Exception\ConfigurationException;
-use GetStream\VisionAgents\Generated\SessionTool;
-use GetStream\VisionAgents\Generated\SessionToolApproval;
+use GetStream\StreamAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Generated\SessionTool;
+use GetStream\StreamAgents\Generated\SessionToolApproval;
 use JsonException;
 use ReflectionFunction;
 use RuntimeException;

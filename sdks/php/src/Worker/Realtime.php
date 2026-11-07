@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Worker;
+namespace GetStream\StreamAgents\Worker;
 
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Exception\RealtimeException;
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Exception\RealtimeException;
+use GetStream\StreamAgents\Json;
 use Generator;
 
 /**

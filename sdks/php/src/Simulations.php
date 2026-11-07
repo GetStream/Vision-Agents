@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Generated\Simulation;
-use GetStream\VisionAgents\Generated\SimulationRequest;
-use GetStream\VisionAgents\Generated\SimulationRun;
+use GetStream\StreamAgents\Generated\Simulation;
+use GetStream\StreamAgents\Generated\SimulationRequest;
+use GetStream\StreamAgents\Generated\SimulationRun;
 
 /**
  * Conversations to put an agent through, and something that has to be true at the end of each.

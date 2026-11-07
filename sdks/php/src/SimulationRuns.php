@@ -2,9 +2,9 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
-use GetStream\VisionAgents\Generated\SimulationRun;
+use GetStream\StreamAgents\Generated\SimulationRun;
 
 /**
  * The runs of every simulation, newest first.

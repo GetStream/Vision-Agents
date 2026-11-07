@@ -2,10 +2,10 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Inbound;
+namespace GetStream\StreamAgents\Inbound;
 
 use DateTimeImmutable;
-use GetStream\VisionAgents\Json;
+use GetStream\StreamAgents\Json;
 
 /**
  * A call the router handed to this worker. The caller is already in the Stream call.

@@ -2,11 +2,11 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents\Router;
+namespace GetStream\StreamAgents\Router;
 
-use GetStream\VisionAgents\Generated\StsOptions;
-use GetStream\VisionAgents\Router;
-use GetStream\VisionAgents\Worker\Realtime;
+use GetStream\StreamAgents\Generated\StsOptions;
+use GetStream\StreamAgents\Router;
+use GetStream\StreamAgents\Worker\Realtime;
 
 /**
  * A conversation with one native audio model. There is no recording: a conversation is live or

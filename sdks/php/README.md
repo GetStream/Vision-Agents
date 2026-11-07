@@ -21,7 +21,7 @@ composer require amphp/websocket-client amphp/http-client-psr7
 ## An agent on a call
 
 ```php
-use GetStream\VisionAgents\Agent;
+use GetStream\StreamAgents\Agent;
 
 $agent = new Agent(
     config: 'simple_voice_ai',
@@ -44,7 +44,7 @@ through `sync()`.
 ## Who is calling
 
 ```php
-use GetStream\VisionAgents\{Backend, Client};
+use GetStream\StreamAgents\{Backend, Client};
 
 // A router with nothing in front of it, on a laptop.
 $client = new Client(new Backend(url: 'http://localhost:8080', customerId: 'examples'));
@@ -63,7 +63,7 @@ anything that talks to the router: `new Agent(..., client: $client)`.
 ## Conversations, responses, rewind and fork
 
 ```php
-use GetStream\VisionAgents\Generated\ForkSessionRequest;
+use GetStream\StreamAgents\Generated\ForkSessionRequest;
 
 $session = $agent->chat();
 $first = $session->responses->create('Name a colour.');
@@ -155,7 +155,7 @@ $agent->knowledge()->addUrl('https://example.com/pricing', title: 'Pricing', ref
 To change part of a stored config without restating the rest (server side only):
 
 ```php
-use GetStream\VisionAgents\Generated\AgentConfigPatch;
+use GetStream\StreamAgents\Generated\AgentConfigPatch;
 
 $client->agent('support')->updateConfig(new AgentConfigPatch(guardrail: 'Never promise a refund.'));
 ```
@@ -188,7 +188,7 @@ A tool can say how the backend treats its calls, and its callable can take the c
 for as a second argument:
 
 ```php
-use GetStream\VisionAgents\ToolCall;
+use GetStream\StreamAgents\ToolCall;
 
 $agent->tools->register('book_flight', 'Book a flight for the caller', [
     'type' => 'object',
@@ -237,8 +237,8 @@ inbound call arrives with the `sessionId` of the call the caller was routed into
 Run this as a long-lived CLI process, not in a web request.
 
 ```php
-use GetStream\VisionAgents\Inbound\{InboundCall, InboundMessage};
-use GetStream\VisionAgents\Worker\Dispatch;
+use GetStream\StreamAgents\Inbound\{InboundCall, InboundMessage};
+use GetStream\StreamAgents\Worker\Dispatch;
 
 $dispatch = new Dispatch(capacity: 4);
 
@@ -301,8 +301,8 @@ target each modality answers with (`target: en-low-latency` under `stt:` in
 such as `diarize` or `keyterms`.
 
 ```php
-use GetStream\VisionAgents\Client;
-use GetStream\VisionAgents\Generated\{SttOptions, TtsOptions};
+use GetStream\StreamAgents\Client;
+use GetStream\StreamAgents\Generated\{SttOptions, TtsOptions};
 
 $router = (new Client())->router('healthcare', tags: ['team' => 'clinical']);
 
@@ -320,7 +320,7 @@ foreach ($stt->frames() as $frame) { /* transcript frames */ }
 Conversations to put an agent through, judged at the end (server side only):
 
 ```php
-use GetStream\VisionAgents\Generated\SimulationRequest;
+use GetStream\StreamAgents\Generated\SimulationRequest;
 
 $simulation = $client->simulations->create(new SimulationRequest(
     name: 'lunch order',
@@ -336,7 +336,7 @@ Also `get`, `list`, `update`, `delete`, and `runs->list`, `runs->cancel`.
 
 ## Shapes and failures
 
-Request and response shapes are generated into `GetStream\VisionAgents\Generated` from
+Request and response shapes are generated into `GetStream\StreamAgents\Generated` from
 `acceleration/api/openapi.yaml`. A failure raises `RouterException` with the status (0 when
 the router was never reached), the operation, and what the router said; `type` and `errorCode`
 are what to branch on (an unknown code is expected), `docUrl` explains it, and `requestId` is

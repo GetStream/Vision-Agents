@@ -2,7 +2,7 @@
 
 declare(strict_types=1);
 
-namespace GetStream\VisionAgents;
+namespace GetStream\StreamAgents;
 
 use Amp\Http\Client\Connection\DefaultConnectionFactory;
 use Amp\Http\Client\Connection\UnlimitedConnectionPool;
@@ -11,7 +11,7 @@ use Amp\Http\Client\Interceptor\SetRequestTimeout;
 use Amp\Http\Client\Psr7\PsrAdapter;
 use Amp\Http\Client\Psr7\PsrHttpClient;
 use Amp\Socket\DnsSocketConnector;
-use GetStream\VisionAgents\Exception\ConfigurationException;
+use GetStream\StreamAgents\Exception\ConfigurationException;
 use Http\Discovery\Exception\NotFoundException;
 use Http\Discovery\Psr17FactoryDiscovery;
 use Http\Discovery\Psr18ClientDiscovery;
