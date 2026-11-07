@@ -151,13 +151,13 @@ func main() {
 	sentry.Flush(sentryFlushTimeout)
 }
 
-// writeSpec renders the service's OpenAPI document from its operations.
 // sentryOptions are the service's Sentry options. An event carries an error's text, which can
 // hold a key, so it is redacted as the log is.
 func sentryOptions() sentry.ClientOptions {
 	return sentry.ClientOptions{Release: release, ServerName: "acceleration-usage", AttachStacktrace: true, BeforeSend: store.RedactSentryEvent}
 }
 
+// writeSpec renders the service's OpenAPI document from its operations.
 func writeSpec(args []string) error {
 	path := specPath
 	if len(args) > 0 {
