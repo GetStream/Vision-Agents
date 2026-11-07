@@ -111,6 +111,13 @@ func (s *sentWords) over(utterance int64) bool {
 	return utterance <= s.final
 }
 
+// wrote says words of utterance have gone out: an interim shown while the caller talked.
+func (s *sentWords) wrote(utterance int64) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.utterance == utterance && s.text != ""
+}
+
 // establish keeps language as the one utterance is spoken in, unless its first words have
 // said already, and says which it is. An empty language, from a server that does not say,
 // establishes nothing.

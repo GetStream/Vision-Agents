@@ -524,6 +524,15 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 	asker.Overheard(c.participant, Ruled{Check: checked, Words: text, Speaking: true, Overheard: true, Began: c.began, AudioMs: audioMs, WordsMs: wordsMs, Utterance: c.utterance})
 }
 
+// wroteWords says words of utterance have been written: an interim shown while the caller
+// talked, or a check over the agent's in the utterance's language (over.words).
+func (t *Transcriber) wroteWords(utterance int64) bool {
+	t.mu.Lock()
+	over := t.over.utterance == utterance && t.over.words != ""
+	t.mu.Unlock()
+	return over || t.sent.wrote(utterance)
+}
+
 // overtaken says the utterance a check over the agent asked about has ended since, a pause
 // check having ended it with a ruling of its own: the check is about an utterance that is
 // over, and that ruling is the one that stands.
@@ -576,7 +585,12 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	// pause of 200 ms in "Last four 9821, 14 Cedar Lane", begun 2 s before the reply could be
 	// heard, ended the utterance on its first half, its words written as nothing. The check
 	// ends nothing before the policy's cap, where the turn has ended whatever the model says,
-	// and its ruling stands while the agent talks on (standsOver).
+	// and its ruling stands while the agent talks on (standsOver). That is for a caller who was
+	// saying words, some of them written by then (wroteWords). An utterance none of which has
+	// been written is a noise the speech gate opened on before the reply, a room's babble, and
+	// ends as one begun over the agent does: left standing, babble that never paused for the
+	// cap ran on through the reply and took the caller's next line in with it, which was
+	// answered a babble cycle late or cut at the utterance limit.
 	//
 	// The agent's, where they began over it, while they could hear it: a ruling that it may
 	// talk on ends the utterance, as the model let the agent talk through it (a murmur, a
@@ -601,7 +615,7 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 			checked.Ended = true
 		case takes && given:
 			checked.Ended = true
-		case !takes && !given && heard:
+		case !takes && !given && (heard || !t.wroteWords(c.utterance)):
 			checked.Ended = true
 		default:
 			checked.Ended, standing = false, true
@@ -772,7 +786,10 @@ func (t *Transcriber) finish(epoch int64) {
 	ruled.Words, ruled.AudioMs, ruled.WordsMs = *p.words, p.audioMs, p.wordsMs
 	// The words of the pause that ended the utterance may come back empty where a check over
 	// the agent wrote some of it: the utterance is those words, as far as that check heard it.
-	if ruled.Words == "" && t.over.utterance == utterance && t.over.words != "" {
+	// Not where the server said why it wrote none (a voice in another language, a murmur it
+	// ruled ignored): the pause heard the whole of it, and a check over the agent that heard
+	// less may have taken a room's voice for words in the caller's language.
+	if ruled.Words == "" && noise == "" && t.over.utterance == utterance && t.over.words != "" {
 		ruled.Words = t.over.words
 	}
 	t.mu.Unlock()
