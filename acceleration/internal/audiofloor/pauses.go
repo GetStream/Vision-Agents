@@ -166,7 +166,9 @@ type pause struct {
 }
 
 // pauseCheck is one question about a pause, asked off the session's goroutine. voiced is how
-// much of the utterance so far was speech, and length how long it is, the pause included.
+// much of the utterance so far was speech, and length how long it is, the pause included; talked
+// is the speech in frames, and free says the check was answered with the floor free, which its
+// words then move the clock of a pause the gate can't hear by (stillWords).
 type pauseCheck struct {
 	epoch          int64
 	utterance      int64
@@ -175,7 +177,8 @@ type pauseCheck struct {
 	counted        bool
 	paused         time.Duration
 	voiced, length time.Duration
-	at             int64
+	at, talked     int64
+	free           bool
 	participant    stt.Participant
 	audio          harness.Audio
 	asked, began   time.Time
@@ -242,7 +245,7 @@ func (t *Transcriber) checksPause(participant stt.Participant, heard int64) bool
 		t.spoken = 0
 	}
 	c := pauseCheck{epoch: p.epoch, utterance: p.utterance, first: p.checks == 1, firstPause: t.pauses == 1, counted: p.counted,
-		paused: t.quiet, at: heard, voiced: time.Duration(t.talked) * frame, length: time.Duration(heard-t.start) * frame,
+		paused: t.quiet, at: heard, talked: t.talked, voiced: time.Duration(t.talked) * frame, length: time.Duration(heard-t.start) * frame,
 		participant: participant, asked: time.Now()}
 	c.began = c.asked.Add(-time.Duration(heard-t.voicedFrom) * frame)
 	// The check that asks for words sends the whole utterance: the model decides on its
@@ -626,6 +629,9 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 	}
 	t.logCheck(turn, c, checked, heard, err)
 	t.mu.Lock()
+	if err == nil && !turn.Speaking {
+		t.stillBound = stillBound(checked.Ending)
+	}
 	p := &t.pause
 	if p.epoch != c.epoch {
 		// The caller spoke again, or the utterance ended: nobody waits for this.
@@ -680,6 +686,7 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		asker.Overheard(c.participant, *stopping)
 	}
 	if said != nil {
+		c.free = !turn.Speaking
 		t.running.Add(1)
 		go t.await(c, said)
 	}
@@ -733,6 +740,9 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 		return
 	}
 	text := strings.TrimSpace(words.Text)
+	if c.free && words.Noise == "" {
+		t.wroteLocked(c.utterance, c.at, c.talked, text)
+	}
 	waiting := true
 	var stopping *Ruled
 	asker := t.asker
