@@ -7107,6 +7107,7 @@ func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidWhenTheCallerWasLastHe
 	s.Require().True(strings.HasPrefix(checkIn.TurnID, backchannelPrefix), "the check-in is not the case under test")
 	s.agent.mu.Lock()
 	s.agent.lastHeardAt = time.Now()
+	s.agent.talkedAt = s.agent.lastHeardAt
 	s.agent.mu.Unlock()
 
 	s.refusesVoice()
@@ -7139,6 +7140,34 @@ func (s *AgentSuite) TestAReplyHeldForTheNextVoiceIsSaidAfterAMurmurOfTheCallers
 
 	s.eventually(func() bool { return said(s.replacement.spoken()) == sent },
 		"a reply the caller murmured over while the next voice opened was not said")
+	s.False(s.cutOff(turn), "a reply the next voice says was reported cut off")
+}
+
+func (s *AgentSuite) TestAReplyHeldForTheNextVoiceIsSaidWhileTheCallersWordsAreStillComing() {
+	// Only a check-in is dropped for the caller talking: a reply is let go of by the turn
+	// that abandons it, and words still coming (an interim) have not done that.
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.writtenToSilentVoice()
+	sent := said(s.voice.spoken())
+
+	s.refusesVoice()
+	<-started
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Interim: true, Utterance: 1, Text: "actually I wanted to ask", Language: "en"})
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return !s.agent.talkedAt.IsZero()
+	}, "the caller was never heard")
+	opened()
+
+	s.eventually(func() bool { return said(s.replacement.spoken()) == sent },
+		"a reply was not said while the caller's words were still coming")
 	s.False(s.cutOff(turn), "a reply the next voice says was reported cut off")
 }
 
