@@ -810,9 +810,16 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 		if moved := next.Config(); moved.Name() != lost.Config().Name() || moved.BYOK != lost.Config().BYOK {
 			routing.CountHandover(routing.TTS, lost.Config(), nil)
 		}
-		if err := lost.Close(); err != nil {
-			a.logger.Debug("closing the lost voice", "error", err)
-		}
+		// A provider may take its close timeout to close (ElevenLabs waits up to 2 s for its
+		// server to close the socket), and the reply held for the caller does not wait on it.
+		// The pipeline counts the close, so stopping it or closing the agent waits for it.
+		p.running.Add(1)
+		go func() {
+			defer p.running.Done()
+			if err := lost.Close(); err != nil {
+				a.logger.Debug("closing the lost voice", "error", err)
+			}
+		}()
 		// Start draining before releasing the recovery barrier. The queued answer may
 		// synthesize as soon as it is admitted, and a new voice can fail immediately.
 		go a.consumeTTS(p, next)
