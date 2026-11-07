@@ -4,7 +4,7 @@ import 'package:stream_agents_core/stream_agents_core.dart';
 const _kind = 'chat';
 
 /// The app's own Stream Chat client.
-extension ChatClients on VisionAgents {
+extension ChatClients on StreamAgents {
   /// Hands over the app's own Stream Chat client, so every conversation opens on it rather
   /// than on a second one. Connecting it, as the agents' `userId`, stays the app's job, and
   /// [disconnect] leaves it alone.

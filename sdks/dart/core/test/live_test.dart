@@ -25,7 +25,7 @@ final _agent = Platform.environment['VISION_AGENTS_AGENT'] ?? '';
 final _user = 'dart-live-${DateTime.now().millisecondsSinceEpoch}';
 
 void main() {
-  late VisionAgents agents;
+  late StreamAgents agents;
   final opened = <AgentSession>[];
 
   Future<AgentSession> chat([SessionOptions options = const SessionOptions()]) async {
@@ -35,7 +35,7 @@ void main() {
   }
 
   setUp(() {
-    agents = VisionAgents(url: Uri.parse(_url!), customerId: _customerId).withUser(_user);
+    agents = StreamAgents(url: Uri.parse(_url!), customerId: _customerId).withUser(_user);
   });
 
   tearDown(() async {

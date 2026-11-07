@@ -31,7 +31,7 @@ dependency_overrides:
 ## Using them
 
 ```dart
-final agents = VisionAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
+final agents = StreamAgents(apiKey: 'your_api_key', userId: 'jlahey', token: yourBackend.agentToken);
 
 // In writing. No call is joined, nothing is transcribed or spoken.
 final chat = await agents.agent('support').chat();
@@ -50,10 +50,10 @@ await voice.join();
 await agents.disconnect();
 ```
 
-`VisionAgents(apiKey: ...)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
+`StreamAgents(apiKey: ...)` reaches Stream's hosted router in us-east4; pass `url:` for another router. For another
 region, pass `url: Backend.regionUrl('europe-west4')`. A router
 running locally with nothing in front of it is reached by customer id instead:
-`VisionAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`. Pass `apiKey`,
+`StreamAgents(url: Uri.parse('http://localhost:8080'), customerId: 'acme')`. Pass `apiKey`,
 `userId` and `token` beside it and the key is Stream's alone, so chat and video connect on a
 local router too.
 
@@ -236,7 +236,7 @@ final thisWeek = await agents.sessions.query(
 final answer = await agents.router(config: 'healthcare').search('perioperative antibiotic guidance');
 ```
 
-`VisionAgents(apiKey: ...)` with no token asks for a guest anonymously and may do nothing else
+`StreamAgents(apiKey: ...)` with no token asks for a guest anonymously and may do nothing else
 until `withGuest` or `withUser`. A router that admits no anonymous callers, Stream's hosted one
 for now, throws a `StateError`, and your backend mints the guest instead.
 

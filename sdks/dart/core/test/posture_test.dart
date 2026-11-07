@@ -24,11 +24,11 @@ List<(String, RegExp)> _clientAccessible() {
 /// backend's to do.
 void main() {
   late TestRouter router;
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() async {
     router = await TestRouter.start();
-    agents = VisionAgents(url: router.url, customerId: 'acme');
+    agents = StreamAgents(url: router.url, customerId: 'acme');
   });
 
   tearDown(() async {

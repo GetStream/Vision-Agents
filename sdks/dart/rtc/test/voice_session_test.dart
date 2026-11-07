@@ -71,11 +71,11 @@ Future<void> _until(bool Function() done) async {
 
 void main() {
   late _Router router;
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() async {
     router = await _Router.start();
-    agents = VisionAgents(url: router.url, customerId: 'acme', userId: 'ada');
+    agents = StreamAgents(url: router.url, customerId: 'acme', userId: 'ada');
   });
 
   tearDown(() async {
@@ -107,7 +107,7 @@ void main() {
     });
 
     test('keeps why joining failed when the token could not be had', () async {
-      final keyed = VisionAgents(
+      final keyed = StreamAgents(
         url: router.url,
         customerId: 'acme',
         apiKey: 'stream-key',

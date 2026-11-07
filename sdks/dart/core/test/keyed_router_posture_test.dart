@@ -32,13 +32,13 @@ String _sign(Map<String, Object?> claims) {
 }
 
 void main() {
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() {
     final id = 'dart-device-${DateTime.now().microsecondsSinceEpoch}';
     final exp = DateTime.now().add(const Duration(hours: 1)).millisecondsSinceEpoch ~/ 1000;
     final token = _sign({'user_id': id, 'exp': exp});
-    agents = VisionAgents(url: _url, apiKey: _key, userId: id, token: () async => token);
+    agents = StreamAgents(url: _url, apiKey: _key, userId: id, token: () async => token);
   });
 
   tearDown(() => agents.close());

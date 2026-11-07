@@ -124,7 +124,7 @@ void main() {
 
     test("the app's own client is used, kept, and left connected", () async {
       final peers = _Peers();
-      final agents = VisionAgents.withBackend(_signedIn('john'));
+      final agents = StreamAgents.withBackend(_signedIn('john'));
       final mine = _Peer('john');
       agents.backend.give('chat', mine);
 
@@ -161,7 +161,7 @@ void main() {
 
     test('disconnecting closes what was built, and the next session opens anew', () async {
       final peers = _Peers();
-      final agents = VisionAgents.withBackend(_signedIn('john'));
+      final agents = StreamAgents.withBackend(_signedIn('john'));
 
       final first = await agents.backend.shared(
         'chat',

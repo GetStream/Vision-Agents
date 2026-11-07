@@ -9,11 +9,11 @@ import 'support/router.dart';
 
 void main() {
   late TestRouter router;
-  late VisionAgents agents;
+  late StreamAgents agents;
 
   setUp(() async {
     router = await TestRouter.start();
-    agents = VisionAgents(url: router.url, customerId: 'acme');
+    agents = StreamAgents(url: router.url, customerId: 'acme');
   });
 
   tearDown(() async {
@@ -37,7 +37,7 @@ void main() {
     test('presents a token with the api key, asking the provider each time', () async {
       router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
       var asked = 0;
-      final keyed = VisionAgents(
+      final keyed = StreamAgents(
         url: router.url,
         apiKey: 'key',
         token: () async => 'token-${++asked}',
@@ -59,7 +59,7 @@ void main() {
       "a key beside a customer id is Stream's, and the router is reached by customer id",
       () async {
         router.answer('GET /v1/agents/sessions/s1', Answer(200, sessionJson()));
-        final local = VisionAgents(
+        final local = StreamAgents(
           url: router.url,
           customerId: 'acme',
           apiKey: 'stream-key',
@@ -112,7 +112,7 @@ void main() {
     });
 
     test('an api key with no token asks for nothing but a guest', () async {
-      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+      final keyed = StreamAgents(url: router.url, apiKey: 'key');
 
       await expectLater(keyed.sessions.get('s1'), throwsArgumentError);
       keyed.close();
@@ -624,7 +624,7 @@ void main() {
       final nowhere = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
       final port = nowhere.port;
       await nowhere.close();
-      final unreachable = VisionAgents(
+      final unreachable = StreamAgents(
         url: Uri.parse('http://127.0.0.1:$port'),
         customerId: 'acme',
       );
@@ -820,7 +820,7 @@ void main() {
     });
   });
 
-  group('VisionAgents.guestUser', () {
+  group('StreamAgents.guestUser', () {
     Map<String, Object?> guest(String id, {String token = 't1', DateTime? expires}) => {
       'id': id,
       'token': token,
@@ -927,7 +927,7 @@ void main() {
 
     test('a device with only the app key asks for a guest anonymously', () async {
       router.answer('POST /v1/agents/guests', Answer(201, guest('guest-1')));
-      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+      final keyed = StreamAgents(url: router.url, apiKey: 'key');
 
       final minted = await keyed.guestUser();
       keyed.close();
@@ -948,7 +948,7 @@ void main() {
           'StatusCode': 401,
         }),
       );
-      final keyed = VisionAgents(url: router.url, apiKey: 'key');
+      final keyed = StreamAgents(url: router.url, apiKey: 'key');
 
       await expectLater(
         keyed.guestUser(),

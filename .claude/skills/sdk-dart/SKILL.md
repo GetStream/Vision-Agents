@@ -53,7 +53,7 @@ The key, `userId` and token are the one identity for the router, Stream Chat and
 `Backend.shared(kind, open:, disconnect:)` holds one client per `kind:apiKey:userId`: sessions
 asking at once share one opening, one that failed to open is opened again, and `withUser` keeps
 the registry so another user gets their own. `Backend.give` holds the app's own client, which
-`VisionAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
+`StreamAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
 `customerId` the key is Stream's alone and the router is reached by customer id.
 
 - `stream_agents_chat`: `agents.useChat(client)` and `session.chat()`, which answers the
@@ -133,7 +133,7 @@ headers or body.
 ## Public API
 
 ```dart
-final agents = VisionAgents(url: url, customerId: 'acme');
+final agents = StreamAgents(url: url, customerId: 'acme');
 final chat = await agents.agent('support').chat();
 ```
 
