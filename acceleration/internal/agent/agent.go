@@ -3797,14 +3797,24 @@ func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message)
+		return a.sendSentence(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message, true)
 	}
 
-	if a.openTurn != turnID {
+	opens := a.openTurn != turnID
+	if opens {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text}, message)
+	return a.sendSentence(voice, turnID, tts.Request{ID: turnID, Text: text}, message, opens)
+}
+
+// sendSentence sends a request of a reply to the voice, unless it is held for the voice
+// replacing a lost one. counted is whether it was counted as being said.
+func (a *Agent) sendSentence(voice *ttsrouter.Session, turnID string, request tts.Request, message MessageSpan, counted bool) error {
+	if a.hold(turnID, request, message, counted) {
+		return nil
+	}
+	return a.synthesize(voice, turnID, request, message)
 }
 
 // speakWhole says a piece of text that is already complete, as one utterance. Its message,
@@ -3832,7 +3842,11 @@ func (a *Agent) closeUtterance(turnID string) error {
 	if voice == nil || !voice.Streaming() || a.openTurn != turnID {
 		return nil
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Final: true})
+	request := tts.Request{ID: turnID, Final: true}
+	if a.hold(turnID, request, MessageSpan{}, false) {
+		return nil
+	}
+	return voice.Synthesize(request)
 }
 
 // expectedSyntheses is how many syntheses a finished reply will produce in total. A

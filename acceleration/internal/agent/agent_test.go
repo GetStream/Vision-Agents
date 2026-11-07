@@ -6954,6 +6954,115 @@ func (s *AgentSuite) TestAReplyStillBeingWrittenGoesOnWhenItsVoiceIsLost() {
 	s.model.finishes(turn)
 }
 
+// writingWhileTheNextVoiceOpens has the model write a sentence of a reply to a voice that says
+// none of it, loses the voice, writes another sentence while the next voice is opened and
+// finishes the reply once it is. heard, if set, runs before the voice is lost.
+func (s *AgentSuite) writingWhileTheNextVoiceOpens(streaming bool, heard func(turn string)) string {
+	s.join(streaming)
+	s.voice.silent = true
+	s.replacement = newStubTTS(streaming)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	s.model.reply = nil
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	turn := s.model.requests()[0].ID
+	s.model.writes(turn, "Let me look that up. ")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+	if heard != nil {
+		heard(turn)
+	}
+
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Fatal: true})
+	<-started
+	sent := len(s.voice.spoken())
+	s.model.writes(turn, "It shipped on Monday. ")
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.held != nil && slices.ContainsFunc(s.agent.held.unsaid, func(unsaid unsaidUtterance) bool {
+			return strings.Contains(unsaid.text, "It shipped")
+		})
+	}, "the sentence written while the next voice opened was not kept for it")
+	opened()
+	s.model.finishes(turn)
+	s.Equal(sent, len(s.voice.spoken()), "a sentence was sent to the lost voice")
+	return turn
+}
+
+func (s *AgentSuite) TestWhatAReplyStillBeingWrittenHadSentAndWritesWhileTheNextVoiceOpensIsSaidInOrder() {
+	// Sent to the lost voice, neither sentence is ever heard.
+	turn := s.writingWhileTheNextVoiceOpens(false, nil)
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) == 2 }, "the reply was not said by the next voice")
+	again := s.replacement.spoken()
+	s.Equal("Let me look that up.", strings.TrimSpace(again[0].Text))
+	s.Equal("It shipped on Monday.", strings.TrimSpace(again[1].Text))
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn never ended")
+	reported, _ := s.turnReported(turn)
+	s.False(reported.Interrupted)
+	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
+}
+
+func (s *AgentSuite) TestWhatAReplyStillBeingWrittenHadStreamedIsSaidByTheNextVoiceAndEnded() {
+	// A streaming voice is told the utterance is over once the reply is: left open, it is
+	// never finished.
+	turn := s.writingWhileTheNextVoiceOpens(true, nil)
+
+	s.eventually(func() bool {
+		again := s.replacement.spoken()
+		return len(again) > 0 && again[len(again)-1].Final
+	}, "the reply said by the next voice was never ended")
+	var texts []string
+	for _, request := range s.replacement.spoken() {
+		s.Equal(turn, request.ID)
+		if request.Text != "" {
+			texts = append(texts, strings.TrimSpace(request.Text))
+		}
+	}
+	s.Equal([]string{"Let me look that up.", "It shipped on Monday."}, texts)
+	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
+}
+
+func (s *AgentSuite) TestASentenceWrittenWhileTheNextVoiceOpensIsSaidByItAfterAStartTheCallerHeard() {
+	// What the caller heard is not said again, and what was written after is not lost.
+	s.writingWhileTheNextVoiceOpens(false, func(string) {
+		s.voice.emitter.Send(tts.AudioChunk{
+			SynthesisID: s.voice.spoken()[0].ID,
+			Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+		})
+		s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "none of the reply was heard")
+	})
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the sentence was not said by the next voice")
+	s.never(func() bool { return len(s.replacement.spoken()) > 1 }, "a sentence the caller heard was said again")
+	s.Equal("It shipped on Monday.", strings.TrimSpace(s.replacement.spoken()[0].Text))
+	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
+}
+
+func (s *AgentSuite) TestAStreamedReplyTheLostVoiceWasToldWasOverIsEndedByTheNextVoice() {
+	// Lost after the model ended the utterance and before it was done with the reply, the
+	// end is not told again.
+	s.replacement = newStubTTS(true)
+	turn := s.writtenToSilentVoice()
+	s.agent.mu.Lock()
+	s.agent.generating = true
+	s.agent.mu.Unlock()
+
+	s.refusesVoice()
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the reply was not said again")
+	s.agent.mu.Lock()
+	s.agent.generating = false
+	s.agent.mu.Unlock()
+
+	again := s.replacement.spoken()
+	s.True(again[len(again)-1].Final, "the reply said again was left open")
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn never ended")
+}
+
 func (s *AgentSuite) TestWhatIsTypedIntoACallIsHeardAsTheCallerSaid() {
 	// The transcript, the review and the logs take a caller's line from Heard. Without it
 	// a line typed into a call is answered and then nowhere to be read.
