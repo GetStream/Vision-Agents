@@ -687,6 +687,7 @@ func (s *AgentSuite) TestANativeCallerTurnAnsweredThroughADelegateIsObservedAtTh
 			s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
 			_, measured := turnFor(events, "r2")
 			s.False(measured, "the reply after the hand-over answers nobody's silence of its own")
+			s.Equal(kindFollowUp, s.agent.turns.originOf("r2").kind, "the reply delivering the subagent's work is a follow-up, as on the cascade")
 		})
 	}
 }
@@ -751,6 +752,36 @@ func (s *AgentSuite) TestANativeCallerTurnTypedOverBeforeItHandsWorkOnIsNotAnswe
 
 	for leg, series := range observedSince(pipelineNative, before) {
 		s.Zero(series.count, leg)
+	}
+}
+
+// Catches the reply that answers a native caller turn waiting on a tool recorded as the wrong
+// work: a tool's answer for a tool, a follow-up for a delegate_skill call still running, as the
+// cascade names the same lines (AI-2969 R2.2).
+func (s *AgentSuite) TestANativeReplyAnsweringACallStillRunningIsRecordedAsThatCallsWork() {
+	for tool, want := range map[string]string{"lookup_order": kindTool, delegateSkill: kindFollowUp} {
+		s.Run(tool, func() {
+			held := newHeldStart()
+			defer held.let()
+			peer := s.joinNativeWith(func(options *Options) { options.OnToolStarted = held.hold })
+			s.nativeFrame(peer, "session.update")
+			s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+			s.heardSpeechStart()
+			s.stoppedSpeaking(peer)
+			s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+			s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"`+tool+`","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+			select {
+			case <-held.started:
+			case <-time.After(settleFor):
+				s.FailNow("the tool call never started")
+			}
+			s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+			s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the caller's reply never completed")
+			s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+			s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, "the reply after the call never began")
+
+			s.Equal(want, s.agent.turns.originOf("r2").kind)
+		})
 	}
 }
 

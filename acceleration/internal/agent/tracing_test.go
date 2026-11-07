@@ -187,7 +187,7 @@ func (s *TurnTracingSuite) TestACallerTurnAnsweredByALaterLineIsTracedUnderItsOw
 	at := time.Now()
 	tracker.started("turn-caller", kindCaller)
 	tracker.begin("turn-caller", stt.Participant{ID: "alice"}, at, at, 50)
-	tracker.owes("turn-caller")
+	tracker.owes("turn-caller", "")
 	tracker.completed("turn-caller", 0, 0)
 	tracker.started("reply-follow", kindFollowUp)
 

@@ -3137,7 +3137,7 @@ func (a *Agent) finish(response llm.Response) {
 	// A reply that handed work on and said nothing leaves the caller waiting for what is said
 	// for it later. In writing nothing is heard, so there is nothing to wait for.
 	if !a.options.Text && (len(calls) > 0 || a.harness.Delegating() || a.harness.Pending()) {
-		a.turns.owes(response.ID)
+		a.turns.owes(response.ID, "")
 	}
 	// How many syntheses the turn produces is only settled once the reply is, and it is
 	// what tells the tracker when the turn has finished being spoken.

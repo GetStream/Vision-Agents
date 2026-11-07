@@ -150,7 +150,11 @@ type openTurn struct {
 	settled int
 	// owed means a caller turn's reply handed work on, to a tool or to the subagent, so when
 	// none of its own audio went out the turn waits for the first line said for it.
-	owed        bool
+	owed bool
+	// answer is what a native reply that answers the owed turn is recorded as, which the model
+	// does not say: a tool's answer, or a follow-up delivering the subagent's work. The cascade
+	// starts each of its lines with its own kind.
+	answer      string
 	interrupted bool
 	// why is why the reply was abandoned, set with interrupted.
 	why interruption
@@ -246,14 +250,16 @@ func (t *turnTracker) reportAll(settled []settledTurn) {
 	}
 }
 
-// owes records that a caller turn's reply handed work on. It is told before the reply is
-// completed, so a reply that said nothing is not closed without the line said for it. Nobody
-// waits on a turn a scheduled task fired, so that one owes nothing.
-func (t *turnTracker) owes(turnID string) {
+// owes records that a caller turn's reply handed work on, which a native reply that answers it
+// is recorded as answer of. It is told before the reply is completed, so a reply that said
+// nothing is not closed without the line said for it. Nobody waits on a turn a scheduled task
+// fired, so that one owes nothing.
+func (t *turnTracker) owes(turnID, answer string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if current := t.open[turnID]; current != nil && t.origins[turnID].kind == kindCaller && !t.origins[turnID].scheduled {
 		current.owed = true
+		current.answer = answer
 	}
 }
 
@@ -268,13 +274,14 @@ func (t *turnTracker) scheduledTurn(turnID string) {
 	}
 }
 
-// answering records that a native reply of kind nobody's silence opened answers the latest
-// caller turn, when that turn still waits for a line said for it, and records nothing otherwise.
-func (t *turnTracker) answering(turnID, kind string) {
+// answering records that a native reply nobody's silence opened answers the latest caller turn,
+// as the kind of work that turn handed on, when it still waits for a line said for it, and
+// records nothing otherwise.
+func (t *turnTracker) answering(turnID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if caller := t.open[t.caller]; caller != nil && caller.owed {
-		t.remember(turnID, origin{kind: kind, parent: t.caller, pipeline: pipelineNative})
+		t.remember(turnID, origin{kind: caller.answer, parent: t.caller, pipeline: pipelineNative})
 	}
 }
 

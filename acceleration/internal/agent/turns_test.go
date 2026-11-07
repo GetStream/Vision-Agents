@@ -443,7 +443,7 @@ func (s *TurnRecorderSuite) TestAScheduledTurnIsNotAnsweredByALineSaidForIt() {
 	tracker.started("reply-update", kindUpdate)
 
 	tracker.firstAudio("reply-update", at.Add(400*time.Millisecond))
-	tracker.owes("turn-scheduled")
+	tracker.owes("turn-scheduled", "")
 	tracker.completed("turn-scheduled", 0, 0)
 
 	s.Equal("turn-scheduled", finished.TurnID, "the scheduled turn was held back for a line said for it")
@@ -451,19 +451,24 @@ func (s *TurnRecorderSuite) TestAScheduledTurnIsNotAnsweredByALineSaidForIt() {
 }
 
 // Catches a native reply nobody's silence opened recorded as answering a caller turn that waits
-// for nothing: only one that handed work on and said nothing is owed it (AI-2969 R1.2).
+// for nothing: only one that handed work on and said nothing is owed it (AI-2969 R1.2). It is
+// recorded as the work handed on, a tool's or the subagent's (AI-2969 R2.2).
 func (s *TurnRecorderSuite) TestANativeReplyAnswersOnlyACallerTurnOwedALine() {
-	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, nil)
-	at := time.Now()
-	tracker.started("r1", kindCaller)
-	tracker.begin("r1", stt.Participant{ID: "alice"}, at, at, 0)
+	for _, answer := range []string{kindTool, kindFollowUp} {
+		s.Run(answer, func() {
+			tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, nil)
+			at := time.Now()
+			tracker.started("r1", kindCaller)
+			tracker.begin("r1", stt.Participant{ID: "alice"}, at, at, 0)
 
-	tracker.answering("r2", kindTool)
-	tracker.owes("r1")
-	tracker.answering("r3", kindTool)
+			tracker.answering("r2")
+			tracker.owes("r1", answer)
+			tracker.answering("r3")
 
-	s.Equal(origin{}, tracker.originOf("r2"), "a reply was recorded for a turn that waited for nothing")
-	s.Equal(origin{kind: kindTool, parent: "r1", pipeline: pipelineNative}, tracker.originOf("r3"))
+			s.Equal(origin{}, tracker.originOf("r2"), "a reply was recorded for a turn that waited for nothing")
+			s.Equal(origin{kind: answer, parent: "r1", pipeline: pipelineNative}, tracker.originOf("r3"))
+		})
+	}
 }
 
 // Catches a caller turn answered by a later line timed from when its words were ready rather
@@ -474,7 +479,7 @@ func (s *TurnRecorderSuite) TestACallerTurnAnsweredByALaterLineIsTimedFromTheLas
 	revisedAt := time.Now()
 	tracker.started("turn-caller", kindCaller)
 	tracker.begin("turn-caller", stt.Participant{ID: "alice"}, revisedAt.Add(300*time.Millisecond), revisedAt, 50)
-	tracker.owes("turn-caller")
+	tracker.owes("turn-caller", "")
 	tracker.completed("turn-caller", 0, 0)
 	tracker.started("reply-follow", kindFollowUp)
 

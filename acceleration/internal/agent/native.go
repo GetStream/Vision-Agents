@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
+	"slices"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -599,8 +601,8 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	} else {
 		// A reply nobody's silence opened, such as what a tool or the subagent came back with,
 		// ends the wait of a caller turn that said nothing and handed work on. The model does
-		// not say what opened it, so it is recorded as a tool's answer.
-		a.turns.answering(started.ResponseID, kindTool)
+		// not say what opened it, so it is recorded as the work that turn handed on.
+		a.turns.answering(started.ResponseID)
 	}
 	a.emitter.Send(Responding{TurnID: started.ResponseID, Participant: participant, Prompt: prompt})
 }
@@ -678,6 +680,8 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	exchange := lastExchange(a.history)
 	pending := a.pendingTools
+	// A delegate_skill call still running is work for the subagent the harness does not know of yet.
+	delegating := slices.Contains(slices.Collect(maps.Values(a.toolsRunning)), delegateSkill)
 	current := a.harness
 	a.mu.Unlock()
 	a.settle()
@@ -685,9 +689,12 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	// An interrupted reply was reported by receiveSTS, or by whoever abandoned it first.
 	if !complete.Interrupted {
 		// A reply that handed work on and said nothing leaves the caller waiting for the reply
-		// that delivers it.
-		if pending > 0 || current != nil && (current.Delegating() || current.Pending()) {
-			a.turns.owes(complete.ResponseID)
+		// that delivers it: a tool's answer, or a follow-up for work the subagent does, as the
+		// cascade names the same lines.
+		if delegating || current != nil && (current.Delegating() || current.Pending()) {
+			a.turns.owes(complete.ResponseID, kindFollowUp)
+		} else if pending > 0 {
+			a.turns.owes(complete.ResponseID, kindTool)
 		}
 		a.turns.completed(complete.ResponseID, 0, 1)
 		a.turns.spoke(complete.ResponseID, 0, complete.AudioDurationMs)
