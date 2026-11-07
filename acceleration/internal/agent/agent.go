@@ -3322,6 +3322,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// lost is set once the voice has gone, which a provider may say twice: as a fatal error
 	// and as the socket dropping.
 	lost := false
+	// handedOver is the turn the voice that replaced this one says again, whose audio and
+	// completions from this voice are no longer the turn's.
+	handedOver := ""
+	// Every synthesis is named by its request, so none is a turn when nothing was handed over.
+	handed := func(synthesisID string) bool { return turnOf(synthesisID) == handedOver }
 	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
 	// caller hears as the agent trailing off and their phone hears as it having finished.
 	leveller := audio.NewLeveller()
@@ -3336,6 +3341,9 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	for event := range voice.Events() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
+			if handed(typed.SynthesisID) {
+				continue
+			}
 			// Audio from an abandoned turn is dropped here rather than published, so
 			// barge-in silences the agent even while the provider is still sending.
 			//
@@ -3401,6 +3409,12 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"caller_talking", a.converse.Listening())
 
 		case tts.SynthesisComplete:
+			if handed(typed.SynthesisID) {
+				// Taken, it would settle the turn before the next voice has said it.
+				a.logger.Debug("the lost voice finished an utterance the next one says",
+					"synthesis", typed.SynthesisID, "synthesis_cut", typed.Interrupted)
+				continue
+			}
 			done := a.takeUtterance(typed.SynthesisID)
 			if !typed.Interrupted && typed.Characters > 0 && typed.AudioDurationMs > 0 {
 				// Cut short, a synthesis was billed all of its text and made only part of its
@@ -3460,14 +3474,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 			if !lost {
 				lost = true
-				a.loseVoice(p, voice)
+				handedOver = a.loseVoice(p, voice)
 			}
 
 		case tts.Error:
 			if typed.Fatal {
 				if !lost {
 					lost = true
-					a.loseVoice(p, voice)
+					handedOver = a.loseVoice(p, voice)
 				}
 			} else if typed.SynthesisID == "" {
 				// A failure naming an utterance still settles it, since the router turns

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -210,6 +211,27 @@ func (a *Agent) forgetUtterancesLocked() {
 	clear(a.heard)
 	clear(a.finished)
 	a.finishedOrder = a.finishedOrder[:0]
+}
+
+// unsaidUtterance is an utterance a lost voice was sent: its synthesis, what it was sent and
+// where that is in the reply's message.
+type unsaidUtterance struct {
+	synthesisID string
+	text        string
+	message     MessageSpan
+}
+
+// unsaidLocked is every utterance of a turn the voice has not finished, in the order of the
+// reply's message. Agent.mu must be held.
+func (a *Agent) unsaidLocked(turnID string) []unsaidUtterance {
+	var unsaid []unsaidUtterance
+	for _, heard := range a.heard {
+		if heard.turnID == turnID {
+			unsaid = append(unsaid, unsaidUtterance{synthesisID: heard.synthesisID, text: heard.text, message: heard.message})
+		}
+	}
+	slices.SortFunc(unsaid, func(x, y unsaidUtterance) int { return x.message.Start - y.message.Start })
+	return unsaid
 }
 
 // cutShort is the utterance of a turn being heard when it was cut off, how many

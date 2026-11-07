@@ -453,6 +453,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### A reply the voice lost before any of it was heard is said in the next voice
+
+When a voice fails before any of a finished reply's audio went out (staging: ElevenLabs refusing the agent's voice on its first word), the voice that replaces it says the reply, and the turn is not abandoned. Before, the reply was dropped (`cause=voice_lost`, `turn_abandoned=true`) and the caller heard nothing. A reply partly heard, a line the agent said of its own accord, and a reply with no voice left to say it are still cut off as before (AI-2970).
+
 ### The router's log no longer prints a key a provider echoed in its error
 
 Every value the router, the usage service and the command-line tools log, the message included, goes through the redactor the requests table uses, uncapped, and so do the failures the tools print and the router's and usage service's Sentry events: a provider error that echoes `Authorization: Bearer <key>`, such as in the `agent failure` and `could not review the call` lines, keeps its text with the key shown as `[redacted]`. A line with nothing to redact is unchanged. The redactor now keeps a word after `bearer`, `secret` or `password`, as in "no bearer token" or a `Bearer error="insufficient_scope"` challenge, and takes a `key=` or `token=` that starts a quoted query (AI-2966, #1838).

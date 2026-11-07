@@ -5912,6 +5912,7 @@ func (s *AgentSuite) TestALostVoiceIsReplacedForTheRestOfTheCall() {
 		"the reply was not spoken in the voice that replaced the lost one")
 	// Spoken, the replacement was handed over: its count, if any, has been made.
 	s.Equal(before, failovertest.Of(s.T(), "stub"), "reopened on the same voice, the call moved off nothing")
+	s.Zero(countOf[Interrupted](s.reported()), "nothing was being said, so nothing was cut off")
 }
 
 func (s *AgentSuite) TestALostVoiceAnotherProviderTookOverIsAFailoverOfTheLostOne() {
@@ -6151,6 +6152,13 @@ func (s *AgentSuite) TestACompletionFromALostVoiceDoesNotSettleReplacementSpeech
 	}, "the old voice did not leave an utterance in flight")
 	oldSynthesisID := s.voice.spoken()[0].ID
 	old := s.agent.voice()
+	// Some of the old reply was heard, so it is cut off with its voice rather than said
+	// again by the replacement.
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: oldSynthesisID,
+		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+	})
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "none of the old reply was heard")
 
 	s.voice.emitter.Send(tts.Error{
 		Provider: "stub", Model: "stub-tts", Fatal: true, Err: errors.New("quota exceeded"),
@@ -6190,7 +6198,7 @@ func (s *AgentSuite) TestACompletionFromALostVoiceDoesNotSettleReplacementSpeech
 		SynthesisID: newSynthesisID,
 		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
 	})
-	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+	s.eventually(func() bool { return len(s.edge.heard()) > 1 },
 		"the replacement consumer did not publish its audio")
 
 	openOldCompletion()
@@ -6207,7 +6215,7 @@ func (s *AgentSuite) TestACompletionFromALostVoiceDoesNotSettleReplacementSpeech
 	s.replacement.emitter.Send(tts.SynthesisComplete{
 		SynthesisID: newSynthesisID, Characters: 31, AudioDurationMs: 10, TimeToFirstByteMs: 5,
 	})
-	s.eventually(func() bool { return len(s.edge.heard()) > 0 },
+	s.eventually(func() bool { return len(s.edge.heard()) > 1 },
 		"the replacement voice did not publish its audio")
 	s.eventually(func() bool {
 		for _, event := range s.reported() {
@@ -6237,6 +6245,364 @@ func (s *AgentSuite) TestAnAgentThatLostItsVoiceMidReplyIsNoLongerTalking() {
 
 	s.eventually(func() bool { return !s.agent.floor().Talking },
 		"the agent was still talking in a voice it had lost")
+}
+
+// writtenToSilentVoice has the agent write a whole reply and send all of it to a streaming
+// voice that says none of it, and returns the turn. s.replacement is the voice opened next.
+func (s *AgentSuite) writtenToSilentVoice() string {
+	s.join(true)
+	s.voice.silent = true
+	_, err := s.agent.RespondTo(s.ctx, "what is the capital of France", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool {
+		sent := s.voice.spoken()
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(sent) > 0 && sent[len(sent)-1].Final && !s.agent.generating
+	}, "the whole reply never reached the voice")
+	return s.model.requests()[0].ID
+}
+
+// refusesVoice loses the voice the way a provider refusing the agent's voice does: an error
+// that loses it, then each synthesis it had been sent reported cut.
+func (s *AgentSuite) refusesVoice() {
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Fatal: true,
+		Err: errors.New("free users cannot use library voices via the API"),
+	})
+	var ids []string
+	for _, request := range s.voice.spoken() {
+		if !slices.Contains(ids, request.ID) {
+			ids = append(ids, request.ID)
+			s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID, Interrupted: true})
+		}
+	}
+}
+
+// turnReported is the Turn the agent reported for a turn, once it has.
+func (s *AgentSuite) turnReported(turnID string) (Turn, bool) {
+	for _, event := range s.reported() {
+		if turn, ok := event.(Turn); ok && turn.TurnID == turnID {
+			return turn, true
+		}
+	}
+	return Turn{}, false
+}
+
+// cutOff reports whether a turn was reported cut off.
+func (s *AgentSuite) cutOff(turnID string) bool {
+	for _, event := range s.reported() {
+		if cut, ok := event.(Interrupted); ok && cut.TurnID == turnID {
+			return true
+		}
+	}
+	return false
+}
+
+func (s *AgentSuite) TestAReplyNoneOfWhichWasHeardIsSaidInTheVoiceThatReplacesTheLostOne() {
+	s.replacement = newStubTTS(true)
+	// Abandoned with the voice, the caller heard nothing of their answer and waited in
+	// silence for one that never came.
+	turn := s.writtenToSilentVoice()
+	sent := said(s.voice.spoken())
+	s.Require().Contains(sent, "How are you?")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return said(s.replacement.spoken()) == sent },
+		"the reply was not said in the voice that replaced the lost one")
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "none of the reply was heard")
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == turn
+	}, "the reply was never reported spoken")
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn was never reported")
+	reported, _ := s.turnReported(turn)
+	s.False(reported.Interrupted, "the turn was reported interrupted")
+	s.Positive(reported.AudioOutMs, "the turn was settled by the lost voice, before the next one said it")
+	s.False(s.agent.abandonedTurn(turn), "the turn was abandoned with the voice")
+	s.False(s.cutOff(turn), "a reply the next voice says was reported cut off")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the agent never finished saying the reply")
+}
+
+func (s *AgentSuite) TestEachSentenceALostVoiceSaidNoneOfIsSaidAgainInOrder() {
+	// A voice that cannot take deltas was sent each sentence as an utterance of its own, and
+	// the turn is over once each has been said.
+	s.replacement = newStubTTS(false)
+	s.join(false)
+	// More than a map keeps in one group, so the agent's record of them comes back in no
+	// order of its own.
+	s.model.reply = nil
+	for i := range 12 {
+		s.model.reply = append(s.model.reply, fmt.Sprintf("Sentence %d is here. ", i))
+	}
+	s.voice.silent = true
+	_, err := s.agent.RespondTo(s.ctx, "what is the capital of France", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(s.voice.spoken()) == 12 && !s.agent.generating
+	}, "the whole reply never reached the voice")
+	turn := s.model.requests()[0].ID
+	sent := s.voice.spoken()
+	// An utterance of another turn the voice had not finished either is not this reply's.
+	s.agent.mu.Lock()
+	s.agent.heard["turn-before"] = &utterance{agent: s.agent, turnID: "turn-before", synthesisID: "turn-before", text: "Earlier."}
+	s.agent.mu.Unlock()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) == 12 }, "the reply was not said again")
+	again := s.replacement.spoken()
+	for i := range sent {
+		s.Equal(sent[i].ID, again[i].ID, "said out of order")
+		s.Equal(sent[i].Text, again[i].Text)
+		s.True(again[i].Final)
+	}
+	s.eventually(func() bool { _, ok := s.turnReported(turn); return ok }, "the turn never ended")
+	reported, _ := s.turnReported(turn)
+	s.False(reported.Interrupted)
+}
+
+func (s *AgentSuite) TestAReplyPartlyHeardIsStillCutOffWhenItsVoiceIsLost() {
+	s.replacement = newStubTTS(true)
+	// The caller heard the start of it: said again from the top, they would hear it twice.
+	turn := s.writtenToSilentVoice()
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: turn,
+		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+	})
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "none of the reply was heard")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.cutOff(turn) }, "the reply was never reported cut off")
+	s.True(s.agent.abandonedTurn(turn))
+	s.never(func() bool { return len(s.replacement.spoken()) > 0 }, "a reply partly heard was said again")
+}
+
+func (s *AgentSuite) TestAReplyTheCallerTalkedOverWhileTheVoiceWasReplacedIsNotSaidAgain() {
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.writtenToSilentVoice()
+
+	s.refusesVoice()
+	<-started
+	s.agent.Interrupt()
+	opened()
+
+	s.eventually(func() bool { return s.cutOff(turn) }, "the reply was never reported cut off")
+	s.never(func() bool { return len(s.replacement.spoken()) > 0 }, "a reply the caller talked over was said again")
+}
+
+func (s *AgentSuite) TestAReplyNoVoiceReplacedIsReportedCutOff() {
+	s.replacement = newStubTTS(true)
+	s.replacementErr = errors.New("no voice left")
+	turn := s.writtenToSilentVoice()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.cutOff(turn) }, "the reply was left as still being said")
+	s.True(s.agent.abandonedTurn(turn))
+	s.eventually(func() bool { return !s.agent.Busy() }, "the agent was left talking")
+}
+
+func (s *AgentSuite) TestAReplyLeftUnsaidWhenTheCallEndsIsReportedCutOff() {
+	// The call ending while the next voice opens: the turn is closed as cut off, not left
+	// open with nothing to say it.
+	s.logs = &logLines{}
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.writtenToSilentVoice()
+
+	s.refusesVoice()
+	<-started
+	closed := make(chan struct{})
+	go func() {
+		defer close(closed)
+		_ = s.agent.Close()
+	}()
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.closed
+	}, "the agent never closed")
+	opened()
+	<-closed
+
+	logged := s.interruptedOnce()
+	s.Equal(turn, logged["turn"])
+	s.Equal(causeVoiceLost, logged["cause"])
+	s.Empty(s.replacement.spoken())
+}
+
+func (s *AgentSuite) TestAnAnswerNoVoiceSaidIsOwedAgain() {
+	// Handed over and then lost with no voice to say it, what the answer told is still
+	// owed to the caller.
+	s.delegates()
+	s.replacementErr = errors.New("no voice left")
+	s.join(true)
+	s.model.reply = []string{`Let me check. <ask skill="think">15% of 84.20</ask>`}
+	s.model.then = []string{"That comes to 12.63."}
+	s.subagent.reply = nil
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is 15% of 84.20")
+	s.eventually(func() bool {
+		requests := s.subagent.requests()
+		return len(requests) > 0 && s.subagent.script(requests[0].ID) != nil
+	}, "nothing was handed over")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the first reply never finished")
+	s.eventually(func() bool { return !s.agent.floor().Talking }, "the first reply was never heard")
+	s.voice.mu.Lock()
+	s.voice.silent = true
+	s.voice.mu.Unlock()
+	taskID := s.subagent.requests()[0].ID
+	s.subagent.writes(taskID, "It is 12.63.")
+	s.subagent.finishes(taskID)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return countOf[Responded](s.reported()) == 2 && !s.agent.generating
+	}, "the answer was never written")
+	s.Require().False(s.agent.harness.Pending())
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.agent.harness.Pending() }, "the answer nobody heard is not owed again")
+}
+
+func (s *AgentSuite) TestAReplyOnceEveryVoiceWasLostIsReportedCutOff() {
+	s.replacement = newStubTTS(true)
+	turn := s.writtenToSilentVoice()
+	s.agent.mu.Lock()
+	for len(s.agent.lostVoices) < maxLostVoices {
+		s.agent.lostVoices = append(s.agent.lostVoices, "stub/stub-tts")
+	}
+	s.agent.mu.Unlock()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.cutOff(turn) }, "the reply was left as still being said")
+	s.Empty(s.replacement.spoken())
+}
+
+func (s *AgentSuite) TestAReplyTheNextVoiceRefusesIsReportedCutOff() {
+	s.replacement = newStubTTS(true)
+	s.replacement.refuses = errors.New("text too long")
+	turn := s.writtenToSilentVoice()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.cutOff(turn) }, "the reply was left as still being said")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the refused utterance was left counted")
+}
+
+func (s *AgentSuite) TestAReplyTheLostVoiceHadLetGoOfIsReportedCutOff() {
+	s.replacement = newStubTTS(true)
+	// Its completion came first, so nothing is left of what the voice was sent to say again.
+	turn := s.writtenToSilentVoice()
+	s.voice.emitter.Send(tts.SynthesisComplete{SynthesisID: turn, Interrupted: true})
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return s.agent.utteranceLocked(turn) == nil
+	}, "the completion was never taken")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.cutOff(turn) }, "the reply was left as still being said")
+}
+
+func (s *AgentSuite) TestAudioTheLostVoiceSendsForAReplyTheNextSaysIsNotHeard() {
+	// Both would be heard: the start of the reply from one voice, then all of it again.
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.writtenToSilentVoice()
+
+	s.refusesVoice()
+	<-started
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: turn,
+		Audio:       audio.PcmData{Samples: make([]int16, 200), SampleRate: 16_000, Channels: 1},
+	})
+	opened()
+
+	s.eventually(func() bool { return len(s.edge.heard()) > 0 }, "the next voice was never heard")
+	s.never(func() bool {
+		return slices.ContainsFunc(s.edge.heard(), func(chunk audio.PcmData) bool { return len(chunk.Samples) == 200 })
+	}, "the lost voice's audio of the reply was heard")
+}
+
+func (s *AgentSuite) TestADirectionTheNextVoiceCannotActIsTakenOutOfTheReplyItSaysAgain() {
+	// Left in, the caller would hear the word "laughs" read out.
+	s.performing = "Act the directions in brackets."
+	s.replacement = newStubTTS(true)
+	s.join(true)
+	s.model.reply = []string{"[laughs] That ", "is a good one."}
+	s.voice.silent = true
+	_, err := s.agent.RespondTo(s.ctx, "tell me a joke", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool {
+		sent := s.voice.spoken()
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(sent) > 0 && sent[len(sent)-1].Final && !s.agent.generating
+	}, "the whole reply never reached the voice")
+	s.Require().Contains(said(s.voice.spoken()), "[laughs]")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the reply was not said again")
+	s.Equal("That is a good one.", strings.TrimSpace(said(s.replacement.spoken())))
+}
+
+func (s *AgentSuite) TestADirectionTheNextVoiceActsIsKeptInTheReplyItSaysAgain() {
+	s.performing = "Act the directions in brackets."
+	s.replacement = newStubTTS(true)
+	s.replacement.performs = true
+	s.join(true)
+	s.model.reply = []string{"[laughs] That ", "is a good one."}
+	s.voice.silent = true
+	_, err := s.agent.RespondTo(s.ctx, "tell me a joke", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool {
+		sent := s.voice.spoken()
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return len(sent) > 0 && sent[len(sent)-1].Final && !s.agent.generating
+	}, "the whole reply never reached the voice")
+	sent := said(s.voice.spoken())
+	s.Require().Contains(sent, "[laughs]")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the reply was not said again")
+	s.Equal(sent, said(s.replacement.spoken()))
+}
+
+func (s *AgentSuite) TestTheAgentIsTalkingWhileTheNextVoiceSaysWhatTheLostOneDidNot() {
+	// Taken for quiet, it would answer the caller over its own reply.
+	s.replacement = newStubTTS(true)
+	s.replacement.silent = true
+	turn := s.writtenToSilentVoice()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the reply was not said again")
+	s.never(func() bool { return !s.agent.floor().Talking }, "the agent was quiet while saying the reply")
+	s.replacement.emitter.Send(tts.SynthesisComplete{SynthesisID: turn, Characters: 10, AudioDurationMs: 10})
+	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
 }
 
 func (s *AgentSuite) TestTheGreetingIsSaidAsTheGreeting() {
@@ -6327,6 +6693,10 @@ func (s *AgentSuite) TestAReplyStillBeingWrittenGoesOnWhenItsVoiceIsLost() {
 		}
 	}
 	s.False(s.agent.abandonedTurn(turn), "the rest of the reply would be dropped")
+	s.agent.mu.Lock()
+	speaking := s.agent.speakingTurn
+	s.agent.mu.Unlock()
+	s.Equal(turn, speaking, "the caller could no longer talk over the rest of the reply")
 	s.model.writes(turn, "It shipped on Monday.")
 	s.model.finishes(turn)
 }
