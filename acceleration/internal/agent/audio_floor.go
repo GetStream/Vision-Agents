@@ -34,8 +34,10 @@ type audioFloor struct {
 	checked []ruledWords
 	settled map[string]harness.Decided
 	// wanted is the tool a ruling with the floor free heard the caller ask for, by
-	// candidate, until the turn is answered (wantedFor).
+	// candidate, until the turn is answered (wantedFor), and intent what the agent said
+	// about it.
 	wanted map[string]wantedTool
+	intent toolIntent
 }
 
 // ruledWords is a ruling a pause check made, on a participant's words.

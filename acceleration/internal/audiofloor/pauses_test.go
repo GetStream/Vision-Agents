@@ -180,6 +180,20 @@ func (s *PausesSuite) TestAPauseIsOneRequestAndItsWordsTheFinal() {
 	s.Equal(1, decisions, "an ended utterance is asked about no more")
 }
 
+// A ruling handed over with a pause's words says the language the server heard them in, which
+// the agent says anything of its own in.
+func (s *PausesSuite) TestAPausesRulingSaysTheLanguageItsWordsWereHeardIn() {
+	s.server.mu.Lock()
+	s.server.language = "Spanish"
+	s.server.mu.Unlock()
+	s.say(1000, true)
+	s.say(220, false)
+	next[stt.Transcript](&s.transcribing)
+	rulings := s.agent.rulings()
+	s.Require().Len(rulings, 1)
+	s.Equal("Spanish", rulings[0].Language)
+}
+
 // Over the agent, a caller voiced for overAfter is asked about without waiting for a pause,
 // the decision and the words in one request, then every interval while they talk on and the
 // agent speaks: a ruling to stop is handed over at once with the words (Overheard), the

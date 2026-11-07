@@ -416,6 +416,13 @@ type Agent struct {
 	// to be faster. The checks of a pause keep the flow controller's own share of its deadline
 	// (harness.HearDeadline).
 	AudioFloorOverlapTimeout time.Duration `koanf:"chorus_asr_overlap_timeout"`
+	// AudioFloorToolAcknowledgment says whether an agent acting on chorus-asr says a short
+	// acknowledgment as soon as a turn the model is sure asks for one of its tools ends,
+	// while the reply works out the call: on (the default) or off. AudioFloorToolSteering
+	// says whether that reply is told which tool the model heard asked for: on or off (the
+	// default).
+	AudioFloorToolAcknowledgment string `koanf:"chorus_asr_tool_acknowledgment"`
+	AudioFloorToolSteering       string `koanf:"chorus_asr_tool_steering"`
 }
 
 // Connectors is whether agents may reach the customer's accounts elsewhere.
@@ -602,9 +609,11 @@ var variables = map[string]string{
 	"episodes.idle_after":       "ROUTER_EPISODES_IDLE_AFTER",
 	"models.private_endpoints":  "ROUTER_MODELS_PRIVATE_ENDPOINTS",
 
-	"agent.chorus_asr_overlap_timeout":  "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
-	"connectors.proxy_calls_per_minute": "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
-	"runs.concurrent_per_app":           "ROUTER_RUNS_CONCURRENT_PER_APP",
+	"agent.chorus_asr_overlap_timeout":     "ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT",
+	"agent.chorus_asr_tool_acknowledgment": "ROUTER_CHORUS_ASR_TOOL_ACKNOWLEDGMENT",
+	"agent.chorus_asr_tool_steering":       "ROUTER_CHORUS_ASR_TOOL_STEERING",
+	"connectors.proxy_calls_per_minute":    "ROUTER_CONNECTORS_PROXY_CALLS_PER_MINUTE",
+	"runs.concurrent_per_app":              "ROUTER_RUNS_CONCURRENT_PER_APP",
 
 	"sandbox.enabled":               "ROUTER_SANDBOX_ENABLED",
 	"sandbox.recipients":            "ROUTER_SANDBOX_RECIPIENTS",
@@ -841,6 +850,18 @@ func (c Config) validate() error {
 	case "", "on", "off":
 	default:
 		return fmt.Errorf("config: agent.chorus_asr_interims (ROUTER_CHORUS_ASR_INTERIMS) is on or off, got %q", c.Agent.AudioFloorInterims)
+	}
+	switch c.Agent.AudioFloorToolAcknowledgment {
+	case "", "on", "off":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_tool_acknowledgment (ROUTER_CHORUS_ASR_TOOL_ACKNOWLEDGMENT) is on or off, got %q",
+			c.Agent.AudioFloorToolAcknowledgment)
+	}
+	switch c.Agent.AudioFloorToolSteering {
+	case "", "on", "off":
+	default:
+		return fmt.Errorf("config: agent.chorus_asr_tool_steering (ROUTER_CHORUS_ASR_TOOL_STEERING) is on or off, got %q",
+			c.Agent.AudioFloorToolSteering)
 	}
 	// The agent stops within 800 ms of a caller's first word over it, and the first check is
 	// asked 350 ms into it: a longer wait than 450 ms can't keep that line whatever the server

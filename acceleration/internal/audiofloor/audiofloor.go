@@ -301,6 +301,9 @@ type Client struct {
 	// overlapTimeout is how long a ruling on a caller talking over the agent is waited for
 	// (HearDeadline), the flow controller's own share of its deadline when zero.
 	overlapTimeout time.Duration
+	// acknowledges and steers say what an agent acting on the model does with the tool a
+	// ruling hears the caller ask for (Acknowledges, Steers).
+	acknowledges, steers bool
 	// now is the clock the policy's age is read by: time.Now, but in tests.
 	now func() time.Time
 
@@ -325,8 +328,18 @@ func New(url string, format Format, client *http.Client) *Client {
 	if client == nil {
 		client = http.DefaultClient
 	}
-	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, interims: true, now: time.Now, agents: map[[sha256.Size]byte]registration{}}
+	return &Client{url: strings.TrimRight(url, "/"), format: format, http: client, interims: true, acknowledges: true, now: time.Now,
+		agents: map[[sha256.Size]byte]registration{}}
 }
+
+// Acknowledges says an agent acting on the model says a short acknowledgment as soon as a
+// turn its ruling is sure asks for one of the agent's tools has ended
+// (config.Agent.AudioFloorToolAcknowledgment).
+func (c *Client) Acknowledges() bool { return c.acknowledges }
+
+// Steers says an agent acting on the model tells the reply which of its tools the ruling
+// heard the caller ask for, when it is sure (config.Agent.AudioFloorToolSteering).
+func (c *Client) Steers() bool { return c.steers }
 
 // WithAPIKey has the client send key, when there is one, as a bearer token on every request,
 // and returns the client.
@@ -819,5 +832,7 @@ func Open(settings config.Agent) *Client {
 	client := New(settings.AudioFloorURL, Format(cmp.Or(settings.AudioFloorAudio, string(Opus))), nil).WithAPIKey(settings.AudioFloorAPIKey)
 	client.interims = settings.AudioFloorInterims != "off"
 	client.overlapTimeout = settings.AudioFloorOverlapTimeout
+	client.acknowledges = settings.AudioFloorToolAcknowledgment != "off"
+	client.steers = settings.AudioFloorToolSteering == "on"
 	return client
 }

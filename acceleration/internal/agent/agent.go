@@ -1955,11 +1955,11 @@ func (a *Agent) perform(action Action) {
 		a.mu.Unlock()
 		note := joinNotes(action.Clarify, missedNote(missed))
 		adopted, speculated := a.adoptSpeculation(action.Candidate, note)
-		a.heardIntent(action.Candidate)
+		intent := a.heardIntent(action.Candidate, adopted)
 		if adopted {
 			return
 		}
-		if err := a.respondCandidate(action.Candidate, note, speculated); err != nil {
+		if err := a.respondCandidate(action.Candidate, joinNotes(note, intent), speculated); err != nil {
 			a.fail(err, "llm")
 		}
 
@@ -2939,6 +2939,9 @@ func (a *Agent) consumeLLM(p *pipeline, replies <-chan llm.Event) {
 // handle deals with one event from the model.
 func (a *Agent) handle(event llm.Event) {
 	switch typed := event.(type) {
+	case llm.ResponseCreated:
+		a.acknowledge(typed.ResponseID)
+
 	case llm.OutputTextDelta:
 		if !a.speaking(typed.ResponseID) {
 			// The turn was interrupted, so the rest of the reply is not spoken.
@@ -3112,7 +3115,7 @@ func (a *Agent) finish(response llm.Response) {
 		}
 		// A reply that failed before a word of it was said leaves the caller waiting for
 		// one that is not coming, and after "one moment" that silence is the answer lost.
-		if response.Status == llm.StatusFailed && strings.TrimSpace(a.spoken.String()) == "" {
+		if response.Status == llm.StatusFailed && a.saidNothingOfItsOwn(response.ID) {
 			if err := a.speakSentence(response.ID, lostReply, a.appendSpoken(lostReply)); err != nil {
 				a.fail(err, "tts")
 			}
