@@ -7055,17 +7055,22 @@ func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsNotSaidOverACallerWhoStart
 
 func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidAfterAMurmurOfTheCallers() {
 	// A murmur is the caller listening, as it is to a reply: the check-in is still said.
-	s.checkInSaidAfterTheCallerSays("mm-hm")
+	s.checkInSaidAfterTheCallerSays(func(alice stt.Participant) { s.mutters(alice, "mm-hm") })
 }
 
 func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidAfterTheCallerSaysOkay() {
 	// Assent, like a murmur, takes no floor.
-	s.checkInSaidAfterTheCallerSays("okay")
+	s.checkInSaidAfterTheCallerSays(func(alice stt.Participant) { s.mutters(alice, "okay") })
 }
 
-// checkInSaidAfterTheCallerSays holds an idle check-in for the next voice, has the caller say
-// text while that voice opens, and asserts the check-in is said and not reported cut off.
-func (s *AgentSuite) checkInSaidAfterTheCallerSays(text string) {
+func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidWhileTheCallerIsOnlyHeardOnTheAudioFloor() {
+	// The audio floor hears the caller without words: that alone does not drop the held check-in.
+	s.checkInSaidAfterTheCallerSays(func(alice stt.Participant) { pauseAsker{s.agent}.Hearing(alice) })
+}
+
+// checkInSaidAfterTheCallerSays holds an idle check-in for the next voice, has the caller act
+// with hear while that voice opens, and asserts the check-in is said and not reported cut off.
+func (s *AgentSuite) checkInSaidAfterTheCallerSays(hear func(alice stt.Participant)) {
 	s.join(false)
 	s.voice.silent = true
 	s.replacement = newStubTTS(false)
@@ -7083,7 +7088,7 @@ func (s *AgentSuite) checkInSaidAfterTheCallerSays(text string) {
 	<-started
 	alice := stt.Participant{ID: "alice"}
 	s.speak(alice)
-	s.mutters(alice, text)
+	hear(alice)
 	s.eventually(func() bool { return !s.agent.floor().LastHeardAt.IsZero() }, "the caller was never heard")
 	opened()
 
