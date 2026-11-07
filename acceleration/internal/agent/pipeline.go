@@ -752,7 +752,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 			again = a.speakingTurn
 		}
 		if resaid || replace && a.generating {
-			a.held = &heldReply{turnID: a.speakingTurn, written: !a.generating}
+			a.held = &heldReply{turnID: a.speakingTurn, written: !a.generating, lostAt: time.Now()}
 			if resaid {
 				a.held.unsaid = unsaid
 			}
@@ -823,7 +823,8 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 		}
 		// Counted as being said under the same lock, so nothing finds the agent quiet
 		// between the recovery ending and the reply going to the new voice.
-		resay := recovered && held != nil && a.held == held && a.owedLocked(held.turnID)
+		resay := recovered && held != nil && a.held == held && a.owedLocked(held.turnID) &&
+			!a.talkedOverLocked(held)
 		if resay {
 			for i := range held.unsaid {
 				if held.unsaid[i].counts && !held.unsaid[i].counted {
@@ -851,6 +852,14 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 // Agent.mu must be held.
 func (a *Agent) murmurLocked(turnID string) bool {
 	return strings.HasPrefix(turnID, backchannelPrefix) && a.keptReply != turnID
+}
+
+// talkedOverLocked reports whether a check-in held for the next voice was overtaken by the
+// caller: they were heard after its voice was lost. A reply they talk over is abandoned,
+// which lets go of it, but hearing them is no interruption of a line under a murmur's
+// prefix, so the next voice would say it over them. Agent.mu must be held.
+func (a *Agent) talkedOverLocked(held *heldReply) bool {
+	return strings.HasPrefix(held.turnID, backchannelPrefix) && a.lastHeardAt.After(held.lostAt)
 }
 
 // lostWith reports a reply the voice was lost under as cut off, and owes the caller again

@@ -7023,6 +7023,36 @@ func (s *AgentSuite) TestAMurmurALostVoiceNeverSaidIsNotSaidInTheNextVoice() {
 	s.Empty(s.edge.heard(), "a murmur nobody heard reached the call")
 }
 
+func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsNotSaidOverACallerWhoStartedTalking() {
+	// Under a murmur's prefix, a check-in is not abandoned when the caller talks, so held for
+	// the next voice it was said over them once that voice opened.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	s.model.composes = []string{"Is there anything else I can help with?"}
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	checkIn, _ := firstOf[Responded](s.reported())
+	s.Require().True(strings.HasPrefix(checkIn.TurnID, backchannelPrefix), "the check-in is not the case under test")
+
+	s.refusesVoice()
+	<-started
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.mutters(alice, "actually I wanted to ask about")
+	s.eventually(func() bool { return !s.agent.floor().LastHeardAt.IsZero() }, "the caller was never heard")
+	opened()
+
+	s.eventually(func() bool { return s.cutOff(checkIn.TurnID) }, "a check-in the caller talked over while the next voice opened was never reported cut off")
+	s.never(func() bool {
+		return slices.ContainsFunc(s.replacement.spoken(), func(r tts.Request) bool { return r.ID == checkIn.TurnID })
+	}, "a held check-in was said over a caller who started talking")
+}
+
 func (s *AgentSuite) TestALineTheVoiceWouldNotTakeIsReportedCutOff() {
 	// Reported before its sound, so a watcher has it in time: a line never said is then
 	// closed, not left as still coming.
