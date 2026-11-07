@@ -14,11 +14,11 @@ official `ruby:4.0` image. Never install gems on the host.
 
 ## The gem
 
-One gem, `getstream-vision-agents`, `require "getstream/vision_agents"`, module
+One gem, `stream-agents`, `require "getstream/vision_agents"`, module
 `GetStream::VisionAgents`. Stream's own gems are `getstream-ruby` (`GetStreamRuby::Client`,
 generated code under `GetStream::`), `stream-chat-ruby` (maintenance mode) and `stream-ruby`;
 the name sits beside the current one without claiming its namespace.
-`lib/getstream-vision-agents.rb` exists only so `Bundler.require` finds it.
+`lib/stream-agents.rb` exists only so `Bundler.require` finds it.
 
 ```
 lib/getstream/vision_agents.rb     requires everything, in order

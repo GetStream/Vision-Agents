@@ -3,13 +3,13 @@
 require_relative "lib/getstream/vision_agents/version"
 
 Gem::Specification.new do |spec|
-  spec.name = "getstream-vision-agents"
+  spec.name = "stream-agents"
   spec.version = GetStream::VisionAgents::VERSION
   spec.authors = ["Stream"]
   spec.email = ["support@getstream.io"]
-  spec.summary = "Server-side Ruby SDK for Stream's Vision Agents acceleration backend"
+  spec.summary = "Server-side Ruby SDK for the Stream Agents acceleration backend"
   spec.description = "Configure agents, open sessions, answer inbound calls and messages, " \
-                     "place outbound calls and sync agent folders against the Vision Agents backend."
+                     "place outbound calls and sync agent folders against the Stream Agents backend."
   spec.homepage = "https://github.com/GetStream/Vision-Agents"
   spec.license = "MIT"
   spec.required_ruby_version = ">= 3.3"

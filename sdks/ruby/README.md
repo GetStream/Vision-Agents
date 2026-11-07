@@ -1,4 +1,4 @@
-# getstream-vision-agents
+# stream-agents
 
 The server-side Ruby client for the Stream acceleration backend: agents, calls, dispatch,
 folder sync and the router, from a process you run.
@@ -8,7 +8,7 @@ answers and speaks. What arrives here are the events saying so, and what stays h
 function calling, because the functions are here.
 
 ```ruby
-gem "getstream-vision-agents"
+gem "stream-agents"
 ```
 
 Ruby 3.3 or newer. Two runtime dependencies: `getstream-ruby`, Stream's own server-side gem,
@@ -341,7 +341,7 @@ router.llm.realtime { |llm| llm.respond("Say hi") { |delta| print delta } }
 
 router.stt.recording("https://example.com/call.mp3", diarize: true)
 router.search("perioperative antibiotic guidance", results: 5)
-router.configure_stt(target: "en-low-latency", keyterms: ["Vision Agents"])
+router.configure_stt(target: "en-low-latency", keyterms: ["Stream Agents"])
 ```
 
 `realtime` takes only per-call overrides such as `diarize:`, `keyterms:` or `voice:`. Options
