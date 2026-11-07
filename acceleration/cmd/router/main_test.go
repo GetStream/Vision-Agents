@@ -6,6 +6,7 @@ import (
 	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"testing"
 
 	"github.com/getsentry/sentry-go"
@@ -156,4 +157,23 @@ func TestTheRoutersSentryEventsKeepAProvidersReasonAndNotTheKeyItEchoed(t *testi
 	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
 	require.Equal(t, reason, sent[0].Exception[len(sent[0].Exception)-1].Value)
 	require.Equal(t, reason, sent[0].Breadcrumbs[0].Message)
+}
+
+// The logger main builds takes a key out of a startup failure: a ROUTER_ENV that names one is
+// refused, and the refusal is logged without it.
+func TestTheRouterBinaryLogsAStartupFailureWithoutTheKeyInIt(t *testing.T) {
+	if os.Getenv("ROUTER_MAIN_TEST") == "1" {
+		os.Args = []string{"router"}
+		main()
+		return
+	}
+	key := rand.Text()
+	command := exec.Command(os.Args[0], "-test.run=^TestTheRouterBinaryLogsAStartupFailureWithoutTheKeyInIt$")
+	command.Env = append(os.Environ(), "ROUTER_MAIN_TEST=1", "ROUTER_ENV=Bearer sk-test-"+key)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	require.Error(t, command.Run(), "the router started with an unknown ROUTER_ENV")
+
+	require.NotContains(t, stderr.String(), key)
+	require.Contains(t, stderr.String(), `msg="router stopped" error="config: unknown ROUTER_ENV \"[redacted]\"`)
 }
