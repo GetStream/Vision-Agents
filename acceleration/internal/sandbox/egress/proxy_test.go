@@ -1038,15 +1038,71 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainEndsWithTheSandbox() {
 	s.ErrorIs(err, io.EOF)
 }
 
+// tunnelBuffer is the size of each socket buffer of a blind tunnel: both ends' and the proxy's
+// two sockets. macOS grows a loopback socket's buffers up to 4 MiB each (net.inet.tcp.autorcvbufmax,
+// autosndbufmax), so a tunnel whose ends read nothing held about 40 MB of the kernel's network
+// memory until it closed. That memory is the whole machine's: with a few such tunnels at once the
+// kernel denied buffers (netstat -m) and the test Redis behind Docker's port forward went silent
+// for 20-30 s, so the suite's next tests failed at rueidis' 5 s dial timeout (AI-2928). Chosen,
+// not measured: two of the proxy's 32 KiB copy chunks, so a fill still blocks a copy in its write.
+const tunnelBuffer = 64 << 10
+
+// tunnelHeld bounds what a fill in one direction may write before it blocks, with tunnelBuffer.
+// Measured: a direction took 1.25 MB on macOS and 1.34 MB on Linux (Docker Desktop's VM) with
+// tunnelBuffer, and on macOS 12.6 MB without it when neither end reads. The kernels keep more than
+// the buffer sizes they are given (Linux doubles them, socket(7)), so the bound is read from runs.
+const tunnelHeld = 2 << 20
+
+// smallBuffers gives conn, a TCP connection, buffers of tunnelBuffer each way.
+func smallBuffers(conn net.Conn) error {
+	tcp, ok := conn.(*net.TCPConn)
+	if !ok {
+		return fmt.Errorf("%T is not a TCP connection", conn)
+	}
+	return errors.Join(tcp.SetReadBuffer(tunnelBuffer), tcp.SetWriteBuffer(tunnelBuffer))
+}
+
+// smallBufferListener gives each connection it accepts smallBuffers.
+type smallBufferListener struct{ net.Listener }
+
+func (l smallBufferListener) Accept() (net.Conn, error) {
+	conn, err := l.Listener.Accept()
+	if err != nil {
+		return nil, err
+	}
+	if err := smallBuffers(conn); err != nil {
+		_ = conn.Close()
+		return nil, err
+	}
+	return conn, nil
+}
+
 // blindTunnel opens a tunnel to an allowed domain on a proxy whose idle timeout is idle, to a host
-// that is a bare listener: the sandbox's end and the host's.
+// that is a bare listener: the sandbox's end and the host's. Every socket on the way has
+// smallBuffers.
 func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = listener.Close() })
 	s.answerAt(listener.Addr().String())
 	s.allow("outside.test")
-	s.proxy = httptest.NewServer(s.newProxy(s.store, func(options *egress.Options) { options.IdleTimeout = idle }))
+	s.proxy = httptest.NewUnstartedServer(s.newProxy(s.store, func(options *egress.Options) {
+		options.IdleTimeout = idle
+		dial := options.Dial
+		options.Dial = func(ctx context.Context, network, address string) (net.Conn, error) {
+			conn, err := dial(ctx, network, address)
+			if err != nil {
+				return nil, err
+			}
+			if err := smallBuffers(conn); err != nil {
+				_ = conn.Close()
+				return nil, err
+			}
+			return conn, nil
+		}
+	}))
+	s.proxy.Listener = smallBufferListener{s.proxy.Listener}
+	s.proxy.Start()
 	s.T().Cleanup(s.proxy.Close)
 	accepted := make(chan net.Conn, 1)
 	go func() {
@@ -1056,6 +1112,7 @@ func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
 	sandbox, err = net.Dial("tcp", s.proxy.Listener.Addr().String())
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sandbox.Close() })
+	s.Require().NoError(smallBuffers(sandbox))
 	_, err = fmt.Fprintf(sandbox, "CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\nProxy-Authorization: %s\r\n\r\n",
 		basic("sbx", s.credential))
 	s.Require().NoError(err)
@@ -1065,6 +1122,7 @@ func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
 	host = <-accepted
 	s.Require().NotNil(host)
 	s.T().Cleanup(func() { _ = host.Close() })
+	s.Require().NoError(smallBuffers(host))
 	return sandbox, host
 }
 
@@ -1158,8 +1216,8 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen
 // no byte at all. One such write can be a proxy copy that has not run yet, which then moves
 // everything on and goes back to a read that the idle timeout ends; a proxy that takes nothing
 // for several stalls has both its buffers and its write full, and its copy is stuck in the write.
-// It returns an error, not a failed test: the callers run it in goroutines.
-func fillUntilBlocked(conn net.Conn, stall time.Duration) error {
+// It returns what it wrote, and an error, not a failed test: the callers run it in goroutines.
+func fillUntilBlocked(conn net.Conn, stall time.Duration) (int, error) {
 	// stalls: chosen, not measured: three stalls outlast the longest pause of a proxy copy seen
 	// on this machine under a load of 115 (a single stall was passed by a copy that had not run).
 	const stalls = 3
@@ -1167,29 +1225,30 @@ func fillUntilBlocked(conn net.Conn, stall time.Duration) error {
 	// 1 GiB is far past any loopback buffer chain; a tunnel that takes it all is not blocked.
 	for written, blocked := 0, 0; written < 1<<30; {
 		if err := conn.SetWriteDeadline(time.Now().Add(stall)); err != nil {
-			return err
+			return written, err
 		}
 		n, err := conn.Write(chunk)
 		written += n
 		if err != nil && !errors.Is(err, os.ErrDeadlineExceeded) {
-			return fmt.Errorf("the tunnel closed while it was being filled: %w", err)
+			return written, fmt.Errorf("the tunnel closed while it was being filled: %w", err)
 		}
 		if n > 0 {
 			blocked = 0
 			continue
 		}
 		if blocked++; blocked == stalls {
-			return nil
+			return written, nil
 		}
 	}
-	return errors.New("the tunnel took a gigabyte nobody reads")
+	return 1 << 30, errors.New("the tunnel took a gigabyte nobody reads")
 }
 
 // TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout: bytes fill the
 // buffers and a copy blocks in its write. With one copy stuck, the other has a read pending to
 // time out; with both stuck, each end's write deadline is the only thing that ends the tunnel.
 // The test touches its ends no more once they are full: a byte it sent would count as progress
-// and restart the idle timeout, so the close is read from the open-tunnels gauge. That a tunnel
+// and restart the idle timeout, so the close is read from the open-tunnels gauge. A fill stays
+// within tunnelHeld: the buffers are blindTunnel's small ones, not the kernel's. That a tunnel
 // is not closed before the idle timeout is held by
 // TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout, not here.
 func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtTheIdleTimeout() {
@@ -1226,12 +1285,21 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtT
 			if stalled.hostSends {
 				senders = append(senders, host)
 			}
-			filled := make(chan error, len(senders))
+			type fill struct {
+				written int
+				err     error
+			}
+			filled := make(chan fill, len(senders))
 			for _, sender := range senders {
-				go func() { filled <- fillUntilBlocked(sender, stall) }()
+				go func() {
+					written, err := fillUntilBlocked(sender, stall)
+					filled <- fill{written, err}
+				}()
 			}
 			for range senders {
-				s.Require().NoError(<-filled)
+				fill := <-filled
+				s.Require().NoError(fill.err)
+				s.LessOrEqual(fill.written, tunnelHeld, "the tunnel held more than its small buffers")
 			}
 
 			// Every buffer is full and nothing moves from here: the last byte moved no later than
