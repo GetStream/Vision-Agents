@@ -6762,15 +6762,23 @@ func (s *AgentSuite) TestWhatOfAReplyANextVoiceLostTooWasNotSentIsSaidByTheVoice
 	s.refusesVoice()
 	<-taken
 	third := newStubTTS(false)
+	third.silent = true
 	s.replacement = third
 	second.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Fatal: true, Err: errors.New("socket closed")})
 	s.eventually(func() bool { return len(third.spoken()) == 3 }, "the reply was not said by the voice after the next")
 	release()
 
 	s.never(func() bool { return len(second.spoken()) > 1 }, "the reply was sent on to a voice that was lost")
-	for i, request := range third.spoken() {
+	again := third.spoken()
+	for i, request := range again {
 		s.Equal(sent[i].ID, request.ID, "said out of order")
 		s.Equal(sent[i].Text, request.Text)
+	}
+	// Each is counted as being said again, from nothing.
+	third.emitter.Send(tts.SynthesisComplete{SynthesisID: again[0].ID, Characters: 10, AudioDurationMs: 10})
+	s.never(func() bool { return !s.agent.floor().Talking }, "the agent was quiet with two sentences left")
+	for _, request := range again[1:] {
+		third.emitter.Send(tts.SynthesisComplete{SynthesisID: request.ID, Characters: 10, AudioDurationMs: 10})
 	}
 	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
 }
@@ -6987,8 +6995,13 @@ func (s *AgentSuite) writingWhileTheNextVoiceOpens(streaming bool, heard func(tu
 			return strings.Contains(unsaid.text, "It shipped")
 		})
 	}, "the sentence written while the next voice opened was not kept for it")
-	opened()
 	s.model.finishes(turn)
+	s.eventually(func() bool {
+		s.agent.mu.Lock()
+		defer s.agent.mu.Unlock()
+		return !s.agent.generating
+	}, "the reply was never finished")
+	opened()
 	s.Equal(sent, len(s.voice.spoken()), "a sentence was sent to the lost voice")
 	return turn
 }
@@ -7017,8 +7030,10 @@ func (s *AgentSuite) TestWhatAReplyStillBeingWrittenHadStreamedIsSaidByTheNextVo
 		return len(again) > 0 && again[len(again)-1].Final
 	}, "the reply said by the next voice was never ended")
 	var texts []string
-	for _, request := range s.replacement.spoken() {
+	again := s.replacement.spoken()
+	for i, request := range again {
 		s.Equal(turn, request.ID)
+		s.Equal(i == len(again)-1, request.Final, "the utterance was ended before all of it was sent")
 		if request.Text != "" {
 			texts = append(texts, strings.TrimSpace(request.Text))
 		}
@@ -7041,6 +7056,29 @@ func (s *AgentSuite) TestASentenceWrittenWhileTheNextVoiceOpensIsSaidByItAfterAS
 	s.never(func() bool { return len(s.replacement.spoken()) > 1 }, "a sentence the caller heard was said again")
 	s.Equal("It shipped on Monday.", strings.TrimSpace(s.replacement.spoken()[0].Text))
 	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
+}
+
+func (s *AgentSuite) TestAReplyStillBeingWrittenIsNotCutOffWhenNoVoiceReplacesTheLostOne() {
+	// As before: what is written after goes to the voice there is.
+	s.join(false)
+	s.voice.silent = true
+	s.replacementErr = errors.New("no voice left")
+	s.model.reply = nil
+	_, err := s.agent.RespondTo(s.ctx, "where is my order", nil, options.LLM{})
+	s.Require().NoError(err)
+	s.eventually(func() bool { return len(s.model.requests()) == 1 }, "the model was never asked")
+	turn := s.model.requests()[0].ID
+	s.model.writes(turn, "Let me look that up. ")
+	s.eventually(func() bool { return len(s.voice.spoken()) > 0 }, "the reply never reached the voice")
+
+	s.voice.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Fatal: true})
+
+	// One for the voice lost, one for the voice that could not replace it.
+	s.eventually(func() bool { return countOf[Error](s.reported()) == 2 }, "the next voice was never given up on")
+	s.False(s.cutOff(turn), "a reply still being written was reported cut off")
+	s.False(s.agent.abandonedTurn(turn), "the rest of the reply would be dropped")
+	s.model.writes(turn, "It shipped on Monday. ")
+	s.model.finishes(turn)
 }
 
 func (s *AgentSuite) TestAStreamedReplyTheLostVoiceWasToldWasOverIsEndedByTheNextVoice() {
