@@ -140,7 +140,7 @@ jobs:
       # test shows only when both are collected together. The root conftest.py fails a test file that
       # gets another file's module.
       - name: Collect core and plugin tests together
-        run: uv run --no-sync pytest --collect-only -q tests/ plugins/*/tests/*.py
+        run: uv run --no-sync pytest --collect-only -qqq tests/ plugins/*/tests/*.py
       # Unit tests spread over every core; integration tests stay serial so the providers'
       # rate limits see one caller.
       - name: Run core tests
