@@ -1024,7 +1024,7 @@ func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
 
 // SessionRespondCommand is the SessionRespondCommand schema.
 type SessionRespondCommand struct {
-	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message." pattern:"^[A-Za-z0-9_-]{1,128}$"`
 	Images    *[]ImageSource            `json:"images,omitempty"`
 	Text      string                    `json:"text"`
 	Type      SessionRespondCommandType `json:"type" enum:"respond"`

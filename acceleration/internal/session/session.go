@@ -810,6 +810,15 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 	// A worker's command on a channel it answers hands on what the person wrote there, photos
 	// and all, so only the reply is written, as Respond does (Spec.Dispatched).
 	handedOn := s.spec.Text && s.spec.Dispatched
+	if len(images) > 0 && s.reachesModel(id) {
+		// RespondTo would refuse them only after they were uploaded and shown on the person's
+		// message, as a question nothing answers. The retry of a command already taken is
+		// answered with its receipt and never reaches the model, so the session's model since
+		// changing to one that cannot see does not refuse it.
+		if err := s.current().CheckTurn(asked, true); err != nil {
+			return persistent.CommandReceipt{}, "", stack.Wrap(err)
+		}
+	}
 	var photos []persistent.Photo
 	if !handedOn {
 		var err error
@@ -862,6 +871,22 @@ func (s *Session) RespondCommandWithAction(ctx context.Context, id, text, client
 		return receipt, "", nil
 	}
 	return receipt, s.openTurn(turnID, text), nil
+}
+
+// reachesModel is whether the command under id would be shown to the model: one not taken
+// yet, or one a dispatch worker's server is answering now (AwaitCommand). The retry of one
+// already taken is answered with its receipt.
+func (s *Session) reachesModel(id string) bool {
+	if s.persisted == nil {
+		return true
+	}
+	s.commandMu.Lock()
+	defer s.commandMu.Unlock()
+	if _, err := s.persisted.Command(id); err != nil {
+		return true
+	}
+	_, waiting := s.awaiting[id]
+	return waiting
 }
 
 // photos uploads what a person sent with a command, photos and voice notes, to their

@@ -25,8 +25,8 @@ class SessionRespondCommand:
         type_ (SessionRespondCommandType):
         images (list[ImageSource] | Unset):
         request_id (str | Unset): Generated and sent by the SDKs, one per question, so a retry is answered once.
-            Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only
-            when present.
+            Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one,
+            images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message.
     """
 
     text: str

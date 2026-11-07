@@ -9275,10 +9275,13 @@ pub struct RespondRequest {
     ///The install the command came from. It is written on the person's message as client_id, and a client tool called while answering is addressed to it.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub client_id: ::std::option::Option<::std::string::String>,
-    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, a voice note is uploaded and shown on the person's message. A retry with the same id, text and voice note does not restart inference.
+    ///Photos to answer about, as on createResponse. With a request_id, or with no text in a session kept in Stream Chat, they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message. The model sees them with this question alone. Refused before any turn starts when the agent has neither a vision skill nor a conversation model that accepts images.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
+    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, photos and a voice note are uploaded and shown on the person's message. A retry with the same id, text, photos and voice note does not restart inference.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
-    ///What to answer, as though it had been said. May be empty when audio carries the question.
+    ///What to answer, as though it had been said. May be empty when photos or audio carry the question.
     pub text: ::std::string::String,
 }
 ///How a conversation is handed back to the model when a session carries it on.
@@ -10690,7 +10693,7 @@ pub struct SessionQuery {
 pub struct SessionRespondCommand {
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub images: ::std::option::Option<::std::vec::Vec<ImageSource>>,
-    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present.
+    ///Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub request_id: ::std::option::Option<::std::string::String>,
     pub text: ::std::string::String,

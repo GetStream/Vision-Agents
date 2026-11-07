@@ -444,6 +444,133 @@ func (s *ResponsesAskedSuite) TestAPhotoSentWithoutTextOrRequestIDIsHeldToAComma
 	s.Len(s.chat.Uploads()[before:], 0, "nothing refused is uploaded")
 }
 
+// A server sending a person's command on respond sends their photos with it: the model sees them
+// with the question, the person's message shows them, and the install the command came from is
+// kept, which is what addresses a client tool called while answering.
+func (s *ResponsesAskedSuite) TestAPhotoSentOnRespondWithARequestIDIsShownToTheModelAndOnThePersonsMessage() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	command, install := s.utils.uuid(), "iphone-"+s.utils.uuid()
+	text := "What is wrong with this fryer " + command + "?"
+	data := []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR" + command)
+	before := len(s.chat.Uploads())
+
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost,
+		"/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{RequestId: &command, ClientId: &install, Text: text,
+			Images: &[]ImageSource{{Url: "data:image/png;base64," + base64.StdEncoding.EncodeToString(data)}}}, &receipt))
+
+	s.NotEmpty(receipt.UserMessageId)
+	s.NotEmpty(receipt.AssistantMessageId)
+	s.Require().Eventually(func() bool {
+		for _, request := range s.vision.requests() {
+			if request.HasImage() && strings.Contains(fmt.Sprint(request.Input), text) {
+				return true
+			}
+		}
+		return false
+	}, settleFor, 10*time.Millisecond, "the model was never shown the photo with the question")
+	message := s.personsMessage(opened, command)
+	s.Equal(text, message["text"])
+	attachments, _ := json.Marshal(message["attachments"])
+	s.Contains(string(attachments), `"type":"image"`)
+	custom, _ := message["custom"].(map[string]any)
+	s.Equal(install, custom["client_id"])
+	uploads := s.chat.Uploads()[before:]
+	s.Require().Len(uploads, 1)
+	s.Equal(data, uploads[0].Data, "the photo uploaded is the one sent")
+}
+
+// Photos on respond are held to a command's rules, and an agent with nothing that can see them
+// refuses the question as createResponse does, uploading nothing.
+func (s *ResponsesAskedSuite) TestAPhotoSentOnRespondIsRefusedWhereCreateResponseRefusesIt() {
+	photo := ImageSource{Url: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))}
+	nine := []ImageSource{photo, photo, photo, photo, photo, photo, photo, photo, photo}
+	seeing := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	blind := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("noted/noted-model")})
+	before := len(s.chat.Uploads())
+
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+seeing.Id+"/respond",
+		RespondRequest{RequestId: pointerTo(s.utils.uuid()), Text: "What is this?", Images: &[]ImageSource{{Url: "https://example.com/a.png"}}})
+	s.Equal(http.StatusBadRequest, status, "a photo linked from elsewhere")
+	s.Contains(string(body), "takes photos as data URIs")
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+seeing.Id+"/respond",
+		RespondRequest{RequestId: pointerTo(s.utils.uuid()), Text: "What are these?", Images: &nine})
+	s.Equal(http.StatusBadRequest, status, "more photos than a message shows")
+	s.Contains(string(body), "at most 8 photos")
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+blind.Id+"/respond",
+		RespondRequest{RequestId: pointerTo(s.utils.uuid()), Text: "What is this?", Images: &[]ImageSource{photo}})
+	s.Equal(http.StatusBadRequest, status, "an agent that cannot see")
+	s.Contains(string(body), `"code":"not_configured"`)
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+blind.Id+"/responses",
+		CreateResponseRequest{RequestId: pointerTo(s.utils.uuid()), Text: "What is this?", Images: &[]ImageSource{photo}})
+	s.Equal(http.StatusBadRequest, status, "an agent that cannot see, on createResponse")
+	s.Contains(string(body), `"code":"not_configured"`)
+	s.Len(s.chat.Uploads()[before:], 0, "nothing refused is uploaded")
+	s.Empty(s.chat.Stored(strings.TrimPrefix(value(blind.ConversationId), "agent:")), "nothing refused is written")
+}
+
+// The retry of a photo question already taken is answered with its receipt after the session's
+// model changed to one that cannot see: it starts no turn, so nothing has to see its photo.
+func (s *ResponsesAskedSuite) TestARetryOfAPhotoQuestionIsAnsweredAfterTheModelChangedToOneThatCannotSee() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	photo := &[]ImageSource{{Url: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))}}
+	responded, created := s.utils.uuid(), s.utils.uuid()
+	respond := RespondRequest{RequestId: &responded, Text: "What is wrong with this fryer " + responded + "?", Images: photo}
+	create := CreateResponseRequest{RequestId: &created, Text: "What is wrong with this grill " + created + "?", Images: photo}
+	shown := func() int {
+		count := 0
+		for _, request := range s.vision.requests() {
+			if input := fmt.Sprint(request.Input); request.HasImage() && (strings.Contains(input, responded) || strings.Contains(input, created)) {
+				count++
+			}
+		}
+		return count
+	}
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond", respond, &receipt))
+	s.repliesCompleted(opened, 1)
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", create)
+	s.Require().Equal(http.StatusAccepted, status, string(body))
+	s.repliesCompleted(opened, 2)
+	s.Require().Equal(2, shown(), "each question was shown its photo")
+	uploads := len(s.chat.Uploads())
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/sessions/"+opened.Id+"/settings",
+		SessionSettingsRequest{Llm: pointerTo("noted/noted-model")}, nil))
+
+	var retried CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond", respond, &retried))
+	s.True(retried.Duplicate, "a retry starts no second turn")
+	s.Equal(receipt.UserMessageId, retried.UserMessageId)
+	s.Equal(receipt.AssistantMessageId, retried.AssistantMessageId)
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", create)
+	s.Require().Equal(http.StatusAccepted, status, string(body))
+	var again AgentResponse
+	s.Require().NoError(json.Unmarshal(body, &again))
+	s.Empty(again.Id, "a retry on createResponse starts no second turn")
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{RequestId: pointerTo(s.utils.uuid()), Text: "And this one?", Images: photo})
+	s.Equal(http.StatusBadRequest, status, "a new photo question is refused by the model that cannot see")
+	s.Contains(string(body), `"code":"not_configured"`)
+	s.Len(s.chat.Uploads()[uploads:], 0, "nothing is uploaded again")
+	s.Never(func() bool { return shown() > 2 }, 200*time.Millisecond, 10*time.Millisecond, "no question is shown its photo again")
+}
+
+// repliesCompleted waits until n replies in the session's channel have finished.
+func (s *ResponsesAskedSuite) repliesCompleted(opened Session, n int) {
+	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
+	s.Require().Eventually(func() bool {
+		completed := 0
+		for _, stored := range s.chat.Stored(channel) {
+			custom, _ := stored["custom"].(map[string]any)
+			if written, _ := custom["support_message"].(map[string]any); written["role"] == "assistant" && written["state"] == "completed" {
+				completed++
+			}
+		}
+		return completed >= n
+	}, settleFor, 10*time.Millisecond, "fewer than %d replies finished", n)
+}
+
 // Controls, each answered the same on the base (49fa88bde): a question without a request id
 // that has text is shown as typed, its photos going to the model alone, and one with nothing
 // in it is refused.
