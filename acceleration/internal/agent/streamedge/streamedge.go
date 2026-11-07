@@ -235,8 +235,8 @@ func (e *Edge) joinCall(ctx context.Context, call *rtc.Call) (*sfu_events.JoinRe
 // ended, as well.
 const codeNotAllowed = 17
 
-// noVideoMessages are the words Stream's message says either refusal in, after the name of
-// the request it refused.
+// noVideoMessages are Stream's words for the two refusals, inside a message that names the
+// request first: JoinCall failed with error: "video is not enabled on this server".
 var noVideoMessages = []string{"video is not enabled for your account", "video is not enabled on this server"}
 
 // videoOff reports whether err is Stream refusing a join because the customer's account or
@@ -248,8 +248,8 @@ func videoOff(err error) bool {
 	})
 }
 
-// noVideo is a join refused for an account or a server that runs no video. It reads as the refusal it wraps,
-// so the answer a caller gets keeps Stream's words, and it is agent.ErrNoVideo.
+// noVideo is a join refused for an account or a server that runs no video. It reads as the
+// refusal it wraps, so the answer a caller gets keeps Stream's words, and it is agent.ErrNoVideo.
 type noVideo struct{ error }
 
 func (noVideo) Is(target error) bool { return target == agent.ErrNoVideo }
