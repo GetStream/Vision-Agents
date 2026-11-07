@@ -1,10 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"crypto/rand"
+	"errors"
 	"log/slog"
 	"os"
+	"os/exec"
 	"testing"
 
+	"github.com/getsentry/sentry-go"
 	"github.com/stretchr/testify/require"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/api"
@@ -112,4 +117,64 @@ func TestKnowledgeURLsAreNotServedWithoutRedis(t *testing.T) {
 
 	require.NoError(t, err)
 	require.Nil(t, pages)
+}
+
+// A provider that echoes the request's headers in its error puts the key the router sent into the
+// failure; the router's log keeps the provider's reason and not the key, and still logs at its level.
+func TestTheRoutersLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	var out bytes.Buffer
+	logger := newLogger(&out, slog.LevelWarn)
+	logger.Info("below the level")
+	logger.Error("agent failure", "error", errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n"+
+		"request headers: Authorization: Bearer sk-test-"+key))
+
+	require.NotContains(t, out.String(), key)
+	require.NotContains(t, out.String(), "below the level")
+	require.Contains(t, out.String(), `msg="agent failure" error="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`)
+}
+
+// The router's Sentry events carry a failure's text: the key a provider echoed in it is taken
+// out of the exception and the breadcrumbs, and the reason is kept.
+func TestTheRoutersSentryEventsKeepAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	options := sentryOptions()
+	require.NotNil(t, options.BeforeSend, "the router's events are sent as they are")
+	var sent []*sentry.Event
+	redact := options.BeforeSend
+	options.BeforeSend = func(event *sentry.Event, hint *sentry.EventHint) *sentry.Event {
+		sent = append(sent, redact(event, hint))
+		return nil
+	}
+	client, err := sentry.NewClient(options)
+	require.NoError(t, err)
+	hub := sentry.NewHub(client, sentry.NewScope())
+	echoed := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: Authorization: Bearer sk-test-" + key
+	hub.AddBreadcrumb(&sentry.Breadcrumb{Message: echoed}, nil)
+	hub.CaptureException(errors.New(echoed))
+
+	require.Len(t, sent, 1)
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	require.Equal(t, reason, sent[0].Exception[len(sent[0].Exception)-1].Value)
+	require.Equal(t, reason, sent[0].Breadcrumbs[0].Message)
+}
+
+// The logger main builds takes a key out of a startup failure: a config path that names one is
+// unreadable, and the failure is logged without it. A path, not ROUTER_ENV: the integration
+// build's testenv resets ROUTER_ENV in the child.
+func TestTheRouterBinaryLogsAStartupFailureWithoutTheKeyInIt(t *testing.T) {
+	if path := os.Getenv("ROUTER_MAIN_TEST_CONFIG"); path != "" {
+		os.Args = []string{"router", "--config", path}
+		main()
+		return
+	}
+	key := rand.Text()
+	command := exec.Command(os.Args[0], "-test.run=^TestTheRouterBinaryLogsAStartupFailureWithoutTheKeyInIt$")
+	command.Env = append(os.Environ(), "ROUTER_MAIN_TEST_CONFIG=/missing/Bearer sk-test-"+key)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	require.Error(t, command.Run(), "the router started with a config it cannot read")
+
+	require.NotContains(t, stderr.String(), key)
+	require.Contains(t, stderr.String(), `msg="router stopped" error="config: read /missing/[redacted] open /missing/[redacted]`)
 }

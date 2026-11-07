@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 
@@ -60,4 +61,22 @@ func (s *AgentSuite) replyRequestIsLoggedWithItsProviderAndModel() {
 	s.Equal("stub", failure["provider"])
 	s.Equal("stub-model", failure["model"])
 	s.Contains(failure["error"], "failed to connect to local service")
+}
+
+// A provider that echoes the request's headers in its error puts the key it was sent into the
+// failure; the failure line keeps the provider's reason and not the key.
+func (s *AgentSuite) TestAFailureLineKeepsTheProvidersReasonAndNotTheKeyItEchoed() {
+	s.logs = &logLines{}
+	key := rand.Text()
+	s.join(false)
+	s.model.refuses = errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n" +
+		"request headers: Authorization: Bearer sk-test-" + key)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "what is our forecast")
+
+	s.eventually(func() bool { return len(s.logs.records("agent failure")) == 1 }, "the failure was never logged")
+	failure := s.logs.records("agent failure")[0]
+	s.Contains(failure["error"], "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]")
+	s.NotContains(s.logs.buf.String(), key)
 }

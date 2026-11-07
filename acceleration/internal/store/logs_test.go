@@ -1,9 +1,21 @@
 package store
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"log/slog"
 	"strings"
 	"testing"
+	"time"
+
+	"github.com/getsentry/sentry-go"
+
+	"github.com/GetStream/Vision-Agents/acceleration/internal/stack"
 )
 
 func TestSafeLogTextCredentials(t *testing.T) {
@@ -48,6 +60,8 @@ func TestSafeLogTextQueryAndEncodedCredentials(t *testing.T) {
 		"twice-encoded bearer":                       `h=Bearer%2520` + secret,
 		"twice-encoded authorization":                `h=Authorization%253A%2520Basic%2520` + secret,
 		"key first (gemini stt and sts)":             `Get "wss://live.example/ws?key=` + secret + `": dial tcp: i/o timeout`,
+		"key at the start of a json query":           `{"method":"GET","query":"key=` + secret + backslash + `u0026echo_status=404"}`,
+		"token at the start of a quoted query":       `query="token=` + secret + `"`,
 		"key after another parameter":                `wss://live.example/ws?alt=sse&key=` + secret + `&model=m`,
 		"key in upper case":                          `wss://live.example/ws?KEY=` + secret,
 		"key in an encoded url":                      `redirect=https%3A%2F%2Flive.example%2Fws%3Fkey%3D` + secret,
@@ -101,23 +115,109 @@ func TestSafeLogTextKeepsTheRestOfTheURL(t *testing.T) {
 		`Get "wss://live.example/ws?alt=sse&key=` + secret + `&model=m": EOF`:        `Get "wss://live.example/ws?alt=sse&key=[redacted]&model=m": EOF`,
 		`h=Authorization%3A%20Basic%20` + secret + `&model=m`:                        `h=[redacted]&model=m`,
 		`h=Bearer%20` + secret + `&model=m`:                                          `h=[redacted]&model=m`,
+		`{"query":"key=` + secret + backslash + `u0026echo_status=404"}`:             `{"query":"key=[redacted]` + backslash + `u0026echo_status=404"}`,
 	} {
 		if result := SafeLogText(message); result != want {
 			t.Errorf("SafeLogText(%q) = %q, want %q", message, result, want)
 		}
 	}
-	// The answers base 6b9627f99 gives for them, the same as the input but for the last one,
-	// whose "bearer of" the bearer rule took before this change too.
+	// The answers base 6b9627f99 gives for them, the same as the input; the bearer rule takes no
+	// word after bearer, so the last one's "bearer of" stays too.
 	for message, want := range map[string]string{
 		`wss://stt.example/v1/listen?model=nova-3&keyterm=Stream&keyterms=Vision&keyterms_prompt=%5B%22Agents%22%5D&language_code=en`: `wss://stt.example/v1/listen?model=nova-3&keyterm=Stream&keyterms=Vision&keyterms_prompt=%5B%22Agents%22%5D&language_code=en`,
 		`wss://stt.example/v1/listen?monkey=banana&keys=3&tokens=12&token_type_hint=access_token&max_tokens=256`:                      `wss://stt.example/v1/listen?monkey=banana&keys=3&tokens=12&token_type_hint=access_token&max_tokens=256`,
 		`the key=value pair and token=12 in prose`:                                                        `the key=value pair and token=12 in prose`,
 		`Get "https://api.example/v1/models?page=2&limit=50": dial tcp: lookup api.example: no such host`: `Get "https://api.example/v1/models?page=2&limit=50": dial tcp: lookup api.example: no such host`,
-		`authorization%20failed for model gpt and the bearer of bad news`:                                 `authorization%20failed for model gpt and the [redacted] bad news`,
+		`authorization%20failed for model gpt and the bearer of bad news`:                                 `authorization%20failed for model gpt and the bearer of bad news`,
 	} {
 		if result := SafeLogText(message); result != want {
 			t.Errorf("SafeLogText(%q) = %q, want %q", message, result, want)
 		}
+	}
+}
+
+// Our own errors name a bearer token, a secret or a password in prose, and a WWW-Authenticate
+// challenge starts with Bearer and an auth-param (RFC 6750 section 3): with no credential in
+// them, they are kept byte for byte.
+func TestRedactLogTextKeepsProseAndChallenges(t *testing.T) {
+	for _, text := range []string{
+		"bearer: the credential is not a bearer credential",
+		"sandbox: the connection's scheme sends no bearer token",
+		"auth: open secret: cipher: message authentication failed",
+		"phone: open sip trunk password: cipher: message authentication failed",
+		"store: rotate guest secret: context canceled",
+		"store: set guest secret: EOF",
+		"auth: open secret: ERROR #23505 duplicate key value",
+		"apikey: the key is required",
+		"needs_reauthorization: the provider no longer takes the credential",
+		"usage: USAGE_INGEST_TOKEN is required: the bearer token producers and routers call with",
+		"a Bearer Token. And a bearer or api_key connection",
+		`Bearer error="insufficient_scope", scope="files:read files:write"`,
+		`Bearer realm="", authorization_uri="https://x"`,
+		`Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"`,
+	} {
+		if result := RedactLogText(text); result != text {
+			t.Errorf("RedactLogText(%q) = %q, want it unchanged", text, result)
+		}
+	}
+}
+
+// A value that is not a word is a credential, after a word the rule passed over too.
+func TestRedactLogTextTakesAValueThatIsNotAWord(t *testing.T) {
+	secret := rand.Text()
+	for text, want := range map[string]string{
+		"Authorization: Bearer sk-test-" + secret:             "[redacted]",
+		"sent Bearer " + secret + " and failed":               "sent [redacted] and failed",
+		"sent bearer " + strings.ToLower(secret) + "0 failed": "sent [redacted] failed",
+		"https://auth.example/token?client_secret=" + secret:  "https://auth.example/token?client_[redacted]",
+		`{"password":"` + secret + `"}`:                       `{"[redacted]}`,
+		`{"password":"word"}`:                                 `{"[redacted]}`,
+		"password: hunter2 rejected":                          "[redacted] rejected",
+		"secret: password: " + secret:                         "secret: [redacted]",
+		"bearer of Bearer " + secret:                          "bearer of [redacted]",
+		"Bearer private-token":                                "[redacted]",
+		"Bearer ABCDEFGHI":                                    "[redacted]",
+		`Bearer error="invalid_token", Bearer ` + secret:      `Bearer error="invalid_token", [redacted]`,
+	} {
+		if result := RedactLogText(text); result != want {
+			t.Errorf("RedactLogText(%q) = %q, want %q", text, result, want)
+		}
+	}
+}
+
+// mayHoldCredential lets through every text a rule redacts: one row per rule and per word it
+// needs, in any case, with the Kelvin sign and the long s the rules fold to k and s.
+func TestEveryTextARuleRedactsPassesTheCheck(t *testing.T) {
+	secret := rand.Text()
+	for _, text := range []string{
+		"sent BEARER " + secret,
+		"h=bearer%20" + secret,
+		"Proxy-Authorization: Basic " + secret,
+		"Set-Cookie: session=" + secret,
+		"h=Authorization%3A%20Basic%20" + secret,
+		"h=COOKIE%3D" + secret,
+		"x_api_key=" + secret,
+		"ApiKey: " + secret,
+		"refresh-token=" + secret,
+		"ACCESS_TOKEN=" + secret,
+		"client_SECRET=" + secret,
+		`{"Password":"` + secret + `"}`,
+		"wss://live.example/ws?KEY=" + secret,
+		"https://ipinfo.io/json?Token=" + secret,
+		"https://user:" + secret + "@example.com",
+		"used sk-" + secret,
+		"https://ipinfo.io/json?to\u212aen=" + secret,
+		"pa\u017f\u017fword=" + secret,
+	} {
+		if redactCredentials(text) == text {
+			t.Errorf("no rule redacts %q: the row tests nothing", text)
+		}
+		if !mayHoldCredential(text) {
+			t.Errorf("the check skips %q, which a rule redacts", text)
+		}
+	}
+	if mayHoldCredential(`llmrouter: post "https://api.example.com/v1/chat/completions": context deadline exceeded`) {
+		t.Error("the check lets a line with none of the words through")
 	}
 }
 
@@ -174,5 +274,250 @@ func TestSafeLogDetailsKeepsTheBridgeMediaKeys(t *testing.T) {
 	})
 	if len(details) != 2 || details["stream_media_addr"] != "203.0.113.10" || details["customer_media_addr"] != "198.51.100.7" {
 		t.Fatalf("details = %v, want only the two media addresses", details)
+	}
+}
+
+// logged is what a text handler with RedactLogAttr, or with no ReplaceAttr when redact is
+// false, prints for one record at a pinned time, so two runs of it can be compared byte for
+// byte.
+func logged(t *testing.T, redact bool, message string, args ...any) string {
+	t.Helper()
+	var out bytes.Buffer
+	options := &slog.HandlerOptions{}
+	if redact {
+		options.ReplaceAttr = RedactLogAttr
+	}
+	record := slog.NewRecord(time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC), slog.LevelError, message, 0)
+	record.Add(args...)
+	if err := slog.NewTextHandler(&out, options).Handle(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+// echoedKey is a provider's 502 that echoes the Authorization header it was sent, and the key
+// in it.
+func echoedKey() (error, string) {
+	key := rand.Text()
+	return errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n" +
+		"request headers: Authorization: Bearer sk-test-" + key), key
+}
+
+func TestRedactLogAttrKeepsAnErrorsReasonAndNotTheKeyItEchoed(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "agent failure", "context", "llm", "error", fmt.Errorf("gemma: %w", err))
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	want := `error="gemma: 502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`
+	if !strings.Contains(line, want) || !strings.Contains(line, "context=llm") {
+		t.Fatalf("the line lost the rest of the error: %s", line)
+	}
+}
+
+// A string attribute and the message are what a line holds when its caller logged err.Error()
+// or formatted the error into the message.
+func TestRedactLogAttrTakesTheKeyOutOfAStringAndTheMessage(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "refused: "+err.Error(), "reason", err.Error())
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	if strings.Count(line, `failed to connect to local service\nrequest headers: [redacted]`) != 2 {
+		t.Fatalf("the line lost the rest of the error: %s", line)
+	}
+}
+
+func TestRedactLogAttrTakesTheKeyOutOfAGroup(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "agent failure", slog.Group("turn", "error", err))
+	if strings.Contains(line, key) || !strings.Contains(line, `turn.error="502 Bad Gateway`) {
+		t.Fatalf("the group kept the key or lost the error: %s", line)
+	}
+}
+
+// An alert logs its details as a map, which can hold an error's text.
+func TestRedactLogAttrTakesTheKeyOutOfAMapOfDetails(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "usage alert", "extra", map[string]any{"listing": err.Error()})
+	if strings.Contains(line, key) || !strings.Contains(line, "listing:502 Bad Gateway") {
+		t.Fatalf("the details kept the key or lost the error: %s", line)
+	}
+}
+
+// The text handler prints a []byte as a string, so the key in a provider's body logged as
+// bytes is taken out of that string.
+func TestRedactLogAttrTakesTheKeyOutOfBytes(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "provider answered", "body", []byte(err.Error()))
+	if strings.Contains(line, key) || !strings.Contains(line, `body="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`) {
+		t.Fatalf("the bytes kept the key or lost the body: %s", line)
+	}
+}
+
+// The text handler prints an error as %+v, which for a stack.Wrap error is the error and its
+// stack; the redacted error keeps the stack.
+func TestRedactLogAttrKeepsTheStackOfAnErrorItRedacts(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "agent failure", "error", stack.Wrap(err))
+	if strings.Contains(line, key) || !strings.Contains(line, "TestRedactLogAttrKeepsTheStackOfAnErrorItRedacts") {
+		t.Fatalf("the redacted error kept the key or lost its stack: %s", line)
+	}
+}
+
+// A log line has no cap: a long error is logged whole, as it was before, with only its key
+// taken out.
+func TestRedactLogAttrKeepsALongErrorWhole(t *testing.T) {
+	err, key := echoedKey()
+	long := fmt.Errorf("%s: %w", strings.Repeat("upstream said no. ", 600), err)
+	line := logged(t, true, "agent failure", "error", long)
+	if strings.Contains(line, key) || strings.Count(line, "upstream said no.") != 600 ||
+		!strings.Contains(line, "request headers: [redacted]") {
+		t.Fatalf("the long error kept the key or lost its text: %d bytes", len(line))
+	}
+}
+
+// The control is the line a text handler with no ReplaceAttr prints, which is the line the
+// router printed before RedactLogAttr: with nothing to redact, it is the same byte for byte.
+func TestRedactLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
+	args := []any{
+		"error", stack.Wrap(errors.New("502 Bad Gateway: upstream error: failed to connect to local service")),
+		"reason", "perplexity: PERPLEXITY_API_KEY is required",
+		"tokens", 42,
+		"took", 1500 * time.Millisecond,
+		"extra", map[string]any{"day": "2026-11-06", "rows": 3},
+		"payload", []byte(`{"type":"ping"}`),
+	}
+	want := logged(t, false, "agent failure", args...)
+	if got := logged(t, true, "agent failure", args...); got != want {
+		t.Fatalf("the line changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// loggedJSON is what a JSON handler with RedactJSONLogAttr, or with no ReplaceAttr when redact
+// is false, prints for one record at a pinned time.
+func loggedJSON(t *testing.T, redact bool, message string, args ...any) string {
+	t.Helper()
+	var out bytes.Buffer
+	options := &slog.HandlerOptions{}
+	if redact {
+		options.ReplaceAttr = RedactJSONLogAttr
+	}
+	record := slog.NewRecord(time.Date(2026, 11, 6, 12, 0, 0, 0, time.UTC), slog.LevelError, message, 0)
+	record.Add(args...)
+	if err := slog.NewJSONHandler(&out, options).Handle(context.Background(), record); err != nil {
+		t.Fatal(err)
+	}
+	return out.String()
+}
+
+// hiddenText is an error whose %v and %+v show less than its Error(), which is what the JSON
+// handler prints.
+type hiddenText struct{ text string }
+
+func (e hiddenText) Error() string                 { return e.text }
+func (e hiddenText) Format(f fmt.State, verb rune) { fmt.Fprint(f, "provider failed") }
+
+// The JSON handler prints an error's Error(): the key is taken out of that, though %+v hides
+// it, and a stack.Wrap error stays its Error(), with no stack added.
+func TestRedactJSONLogAttrReadsAnErrorAsTheHandlerPrintsIt(t *testing.T) {
+	err, key := echoedKey()
+	line := loggedJSON(t, true, "agent failure", "hidden", hiddenText{err.Error()}, "wrapped", stack.Wrap(err),
+		"body", []byte(err.Error()), "extra", map[string]any{"listing": err.Error()})
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	reason := `502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]`
+	for _, want := range []string{`"hidden":"` + reason + `"`, `"wrapped":"` + reason + `"`, `"body":"` + reason + `"`, `listing`} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("the line lost %s: %s", want, line)
+		}
+	}
+}
+
+// A message and a string attribute are redacted too, whatever their key.
+func TestRedactJSONLogAttrRedactsAMessageAndAStringAttribute(t *testing.T) {
+	err, key := echoedKey()
+	line := loggedJSON(t, true, err.Error(), "reason", err.Error())
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+	if !strings.Contains(line, `"reason":"502 Bad Gateway`) {
+		t.Fatalf("the line lost the reason: %s", line)
+	}
+}
+
+// marshalsOtherText is an error whose Error() is clean and whose JSON is not: the handler
+// prints the JSON.
+type marshalsOtherText struct{ text string }
+
+func (e marshalsOtherText) Error() string { return "provider failed" }
+func (e marshalsOtherText) MarshalJSON() ([]byte, error) {
+	return json.Marshal(e.text)
+}
+
+func TestRedactJSONLogAttrRedactsWhatAMarshalingErrorPrints(t *testing.T) {
+	err, key := echoedKey()
+	line := loggedJSON(t, true, "agent failure", "error", marshalsOtherText{err.Error()})
+	if strings.Contains(line, key) {
+		t.Fatalf("the key survived: %s", line)
+	}
+}
+
+func TestRedactJSONLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
+	args := []any{
+		"error", stack.Wrap(errors.New("502 Bad Gateway: upstream error: failed to connect to local service")),
+		"reason", "perplexity: PERPLEXITY_API_KEY is required",
+		"tokens", 42,
+		"extra", map[string]any{"day": "2026-11-06", "rows": 3},
+		"payload", []byte(`{"type":"ping"}`),
+	}
+	want := loggedJSON(t, false, "agent failure", args...)
+	if got := loggedJSON(t, true, "agent failure", args...); got != want {
+		t.Fatalf("the line changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// A Sentry event carries an error's text in its message, its exceptions and its breadcrumbs.
+func TestRedactSentryEventKeepsTheReasonAndNotTheKey(t *testing.T) {
+	err, key := echoedKey()
+	event := RedactSentryEvent(&sentry.Event{
+		Message:     "router stopped: " + err.Error(),
+		Exception:   []sentry.Exception{{Type: "*errors.errorString", Value: err.Error()}},
+		Breadcrumbs: []*sentry.Breadcrumb{{Message: err.Error()}},
+	}, nil)
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	if event.Message != "router stopped: "+reason || event.Exception[0].Value != reason || event.Breadcrumbs[0].Message != reason {
+		t.Fatalf("the event kept the key or lost the reason: %+v", event)
+	}
+	if event.Exception[0].Type != "*errors.errorString" || strings.Contains(fmt.Sprint(event.Breadcrumbs[0]), key) {
+		t.Fatalf("the event changed what it should keep: %+v", event)
+	}
+}
+
+// BenchmarkLogLine is the cost of RedactLogAttr on a router line with no key in it, typical and
+// with a 4 KB error, against the same handler with no ReplaceAttr, which is what the router
+// logged with before it.
+func BenchmarkLogLine(b *testing.B) {
+	typical := errors.New(`llmrouter: post "https://api.example.com/v1/chat/completions": context deadline exceeded`)
+	long := errors.New(strings.Repeat("upstream said the model is overloaded, retry later; ", 80))
+	for _, run := range []struct {
+		name    string
+		replace func([]string, slog.Attr) slog.Attr
+		err     error
+	}{
+		{"typical/plain", nil, typical},
+		{"typical/redacted", RedactLogAttr, typical},
+		{"long/plain", nil, long},
+		{"long/redacted", RedactLogAttr, long},
+	} {
+		b.Run(run.name, func(b *testing.B) {
+			logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{ReplaceAttr: run.replace}))
+			b.ReportAllocs()
+			for b.Loop() {
+				logger.Info("served a request", "request_id", "01HZX3Q9V8M2", "model", "openai/gpt-4o-mini",
+					"status", 200, "duration", 312*time.Millisecond, "error", run.err)
+			}
+		})
 	}
 }
