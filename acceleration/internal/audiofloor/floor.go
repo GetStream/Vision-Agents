@@ -130,7 +130,7 @@ func (t *Transcriber) settle(c pauseCheck, said <-chan Words, force bool) {
 // settled, for a floor that rules alone whose checks can't rule on it: the voice has paused,
 // and that transcriber has written its final since.
 func (t *Transcriber) wordsEnded() bool {
-	return t.words != nil && t.quiet >= writeAfter && t.words.settledSince(t.now().Add(-t.quiet))
+	return t.words != nil && t.quiet >= writeAfter && t.words.settledSince(time.Now().Add(-t.quiet))
 }
 
 // endOnWords ends the utterance being heard with no check's ruling, for a floor that rules
@@ -244,7 +244,7 @@ type spoken struct {
 	// began when its first words came.
 	utterance int64
 	began     time.Time
-	settled   []string
+	settled   []settledRun
 	// open is the revision of the run not settled, numbered run (stt.Transcript.Utterance),
 	// and finalAt when the last final came.
 	open    string
@@ -259,6 +259,13 @@ type spoken struct {
 	// spent is a run whose final the wait gave up on: the utterance ended on its words as they
 	// stood, and what more comes of it is that utterance's, which is over.
 	spent int64
+}
+
+// settledRun is the words of a run the transcriber settled, and the run's number, none when
+// zero.
+type settledRun struct {
+	run  int64
+	text string
 }
 
 // cut is an utterance the floor ended, waiting for its words: the final of run, the run the
@@ -306,10 +313,15 @@ func (w *spoken) heard(transcript stt.Transcript) (interim stt.Transcript, show,
 	if w.began.IsZero() && text != "" {
 		w.began = time.Now()
 	}
+	if last := len(w.settled) - 1; last >= 0 && run != 0 && w.settled[last].run == run && w.open == "" {
+		// The run its last final settled carries on, restated whole, as a transcriber that took
+		// the end of a run back does, or its final came again: these are its words now.
+		w.settled = w.settled[:last]
+	}
 	switch transcript.Mode {
 	case stt.ModeFinal:
 		if text != "" {
-			w.settled = append(w.settled, text)
+			w.settled = append(w.settled, settledRun{run: run, text: text})
 		}
 		w.open, w.run, w.finalAt = "", 0, time.Now()
 	case stt.ModeDelta:
@@ -317,7 +329,7 @@ func (w *spoken) heard(transcript stt.Transcript) (interim stt.Transcript, show,
 	default:
 		if w.open != "" && w.run != 0 && run != 0 && run != w.run {
 			// A run that ended without a final: its words as they stood.
-			w.settled = append(w.settled, strings.TrimSpace(w.open))
+			w.settled = append(w.settled, settledRun{run: w.run, text: strings.TrimSpace(w.open)})
 		}
 		w.open, w.run = text, run
 	}
@@ -405,7 +417,11 @@ func (w *spoken) deliverLocked(c *cut, settled string) {
 
 // textLocked is the words gathered so far. w.mu is held.
 func (w *spoken) textLocked() string {
-	return strings.TrimSpace(strings.Join(append(w.settled[:len(w.settled):len(w.settled)], w.open), " "))
+	texts := make([]string, 0, len(w.settled)+1)
+	for _, settled := range w.settled {
+		texts = append(texts, settled.text)
+	}
+	return strings.TrimSpace(strings.Join(append(texts, w.open), " "))
 }
 
 // soFar is the words of the utterance being heard as they stand.
@@ -438,7 +454,7 @@ func (w *spoken) failedOver() {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if open := strings.TrimSpace(w.open); open != "" {
-		w.settled = append(w.settled, open)
+		w.settled = append(w.settled, settledRun{text: open})
 	}
 	w.open, w.run, w.spent = "", 0, 0
 	if c := w.cut; c != nil && c.run != 0 {

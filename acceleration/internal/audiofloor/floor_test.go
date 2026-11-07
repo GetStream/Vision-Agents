@@ -164,6 +164,18 @@ func (s *FloorSuite) TestARunTheOtherTranscriberEndsMidSentenceIsNoTurn() {
 	s.Equal(end.Text, rulings[0].Words)
 }
 
+// A run the other transcriber settled and then carries on, restated whole, as one that takes the
+// end of a run back does, or whose final comes twice, is its newest words, not two runs.
+func (s *FloorSuite) TestARunRestatedAfterItsFinalIsItsNewestWords() {
+	s.say(1000, true)
+	s.writes(1, stt.ModeFinal, "A table for two")
+	s.writes(1, stt.ModeReplacement, "A table for two at seven")
+	s.writes(1, stt.ModeFinal, "A table for two at 7.")
+	s.writes(1, stt.ModeFinal, "A table for two at 7.")
+	s.say(220, false)
+	s.Equal("A table for two at 7.", s.final().Text)
+}
+
 // A final that comes after the floor ended the utterance, correcting the words it had open, is
 // waited for: the utterance's words are the final's, not the revision's.
 func (s *FloorSuite) TestALateFinalThatCorrectsTheWordsIsWaitedFor() {
