@@ -4380,6 +4380,14 @@ func (s *AgentSuite) TestAShortenedReplyGivesWayUntilTheNextTurn() {
 	s.says(participant, "and in Porto")
 	s.eventually(func() bool { return countOf[Responding](s.reported()) == 2 }, "the next turn never started")
 	s.False(asker.GivenWay(), "the next turn takes the floor back")
+
+	// A line the voice would not take leaves the agent on no turn, and gave nobody the floor:
+	// the turn it gave way on before is long gone.
+	s.voice.mu.Lock()
+	s.voice.refuses = errors.New("text too long")
+	s.voice.mu.Unlock()
+	s.Require().Error(s.agent.Say(s.ctx, "One moment, checking."))
+	s.False(asker.GivenWay(), "a line never heard gave way to nobody")
 }
 
 // A reply that ends within its shortened tail, its last audio out before the tail is up, is not

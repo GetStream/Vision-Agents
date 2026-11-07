@@ -1297,6 +1297,9 @@ func (a *Agent) sayFor(text, purpose string) error {
 			a.abandoned[turnID] = struct{}{}
 			a.speakingTurn = ""
 			a.saying = ""
+			// Nothing of it was heard, so nobody was given the floor: an earlier turn the agent
+			// gave way on is not the one it is on (GivenWay).
+			a.gaveWay = ""
 		}
 		a.mu.Unlock()
 		a.interrupted(turnID, stt.Participant{}, interruption{cause: causeVoiceRefused})
