@@ -161,15 +161,19 @@ func redactUnlessWord(rule *regexp.Regexp, text string) string {
 // RedactLogAttr is a slog ReplaceAttr that puts every logged string, the message included, and
 // every error or other value through RedactLogText, since a provider's error can echo the key
 // it was sent. A value is read as %+v, which is how slog's text handler prints an error (with
-// its stack, see internal/stack) or a map of details. An attribute with nothing to redact is
-// returned as is, so its line does not change.
+// its stack, see internal/stack) or a map of details, but for a []byte, which it prints as a
+// string. An attribute with nothing to redact is returned as is, so its line does not change.
 func RedactLogAttr(_ []string, attr slog.Attr) slog.Attr {
 	var text string
 	switch attr.Value.Kind() {
 	case slog.KindString:
 		text = attr.Value.String()
 	case slog.KindAny:
-		text = fmt.Sprintf("%+v", attr.Value.Any())
+		if bytes, ok := attr.Value.Any().([]byte); ok {
+			text = string(bytes)
+		} else {
+			text = fmt.Sprintf("%+v", attr.Value.Any())
+		}
 	default:
 		return attr
 	}

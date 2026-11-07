@@ -302,6 +302,16 @@ func TestRedactLogAttrTakesTheKeyOutOfAMapOfDetails(t *testing.T) {
 	}
 }
 
+// The text handler prints a []byte as a string, so the key in a provider's body logged as
+// bytes is taken out of that string.
+func TestRedactLogAttrTakesTheKeyOutOfBytes(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "provider answered", "body", []byte(err.Error()))
+	if strings.Contains(line, key) || !strings.Contains(line, `body="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`) {
+		t.Fatalf("the bytes kept the key or lost the body: %s", line)
+	}
+}
+
 // The text handler prints an error as %+v, which for a stack.Wrap error is the error and its
 // stack; the redacted error keeps the stack.
 func TestRedactLogAttrKeepsTheStackOfAnErrorItRedacts(t *testing.T) {
