@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -112,7 +113,7 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := newLogger(os.Stderr, level)
 	slog.SetDefault(logger)
 
 	if err := run(options, logger); err != nil {
@@ -186,6 +187,12 @@ func (o options) agent() string {
 		return trimmed
 	}
 	return o.callID
+}
+
+// newLogger is the agent's logger, which writes text to w and takes every credential out of
+// what it prints: a provider's error can echo the key it was sent.
+func newLogger(w io.Writer, level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
 }
 
 func run(options options, logger *slog.Logger) error {

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"github.com/uptrace/bun"
+	"log/slog"
 	"regexp"
 	"strconv"
 	"strings"
@@ -113,6 +114,27 @@ func RedactLogText(text string) string {
 	text = encodedBearer.ReplaceAllString(text, "[redacted]")
 	text = providerCredential.ReplaceAllString(text, "[redacted]")
 	return text
+}
+
+// RedactLogAttr is a slog ReplaceAttr that puts every logged error and string, the message
+// included, through RedactLogText, since a provider's error can echo the key it was sent. An
+// error is read as %+v, which is how slog's text handler prints one (with its stack, see
+// internal/stack). An attribute with nothing to redact is returned as is, so its line does
+// not change.
+func RedactLogAttr(_ []string, attr slog.Attr) slog.Attr {
+	var text string
+	switch value := attr.Value.Any().(type) {
+	case string:
+		text = value
+	case error:
+		text = fmt.Sprintf("%+v", value)
+	default:
+		return attr
+	}
+	if redacted := RedactLogText(text); redacted != text {
+		return slog.String(attr.Key, redacted)
+	}
+	return attr
 }
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}
