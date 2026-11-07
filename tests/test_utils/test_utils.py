@@ -11,7 +11,7 @@ from vision_agents.core.utils.utils import cancel_and_wait, ensure_model
 
 from tests.base_test import BaseTest
 
-AUDIO = Path(__file__).parent / "test_assets" / "saturday_seven_thirty.wav"
+AUDIO = Path(__file__).parent.parent / "test_assets" / "saturday_seven_thirty.wav"
 MODEL = b"onnx weights"
 
 

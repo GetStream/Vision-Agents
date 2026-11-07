@@ -313,7 +313,7 @@ source of truth. The generated Swift is committed, like the Python and Go client
 needs no code generation and no build-tool plugin to be trusted in Xcode.
 
 ```bash
-uv run sdks/swift/generate.py --check   # does the filter still agree with the spec?
+uv run sdks/swift/generate.py --check   # does the filter agree with the spec, is the client up to date?
 uv run sdks/swift/generate.py           # regenerate
 ```
 
@@ -321,6 +321,12 @@ The generator is the one Stream Chat and Stream Video generate their clients wit
 `tools/openapi` of the `chat` repository, so regenerating needs that repository checked out
 beside this one (`../chat`) and Go. Its `DefaultAPI` and models run on StreamCore's
 `DefaultAPITransport` and `DefaultAPIClientMiddleware`, which `Backend.swift` implements.
+
+A spec change to the client part fails the `swift` CI job until the client is regenerated, and
+only someone with access to the private `chat` repository can. Check `chat` out at the commit
+in `core/generated.json`'s `generator` field before you regenerate, unless you mean to move the
+generator. The check's rules are tested: `uv run --no-project --with pytest --with pyyaml pytest
+-c /dev/null --rootdir=sdks/swift --confcutdir=sdks/swift sdks/swift/test_generate.py`.
 
 The generated code is `internal`, and every type crossing the public API is hand-written in
 `Models.swift`. That is what lets the spec churn without breaking anybody: a field added to
