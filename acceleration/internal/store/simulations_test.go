@@ -101,6 +101,34 @@ func (s *StoreSuite) TestACasesErrorIsKeptWithoutTheKeyItEchoed() {
 	}
 }
 
+// A tool's result in a transcript can be a provider's text echoing the key it was sent: it is
+// kept without the key, and the transcript the caller passed in (the judge's) is left as it
+// was. A result with no key is kept as it was.
+func (s *StoreSuite) TestATranscriptsToolResultIsKeptWithoutTheKeyItEchoed() {
+	key := "sk-test-" + rand.Text()
+	for result, kept := range map[string]string{
+		"401 Unauthorized\nAuthorization: Bearer " + key: "401 Unauthorized\n[redacted]",
+		`{"status":"shipped","eta":"2026-11-09"}`:         `{"status":"shipped","eta":"2026-11-09"}`,
+	} {
+		run := s.startedRun("app", time.Now().Add(time.Minute))
+		cases, err := s.store.SimulationCases(s.ctx, run.ID)
+		s.Require().NoError(err)
+		kase := cases[0]
+		kase.State = SimulationPassed
+		kase.Transcript = []SimulationLine{{Text: "where is it", Tools: []SimulationTool{
+			{Name: "lookup", Arguments: "{}", Result: "first"}, {Name: "lookup", Arguments: "{}", Result: result},
+		}}}
+
+		s.Require().NoError(s.store.FinishSimulationCase(s.ctx, kase))
+
+		cases, err = s.store.SimulationCases(s.ctx, run.ID)
+		s.Require().NoError(err)
+		s.Require().Len(cases[0].Transcript, 1)
+		s.Equal([]string{"first", kept}, []string{cases[0].Transcript[0].Tools[0].Result, cases[0].Transcript[0].Tools[1].Result})
+		s.Equal(result, kase.Transcript[0].Tools[1].Result, "the caller's transcript was changed")
+	}
+}
+
 // startedRun starts a run of one conversation for a customer, held until a given time.
 func (s *StoreSuite) startedRun(customerID string, heldUntil time.Time) SimulationRun {
 	simulation := Simulation{
