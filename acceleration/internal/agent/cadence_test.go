@@ -86,25 +86,6 @@ func (s *CadenceSuite) TestAFinalTheModelEndedIsPutAtOnce() {
 	}
 }
 
-// So is another transcriber's final of an utterance chorus-asr's floor ended (Floor): the
-// floor sends one final an utterance, whoever wrote its words.
-func (s *CadenceSuite) TestAFinalTheFloorEndedOnAnotherTranscribersWordsIsPutAtOnce() {
-	settling := newCadence(400*time.Millisecond, 800*time.Millisecond, time.Second, slog.New(slog.DiscardHandler))
-	s.T().Cleanup(settling.Close)
-	settling.endedBy = audiofloor.ProviderName
-	alice := stt.Participant{ID: "alice"}
-	heard := time.Now()
-	settling.Observe(stt.Transcript{Participant: alice, Mode: stt.ModeFinal, Utterance: 1, Text: "My PIN is 4729",
-		Provider: "assemblyai", Floor: true})
-	select {
-	case ready := <-settling.Ready():
-		s.Less(time.Since(heard), 30*time.Millisecond, "the final waited")
-		s.True(ready.Ended)
-	case <-time.After(time.Second):
-		s.FailNow("the final was never put")
-	}
-}
-
 // quiet asserts nothing becomes ready, which is how "the agent does not answer that"
 // looks from here.
 func (s *CadenceSuite) quiet() {

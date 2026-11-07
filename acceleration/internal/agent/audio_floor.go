@@ -12,7 +12,6 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/harness"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
-	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
 
 // audioFloorPending bounds the pause checks' rulings still waiting for the flow controller.
@@ -30,18 +29,10 @@ type audioFloor struct {
 	mu sync.Mutex
 	// streams holds each participant's, or nil for one that could not be kept.
 	streams map[string]*audiofloor.Stream
-	// floors holds the floor of each participant whose words another transcriber writes
-	// (rules).
-	floors map[string]*audiofloor.Transcriber
 	// checked are the rulings the transcriber's pause checks made, acting, each until the
 	// flow controller asks about its words, and settled the candidates they were found for.
 	checked []ruledWords
 	settled map[string]harness.Decided
-	// wanted is the tool a ruling with the floor free heard the caller ask for, by
-	// candidate, until the turn is answered (wantedFor), and intent what the agent said
-	// about it.
-	wanted map[string]wantedTool
-	intent toolIntent
 }
 
 // ruledWords is a ruling a pause check made, on a participant's words.
@@ -66,9 +57,7 @@ func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, endOfTurn au
 		hearer:  audiofloor.NewHearer(client, endOfTurn, logger),
 		logger:  logger,
 		streams: map[string]*audiofloor.Stream{},
-		floors:  map[string]*audiofloor.Transcriber{},
 		settled: map[string]harness.Decided{},
-		wanted:  map[string]wantedTool{},
 	}
 }
 
@@ -92,13 +81,7 @@ func (r ruledFirst) Hear(ctx context.Context, turn harness.FlowTurn) (harness.De
 	if ok {
 		return ruled, nil
 	}
-	check, err := r.v.hearer.Check(ctx, turn)
-	if err == nil && check.Ended {
-		r.v.mu.Lock()
-		r.v.keepWantedLocked(turn.ID, check.Answer, "")
-		r.v.mu.Unlock()
-	}
-	return check.Ruling, err
+	return r.v.hearer.Hear(ctx, turn)
 }
 
 // HearDeadline is how long the model has to rule on turn, as its client says
@@ -140,54 +123,14 @@ func (v *audioFloor) findRuled(said, participant string, speaking bool, turnID s
 			clear(v.settled)
 		}
 		v.settled[turnID] = r.ruled.Ruling
-		v.keepWantedLocked(turnID, r.ruled.Answer, r.ruled.Language)
 		return
 	}
 }
 
-// keepWantedLocked keeps the tool answer's ruling heard the caller ask for in turnID, if it
-// names one, heard in language. The caller holds the lock.
-func (v *audioFloor) keepWantedLocked(turnID string, answer audiofloor.Answer, language string) {
-	tool, p := answer.Wanted()
-	if tool == "" {
-		return
-	}
-	if len(v.wanted) >= audioFloorPending {
-		clear(v.wanted)
-	}
-	wanted := wantedTool{tool: tool, p: p, language: language}
-	if answer.PEOT != nil {
-		wanted.pEOT = *answer.PEOT
-	}
-	v.wanted[turnID] = wanted
-}
-
-// wantedFor takes the tool chorus-asr heard the caller ask for in the turn the candidate is,
-// if it heard one. Nil has none.
-func (v *audioFloor) wantedFor(candidateID string) (wantedTool, bool) {
-	if v == nil {
-		return wantedTool{}, false
-	}
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	wanted, ok := v.wanted[candidateID]
-	delete(v.wanted, candidateID)
-	return wanted, ok
-}
-
-// heard keeps a frame of a participant's audio, and has their floor hear it, if another
-// transcriber writes their words (rules). It runs once per frame.
+// heard keeps a frame of a participant's audio. It runs once per frame.
 func (v *audioFloor) heard(inbound InboundAudio) {
 	if v == nil || inbound.Audio.SampleRate != audiofloor.SampleRate || inbound.Audio.Channels != 1 {
 		return
-	}
-	v.mu.Lock()
-	floor := v.floors[inbound.Participant.ID]
-	v.mu.Unlock()
-	if floor != nil {
-		if err := floor.ProcessAudio(inbound.Audio, inbound.Participant); err != nil {
-			v.logger.Debug("the chorus-asr floor missed a frame", "participant", inbound.Participant.ID, "error", err)
-		}
 	}
 	stream := v.stream(inbound.Participant.ID)
 	if stream == nil {
@@ -196,42 +139,6 @@ func (v *audioFloor) heard(inbound InboundAudio) {
 	if err := stream.Write(inbound.Audio.Samples); err != nil {
 		v.logger.Debug("the chorus-asr model missed a frame", "participant", inbound.Participant.ID, "error", err)
 	}
-}
-
-// rules opens a floor of chorus-asr's own for a participant whose words session's transcriber
-// writes, asking about their pauses for asker as chorus-asr's transcriber would
-// (audiofloor.NewFloor): it hears their audio (heard), and their words as that transcriber
-// writes them (Agent.consumeSTT), and asks it for its final when it ends an utterance, where
-// it can be told. Nil is one that could not be opened, whose turns that transcriber ends as
-// it would with no floor.
-func (v *audioFloor) rules(participant stt.Participant, session *sttrouter.Session, languages []string, asker audiofloor.Asker) *audiofloor.Transcriber {
-	floor := audiofloor.NewFloor(v.client, languages, session.Finalize, v.logger.With("participant", participant.ID))
-	if err := floor.Start(context.Background()); err != nil {
-		v.logger.Warn("chorus-asr will not rule on a participant's floor", "participant", participant.ID, "error", err)
-		return nil
-	}
-	floor.AskOnPauses(asker)
-	v.mu.Lock()
-	previous := v.floors[participant.ID]
-	v.floors[participant.ID] = floor
-	v.mu.Unlock()
-	if previous != nil {
-		_ = previous.Close()
-	}
-	return floor
-}
-
-// drop closes a participant's floor, and lets go of it unless another has taken its place.
-func (v *audioFloor) drop(participant string, floor *audiofloor.Transcriber) {
-	if v == nil || floor == nil {
-		return
-	}
-	v.mu.Lock()
-	if v.floors[participant] == floor {
-		delete(v.floors, participant)
-	}
-	v.mu.Unlock()
-	_ = floor.Close()
 }
 
 func (v *audioFloor) stream(participant string) *audiofloor.Stream {
@@ -258,7 +165,6 @@ func (v *audioFloor) forget(participant string) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	delete(v.streams, participant)
-	delete(v.floors, participant)
 	v.checked = slices.DeleteFunc(v.checked, func(r ruledWords) bool { return r.participant == participant })
 }
 
@@ -365,17 +271,7 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return
 	}
-	heard := a.answerHeardBefore(ruled.Began)
-	actions := a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, heard, a.floor())
-	silenced := a.silenced.Load()
-	a.act(actions)
-	a.overheardWords(participant.ID, ruled.Utterance, left, actions, heard, a.silenced.Load() != silenced)
-}
-
-// Unwritten accounts for what checks over the agent wrote of an utterance the transcriber
-// ended with no final (audiofloor.Unwritten).
-func (p pauseAsker) Unwritten(participant stt.Participant, utterance int64, why string) {
-	p.a.words.unwritten(participant.ID, utterance, why)
+	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.answerHeardBefore(ruled.Began), a.floor()))
 }
 
 // GivenWay says the agent has given the floor up to the caller over the turn it is on: it

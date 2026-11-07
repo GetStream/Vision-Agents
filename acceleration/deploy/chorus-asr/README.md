@@ -130,8 +130,6 @@ The router makes chorus-asr available, and each agent opts in to it.
 | `ROUTER_CHORUS_ASR_AUDIO` | `opus` (default), or `pcm`, 16-bit PCM at 8 to 20 times the bytes, to tell the codec apart from the model when debugging a decision |
 | `ROUTER_CHORUS_ASR_INTERIMS` | `on` (default), which has the transcriber write the words so far while the caller talks ([Live words](#live-words)); or `off`, for a server short of transcription lanes, where the words come at the turn's end |
 | `ROUTER_CHORUS_ASR_OVERLAP_TIMEOUT` | How long the router waits for a ruling while the caller talks over the agent, as a duration: `250ms` (default) up to `450ms`, and at least `100ms`. The router refuses to start outside that. A ruling that comes later is not acted on, and the flow controller rules instead ([Fallbacks](#fallbacks)). The checks of a pause keep their 1 s whatever it says. Set it from the server's round trip ([The wait over the agent](#the-wait-over-the-agent)) |
-| `ROUTER_CHORUS_ASR_TOOL_ACKNOWLEDGMENT` | `on` (default), which has an agent acting on chorus-asr say a short acknowledgment, such as "One moment.", as soon as a turn the model is sure asks for one of its tools has ended, while the reply works out the call; or `off` ([The tool the caller asks for](#the-tool-the-caller-asks-for)) |
-| `ROUTER_CHORUS_ASR_TOOL_STEERING` | `off` (default), or `on`, which tells that reply, in a note, which tool the model heard the caller ask for ([The tool the caller asks for](#the-tool-the-caller-asks-for)) |
 
 `cmd/router` and `cmd/agent` read these the same way (`audiofloor.Open`); `cmd/agent`'s one
 agent opts in with `-floor-control stream/chorus-asr`.
@@ -223,40 +221,6 @@ it does with no such model; chorus-asr still transcribes for an agent whose `stt
 - **A session row** keeps the floor control it was opened with, which reopening it keeps; one
   opened with none takes its config's.
 
-### The tool the caller asks for
-
-With the floor free, a ruling names the tool the caller is asking for, when the likeliest answer
-other than waiting is one of the agent's own tools (`ruling.tool`), and the answer gives each
-option's probability. That is the tool the caller asks for, which is often not the one the reply
-calls first: an agent told to check availability before it books, or to verify a caller before
-it reschedules, is asked to book or to reschedule. On the voice bench's three agents the reply's
-first call was the tool the model named in 15 of the 146 turns it named one in, and some tool was
-called in 126; with the probabilities logged, in 4 of 33 and 27 of 33. So an agent acting on
-chorus-asr does two things with it, and neither names a tool to the caller:
-
-- **It acknowledges the turn at once** (`ROUTER_CHORUS_ASR_TOOL_ACKNOWLEDGMENT`, on by default).
-  When the tool's probability is at least 0.999, the tool is one the agent offers and its result
-  is answered aloud, the reply opens with a short phrase in the language the server heard the
-  turn in, "One moment.", "Just a moment." or "Give me a second." in English, a different one each
-  time, and in Spanish, French, German, Portuguese, Italian or Dutch; in any other language it says
-  nothing. It is said as soon as the reply's request is accepted, as the reply's first words: a
-  caller who talks on before hearing them drops them with the reply, one heard since the turn was
-  answered is not talked over, and one who talks over them is talking over the reply. The reply
-  is told what was said, as its hold phrase, and says no other, and the agent adds no line of its
-  own or a binding's `pre_speech` while the tool runs: the wait has one hold phrase, said sooner.
-  A reply that fails after it still says the answer is lost.
-- **It can tell the reply which tool** (`ROUTER_CHORUS_ASR_TOOL_STEERING`, off by default), in a
-  note, when the tool's probability is at least 0.999: the reply is told the tool the caller
-  is asking for and still chooses. It is a note, not a tool choice, because every provider's named
-  tool choice forces the call, and so it works with every model. It is off because at no
-  probability was the tool named the reply's first call in more than one turn in eight.
-
-Each turn answered on a ruling that names a tool logs `chorus-asr heard the caller ask for a
-tool` at info, with the tool, its probability, `p_eot`, the language and what was done about it,
-and counts it in `router_chorus_asr_tool_intents_total{acknowledgment,steering}`; an
-acknowledgment said logs `acknowledged a turn asking for a tool`, and one not said, why
-(`router_chorus_asr_tool_acknowledgments_total{outcome}`). `cannot` is not acted on.
-
 ## How long a caller waits: `max_wait_ms`
 
 How long chorus-asr waits before it takes a pause for the end of a turn is the agent's
@@ -338,12 +302,7 @@ last frame, and a pause costs one request:
     before the policy's `cap_ms`, where the turn has ended whatever the model says, and its
     ruling stands while the agent talks on, with nothing more asked. Ended at once, a 200 ms
     pause at the comma of "Last four 9821, 14 Cedar Lane", begun 2 s before the reply could
-    be heard, ended the utterance on its first half, its words written as nothing. Of an
-    utterance none of which has been written by that check, the pause's own words say whose
-    it is: words, or a murmur the server heard and wrote none of (`noise: ignored`), are the
-    caller's, and the ruling stands; none with no reason, or a voice in another language
-    (`noise: language`), is a noise the speech gate opened on before the reply, a room's
-    babble, and the utterance ends at that check, with nothing sent.
+    be heard, ended the utterance on its first half, its words written as nothing.
   - *Begun over the agent*, while they could hear it, a ruling that it may talk on ends the
     utterance at that check, as the model let the agent talk through it: a murmur, a cough,
     its own voice heard back. What the caller says next is an utterance of its own; run on,

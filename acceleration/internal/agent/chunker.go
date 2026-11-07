@@ -83,15 +83,6 @@ func (c *chunker) Add(text string) []sentence {
 	return chunks
 }
 
-// Said counts runes the reply opened with that went to the voice without it, an
-// acknowledgment, so that where its sentences are in the reply counts them too. What follows
-// is not the reply's opening clause: the voice is already speaking.
-func (c *chunker) Said(runes int) {
-	c.read += runes
-	c.from = c.read
-	c.started = true
-}
-
 // Flush returns whatever is left, for the end of a reply that did not end in punctuation.
 func (c *chunker) Flush() sentence {
 	defer c.Reset()

@@ -627,31 +627,7 @@ func (s *HearerSuite) TestATurnHasEndedWhenPEndReachesTheBar() {
 	s.Require().NoError(err)
 	s.True(later.Ended)
 	s.Equal(harness.Decided{Disposition: harness.Respond, Floor: harness.Continue}, later.Ruling)
-	s.Equal("book", later.Answer.Ruling.Tool, "the tool wanted is the answer's")
-}
-
-// The tool a ruling names is wanted with the probability the model gave that option, which
-// an agent acts on only when it is sure.
-func (s *HearerSuite) TestTheToolWantedHasItsOptionsProbability() {
-	s.server.decision = `{"answer":"respond","answer_probability":0.6,"p_eot":0.999,"options":[{"name":"respond","p":0.6},` +
-		`{"name":"wait","p":0.001},{"name":"book","p":0.3},{"name":"check","p":0.099}],"decide_ms":1,` +
-		`"ruling":{"disposition":"respond","floor":"continue","tool":"book"}}`
-	got, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Paused: 200 * time.Millisecond})
-	s.Require().NoError(err)
-	tool, p := got.Answer.Wanted()
-	s.Equal("book", tool)
-	s.InDelta(0.3, p, 1e-9, "the tool's own probability, not the likeliest answer's")
-}
-
-// A ruling that names no tool wants none, whatever the options say: cannot is not a tool.
-func (s *HearerSuite) TestARulingNamingNoToolWantsNone() {
-	s.server.decision = `{"answer":"cannot","answer_probability":0.9,"p_eot":0.999,"options":[{"name":"cannot","p":0.9},` +
-		`{"name":"book","p":0.05}],"decide_ms":1,"ruling":{"disposition":"respond","floor":"continue","cannot":true}}`
-	got, err := s.hearer.Check(context.Background(), harness.FlowTurn{Audio: some, Paused: 200 * time.Millisecond})
-	s.Require().NoError(err)
-	tool, p := got.Answer.Wanted()
-	s.Empty(tool)
-	s.Zero(p)
+	s.Equal("book", later.Answer.Ruling.Tool, "the tool wanted is the answer's, for the log")
 }
 
 func (s *HearerSuite) TestATurnHasEndedAtTheCapWhateverTheModelSays() {
@@ -763,10 +739,6 @@ type transcribing struct {
 	wordsAlone bool
 	interims   bool
 	languages  []string
-	// rulesAlone opens each as a floor that rules alone (NewFloor), whose words another
-	// transcriber writes, asking it for its final with finalize.
-	rulesAlone bool
-	finalize   func() (bool, error)
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -808,16 +780,12 @@ func (s *transcribing) reopen(now func() time.Time) {
 }
 
 func (s *transcribing) openReading(now func() time.Time) {
-	if s.rulesAlone {
-		s.transcriber = NewFloor(s.client, s.languages, s.finalize, slog.New(slog.DiscardHandler))
-	} else {
-		s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
-		s.transcriber.interims = s.interims
-	}
+	s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
 	s.transcriber.now = now
 	if s.wordsAlone {
 		s.transcriber.AskOnPauses(nil)
 	}
+	s.transcriber.interims = s.interims
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })

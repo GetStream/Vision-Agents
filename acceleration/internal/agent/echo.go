@@ -47,11 +47,10 @@ var echoes = promauto.NewCounterVec(prometheus.CounterOpts{
 // left is the caller's, and an echo alone is nothing heard. The model writes no word's time,
 // so what is weighed is the audio the words are of, from the start of its utterance: one
 // that began more than echoDelay after the agent's last audible sample went out has none of
-// its voice in it, and a caller who repeats the agent then said the words. The same goes for
-// another transcriber's words of an utterance chorus-asr's floor ended (stt.Transcript.Floor),
-// timed by the floor's clock. Other transcribers are left as they are.
+// its voice in it, and a caller who repeats the agent then said the words. Other
+// transcribers are left as they are.
 func (a *Agent) withoutEcho(transcript stt.Transcript) (string, int) {
-	if transcript.Provider != audiofloor.ProviderName && !transcript.Floor {
+	if transcript.Provider != audiofloor.ProviderName {
 		return transcript.Text, 0
 	}
 	a.mu.Lock()
@@ -84,9 +83,6 @@ func (a *Agent) droppingEcho(transcript stt.Transcript, who string) (string, boo
 		"text", transcript.Text, "echo_words", echo, "left", left)
 	heard := strings.TrimSpace(left) != ""
 	echoes.WithLabelValues(strconv.FormatBool(heard)).Inc()
-	if transcript.Final() {
-		a.echoedWords(transcript, echo)
-	}
 	return left, heard
 }
 
