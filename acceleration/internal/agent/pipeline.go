@@ -21,6 +21,7 @@ import (
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/tts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/ttsrouter"
 )
 
@@ -695,18 +696,32 @@ const maxLostVoices = 3
 // loseVoice is what follows a voice going for good. Whatever it was saying will never
 // finish, and an agent still counted as talking hears everything the caller says next as
 // talking over it, so that is let go of first. Then another voice is opened for the rest
-// of the call, with the one that went tried last.
-func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
+// of the call, with the one that went tried last. It returns the turn the voice that
+// replaces this one says again, empty when there is none.
+func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	a.mu.Lock()
 	if a.pipe != p || a.tts != lost {
 		a.mu.Unlock()
-		return
+		return ""
 	}
 	a.utterances = 0
-	// What a reply cut off with the voice had been heard of, before it is forgotten.
+	// What a reply cut off with the voice had been heard of, and what it had been sent,
+	// before it is forgotten.
 	var cutShort cutShort
+	var unsaid []unsaidUtterance
 	if lost == a.tts && a.speakingTurn != "" {
 		cutShort = a.cutShortLocked(a.speakingTurn, time.Now())
+		unsaid = a.unsaidLocked(a.speakingTurn, lost.Streaming())
+	}
+	// A voice that replaced a lost one and was lost too may not have been sent all of the
+	// reply yet: what it had still to be sent comes after what it was.
+	if a.heldLocked(a.speakingTurn) {
+		unsaid = append(unsaid, a.held.unsaid...)
+	}
+	a.held = nil
+	// None of it is counted any more: the count starts again from nothing.
+	for i := range unsaid {
+		unsaid[i].counted = false
 	}
 	outstanding := a.speakingTurn != "" && a.audioOutstandingLocked(a.speakingTurn)
 	// What the lost voice was saying will not be heard from it.
@@ -724,25 +739,37 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 	// and what was handed to it is owed to the caller again. What the edge already had
 	// plays out. A reply the model is still writing goes on in the voice that replaces
 	// this one, so it is left to finish, and a murmur was never a reply.
-	cut := ""
-	if lost == a.tts && a.speakingTurn != "" && !a.generating &&
-		!strings.HasPrefix(a.speakingTurn, backchannelPrefix) {
-		cut = a.speakingTurn
-		a.abandoned[cut] = struct{}{}
-		a.speakingTurn = ""
-		a.saying = ""
+	//
+	// A reply or a line none of whose sound went out is not over: the caller heard nothing
+	// of it, so the voice that replaces this one says it, as a provider refusing the agent's
+	// voice on its first word otherwise leaves them waiting in silence for an answer, or
+	// with no greeting at all. What is written of a reply while that voice opens is held for
+	// it too: sent to the lost one, it would never be heard.
+	cut, again := "", ""
+	if lost == a.tts && a.speakingTurn != "" && !strings.HasPrefix(a.speakingTurn, backchannelPrefix) {
+		resaid := replace && a.voiced != a.speakingTurn && len(unsaid) > 0
+		if resaid {
+			again = a.speakingTurn
+		}
+		if resaid || replace && a.generating {
+			a.held = &heldReply{turnID: a.speakingTurn, written: !a.generating}
+			if resaid {
+				a.held.unsaid = unsaid
+			}
+		} else if !a.generating {
+			cut = a.speakingTurn
+			a.abandoned[cut] = struct{}{}
+			a.speakingTurn = ""
+			a.saying = ""
+		}
 	}
-	current := a.harness
+	held, current := a.held, a.harness
 	a.mu.Unlock()
 	if cut != "" {
-		if current != nil && outstanding {
-			current.Release(cut)
-		}
-		a.interrupted(cut, stt.Participant{}, interruption{cause: causeVoiceLost})
-		a.emitter.Send(cutShort.cut(Interrupted{TurnID: cut}))
+		a.lostWith(cut, current, outstanding, cutShort)
 	}
 	if !replace {
-		return
+		return ""
 	}
 
 	// The new voice is consumed under this pipeline like the one it replaces, so it is
@@ -756,6 +783,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 				a.recoveringVoice = nil
 			}
 			a.mu.Unlock()
+			a.unsay(held)
 			p.running.Done()
 			a.fail(fmt.Errorf("agent: replace the lost voice: %w", err), "tts")
 			return
@@ -766,6 +794,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 				a.recoveringVoice = nil
 			}
 			a.mu.Unlock()
+			a.unsay(held)
 			_ = next.Close()
 			p.running.Done()
 			return
@@ -792,11 +821,143 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) {
 		if recovered {
 			a.recoveringVoice = nil
 		}
+		// Counted as being said under the same lock, so nothing finds the agent quiet
+		// between the recovery ending and the reply going to the new voice.
+		resay := recovered && held != nil && a.held == held && a.owedLocked(held.turnID)
+		if resay {
+			for i := range held.unsaid {
+				if held.unsaid[i].counts && !held.unsaid[i].counted {
+					a.utterances++
+					held.unsaid[i].counted = true
+				}
+			}
+		}
 		a.mu.Unlock()
+		if resay {
+			a.sayAgain(next, held)
+		} else {
+			a.unsay(held)
+		}
 		if recovered {
 			a.respondQueued()
 		}
 	}()
+	return again
+}
+
+// lostWith reports a reply the voice was lost under as cut off, and owes the caller again
+// what it was handed when some of it was never heard.
+func (a *Agent) lostWith(turnID string, current *harness.Harness, outstanding bool, cut cutShort) {
+	if current != nil && outstanding {
+		current.Release(turnID)
+	}
+	a.interrupted(turnID, stt.Participant{}, interruption{cause: causeVoiceLost})
+	a.emitter.Send(cut.cut(Interrupted{TurnID: turnID}))
+}
+
+// owedLocked reports whether a reply a lost voice left unsaid is still the one the agent
+// is on: the caller talking over it in the meantime abandoned it, which let go of it.
+// Agent.mu must be held.
+func (a *Agent) owedLocked(turnID string) bool {
+	return turnID != "" && a.speakingTurn == turnID
+}
+
+// sayAgain has the voice that replaced a lost one say what the lost one was sent of a
+// reply none of which was heard, each utterance under its own synthesis as before, so the
+// turn is told it was spoken once each has finished. The utterances are already counted.
+// It stops once the caller has taken the floor, this voice is lost too or a settings swap
+// replaced it: what is sent after is billed and never heard.
+func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
+	a.mu.Lock()
+	performs := a.performs
+	a.mu.Unlock()
+	for {
+		a.mu.Lock()
+		if a.held != held {
+			// Lost too, this voice handed what is left to the one that replaces it: every
+			// voice lost lets go of what was held for the one before.
+			a.mu.Unlock()
+			return
+		}
+		if len(held.unsaid) == 0 || !a.owedLocked(held.turnID) || a.tts != voice {
+			a.unsentLocked(held)
+			a.held = nil
+			a.mu.Unlock()
+			return
+		}
+		heard := held.unsaid[0]
+		held.unsaid = held.unsaid[1:]
+		text := heard.text
+		// The lost voice may have acted directions this one would read out.
+		if !performs {
+			text = tts.Unperformed(text)
+		}
+		// Kept with the taking, so a voice lost while it is being sent hands it over too. A
+		// request that only ends the utterance has nothing to keep.
+		if text != "" {
+			a.sendingLocked(held.turnID, heard.synthesisID, text, heard.message)
+		}
+		a.mu.Unlock()
+		err := voice.Synthesize(tts.Request{ID: heard.synthesisID, Text: text, Final: heard.final})
+		if err == nil {
+			continue
+		}
+		a.mu.Lock()
+		mine := a.held == held
+		if mine {
+			// Refused, it is never said, and neither is what comes after it.
+			held.unsaid = append(held.unsaid, heard)
+			a.unsentLocked(held)
+		}
+		a.mu.Unlock()
+		// Lost meanwhile, the voice refused it as a lost one: the next voice says it.
+		if mine {
+			a.takeUtterance(heard.synthesisID)
+			a.unsay(held)
+			a.fail(err, "tts")
+		}
+		return
+	}
+}
+
+// unsentLocked lets go of what of a held reply will not be sent: counted as being said, it
+// would never finish. Agent.mu must be held.
+func (a *Agent) unsentLocked(held *heldReply) {
+	for _, unsent := range held.unsaid {
+		if unsent.counted {
+			a.utterances = max(0, a.utterances-1)
+		}
+	}
+	held.unsaid = nil
+}
+
+// unsay reports a reply a lost voice left unsaid cut off once no other voice will say it,
+// as loseVoice does one it cannot hand over: no voice replaced the lost one, or the voice
+// that did refused it. One the caller took the floor from first, or that a voice lost
+// later took with it, is not cut off here.
+func (a *Agent) unsay(held *heldReply) {
+	if held == nil {
+		return
+	}
+	a.mu.Lock()
+	mine := a.held == held
+	// A reply still being written when its voice went goes on as before: what is written
+	// after goes to the voice there is.
+	owed := mine && held.written && a.owedLocked(held.turnID)
+	if mine {
+		a.unsentLocked(held)
+		a.held = nil
+	}
+	if owed {
+		a.abandoned[held.turnID] = struct{}{}
+		a.speakingTurn = ""
+		a.saying = ""
+	}
+	current := a.harness
+	a.mu.Unlock()
+	if owed {
+		a.lostWith(held.turnID, current, true, cutShort{})
+	}
 }
 
 func (a *Agent) startListener(target string) (*sttrouter.Session, error) {
