@@ -1,11 +1,11 @@
-# getstream-vision-agents-net
+# stream-agents
 
 The .NET server-side SDK for the Stream acceleration backend. The backend joins the call,
 hears the caller, answers and speaks; this creates the session, holds the events socket,
 runs your functions and configures everything.
 
 ```bash
-dotnet add package getstream-vision-agents-net
+dotnet add package stream-agents
 ```
 
 .NET 10. It depends on [getstream-net](https://www.nuget.org/packages/getstream-net) for

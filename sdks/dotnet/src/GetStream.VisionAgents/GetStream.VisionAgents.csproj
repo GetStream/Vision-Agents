@@ -3,10 +3,10 @@
   <PropertyGroup>
     <RootNamespace>GetStream.VisionAgents</RootNamespace>
     <AssemblyName>GetStream.VisionAgents</AssemblyName>
-    <PackageId>getstream-vision-agents-net</PackageId>
+    <PackageId>stream-agents</PackageId>
     <Version>0.1.0</Version>
     <Authors>GetStream</Authors>
-    <Description>Server-side .NET SDK for Stream Vision Agents: configure agents, join calls, answer dispatched calls and messages, and route STT, TTS, LLM and search.</Description>
+    <Description>Server-side .NET SDK for Stream Agents: configure agents, join calls, answer dispatched calls and messages, and route STT, TTS, LLM and search.</Description>
     <PackageTags>getstream;vision-agents;voice;agents;stt;tts;llm</PackageTags>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
     <PackageReadmeFile>README.md</PackageReadmeFile>
