@@ -114,6 +114,8 @@ type origin struct {
 	// pipeline is the pipeline the agent ran when the turn started: a settings change may
 	// swap it while the turn is still open, and the turn finishes on the one it began on.
 	pipeline string
+	// scheduled says a scheduled task fired the caller turn, not somebody in the call.
+	scheduled bool
 }
 
 // openTurn is a turn that has not finished yet.
@@ -233,12 +235,24 @@ func (t *turnTracker) reportAll(settled []settledTurn) {
 }
 
 // owes records that a caller turn's reply handed work on. It is told before the reply is
-// completed, so a reply that said nothing is not closed without the line said for it.
+// completed, so a reply that said nothing is not closed without the line said for it. Nobody
+// waits on a turn a scheduled task fired, so that one owes nothing.
 func (t *turnTracker) owes(turnID string) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if current := t.open[turnID]; current != nil && t.origins[turnID].kind == kindCaller {
+	if current := t.open[turnID]; current != nil && t.origins[turnID].kind == kindCaller && !t.origins[turnID].scheduled {
 		current.owed = true
+	}
+}
+
+// scheduledTurn records that a scheduled task fired the caller turn turnID, once started has
+// recorded it.
+func (t *turnTracker) scheduledTurn(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if started, known := t.origins[turnID]; known {
+		started.scheduled = true
+		t.origins[turnID] = started
 	}
 }
 
@@ -372,7 +386,7 @@ func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 		current.roundtripMs = msBetween(current.transcriptAt, at)
 	}
 	var answered settledTurn
-	if started := t.origins[turnID]; answersCaller(started.kind) {
+	if started := t.origins[turnID]; answersCaller(started.kind) && !t.origins[started.parent].scheduled {
 		if caller := t.open[started.parent]; caller != nil && caller.firstAudioAt.IsZero() {
 			caller.firstAudioAt = at
 			caller.roundtripMs = msBetween(caller.transcriptAt, at)

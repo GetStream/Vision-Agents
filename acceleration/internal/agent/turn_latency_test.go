@@ -8,6 +8,7 @@ import (
 	dto "github.com/prometheus/client_model/go"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/options"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/routing"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
 )
@@ -554,4 +555,54 @@ func (s *AgentSuite) TestAToolsReplyThatCallsAnotherToolIsReportedWhenDone() {
 
 	s.eventually(func() bool { return len(s.model.requests()) == 3 }, "the second tool's answer was never read")
 	s.eventually(func() bool { return countOf[Turn](s.reported()) == 3 }, "a turn of the chain was held back")
+}
+
+// Catches a scheduled task's turn held back for the line said for it, like a caller's: nobody
+// in the call waited on it, so it is reported when its reply is done, as before (AI-2969 R1.1).
+func (s *AgentSuite) TestAScheduledTaskThatOnlyCallsAToolIsNotObserved() {
+	s.ownsTools("order 12 ships tomorrow")
+	s.join(false)
+	s.model.replyOn = map[int][]string{1: {"Hello."}, 2: {}}
+	s.model.then = []string{"Your order ships tomorrow."}
+	s.model.callsOn = 2
+	s.asksFor("lookup_order", `{"order":"12"}`)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.says(participant, "hello")
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 1 }, "the caller's turn was never reported")
+	before := turnLatencies(pipelineCascade)
+
+	scheduled, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Tell the caller where order 12 is", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return countOf[Turn](s.reported()) == 3 }, "the task's turn and the tool's answer were never reported")
+	s.eventually(func() bool { return s.spokenText("Your order ships tomorrow.") }, "the tool's answer was never said")
+	turn, ok := turnFor(s.reported(), scheduled)
+	s.Require().True(ok, "the task's turn was never reported")
+	s.Zero(turn.RoundtripMs, "the task's turn was timed to the tool's answer")
+	for leg, series := range observedSince(pipelineCascade, before) {
+		s.Zero(series.count, leg)
+	}
+}
+
+// Catches a scheduled task's turn that hands work to the subagent timed to the answer it came
+// back with (AI-2969 R1.1).
+func (s *AgentSuite) TestAScheduledTaskThatHandsWorkToTheSubagentIsNotObserved() {
+	s.delegates()
+	s.join(true)
+	s.model.reply = []string{`<ask skill="think">order 12</ask>`}
+	s.model.then = []string{"Your order ships tomorrow."}
+	s.subagent.reply = []string{"It ships tomorrow."}
+	before := turnLatencies(pipelineCascade)
+
+	scheduled, err := s.agent.RespondTo(routing.WithScheduledTurn(s.ctx), "Remind the caller about order 12", nil, options.LLM{})
+	s.Require().NoError(err)
+
+	s.eventually(func() bool { return s.spokenText("Your order ships tomorrow.") }, "the subagent's answer was never said")
+	s.eventually(func() bool { _, ok := turnFor(s.reported(), scheduled); return ok }, "the task's turn was never reported")
+	turn, _ := turnFor(s.reported(), scheduled)
+	s.Zero(turn.RoundtripMs, "the task's turn was timed to the subagent's answer")
+	for leg, series := range observedSince(pipelineCascade, before) {
+		s.Zero(series.count, leg)
+	}
 }

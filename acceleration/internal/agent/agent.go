@@ -2297,6 +2297,9 @@ func (a *Agent) respondTurn(
 	a.mu.Unlock()
 
 	a.turns.started(turnID, kindCaller)
+	if scheduled {
+		a.turns.scheduledTurn(turnID)
+	}
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 

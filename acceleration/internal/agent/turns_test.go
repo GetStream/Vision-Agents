@@ -430,3 +430,22 @@ func (s *TurnRecorderSuite) TestMarksAreOnlyHandedOutWhileTheTurnStillWantsThem(
 
 	s.Nil(tracker.marksFor("turn-1"), "once the speech has been heard, the edge has no more to say")
 }
+
+// Catches a line said while a scheduled task's turn still runs taken for the answer it waits on,
+// and that turn held back once it hands work on: nobody in the call waited on it (AI-2969 R1.1).
+func (s *TurnRecorderSuite) TestAScheduledTurnIsNotAnsweredByALineSaidForIt() {
+	var finished Turn
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, func(turn Turn) { finished = turn })
+	at := time.Now()
+	tracker.started("turn-scheduled", kindCaller)
+	tracker.scheduledTurn("turn-scheduled")
+	tracker.begin("turn-scheduled", stt.Participant{ID: "caller"}, at, at, 0)
+	tracker.started("reply-update", kindUpdate)
+
+	tracker.firstAudio("reply-update", at.Add(400*time.Millisecond))
+	tracker.owes("turn-scheduled")
+	tracker.completed("turn-scheduled", 0, 0)
+
+	s.Equal("turn-scheduled", finished.TurnID, "the scheduled turn was held back for a line said for it")
+	s.Zero(finished.RoundtripMs, "the scheduled turn was timed to the update")
+}
