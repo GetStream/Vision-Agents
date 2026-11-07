@@ -1,8 +1,11 @@
 package streamedge
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"time"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/coordinator"
@@ -27,16 +30,20 @@ func (s *StreamEdgeSuite) joinAnswered(status int, body string) error {
 		_, _ = w.Write([]byte(body))
 	}))
 	s.T().Cleanup(coordinatorAPI.Close)
+	return s.joinAt(s.ctx, coordinatorAPI.URL)
+}
 
+// joinAt is the error the edge's join of call-1 returns with Stream's coordinator at address.
+func (s *StreamEdgeSuite) joinAt(ctx context.Context, address string) error {
 	edge, err := New(Options{CallID: "call-1", User: User{ID: "agent"}, APIKey: "key", UserToken: "token"})
 	s.Require().NoError(err)
 	client, err := rtc.NewClient("key", rtc.User{ID: "agent"}, rtc.StaticToken("token"),
 		rtc.WithoutCoordinatorWS(), rtc.WithoutLocationDiscovery(),
-		rtc.WithCoordinatorOptions(coordinator.ApiURL(coordinatorAPI.URL)))
+		rtc.WithCoordinatorOptions(coordinator.ApiURL(address)))
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = client.Close() })
 
-	joined, err := edge.joinCall(s.ctx, client.Call(defaultCallType, "call-1"))
+	joined, err := edge.joinCall(ctx, client.Call(defaultCallType, "call-1"))
 	s.Require().Error(err)
 	s.Nil(joined)
 	return err
@@ -49,6 +56,10 @@ func (s *StreamEdgeSuite) TestAJoinRefusedForAServerWithNoVideoIsNoVideoInStream
 		`{"code":17,"message":"`+noVideoRefusal+`","StatusCode":403,"duration":"0.00ms","more_info":""}`)
 
 	s.ErrorIs(err, agent.ErrNoVideo)
+	s.NotErrorIs(err, agent.ErrCallLeft, "the mark is every error")
+	refused, ok := errors.AsType[*coordinator.Error](err)
+	s.Require().True(ok, "the mark hides Stream's refusal")
+	s.Equal(17, refused.Code)
 	s.Equal(`streamedge: join agent:call-1: join call agent:call-1: code: , message: JoinCall failed with error: `+
 		`"video is not enabled on this server"`, err.Error())
 }
@@ -69,4 +80,19 @@ func (s *StreamEdgeSuite) TestTheNoVideoWordsUnderAnotherCodeAreNotNoVideo() {
 
 	s.NotErrorIs(err, agent.ErrNoVideo)
 	s.ErrorContains(err, "video is not enabled on this server")
+}
+
+func (s *StreamEdgeSuite) TestAJoinThatNeverReachedStreamIsNotNoVideo() {
+	// Catches a failure with no answer from Stream, such as a coordinator out of reach, read
+	// as a refusal, or the check failing on an error that is not Stream's.
+	gone := httptest.NewServer(http.NotFoundHandler())
+	gone.Close()
+	ctx, cancel := context.WithTimeout(s.ctx, 300*time.Millisecond)
+	defer cancel()
+
+	err := s.joinAt(ctx, gone.URL)
+
+	s.NotErrorIs(err, agent.ErrNoVideo)
+	_, fromStream := errors.AsType[*coordinator.Error](err)
+	s.False(fromStream, "the coordinator out of reach answered")
 }
