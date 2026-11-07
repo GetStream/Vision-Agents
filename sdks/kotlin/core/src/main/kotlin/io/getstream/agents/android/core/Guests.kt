@@ -23,7 +23,7 @@ public interface GuestStore {
 }
 
 /**
- * A guest kept in one file, such as `File(context.filesDir, "vision-agents-guest.json")`.
+ * A guest kept in one file, such as `File(context.filesDir, "stream-agents-guest.json")`.
  *
  * What it holds is a token scoped to one guest, so app-private storage is enough.
  */

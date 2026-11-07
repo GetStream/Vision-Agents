@@ -11,7 +11,7 @@ public protocol GuestStore: Sendable {
     func clear() throws
 }
 
-/// A guest kept in one file, such as `vision-agents-guest.json` in Application Support.
+/// A guest kept in one file, such as `stream-agents-guest.json` in Application Support.
 ///
 /// What it holds is a token scoped to one guest, so the app's own container is enough.
 public struct FileGuestStore: GuestStore {

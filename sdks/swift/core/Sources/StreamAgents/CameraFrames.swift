@@ -41,7 +41,7 @@ final class CameraFrames: @unchecked Sendable {
     /// The filter the call's camera runs through, which keeps a frame now and then and leaves
     /// each one as it was.
     var filter: VideoFilter {
-        VideoFilter(id: "vision-agents-frames", name: "Frames the agent may look at") { [weak self] input in
+        VideoFilter(id: "stream-agents-frames", name: "Frames the agent may look at") { [weak self] input in
             self?.offer(input.originalImage.oriented(input.originalImageOrientation))
             return input.originalImage
         }
