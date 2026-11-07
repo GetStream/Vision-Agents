@@ -6951,6 +6951,78 @@ func (s *AgentSuite) TestALineNoneOfWhichWasHeardIsSaidInTheVoiceThatReplacesThe
 	s.Equal(1, countOf[Said](s.reported()), "the greeting was reported said twice")
 }
 
+func (s *AgentSuite) TestACheckInNoneOfWhichWasHeardIsSaidInTheVoiceThatReplacesTheLostOne() {
+	// Not acting on chorus-asr, a check-in goes out under a murmur's prefix. Taken for a
+	// murmur with the voice, it was dropped, and the caller heard nothing until the next one.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.model.composes = []string{"Is there anything else I can help with?"}
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	checkIn, _ := firstOf[Responded](s.reported())
+	s.Require().True(strings.HasPrefix(checkIn.TurnID, backchannelPrefix), "the check-in is not the case under test")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the check-in was not said in the next voice")
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == checkIn.TurnID
+	}, "the check-in was never reported spoken")
+	s.Equal("Is there anything else I can help with?", said(s.replacement.spoken()))
+	s.Len(s.replacement.spoken(), 1, "the check-in was said twice in the next voice")
+	s.Equal(checkIn.TurnID, s.replacement.spoken()[0].ID, "the check-in was said under another synthesis")
+	s.Len(s.edge.heard(), 1, "the caller did not hear the check-in once")
+	s.False(s.cutOff(checkIn.TurnID), "a check-in the next voice says was reported cut off")
+	s.Equal(1, countOf[Responded](s.reported()), "the check-in was reported said twice")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the agent never finished saying the check-in")
+}
+
+func (s *AgentSuite) TestACheckInALostVoiceWasSayingIsReportedCutOff() {
+	// Taken for a murmur, a check-in partly heard was left as still being said, and said
+	// again from the top the caller would hear its start twice.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.model.composes = []string{"Is there anything else I can help with?"}
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	checkIn, _ := firstOf[Responded](s.reported())
+	s.Require().True(strings.HasPrefix(checkIn.TurnID, backchannelPrefix), "the check-in is not the case under test")
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: checkIn.TurnID,
+		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+	})
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "none of the check-in was heard")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.cutOff(checkIn.TurnID) }, "the check-in the lost voice was saying was never reported cut off")
+	s.never(func() bool { return len(s.replacement.spoken()) > 0 }, "a check-in partly heard was said again")
+}
+
+func (s *AgentSuite) TestAMurmurALostVoiceNeverSaidIsNotSaidInTheNextVoice() {
+	// A murmur is for the moment the caller was talking in: said seconds later, it answers
+	// nothing.
+	s.duplex = DuplexOptions{Backchannel: true, BackchannelWords: 4}
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.mutters(participant, "so I was wondering whether")
+	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 }, "the agent never murmured")
+	lost := s.agent.voice()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.agent.voice() != lost }, "the lost voice was never replaced")
+	s.eventually(func() bool { return !s.agent.floor().Talking }, "the murmur was never let go of")
+	s.Empty(s.replacement.spoken(), "the next voice said a murmur")
+	s.Empty(s.edge.heard(), "a murmur nobody heard reached the call")
+}
+
 func (s *AgentSuite) TestALineTheVoiceWouldNotTakeIsReportedCutOff() {
 	// Reported before its sound, so a watcher has it in time: a line never said is then
 	// closed, not left as still coming.

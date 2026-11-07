@@ -746,7 +746,7 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	// with no greeting at all. What is written of a reply while that voice opens is held for
 	// it too: sent to the lost one, it would never be heard.
 	cut, again := "", ""
-	if lost == a.tts && a.speakingTurn != "" && !strings.HasPrefix(a.speakingTurn, backchannelPrefix) {
+	if lost == a.tts && a.speakingTurn != "" && !a.murmurLocked(a.speakingTurn) {
 		resaid := replace && a.voiced != a.speakingTurn && len(unsaid) > 0
 		if resaid {
 			again = a.speakingTurn
@@ -843,6 +843,14 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 		}
 	}()
 	return again
+}
+
+// murmurLocked reports whether turnID is a murmur. A check-in goes out under a murmur's
+// prefix when the agent is not acting on chorus-asr, but unlike a murmur it is a line the
+// agent kept in its history: lost with its voice, it is a line like the greeting.
+// Agent.mu must be held.
+func (a *Agent) murmurLocked(turnID string) bool {
+	return strings.HasPrefix(turnID, backchannelPrefix) && a.keptReply != turnID
 }
 
 // lostWith reports a reply the voice was lost under as cut off, and owes the caller again
