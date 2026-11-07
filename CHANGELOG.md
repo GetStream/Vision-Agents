@@ -453,6 +453,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### The router's log no longer prints a key a provider echoed in its error
+
+Every value the router and the agent binary log, the message included, goes through the redactor the requests table uses, uncapped: a provider error that echoes `Authorization: Bearer <key>`, such as in the `agent failure` and `could not review the call` lines, keeps its text with the key shown as `[redacted]`. A line with nothing to redact is unchanged (AI-2966).
+
 ### A provider key in a URL is redacted from stored failures and stream socket errors
 
 The requests table, agent logs and socket error frames now redact a key sent as a `?key=` or `&token=` query parameter (Gemini Live, ipinfo), raw or percent-encoded, and a URL-encoded `Authorization` or `Cookie` header or bearer token. The stt, tts, sts and llm stream sockets now redact their error frames and close reasons the same way, as the session socket already did (AI-2958, AI-2959).
