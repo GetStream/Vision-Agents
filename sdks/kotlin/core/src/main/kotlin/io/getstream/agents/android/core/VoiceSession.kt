@@ -28,7 +28,7 @@ private const val KIND = "video"
  * Stream Video keeps one client per process, so an app with one of its own hands it over rather
  * than have another built. It is never removed here.
  */
-public fun VisionAgents.use(video: StreamVideo) {
+public fun StreamAgents.use(video: StreamVideo) {
     backend.give(KIND, video)
 }
 
@@ -152,7 +152,7 @@ public class VoiceSession private constructor(
     /**
      * Leaves this device's call. Closes the router session only if this device started it; an
      * attached device navigating away leaves it running. The Video client stays connected for
-     * the next call, until [VisionAgents.disconnect].
+     * the next call, until [StreamAgents.disconnect].
      */
     public suspend fun leave() {
         leaveCall(closeSession = createdLocally)
@@ -242,7 +242,7 @@ public class VoiceSession private constructor(
          */
         public suspend fun start(
             context: Context,
-            agents: VisionAgents,
+            agents: StreamAgents,
             options: SessionOptions = SessionOptions(),
         ): VoiceSession = VoiceSession(context, agents.voice(options), createdLocally = true)
 
@@ -254,7 +254,7 @@ public class VoiceSession private constructor(
          */
         public suspend fun attach(
             context: Context,
-            agents: VisionAgents,
+            agents: StreamAgents,
             sessionId: String,
             tools: List<AgentTool> = emptyList(),
         ): VoiceSession = VoiceSession(context, agents.attach(sessionId, tools), createdLocally = false)

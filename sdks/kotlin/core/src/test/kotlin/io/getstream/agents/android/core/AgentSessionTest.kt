@@ -32,7 +32,7 @@ class AgentSessionTest {
     private val router = TestRouter().apply {
         answer = { if (it.path.endsWith("/responses")) Reply(202, ASKED) else Reply(201, SESSION) }
     }
-    private val agents = VisionAgents(url = router.url, customerId = "acme")
+    private val agents = StreamAgents(url = router.url, customerId = "acme")
     private val deviceZone = deviceZoneId
 
     @AfterTest

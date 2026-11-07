@@ -212,7 +212,7 @@ public class AgentSession internal constructor(
     /**
      * Continues this conversation as a new session, leaving this one as it was.
      *
-     * Follow the fork with [VisionAgents.attach].
+     * Follow the fork with [StreamAgents.attach].
      */
     public suspend fun fork(options: ForkOptions = ForkOptions()): Session =
         Sessions(backend).fork(session.id, options)

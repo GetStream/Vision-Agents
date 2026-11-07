@@ -3,7 +3,7 @@ package io.getstream.visionagents.android.demo
 import io.getstream.agents.android.core.AgentTool
 import io.getstream.agents.android.core.AgentsException
 import io.getstream.agents.android.core.User
-import io.getstream.agents.android.core.VisionAgents
+import io.getstream.agents.android.core.StreamAgents
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
@@ -59,8 +59,8 @@ object Demo {
     /** Who this device is. A call waiting for approval is addressed to them. */
     val user: User = User(id = "demo-caller", name = "Demo caller")
 
-    val agents: VisionAgents by lazy {
-        VisionAgents(url = routerUrl, customerId = CUSTOMER_ID, apiKey = streamApiKey).apply {
+    val agents: StreamAgents by lazy {
+        StreamAgents(url = routerUrl, customerId = CUSTOMER_ID, apiKey = streamApiKey).apply {
             setUser(user) { streamToken() }
         }
     }

@@ -7,7 +7,7 @@ import okhttp3.OkHttpClient
  *
  * Two lines get a conversation going:
  *
- *     val agents = VisionAgents(url = "https://your-router", customerId = "acme")
+ *     val agents = StreamAgents(url = "https://your-router", customerId = "acme")
  *     val chat = agents.agent("docs").chat()
  *
  * Opening a conversation, reading back its turns, going back to one of them, branching off and
@@ -19,7 +19,7 @@ import okhttp3.OkHttpClient
  * Stream Chat and Stream Video all connect with, and
  * every session shares one client of each.
  */
-public class VisionAgents(public val backend: Backend) : AutoCloseable {
+public class StreamAgents(public val backend: Backend) : AutoCloseable {
     public constructor(
         url: String = Backend.DEFAULT_URL,
         customerId: String = "",
@@ -129,11 +129,11 @@ public class VisionAgents(public val backend: Backend) : AutoCloseable {
  * The name is the one the agent's config was synced under, which the router resolves; a name
  * that matches nothing is refused rather than starting an agent with no config.
  */
-public class Agent internal constructor(private val agents: VisionAgents, public val name: String) {
+public class Agent internal constructor(private val agents: StreamAgents, public val name: String) {
     /** This agent's conversations: opening one names it, and listing is narrowed to it. */
     public val sessions: Sessions = Sessions(agents.backend, name)
 
-    /** Holds a conversation with this agent in writing. See [VisionAgents.chat]. */
+    /** Holds a conversation with this agent in writing. See [StreamAgents.chat]. */
     public suspend fun chat(options: SessionOptions = SessionOptions()): AgentSession =
         agents.chat(options.copy(agent = options.agent ?: name))
 
@@ -141,7 +141,7 @@ public class Agent internal constructor(private val agents: VisionAgents, public
     public suspend fun chat(vararg tools: AgentTool): AgentSession =
         chat(SessionOptions(tools = tools.toList()))
 
-    /** Puts this agent on the session's own call and follows it. See [VisionAgents.voice]. */
+    /** Puts this agent on the session's own call and follows it. See [StreamAgents.voice]. */
     public suspend fun voice(options: SessionOptions = SessionOptions()): AgentSession =
         agents.voice(options.copy(agent = options.agent ?: name))
 }

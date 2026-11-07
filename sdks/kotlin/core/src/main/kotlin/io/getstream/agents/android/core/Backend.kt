@@ -57,7 +57,7 @@ public data class StreamCredentials(
  *
  * The key, user and token are the one identity for the router, Stream Chat and Stream Video.
  * Nothing connects when the user is set; each Stream client is built the first time a session
- * asks for it, once per key and user, and [VisionAgents.disconnect] closes it.
+ * asks for it, once per key and user, and [StreamAgents.disconnect] closes it.
  *
  * Constructing one does no I/O. Pass an [OkHttpClient] to share the app's connection pool,
  * proxy and certificate pinning; [close] releases the HTTP client built around it.
@@ -157,7 +157,7 @@ public class Backend(
         val who = identity
         if (apiKey.isEmpty() || who == null) {
             throw AgentsException.Configuration(
-                "Stream Chat and Video need the app's Stream key and a user: build VisionAgents " +
+                "Stream Chat and Video need the app's Stream key and a user: build StreamAgents " +
                     "with apiKey and call setUser",
             )
         }
@@ -187,7 +187,7 @@ public class Backend(
         if (apiKey.isEmpty() || who == null) {
             throw AgentsException.Configuration(
                 "$kind connects to Stream rather than to the router, so it needs the app's Stream " +
-                    "key and a user: build VisionAgents with apiKey and call setUser",
+                    "key and a user: build StreamAgents with apiKey and call setUser",
             )
         }
         val key = "$kind:$apiKey:${who.user.id}"

@@ -14,7 +14,7 @@ import kotlinx.serialization.json.JsonObject
  *
  * What comes back are the router's rows rather than live handles, because reading a
  * conversation back is not the same as holding one and most of them are over. Holding one is
- * [VisionAgents.chat], [VisionAgents.voice] or [VisionAgents.attach].
+ * [StreamAgents.chat], [StreamAgents.voice] or [StreamAgents.attach].
  *
  * From [Agent.sessions] every call is about that agent: opening names it, and listing is
  * narrowed to it.
@@ -139,7 +139,7 @@ public class Sessions internal constructor(
     /**
      * Continues a conversation as a new session held in writing, leaving the parent as it was.
      *
-     * Follow the fork the way any session is followed, with [VisionAgents.attach].
+     * Follow the fork the way any session is followed, with [StreamAgents.attach].
      */
     public suspend fun fork(id: String, options: ForkOptions = ForkOptions()): Session {
         val request = ForkSessionRequest(

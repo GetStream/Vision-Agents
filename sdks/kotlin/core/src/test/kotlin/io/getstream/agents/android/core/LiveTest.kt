@@ -26,7 +26,7 @@ import kotlinx.coroutines.flow.first
  */
 @EnabledIfEnvironmentVariable(named = "VISION_AGENTS_URL", matches = ".+")
 class LiveTest {
-    private val agents = VisionAgents(
+    private val agents = StreamAgents(
         url = System.getenv("VISION_AGENTS_URL"),
         customerId = System.getenv("VISION_AGENTS_CUSTOMER_ID") ?: "acme",
     )

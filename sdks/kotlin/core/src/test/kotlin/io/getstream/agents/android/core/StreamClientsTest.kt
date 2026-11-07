@@ -142,7 +142,7 @@ class StreamClientsTest {
         val first = backend.shared("chat", peers.open, peers.disconnect)
         backend.setUser(User("john"), "another-token")
         val second = backend.shared("chat", peers.open, peers.disconnect)
-        VisionAgents(backend).disconnect()
+        StreamAgents(backend).disconnect()
 
         assertSame(mine, first)
         assertSame(mine, second)
@@ -156,7 +156,7 @@ class StreamClientsTest {
         val backend = signedIn("john")
 
         val first = backend.shared("chat", peers.open, peers.disconnect)
-        VisionAgents(backend).disconnect()
+        StreamAgents(backend).disconnect()
         val second = backend.shared("chat", peers.open, peers.disconnect)
 
         assertNotSame(first, second)

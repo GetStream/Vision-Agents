@@ -64,7 +64,7 @@ private fun clientAccessible(): List<Pair<String, Regex>> {
  */
 class PostureTest {
     private val router = TestRouter()
-    private val agents = VisionAgents(url = router.url, customerId = "acme")
+    private val agents = StreamAgents(url = router.url, customerId = "acme")
 
     @AfterTest
     fun stop() {
@@ -139,7 +139,7 @@ class KeyedRouterPostureTest {
     private val url = System.getenv("INTEGRATION_ROUTER_URL") ?: "http://localhost:8099"
     private val key = System.getenv("INTEGRATION_ROUTER_KEY").orEmpty()
     private val secret = System.getenv("INTEGRATION_ROUTER_SECRET").orEmpty()
-    private val agents = VisionAgents(url = url, apiKey = key).apply {
+    private val agents = StreamAgents(url = url, apiKey = key).apply {
         val id = "kotlin-device-${UUID.randomUUID()}"
         setUser(User(id), sign("""{"user_id":"$id","exp":${System.currentTimeMillis() / 1000 + 3600}}"""))
     }

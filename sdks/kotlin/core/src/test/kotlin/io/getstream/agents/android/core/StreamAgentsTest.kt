@@ -39,9 +39,9 @@ internal fun pageJson(items: List<String>, next: String? = null) =
 
 private val EMPTY_PAGE = pageJson(emptyList())
 
-class VisionAgentsTest {
+class StreamAgentsTest {
     private val router = TestRouter()
-    private val agents = VisionAgents(url = router.url, customerId = "acme")
+    private val agents = StreamAgents(url = router.url, customerId = "acme")
     private val deviceZone = deviceZoneId
 
     init {
@@ -58,7 +58,7 @@ class VisionAgentsTest {
 
     @Test
     fun `naming no router reaches the hosted one`() {
-        VisionAgents(apiKey = "key").use { hosted ->
+        StreamAgents(apiKey = "key").use { hosted ->
             assertEquals(Backend.DEFAULT_URL, hosted.backend.url)
             assertEquals("https://accelerate-us-east4.gcp.stream-io-api.com", hosted.backend.url)
         }
@@ -103,7 +103,7 @@ class VisionAgentsTest {
 
     @Test
     fun `a key beside a customer id is Stream's, and the router is still reached by customer id`() = runTest {
-        val local = VisionAgents(url = router.url, customerId = "acme", apiKey = "stream-key")
+        val local = StreamAgents(url = router.url, customerId = "acme", apiKey = "stream-key")
         local.setUser(User("jlahey"), "token-for-jlahey")
         router.answer = { Reply(200, EMPTY_PAGE) }
 
@@ -121,7 +121,7 @@ class VisionAgentsTest {
     @Test
     fun `behind a verifying deployment the token is the credential, asked for once`() = runTest {
         val asked = AtomicInteger()
-        val keyed = VisionAgents(url = router.url, apiKey = "key-1")
+        val keyed = StreamAgents(url = router.url, apiKey = "key-1")
         keyed.setUser(User("jlahey")) { "token-${asked.incrementAndGet()}" }
         router.answer = { Reply(200, EMPTY_PAGE) }
 
@@ -139,7 +139,7 @@ class VisionAgentsTest {
     @Test
     fun `an expired token is asked for again and the request retried once`() = runTest {
         val asked = AtomicInteger()
-        val keyed = VisionAgents(url = router.url, apiKey = "key-1")
+        val keyed = StreamAgents(url = router.url, apiKey = "key-1")
         keyed.setUser(User("jlahey")) { "token-${asked.incrementAndGet()}" }
         router.answer = {
             if (it.header("Authorization") == "Bearer token-1") Reply(401, envelope("authentication", "unauthenticated", "expired"))
@@ -154,7 +154,7 @@ class VisionAgentsTest {
 
     @Test
     fun `an api key with nobody to act for is refused before any request`() = runTest {
-        val keyed = VisionAgents(url = router.url, apiKey = "key-1")
+        val keyed = StreamAgents(url = router.url, apiKey = "key-1")
 
         assertFailsWith<AgentsException.Configuration> { keyed.sessions.query() }
         assertTrue(router.requests.isEmpty())
@@ -528,7 +528,7 @@ class VisionAgentsTest {
 
     @Test
     fun `a router that is not there is a transport failure, not a status`() = runTest {
-        val nowhere = VisionAgents(url = "http://127.0.0.1:1", customerId = "acme")
+        val nowhere = StreamAgents(url = "http://127.0.0.1:1", customerId = "acme")
 
         assertFailsWith<AgentsException.Transport> { nowhere.sessions.query() }
         nowhere.close()
@@ -675,7 +675,7 @@ class VisionAgentsTest {
     fun `a device with only the app key asks for a guest anonymously`() = runTest {
         router.answer = { Reply(201, """{"id":"guest-1","token":"t"}""") }
 
-        val guest = VisionAgents(url = router.url, apiKey = "key").use { it.guestUser() }
+        val guest = StreamAgents(url = router.url, apiKey = "key").use { it.guestUser() }
 
         assertEquals("guest-1", guest.id)
         val arrived = router.requests.single()
@@ -690,7 +690,7 @@ class VisionAgentsTest {
             Reply(401, """{"code":2,"message":"anonymous access is not available on the acceleration api","StatusCode":401}""")
         }
 
-        val refused = VisionAgents(url = router.url, apiKey = "key").use {
+        val refused = StreamAgents(url = router.url, apiKey = "key").use {
             assertFailsWith<AgentsException.Configuration> { it.guestUser() }
         }
 

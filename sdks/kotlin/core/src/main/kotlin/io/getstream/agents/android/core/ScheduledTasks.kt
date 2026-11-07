@@ -13,7 +13,7 @@ import kotlin.time.Instant
 import kotlinx.serialization.json.JsonObject
 
 /**
- * The reminders and later work agents hold for the user [VisionAgents.setUser] named.
+ * The reminders and later work agents hold for the user [StreamAgents.setUser] named.
  *
  * The agent makes a task in a conversation, when the person asks for one, and the app's backend
  * can make one in their name. A device cannot: what the agent is told when a task comes due is

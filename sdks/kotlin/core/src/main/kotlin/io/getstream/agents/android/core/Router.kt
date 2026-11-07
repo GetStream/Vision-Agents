@@ -15,7 +15,7 @@ import io.getstream.agents.android.core.generated.SearchResult
  *     val router = agents.router(config = "healthcare")
  *     val answer = router.search("what changed in the pricing page")
  *
- * A router comes from [VisionAgents.router], which is where the URL and credentials were
+ * A router comes from [StreamAgents.router], which is where the URL and credentials were
  * settled.
  *
  * Transcription, a voice and a model are not here. Those run over the per-modality socket,

@@ -22,9 +22,9 @@ private const val KIND = "chat"
 /**
  * Hands over the app's own Stream Chat client, so every conversation opens on it rather than on
  * a second one. Connecting it, as the user `setUser` named, stays the app's job, and
- * [VisionAgents.disconnect] leaves it alone.
+ * [StreamAgents.disconnect] leaves it alone.
  */
-public fun VisionAgents.use(client: ChatClient) {
+public fun StreamAgents.use(client: ChatClient) {
     backend.give(KIND, client)
 }
 

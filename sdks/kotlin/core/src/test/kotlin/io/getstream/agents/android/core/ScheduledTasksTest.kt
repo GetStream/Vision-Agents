@@ -30,7 +30,7 @@ private val NINE_IN_AMSTERDAM = Instant.fromEpochSeconds(1_793_174_400)
 
 class ScheduledTasksTest {
     private val router = TestRouter()
-    private val agents = VisionAgents(url = router.url, customerId = "acme")
+    private val agents = StreamAgents(url = router.url, customerId = "acme")
 
     @AfterTest
     fun stop() {
