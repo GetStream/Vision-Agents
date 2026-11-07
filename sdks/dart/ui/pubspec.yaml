@@ -1,4 +1,4 @@
-name: vision_agents_ui
+name: stream_agents_ui
 description: >-
   Flutter widgets for a conversation with a Stream Vision Agent: the transcript, what the agent
   is doing, somewhere to type, and a conversation kept in Stream Chat.
@@ -15,7 +15,7 @@ dependencies:
   flutter:
     sdk: flutter
   # A hosted constraint, resolved to ../core in this repository by pubspec_overrides.yaml.
-  vision_agents_core: ^0.1.0
+  stream_agents_core: ^0.1.0
   # The core of Stream's chat SDK rather than stream_chat_flutter: a conversation kept in
   # Stream Chat is rendered with this package's own turns, so the full kit's widgets, media
   # pickers and their platform setup would be weight the host pays for nothing.

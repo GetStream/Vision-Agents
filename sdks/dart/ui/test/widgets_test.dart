@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:stream_chat_flutter_core/stream_chat_flutter_core.dart' as chat;
-import 'package:vision_agents_core/vision_agents_core.dart';
-import 'package:vision_agents_ui/vision_agents_ui.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
+import 'package:stream_agents_ui/stream_agents_ui.dart';
 
 Widget _app(Widget child) => MaterialApp(home: Scaffold(body: child));
 

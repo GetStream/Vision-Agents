@@ -1,7 +1,7 @@
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 import 'package:yaml/yaml.dart';
 
 import 'support/fixtures.dart';

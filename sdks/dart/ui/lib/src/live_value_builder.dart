@@ -1,7 +1,7 @@
 import 'dart:async';
 
 import 'package:flutter/widgets.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 /// Rebuilds whenever a [LiveValue] changes, starting from its current value.
 ///

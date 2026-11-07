@@ -1,5 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 /// The conversation, scrolling as it grows.
 ///

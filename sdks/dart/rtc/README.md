@@ -1,4 +1,4 @@
-# vision_agents_rtc
+# stream_agents_rtc
 
 Talk to a Stream Vision Agent out loud: joins the call the agent is on with Stream Video.
 

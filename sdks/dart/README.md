@@ -6,14 +6,14 @@ rtc are Flutter.
 
 | Package | pub name | Depends on | What it is |
 | --- | --- | --- | --- |
-| `core/` | `vision_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
-| `chat/` | `vision_agents_chat` | `core`, `stream_chat` 10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
-| `ui/` | `vision_agents_ui` | `core`, `stream_chat_flutter_core` 10.4.0 | Flutter widgets over that state, and a conversation kept in Stream Chat |
-| `rtc/` | `vision_agents_rtc` | `core`, `stream_video_flutter` 1.6.0 | Joining the call, so the conversation can be spoken |
+| `core/` | `stream_agents_core` | `http`, `web_socket` | The generated client, the session socket, and the conversation state |
+| `chat/` | `stream_agents_chat` | `core`, `stream_chat` 10.4.0 | The Stream Chat channel a conversation is kept in, on one shared client |
+| `ui/` | `stream_agents_ui` | `core`, `stream_chat_flutter_core` 10.4.0 | Flutter widgets over that state, and a conversation kept in Stream Chat |
+| `rtc/` | `stream_agents_rtc` | `core`, `stream_video_flutter` 1.6.0 | Joining the call, so the conversation can be spoken |
 
 They are four packages rather than one pub workspace. A workspace resolves as one, so a
 Flutter member would make the pure-Dart core unresolvable without the Flutter SDK. The others
-depend on `vision_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
+depend on `stream_agents_core` from pub.dev, and a committed `pubspec_overrides.yaml` points them
 at `../core` in this repository.
 
 Until they are on pub.dev, an app depends on them by git, and names the core in its own
@@ -21,10 +21,10 @@ Until they are on pub.dev, an app depends on them by git, and names the core in 
 
 ```yaml
 dependencies:
-  vision_agents_chat:
+  stream_agents_chat:
     git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/chat}
 dependency_overrides:
-  vision_agents_core:
+  stream_agents_core:
     git: {url: https://github.com/GetStream/Vision-Agents, ref: accelerate, path: sdks/dart/core}
 ```
 
@@ -39,7 +39,7 @@ await chat.responses.create('What are your opening hours?');
 // chat.conversation.value is the transcript and what the agent is doing, and
 // chat.conversation.stream says each time it changes. The question shows there at once.
 
-// The Stream Chat channel the conversation is kept in, with vision_agents_chat.
+// The Stream Chat channel the conversation is kept in, with stream_agents_chat.
 final channel = await chat.chat();
 
 // Out loud. The agent joins a call and so does this device.
@@ -74,9 +74,9 @@ agents.useVideo(yourVideoClient);
 
 State is a `LiveValue`: the current value, and a stream that starts with it. Nothing here
 depends on a state-management package; `LiveValueBuilder` and `LiveValueNotifier` in
-`vision_agents_ui` adapt it to widgets and `Listenable`.
+`stream_agents_ui` adapt it to widgets and `Listenable`.
 
-With `vision_agents_ui` a whole conversation is one widget:
+With `stream_agents_ui` a whole conversation is one widget:
 
 ```dart
 ConversationView(session: chat)

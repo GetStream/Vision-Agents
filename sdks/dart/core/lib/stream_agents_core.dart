@@ -1,4 +1,4 @@
-/// The state layer and client for Stream's Vision Agents, in pure Dart.
+/// The state layer and client for Stream Agents, in pure Dart.
 ///
 /// Start from [VisionAgents]. The generated wire types are not exported: everything here is
 /// hand-written, so the spec can change without breaking a caller.

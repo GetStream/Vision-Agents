@@ -1,6 +1,6 @@
-# vision_agents_chat
+# stream_agents_chat
 
-The Stream Chat channel a Stream Vision Agents conversation is kept in.
+The Stream Chat channel a Stream Agents conversation is kept in.
 
 ```dart
 final chat = await agents.agent('support').chat();
@@ -11,7 +11,7 @@ It opens on one `StreamChatClient` every session shares, connected with the agen
 and token, or on the app's own handed over with `agents.useChat(client)`. `agents.disconnect()`
 closes only the one built here. A text or voice session keeps a channel unless it is incognito.
 
-Pure Dart, so it runs anywhere the core does. `ChatTranscriptView` in `vision_agents_ui` renders
+Pure Dart, so it runs anywhere the core does. `ChatTranscriptView` in `stream_agents_ui` renders
 the channel.
 
 See [the Dart SDKs](https://github.com/GetStream/Vision-Agents/tree/accelerate/sdks/dart) for the rest.

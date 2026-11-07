@@ -13,7 +13,7 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 final _env = Platform.environment;
 final _key = _env['INTEGRATION_ROUTER_KEY'] ?? '';

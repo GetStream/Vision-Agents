@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:stream_chat_flutter_core/stream_chat_flutter_core.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'transcript_view.dart';
 
@@ -8,7 +8,7 @@ import 'transcript_view.dart';
 ///
 /// A text session that is not incognito names its channel as `type:id`. Reading it
 /// takes a chat client connected as the person holding the conversation; `session.chat()` in
-/// `vision_agents_chat` opens it on the one client every session shares.
+/// `stream_agents_chat` opens it on the one client every session shares.
 Channel? conversationChannel(StreamChatClient client, Session session) {
   final cid = session.conversationId;
   final colon = cid.indexOf(':');

@@ -12,7 +12,7 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:test/test.dart';
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 final _url = Platform.environment['VISION_AGENTS_URL'];
 final _customerId = Platform.environment['VISION_AGENTS_CUSTOMER_ID'] ?? 'acme';

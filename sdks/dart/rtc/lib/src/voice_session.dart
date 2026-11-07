@@ -1,5 +1,5 @@
 import 'package:stream_video_flutter/stream_video_flutter.dart' as video;
-import 'package:vision_agents_core/vision_agents_core.dart';
+import 'package:stream_agents_core/stream_agents_core.dart';
 
 import 'camera_jpeg.dart';
 import 'camera_shots.dart';

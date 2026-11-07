@@ -1,6 +1,6 @@
 ---
 name: sdk-dart
-description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Read this before changing vision_agents_core, vision_agents_chat, vision_agents_ui or vision_agents_rtc, or before adding a Dart client for a new endpoint.
+description: How to build and extend the Dart and Flutter SDKs in sdks/dart. Read this before changing stream_agents_core, stream_agents_chat, stream_agents_ui or stream_agents_rtc, or before adding a Dart client for a new endpoint.
 ---
 
 # Dart SDK conventions
@@ -16,17 +16,17 @@ because Stream Chat 10.4 is.
 ## Packages
 
 ```
-core  vision_agents_core  pure Dart: generated client, socket, conversation state
-chat  vision_agents_chat  pure Dart: the conversation's Stream Chat channel   -> core
-ui    vision_agents_ui    Flutter widgets, Stream Chat transcript             -> core
-rtc   vision_agents_rtc   joining the call over Stream Video                  -> core
+core  stream_agents_core  pure Dart: generated client, socket, conversation state
+chat  stream_agents_chat  pure Dart: the conversation's Stream Chat channel   -> core
+ui    stream_agents_ui    Flutter widgets, Stream Chat transcript             -> core
+rtc   stream_agents_rtc   joining the call over Stream Video                  -> core
 ```
 
 **Four standalone packages, not a pub workspace.** A workspace resolves every member as one
 graph, so once `ui` or `rtc` (Flutter) is a member, `core` cannot be resolved or tested with the
 plain Dart SDK — and a pure-Dart core testable in `dart:stable` is the point of having one. The
 price is four lockfiles and a local link: `chat`, `ui` and `rtc` declare
-`vision_agents_core: ^x.y.z` as a hosted dependency, and a committed `pubspec_overrides.yaml`
+`stream_agents_core: ^x.y.z` as a hosted dependency, and a committed `pubspec_overrides.yaml`
 points it at `../core`. Pub never publishes that file and consumers never see it. Before
 releasing, publish `core` first and check the others resolve against the hosted version with the
 override removed.
@@ -56,9 +56,9 @@ the registry so another user gets their own. `Backend.give` holds the app's own 
 `VisionAgents.disconnect()` never touches; it closes only what `shared` built. Beside a
 `customerId` the key is Stream's alone and the router is reached by customer id.
 
-- `vision_agents_chat`: `agents.useChat(client)` and `session.chat()`, which answers the
+- `stream_agents_chat`: `agents.useChat(client)` and `session.chat()`, which answers the
   conversation's `Channel`, unwatched. A session with no conversation is a `StateError`.
-- `vision_agents_rtc`: `agents.useVideo(client)` and `VoiceSession.join()`, which joins the
+- `stream_agents_rtc`: `agents.useVideo(client)` and `VoiceSession.join()`, which joins the
   session's `callType:callId`. Leaving disposes nothing.
 - Dart has no overloading, hence `useChat` and `useVideo` rather than Kotlin's `use`. A
   client for another user, or a missing key, user or token, is an `ArgumentError`.

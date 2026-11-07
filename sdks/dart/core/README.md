@@ -1,4 +1,4 @@
-# vision_agents_core
+# stream_agents_core
 
 The client for talking to a Stream Vision Agent from Dart: sessions, responses, the session
 socket, and the conversation as state. Pure Dart, so it runs in Flutter, a CLI or a server.
