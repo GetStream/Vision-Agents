@@ -340,8 +340,8 @@ The package is iOS only, so the tests run on a simulator, from the root of the r
 CI is [`client-sdks.yml`](../../../.github/workflows/client-sdks.yml), on the `xcode-27` runner,
 on any change under `sdks/swift`, the demo's app or the spec. It runs `generate.py --check`
 (the generator is in the `chat` repository, which CI does not check out, so it cannot
-regenerate, and compares the spec against `generated.json` instead), runs the core tests on the first iPhone simulator the runner has, and builds
-`swift_demo`. Regenerate locally after a spec change.
+regenerate, and compares the spec against `generated.json` instead), runs the core tests on
+the first iPhone simulator the runner has, and builds `swift_demo`. Regenerate locally after a spec change.
 
 Wait on a condition with a deadline, never `Task.sleep` for a fixed guess:
 
