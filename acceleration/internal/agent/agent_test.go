@@ -7153,6 +7153,37 @@ func (s *AgentSuite) TestAHoldLineNoneOfWhichWasHeardIsSaidInTheVoiceThatReplace
 	s.Len(s.replacement.spoken(), 1, "the hold line was said twice in the next voice")
 }
 
+func (s *AgentSuite) TestAMurmurAfterACheckInIsNotSaidInTheNextVoice() {
+	// The agent keeps the last line it said, a check-in included: a murmur after one is
+	// still a murmur when its voice is lost.
+	s.duplex = DuplexOptions{Backchannel: true, BackchannelWords: 4}
+	s.join(false)
+	s.model.composes = []string{"Is there anything else I can help with?"}
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	s.eventually(func() bool { return !s.agent.Busy() }, "the check-in never finished")
+	s.agent.mu.Lock()
+	kept := s.agent.keptReply
+	s.agent.mu.Unlock()
+	s.Require().NotEmpty(kept, "no line was kept: not the case under test")
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	participant := stt.Participant{ID: "alice"}
+	s.speak(participant)
+	s.mutters(participant, "so I was wondering whether")
+	s.eventually(func() bool { return countOf[Backchannel](s.reported()) == 1 }, "the agent never murmured")
+	lost := s.agent.voice()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool { return s.agent.voice() != lost }, "the lost voice was never replaced")
+	s.never(func() bool {
+		return slices.ContainsFunc(s.replacement.spoken(), func(r tts.Request) bool {
+			return strings.HasPrefix(r.ID, backchannelPrefix)
+		})
+	}, "the next voice said a murmur")
+}
+
 func (s *AgentSuite) TestALineTheVoiceWouldNotTakeIsReportedCutOff() {
 	// Reported before its sound, so a watcher has it in time: a line never said is then
 	// closed, not left as still coming.
