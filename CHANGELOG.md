@@ -413,7 +413,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### Photos an agent cannot see are refused before they are uploaded
 
-A question with photos and a `request_id`, on `createResponse` or the session socket's `respond`, sent to an agent with neither a vision skill nor a conversation model that accepts images, was refused only after its photos were uploaded and the person's message written, leaving a message in the channel that nothing would answer. It is now refused first, with the same 400 `not_configured`, and nothing is uploaded or written.
+A question with photos and a `request_id`, on `createResponse` or the session socket's `respond`, sent to an agent with neither a vision skill nor a conversation model that accepts images, was refused only after its photos were uploaded and the person's message written, leaving a message in the channel that nothing would answer. It is now refused first, with the same 400 `not_configured`, and nothing is uploaded or written. A retry of a photo question already taken is still answered with its receipt, also after the session's model changed to one that cannot see, since it starts no turn.
 
 ### A call that began before its number's link stays before it
 

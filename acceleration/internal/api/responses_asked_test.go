@@ -510,6 +510,67 @@ func (s *ResponsesAskedSuite) TestAPhotoSentOnRespondIsRefusedWhereCreateRespons
 	s.Empty(s.chat.Stored(strings.TrimPrefix(value(blind.ConversationId), "agent:")), "nothing refused is written")
 }
 
+// The retry of a photo question already taken is answered with its receipt after the session's
+// model changed to one that cannot see: it starts no turn, so nothing has to see its photo.
+func (s *ResponsesAskedSuite) TestARetryOfAPhotoQuestionIsAnsweredAfterTheModelChangedToOneThatCannotSee() {
+	opened := s.serverClient.createSession(CreateSessionRequest{Llm: pointerTo("vision/vision-model")})
+	photo := &[]ImageSource{{Url: "data:image/png;base64," + base64.StdEncoding.EncodeToString([]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"))}}
+	responded, created := s.utils.uuid(), s.utils.uuid()
+	respond := RespondRequest{RequestId: &responded, Text: "What is wrong with this fryer " + responded + "?", Images: photo}
+	create := CreateResponseRequest{RequestId: &created, Text: "What is wrong with this grill " + created + "?", Images: photo}
+	shown := func() int {
+		count := 0
+		for _, request := range s.vision.requests() {
+			if input := fmt.Sprint(request.Input); request.HasImage() && (strings.Contains(input, responded) || strings.Contains(input, created)) {
+				count++
+			}
+		}
+		return count
+	}
+	var receipt CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond", respond, &receipt))
+	s.repliesCompleted(opened, 1)
+	status, body := s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", create)
+	s.Require().Equal(http.StatusAccepted, status, string(body))
+	s.repliesCompleted(opened, 2)
+	s.Require().Equal(2, shown(), "each question was shown its photo")
+	uploads := len(s.chat.Uploads())
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPatch, "/v1/agents/sessions/"+opened.Id+"/settings",
+		SessionSettingsRequest{Llm: pointerTo("noted/noted-model")}, nil))
+
+	var retried CommandReceipt
+	s.Require().Equal(http.StatusOK, s.serverClient.do(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond", respond, &retried))
+	s.True(retried.Duplicate, "a retry starts no second turn")
+	s.Equal(receipt.UserMessageId, retried.UserMessageId)
+	s.Equal(receipt.AssistantMessageId, retried.AssistantMessageId)
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/responses", create)
+	s.Require().Equal(http.StatusAccepted, status, string(body))
+	var again AgentResponse
+	s.Require().NoError(json.Unmarshal(body, &again))
+	s.Empty(again.Id, "a retry on createResponse starts no second turn")
+	status, body = s.serverClient.call(http.MethodPost, "/v1/agents/sessions/"+opened.Id+"/respond",
+		RespondRequest{RequestId: pointerTo(s.utils.uuid()), Text: "And this one?", Images: photo})
+	s.Equal(http.StatusBadRequest, status, "a new photo question is refused by the model that cannot see")
+	s.Contains(string(body), `"code":"not_configured"`)
+	s.Len(s.chat.Uploads()[uploads:], 0, "nothing is uploaded again")
+	s.Never(func() bool { return shown() > 2 }, 200*time.Millisecond, 10*time.Millisecond, "no question is shown its photo again")
+}
+
+// repliesCompleted waits until n replies in the session's channel have finished.
+func (s *ResponsesAskedSuite) repliesCompleted(opened Session, n int) {
+	channel := strings.TrimPrefix(value(opened.ConversationId), "agent:")
+	s.Require().Eventually(func() bool {
+		completed := 0
+		for _, stored := range s.chat.Stored(channel) {
+			custom, _ := stored["custom"].(map[string]any)
+			if written, _ := custom["support_message"].(map[string]any); written["role"] == "assistant" && written["state"] == "completed" {
+				completed++
+			}
+		}
+		return completed >= n
+	}, settleFor, 10*time.Millisecond, "fewer than %d replies finished", n)
+}
+
 // Controls, each answered the same on the base (49fa88bde): a question without a request id
 // that has text is shown as typed, its photos going to the model alone, and one with nothing
 // in it is refused.
