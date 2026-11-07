@@ -1039,26 +1039,23 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainEndsWithTheSandbox() {
 }
 
 // tunnelBuffer is the size of each socket buffer of a blind tunnel: both ends' and the proxy's
-// two sockets. macOS grows a loopback socket's buffers up to 4 MiB each (net.inet.tcp.autorcvbufmax,
-// autosndbufmax), so a tunnel whose ends read nothing held about 40 MB of the kernel's network
-// memory until it closed. That memory is the whole machine's: with a few such tunnels at once the
+// two sockets. macOS grows a loopback socket's buffers on its own (net.inet.tcp.autorcvbufmax and
+// autosndbufmax, 4 MiB here), so a tunnel whose ends read nothing held about 40 MB of the kernel's
+// network memory until it closed. That memory is the whole machine's: with a few such tunnels at once the
 // kernel denied buffers (netstat -m) and the test Redis behind Docker's port forward went silent
-// for 20-30 s, so the suite's next tests failed at rueidis' 5 s dial timeout (AI-2928). Chosen,
+// for 15-30 s, so the suite's next tests failed at rueidis' 5 s dial timeout (AI-2928). Chosen,
 // not measured: two of the proxy's 32 KiB copy chunks, so a fill still blocks a copy in its write.
 const tunnelBuffer = 64 << 10
 
 // tunnelHeld bounds what a fill in one direction may write before it blocks, with tunnelBuffer.
 // Measured: a direction took 1.25 MB on macOS and 1.34 MB on Linux (Docker Desktop's VM) with
-// tunnelBuffer, and on macOS 12.6 MB without it when neither end reads. The kernels keep more than
+// tunnelBuffer, and 9-13 MB on either without it when neither end reads. The kernels keep more than
 // the buffer sizes they are given (Linux doubles them, socket(7)), so the bound is read from runs.
 const tunnelHeld = 2 << 20
 
 // smallBuffers gives conn, a TCP connection, buffers of tunnelBuffer each way.
 func smallBuffers(conn net.Conn) error {
-	tcp, ok := conn.(*net.TCPConn)
-	if !ok {
-		return fmt.Errorf("%T is not a TCP connection", conn)
-	}
+	tcp := conn.(*net.TCPConn)
 	return errors.Join(tcp.SetReadBuffer(tunnelBuffer), tcp.SetWriteBuffer(tunnelBuffer))
 }
 
