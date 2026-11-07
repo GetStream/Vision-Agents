@@ -72,6 +72,9 @@ type Ruled struct {
 	Began     time.Time
 	// Utterance is the utterance the words are of, which its final names.
 	Utterance int64
+	// Language is what the server heard the words in, by its own name for it
+	// (Words.Language), empty when it did not say.
+	Language string
 }
 
 // Pauses is a transcriber an agent can have ask about each pause.
@@ -140,10 +143,12 @@ type pause struct {
 	// that check ended the turn.
 	resumed bool
 	// words are the first check's, once written, and audioMs and wordsMs how much audio
-	// they are of and how long they took. noise is why the server wrote none, if it said.
+	// they are of and how long they took. noise is why the server wrote none, if it said,
+	// and language what it heard them in.
 	words            *string
 	audioMs, wordsMs float64
 	noise            string
+	language         string
 	// counted says a check of the pause with the floor free has been read against its bar,
 	// which the checks in a row are counted from (Hearer.rule). One asked over the agent is
 	// not: it has no p_eot.
@@ -701,8 +706,10 @@ func (t *Transcriber) logCheck(turn harness.FlowTurn, c pauseCheck, checked Chec
 	if checked.Answer.PEOT != nil {
 		pEOT = *checked.Answer.PEOT
 	}
+	tool, toolP := checked.Answer.Wanted()
 	t.logger.Debug("chorus-asr checked", append(attributes, "answer", checked.Answer.Answer, "p_eot", pEOT, "bar", checked.Bar,
-		"in_a_row", checked.InARow, "ended", checked.Ended, "disposition", checked.Ruling.Disposition, "floor", checked.Ruling.Floor)...)
+		"in_a_row", checked.InARow, "ended", checked.Ended, "disposition", checked.Ruling.Disposition, "floor", checked.Ruling.Floor,
+		"tool", tool, "tool_p", toolP)...)
 }
 
 // await keeps the words of a pause's first check, once written, and shows them meanwhile
@@ -737,7 +744,7 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	var stopping *Ruled
 	asker := t.asker
 	if same {
-		p.words, p.audioMs, p.wordsMs, p.noise = &text, audioMs, wordsMs, words.Noise
+		p.words, p.audioMs, p.wordsMs, p.noise, p.language = &text, audioMs, wordsMs, words.Noise, words.Language
 		waiting = p.ended == nil
 		if stopping, p.stopping = p.stopping, nil; stopping != nil {
 			stopping.Words, stopping.AudioMs, stopping.WordsMs = text, audioMs, wordsMs
@@ -783,7 +790,7 @@ func (t *Transcriber) finish(epoch int64) {
 	}
 	p.done = true
 	ruled, asker, participant, utterance, noise := *p.ended, t.asker, p.participant, p.utterance, p.noise
-	ruled.Words, ruled.AudioMs, ruled.WordsMs = *p.words, p.audioMs, p.wordsMs
+	ruled.Words, ruled.AudioMs, ruled.WordsMs, ruled.Language = *p.words, p.audioMs, p.wordsMs, p.language
 	// The words of the pause that ended the utterance may come back empty where a check over
 	// the agent wrote some of it: the utterance is those words, as far as that check heard it.
 	// Not where the server said why it wrote none (a voice in another language, a murmur it

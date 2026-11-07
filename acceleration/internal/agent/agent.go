@@ -1955,6 +1955,7 @@ func (a *Agent) perform(action Action) {
 		a.mu.Unlock()
 		note := joinNotes(action.Clarify, missedNote(missed))
 		adopted, speculated := a.adoptSpeculation(action.Candidate, note)
+		a.heardIntent(action.Candidate)
 		if adopted {
 			return
 		}

@@ -236,6 +236,8 @@ type Turn struct {
 
 // Ruling is what to do once the turn has ended, in the flow controller's terms. Tool and
 // Cannot say what only this model can: the tool the caller wants, or that none can do it.
+// The tool is the one the caller asks for, which need not be the one the reply calls
+// first: an agent told to check before it books is asked to book.
 type Ruling struct {
 	Disposition string `json:"disposition"`
 	Floor       string `json:"floor"`
@@ -250,6 +252,30 @@ type Answer struct {
 	PEOT              *float64 `json:"p_eot"`
 	DecideMs          float64  `json:"decide_ms"`
 	Ruling            *Ruling  `json:"ruling"`
+	// Options is every answer the model could give and its probability, in the prompt's
+	// order: the dispositions, then cannot and each of the agent's tools.
+	Options []Option `json:"options"`
+}
+
+// Option is one answer the model could give, a tool's name for a tool, and its probability.
+type Option struct {
+	Name string  `json:"name"`
+	P    float64 `json:"p"`
+}
+
+// Wanted is the tool the ruling says the caller wants and the model's probability of it,
+// or empty when it names none: over the agent, or with the floor free when the likeliest
+// answer other than waiting was not a tool.
+func (a Answer) Wanted() (string, float64) {
+	if a.Ruling == nil || a.Ruling.Tool == "" {
+		return "", 0
+	}
+	for _, option := range a.Options {
+		if option.Name == a.Ruling.Tool {
+			return option.Name, option.P
+		}
+	}
+	return a.Ruling.Tool, 0
 }
 
 const (
