@@ -1493,6 +1493,9 @@ func (a *Agent) close() error {
 	p, released := a.releasePipeline(false)
 	failures = append(failures, released...)
 
+	// A caller turn still waiting for a line said for it gets none now, and is reported while
+	// the emitter still takes it.
+	a.turns.giveUp()
 	// Left is sent before the emitter closes, and the emitter closes before the consumers
 	// are waited on: a consumer blocked emitting to a caller that has stopped reading has
 	// to be let go of, or shutdown would depend on someone draining the channel.
@@ -3127,6 +3130,11 @@ func (a *Agent) finish(response llm.Response) {
 			a.fail(err, "tts")
 		}
 	}
+	// A reply that handed work on and said nothing leaves the caller waiting for what is said
+	// for it later. In writing nothing is heard, so there is nothing to wait for.
+	if !a.options.Text && (len(calls) > 0 || a.harness.Delegating() || a.harness.Pending()) {
+		a.turns.owes(response.ID)
+	}
 	// How many syntheses the turn produces is only settled once the reply is, and it is
 	// what tells the tracker when the turn has finished being spoken.
 	a.turns.completed(response.ID, response.TimeToFirstTokenMs, a.expectedSyntheses(response.ID))
@@ -3680,7 +3688,8 @@ func (a *Agent) follow() error {
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
-	// finishing a sentence and hearing the answer start, and nobody said anything here.
+	// finishing a sentence and hearing the answer start, and nobody said anything here. Its
+	// first audio still ends the wait of a caller turn that said nothing and handed work on.
 	a.turns.started(turnID, kindFollowUp)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 

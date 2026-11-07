@@ -145,7 +145,10 @@ type openTurn struct {
 	// expected is how many syntheses the turn will produce in total.
 	expected int
 	// settled is how many of them have completed.
-	settled     int
+	settled int
+	// owed means a caller turn's reply handed work on, to a tool or to the subagent, so when
+	// none of its own audio went out the turn waits for the first line said for it.
+	owed        bool
 	interrupted bool
 	// why is why the reply was abandoned, set with interrupted.
 	why interruption
@@ -174,20 +177,79 @@ func newTurnTracker(owner routing.Owner, finished func(Turn)) *turnTracker {
 		out: map[string]time.Time{}}
 }
 
-// started records what started a turn, before anything of it is measured or said.
+// started records what started a turn, before anything of it is measured or said. A caller
+// turn still waiting for a line said for it is reported without one when the caller speaks
+// again: what follows answers the newer turn.
 func (t *turnTracker) started(turnID, kind string) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
 	pipeline := pipelineCascade
 	if t.native != nil && t.native() {
 		pipeline = pipelineNative
 	}
-	if kind == kindCaller {
-		t.caller = turnID
-		t.remember(turnID, origin{kind: kind, pipeline: pipeline})
+	if kind != kindCaller {
+		t.remember(turnID, origin{kind: kind, parent: t.caller, pipeline: pipeline})
+		t.mu.Unlock()
 		return
 	}
-	t.remember(turnID, origin{kind: kind, parent: t.caller, pipeline: pipeline})
+	t.caller = turnID
+	t.remember(turnID, origin{kind: kind, pipeline: pipeline})
+	given := t.giveUpLocked()
+	t.mu.Unlock()
+
+	t.reportAll(given)
+}
+
+// giveUp reports each caller turn still waiting for a line said for it, with no first audio.
+func (t *turnTracker) giveUp() {
+	t.mu.Lock()
+	given := t.giveUpLocked()
+	t.mu.Unlock()
+
+	t.reportAll(given)
+}
+
+func (t *turnTracker) giveUpLocked() []settledTurn {
+	var given []settledTurn
+	for id, current := range t.open {
+		if current.owed && current.firstAudioAt.IsZero() {
+			current.owed = false
+			given = append(given, settledTurn{id: id, current: current, finished: t.settleLocked(id, current)})
+		}
+	}
+	return given
+}
+
+// settledTurn is a turn settled under the lock, to be reported once it is let go.
+type settledTurn struct {
+	id       string
+	current  *openTurn
+	finished *Turn
+}
+
+func (t *turnTracker) reportAll(settled []settledTurn) {
+	for _, turn := range settled {
+		t.report(turn.id, turn.current, turn.finished)
+	}
+}
+
+// owes records that a caller turn's reply handed work on. It is told before the reply is
+// completed, so a reply that said nothing is not closed without the line said for it.
+func (t *turnTracker) owes(turnID string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if current := t.open[turnID]; current != nil && t.origins[turnID].kind == kindCaller {
+		current.owed = true
+	}
+}
+
+// answersCaller says whether a turn of kind is a line said for the caller turn it follows: a hold
+// or update line while the work runs, or what a tool or the subagent came back with.
+func answersCaller(kind string) bool {
+	switch kind {
+	case kindHold, kindUpdate, kindTool, kindFollowUp:
+		return true
+	}
+	return false
 }
 
 // remember keeps the origin of a turn, letting the oldest go past originsKept.
@@ -301,17 +363,25 @@ func (t *turnTracker) sentToVoice(turnID string) bool {
 }
 
 // firstAudio records the moment the first audio of a reply reached the edge, which is
-// what ends the participant's wait.
+// what ends the participant's wait. The first audio of a line said for a caller turn that
+// had none of its own ends that turn's wait too.
 func (t *turnTracker) firstAudio(turnID string, at time.Time) {
 	t.mu.Lock()
-	defer t.mu.Unlock()
-
-	current, ok := t.open[turnID]
-	if !ok || !current.firstAudioAt.IsZero() {
-		return
+	if current, ok := t.open[turnID]; ok && current.firstAudioAt.IsZero() {
+		current.firstAudioAt = at
+		current.roundtripMs = msBetween(current.transcriptAt, at)
 	}
-	current.firstAudioAt = at
-	current.roundtripMs = msBetween(current.transcriptAt, at)
+	var answered settledTurn
+	if started := t.origins[turnID]; answersCaller(started.kind) {
+		if caller := t.open[started.parent]; caller != nil && caller.firstAudioAt.IsZero() {
+			caller.firstAudioAt = at
+			caller.roundtripMs = msBetween(caller.transcriptAt, at)
+			answered = settledTurn{id: started.parent, current: caller, finished: t.settleLocked(started.parent, caller)}
+		}
+	}
+	t.mu.Unlock()
+
+	t.report(answered.id, answered.current, answered.finished)
 }
 
 // marksFor returns what an edge reports the first frames of a reply to, or nil when the turn
@@ -446,6 +516,9 @@ func (t *turnTracker) interrupt(turnID string, why interruption) float64 {
 // settleLocked closes the turn if nothing more can be learned about it.
 func (t *turnTracker) settleLocked(turnID string, current *openTurn) *Turn {
 	if !current.modelDone || current.settled < current.expected {
+		return nil
+	}
+	if current.owed && current.firstAudioAt.IsZero() {
 		return nil
 	}
 	// Speech queued on an edge that has not taken it yet is about to give the turn its last
