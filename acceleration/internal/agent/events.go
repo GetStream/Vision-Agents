@@ -285,10 +285,13 @@ type Turn struct {
 	LLMTTFTMs float64
 	// TTSTTFBMs is the wait between sending the first sentence and the first audio.
 	TTSTTFBMs float64
-	// RoundtripMs is the whole delay: last transcript revision to first audio published.
+	// RoundtripMs is the whole delay: last transcript revision to first audio published. For
+	// a caller turn whose reply said nothing and handed work on, a hold or update line, or what
+	// the work came back with, is that first audio.
 	RoundtripMs float64
 	// SpeechEndToAudioMs is voice in to voice out: the roundtrip plus the time the
-	// transcriber spent deciding the participant had stopped.
+	// transcriber spent deciding the participant had stopped. It ends where RoundtripMs does,
+	// at a hold or update line too.
 	SpeechEndToAudioMs float64
 	// FirstFrameQueuedMs and FirstAudibleFrameMs run from the last transcript revision, like
 	// RoundtripMs, to the two moments publishing returning stands in for: the edge queueing the
