@@ -6441,6 +6441,26 @@ func (s *AgentSuite) TestTheAgentClosesOnlyOnceItsLostVoiceHasClosed() {
 	s.Equal(1, s.replacement.closed(), "the voice that replaced the lost one was not closed once")
 }
 
+func (s *AgentSuite) TestStoppingThePipelineWaitsForItsLostVoiceToClose() {
+	// A restart or a move onto speech-to-speech stops the pipeline without closing the agent.
+	s.replacement = newStubTTS(true)
+	s.writtenToSilentVoice()
+	closing, release := s.holdsClose(s.voice)
+	s.refusesVoice()
+	s.eventually(func() bool { return isClosed(closing) }, "the lost voice was never closed")
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the reply was not said again")
+
+	stopped := make(chan struct{})
+	go func() {
+		s.agent.stopPipeline(false)
+		close(stopped)
+	}()
+
+	s.never(func() bool { return isClosed(stopped) }, "the pipeline stopped while its lost voice was still closing")
+	release()
+	s.eventually(func() bool { return isClosed(stopped) }, "the pipeline never stopped")
+}
+
 func (s *AgentSuite) TestAVoiceNeverLostIsClosedOnlyWithTheAgent() {
 	s.replacement = newStubTTS(true)
 	turn := s.writtenToSilentVoice()
