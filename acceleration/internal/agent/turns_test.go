@@ -449,3 +449,19 @@ func (s *TurnRecorderSuite) TestAScheduledTurnIsNotAnsweredByALineSaidForIt() {
 	s.Equal("turn-scheduled", finished.TurnID, "the scheduled turn was held back for a line said for it")
 	s.Zero(finished.RoundtripMs, "the scheduled turn was timed to the update")
 }
+
+// Catches a native reply nobody's silence opened recorded as answering a caller turn that waits
+// for nothing: only one that handed work on and said nothing is owed it (AI-2969 R1.2).
+func (s *TurnRecorderSuite) TestANativeReplyAnswersOnlyACallerTurnOwedALine() {
+	tracker := newTurnTracker(routing.Owner{AgentID: "agent-1", CallID: "call-1"}, nil)
+	at := time.Now()
+	tracker.started("r1", kindCaller)
+	tracker.begin("r1", stt.Participant{ID: "alice"}, at, at, 0)
+
+	tracker.answering("r2", kindTool)
+	tracker.owes("r1")
+	tracker.answering("r3", kindTool)
+
+	s.Equal(origin{}, tracker.originOf("r2"), "a reply was recorded for a turn that waited for nothing")
+	s.Equal(origin{kind: kindTool, parent: "r1", pipeline: pipelineNative}, tracker.originOf("r3"))
+}

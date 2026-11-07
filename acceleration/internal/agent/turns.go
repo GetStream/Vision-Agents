@@ -256,6 +256,16 @@ func (t *turnTracker) scheduledTurn(turnID string) {
 	}
 }
 
+// answering records that a native reply of kind nobody's silence opened answers the latest
+// caller turn, when that turn still waits for a line said for it, and records nothing otherwise.
+func (t *turnTracker) answering(turnID, kind string) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if caller := t.open[t.caller]; caller != nil && caller.owed {
+		t.remember(turnID, origin{kind: kind, parent: t.caller, pipeline: pipelineNative})
+	}
+}
+
 // answersCaller says whether a turn of kind is a line said for the caller turn it follows: a hold
 // or update line while the work runs, or what a tool or the subagent came back with.
 func answersCaller(kind string) bool {

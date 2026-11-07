@@ -624,3 +624,82 @@ func (s *AgentSuite) TestAScheduledTaskAnsweredWithWordsIsNotObserved() {
 		s.Zero(series.count, leg)
 	}
 }
+
+// How far the work a native caller turn hands to the subagent has gone when its reply completes.
+const (
+	handOverRunning  = iota // the delegate_skill call has not returned
+	handOverReturned        // the call returned and the subagent is working
+	handOverFinished        // the subagent finished and its findings wait to be said
+)
+
+// delegatesInSilence has a native caller turn r1 hand work to the subagent, saying something
+// first when spoken is set, and has the reply r2 after the hand-over say a line.
+func (s *AgentSuite) delegatesInSilence(spoken bool, handOver int) []Event {
+	peer := s.joinNativeDelegating()
+	s.nativeFrame(peer, "session.update")
+	s.nativeSend(peer, `{"type":"input_audio_buffer.speech_started"}`)
+	s.heardSpeechStart()
+	s.stoppedSpeaking(peer)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r1"}}`)
+	if spoken {
+		s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r1","delta":"AQACAA=="}`)
+	}
+	s.nativeSend(peer, `{"type":"response.function_call_arguments.done","response_id":"r1","call_id":"call1","name":"delegate_skill","arguments":"{\"skill\":\"think\",\"prompt\":\"Work out the booking total\"}"}`)
+	if handOver != handOverRunning {
+		s.nativeFrame(peer, "conversation.item.create")
+		s.eventually(func() bool {
+			s.agent.mu.Lock()
+			defer s.agent.mu.Unlock()
+			return s.agent.pendingTools == 0
+		}, "the delegate_skill call never returned")
+	}
+	if handOver == handOverFinished {
+		s.eventually(func() bool { return len(s.subagent.requests()) == 1 }, "the subagent was never asked")
+		request := s.subagent.requests()[0]
+		s.subagent.writes(request.ID, "The total is 42 dollars.")
+		s.subagent.finishes(request.ID)
+		s.eventually(func() bool { return s.agent.harness.Pending() && !s.agent.harness.Delegating() }, "the findings never came back")
+	}
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r1","status":"completed"}}`)
+	s.nativeSend(peer, `{"type":"response.created","response":{"id":"r2"}}`)
+	s.nativeSend(peer, `{"type":"response.output_audio.delta","response_id":"r2","delta":"AQACAA=="}`)
+	s.nativeSend(peer, `{"type":"response.done","response":{"id":"r2","status":"completed"}}`)
+	s.eventually(func() bool { return countOf[Spoke](s.reported()) == 2 }, "both replies were never spoken")
+	s.eventually(func() bool { _, ok := turnFor(s.reported(), "r1"); return ok }, "the caller's turn was never reported")
+	return s.reported()
+}
+
+// Catches a native caller turn that handed work to the subagent without a word reported at once
+// with no wait, and the reply after the hand-over left without a turn to time, whether the
+// hand-over is still running, returned or finished when the turn's reply completes (AI-2969 R1.2).
+func (s *AgentSuite) TestANativeCallerTurnAnsweredThroughADelegateIsObservedAtTheReplyAfter() {
+	for name, handOver := range map[string]int{"running": handOverRunning, "returned": handOverReturned, "finished": handOverFinished} {
+		s.Run(name, func() {
+			before := turnLatencies(pipelineNative)
+
+			events := s.delegatesInSilence(false, handOver)
+
+			turn, _ := turnFor(events, "r1")
+			s.Positive(turn.RoundtripMs, "the caller's turn was never timed to the reply after the hand-over")
+			gained := observedSince(pipelineNative, before)
+			s.Equal(uint64(1), gained["roundtrip"].count)
+			s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+			_, measured := turnFor(events, "r2")
+			s.False(measured, "the reply after the hand-over answers nobody's silence of its own")
+		})
+	}
+}
+
+// Control: a native caller turn that said something before it handed work on is observed once,
+// at its own audio, as on the base.
+func (s *AgentSuite) TestANativeCallerTurnThatSpokeBeforeItDelegatedIsObservedOnceAtItsOwnAudio() {
+	before := turnLatencies(pipelineNative)
+
+	events := s.delegatesInSilence(true, handOverRunning)
+
+	turn, _ := turnFor(events, "r1")
+	s.Require().Positive(turn.RoundtripMs)
+	gained := observedSince(pipelineNative, before)
+	s.Equal(uint64(1), gained["roundtrip"].count)
+	s.InDelta(turn.RoundtripMs/1000, gained["roundtrip"].sum, 1e-9)
+}

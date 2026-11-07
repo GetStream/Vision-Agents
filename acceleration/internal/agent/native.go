@@ -595,6 +595,11 @@ func (a *Agent) replyStarted(started sts.ResponseStarted) {
 	if !waiting.IsZero() {
 		a.turns.started(started.ResponseID, kindCaller)
 		a.turns.begin(started.ResponseID, participant, waiting, waiting, 0)
+	} else {
+		// A reply nobody's silence opened, such as what a tool or the subagent came back with,
+		// ends the wait of a caller turn that said nothing and handed work on. The model does
+		// not say what opened it, so it is recorded as a tool's answer.
+		a.turns.answering(started.ResponseID, kindTool)
 	}
 	a.emitter.Send(Responding{TurnID: started.ResponseID, Participant: participant, Prompt: prompt})
 }
@@ -672,11 +677,17 @@ func (a *Agent) replyComplete(complete sts.ResponseComplete) {
 	}
 	exchange := lastExchange(a.history)
 	pending := a.pendingTools
+	current := a.harness
 	a.mu.Unlock()
 	a.settle()
 
 	// An interrupted reply was reported by receiveSTS, or by whoever abandoned it first.
 	if !complete.Interrupted {
+		// A reply that handed work on and said nothing leaves the caller waiting for the reply
+		// that delivers it.
+		if pending > 0 || current != nil && (current.Delegating() || current.Pending()) {
+			a.turns.owes(complete.ResponseID)
+		}
 		a.turns.completed(complete.ResponseID, 0, 1)
 		a.turns.spoke(complete.ResponseID, 0, complete.AudioDurationMs)
 		// Remembering happens off the turn path: extraction takes longer than a turn and
