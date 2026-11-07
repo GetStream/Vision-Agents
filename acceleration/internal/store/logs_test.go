@@ -114,17 +114,63 @@ func TestSafeLogTextKeepsTheRestOfTheURL(t *testing.T) {
 			t.Errorf("SafeLogText(%q) = %q, want %q", message, result, want)
 		}
 	}
-	// The answers base 6b9627f99 gives for them, the same as the input but for the last one,
-	// whose "bearer of" the bearer rule took before this change too.
+	// The answers base 6b9627f99 gives for them, the same as the input; the bearer rule takes no
+	// word after bearer, so the last one's "bearer of" stays too.
 	for message, want := range map[string]string{
 		`wss://stt.example/v1/listen?model=nova-3&keyterm=Stream&keyterms=Vision&keyterms_prompt=%5B%22Agents%22%5D&language_code=en`: `wss://stt.example/v1/listen?model=nova-3&keyterm=Stream&keyterms=Vision&keyterms_prompt=%5B%22Agents%22%5D&language_code=en`,
 		`wss://stt.example/v1/listen?monkey=banana&keys=3&tokens=12&token_type_hint=access_token&max_tokens=256`:                      `wss://stt.example/v1/listen?monkey=banana&keys=3&tokens=12&token_type_hint=access_token&max_tokens=256`,
 		`the key=value pair and token=12 in prose`:                                                        `the key=value pair and token=12 in prose`,
 		`Get "https://api.example/v1/models?page=2&limit=50": dial tcp: lookup api.example: no such host`: `Get "https://api.example/v1/models?page=2&limit=50": dial tcp: lookup api.example: no such host`,
-		`authorization%20failed for model gpt and the bearer of bad news`:                                 `authorization%20failed for model gpt and the [redacted] bad news`,
+		`authorization%20failed for model gpt and the bearer of bad news`:                                 `authorization%20failed for model gpt and the bearer of bad news`,
 	} {
 		if result := SafeLogText(message); result != want {
 			t.Errorf("SafeLogText(%q) = %q, want %q", message, result, want)
+		}
+	}
+}
+
+// Our own errors name a bearer token, a secret or a password in prose, and a WWW-Authenticate
+// challenge starts with Bearer and an auth-param (RFC 6750 section 3): with no credential in
+// them, they are kept byte for byte.
+func TestRedactLogTextKeepsProseAndChallenges(t *testing.T) {
+	for _, text := range []string{
+		"bearer: the credential is not a bearer credential",
+		"sandbox: the connection's scheme sends no bearer token",
+		"auth: open secret: cipher: message authentication failed",
+		"phone: open sip trunk password: cipher: message authentication failed",
+		"store: rotate guest secret: context canceled",
+		"apikey: the key is required",
+		"needs_reauthorization: the provider no longer takes the credential",
+		"usage: USAGE_INGEST_TOKEN is required: the bearer token producers and routers call with",
+		"a Bearer Token. And a bearer or api_key connection",
+		`Bearer error="insufficient_scope", scope="files:read files:write"`,
+		`Bearer realm="", authorization_uri="https://x"`,
+		`Bearer resource_metadata="https://resource.example.com/.well-known/oauth-protected-resource"`,
+	} {
+		if result := RedactLogText(text); result != text {
+			t.Errorf("RedactLogText(%q) = %q, want it unchanged", text, result)
+		}
+	}
+}
+
+// A value that is not a word is a credential, after a word the rule passed over too.
+func TestRedactLogTextTakesAValueThatIsNotAWord(t *testing.T) {
+	secret := rand.Text()
+	for text, want := range map[string]string{
+		"Authorization: Bearer sk-test-" + secret:             "[redacted]",
+		"sent Bearer " + secret + " and failed":               "sent [redacted] and failed",
+		"sent bearer " + strings.ToLower(secret) + "0 failed": "sent [redacted] failed",
+		"https://auth.example/token?client_secret=" + secret:  "https://auth.example/token?client_[redacted]",
+		`{"password":"` + secret + `"}`:                       `{"[redacted]}`,
+		`{"password":"word"}`:                                 `{"[redacted]}`,
+		"password: hunter2 rejected":                          "[redacted] rejected",
+		"secret: password: " + secret:                         "secret: [redacted]",
+		"bearer of Bearer " + secret:                          "bearer of [redacted]",
+		"Bearer private-token":                                "[redacted]",
+		`Bearer error="invalid_token", Bearer ` + secret:      `Bearer error="invalid_token", [redacted]`,
+	} {
+		if result := RedactLogText(text); result != want {
+			t.Errorf("RedactLogText(%q) = %q, want %q", text, result, want)
 		}
 	}
 }

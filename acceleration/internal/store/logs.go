@@ -64,8 +64,18 @@ type LogFilter struct {
 	Forward                                                   bool
 }
 
-var bearerCredential = regexp.MustCompile(`(?i)\bbearer\s+[^\s"\x27,;}]+`)
-var credentialText = regexp.MustCompile(`(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization|cookie)["\x27]?\s*[=:]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|[^\s,;}]+)`)
+// bearerCredential and credentialText take their unquoted value only when it is not a word
+// (see redactUnlessWord): the prose of our own errors and a WWW-Authenticate challenge put a
+// word or an auth-param name there, as in "a bearer token", "open secret: cipher: ..." or
+// `Bearer error="insufficient_scope"` (RFC 6750 section 3).
+var bearerCredential = regexp.MustCompile(`(?i)\bbearer\s+([^\s"\x27,;}]+)`)
+var credentialText = regexp.MustCompile(`(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization|cookie)["\x27]?\s*[=:]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|([^\s,;}]+))`)
+
+// word is a value that reads as prose rather than a credential: letters, lower case after the
+// first, with underscores, as an auth-param name has, and the punctuation that ends a clause or
+// an auth-param name after it. A key or token has a digit, a capital past its first letter or
+// another symbol in it.
+var word = regexp.MustCompile(`^[A-Za-z][a-z_]*[=.:!?)]*$`)
 var authorizationHeader = regexp.MustCompile(`(?im)\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+`)
 var urlCredential = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@`)
 var providerCredential = regexp.MustCompile(`\bsk-[a-zA-Z0-9_-]{8,}`)
@@ -105,15 +115,46 @@ func SafeLogText(text string) string {
 // that must send the whole text, such as a refusal naming what the caller sent, or a log line,
 // which has no cap (RedactLogAttr), uses this; everything stored uses SafeLogText.
 func RedactLogText(text string) string {
-	text = bearerCredential.ReplaceAllString(text, "[redacted]")
+	text = redactUnlessWord(bearerCredential, text)
 	text = authorizationHeader.ReplaceAllString(text, "[redacted]")
-	text = credentialText.ReplaceAllString(text, "[redacted]")
+	text = redactUnlessWord(credentialText, text)
 	text = urlCredential.ReplaceAllString(text, "${1}[redacted]@")
 	text = queryCredential.ReplaceAllString(text, "${1}[redacted]")
 	text = encodedAuthorization.ReplaceAllString(text, "[redacted]")
 	text = encodedBearer.ReplaceAllString(text, "[redacted]")
 	text = providerCredential.ReplaceAllString(text, "[redacted]")
 	return text
+}
+
+// redactUnlessWord replaces each match of rule with [redacted], but for one whose unquoted
+// value, the rule's first group, is a word. The search goes on from that word, which can be
+// the name before a credential: "secret: password: <key>".
+func redactUnlessWord(rule *regexp.Regexp, text string) string {
+	var out strings.Builder
+	last, from := 0, 0
+	for from < len(text) {
+		match := rule.FindStringSubmatchIndex(text[from:])
+		if match == nil {
+			break
+		}
+		for i := range match {
+			if match[i] >= 0 {
+				match[i] += from
+			}
+		}
+		if match[2] >= 0 && word.MatchString(text[match[2]:match[3]]) {
+			from = match[2]
+			continue
+		}
+		out.WriteString(text[last:match[0]])
+		out.WriteString("[redacted]")
+		last, from = match[1], match[1]
+	}
+	if last == 0 {
+		return text
+	}
+	out.WriteString(text[last:])
+	return out.String()
 }
 
 // RedactLogAttr is a slog ReplaceAttr that puts every logged string, the message included, and
