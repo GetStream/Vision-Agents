@@ -244,6 +244,15 @@ func TestRedactLogAttrTakesTheKeyOutOfAGroup(t *testing.T) {
 	}
 }
 
+// An alert logs its details as a map, which can hold an error's text.
+func TestRedactLogAttrTakesTheKeyOutOfAMapOfDetails(t *testing.T) {
+	err, key := echoedKey()
+	line := logged(t, true, "usage alert", "extra", map[string]any{"listing": err.Error()})
+	if strings.Contains(line, key) || !strings.Contains(line, "listing:502 Bad Gateway") {
+		t.Fatalf("the details kept the key or lost the error: %s", line)
+	}
+}
+
 // The text handler prints an error as %+v, which for a stack.Wrap error is the error and its
 // stack; the redacted error keeps the stack.
 func TestRedactLogAttrKeepsTheStackOfAnErrorItRedacts(t *testing.T) {
@@ -262,6 +271,8 @@ func TestRedactLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
 		"reason", "perplexity: PERPLEXITY_API_KEY is required",
 		"tokens", 42,
 		"took", 1500 * time.Millisecond,
+		"extra", map[string]any{"day": "2026-11-06", "rows": 3},
+		"payload", []byte(`{"type":"ping"}`),
 	}
 	want := logged(t, false, "agent failure", args...)
 	if got := logged(t, true, "agent failure", args...); got != want {

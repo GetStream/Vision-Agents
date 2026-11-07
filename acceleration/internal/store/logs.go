@@ -116,18 +116,18 @@ func RedactLogText(text string) string {
 	return text
 }
 
-// RedactLogAttr is a slog ReplaceAttr that puts every logged error and string, the message
-// included, through RedactLogText, since a provider's error can echo the key it was sent. An
-// error is read as %+v, which is how slog's text handler prints one (with its stack, see
-// internal/stack). An attribute with nothing to redact is returned as is, so its line does
-// not change.
+// RedactLogAttr is a slog ReplaceAttr that puts every logged string, the message included, and
+// every error or other value through RedactLogText, since a provider's error can echo the key
+// it was sent. A value is read as %+v, which is how slog's text handler prints an error (with
+// its stack, see internal/stack) or a map of details. An attribute with nothing to redact is
+// returned as is, so its line does not change.
 func RedactLogAttr(_ []string, attr slog.Attr) slog.Attr {
 	var text string
-	switch value := attr.Value.Any().(type) {
-	case string:
-		text = value
-	case error:
-		text = fmt.Sprintf("%+v", value)
+	switch attr.Value.Kind() {
+	case slog.KindString:
+		text = attr.Value.String()
+	case slog.KindAny:
+		text = fmt.Sprintf("%+v", attr.Value.Any())
 	default:
 		return attr
 	}
