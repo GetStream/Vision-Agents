@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -362,6 +363,13 @@ func (s *TextSuite) TestAToolsErrorIsKeptWithoutTheKeyItEchoed() {
 func (s *TextSuite) TestAToolsErrorWithNoKeyInItIsKeptAsItWas() {
 	used := s.failedOrder("kitchen: the oven is off")
 	s.Equal("kitchen: the oven is off", used.Error)
+}
+
+// A tool's error is cut as the requests table cuts an error, so one that fills a transcript
+// does not.
+func (s *TextSuite) TestAToolsErrorIsCutAsTheRequestsTableCutsIt() {
+	used := s.failedOrder(strings.Repeat("x", 9000))
+	s.Equal(strings.Repeat("x", 2048)+"… [truncated]", used.Error)
 }
 
 // failedOrder is the tool the transcript keeps when the model orders a pizza and the kitchen
