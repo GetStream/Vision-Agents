@@ -1076,8 +1076,9 @@ func (l smallBufferListener) Accept() (net.Conn, error) {
 
 // blindTunnel opens a tunnel to an allowed domain on a proxy whose idle timeout is idle, to a host
 // that is a bare listener: the sandbox's end and the host's. Every socket on the way has
-// smallBuffers.
-func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
+// smallBuffers. asked is the time just before the CONNECT is written, the earliest the proxy can
+// start its idle timer: a wait measured from it cannot run short on a correct proxy.
+func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn, asked time.Time) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = listener.Close() })
@@ -1110,6 +1111,7 @@ func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
 	s.Require().NoError(err)
 	s.T().Cleanup(func() { _ = sandbox.Close() })
 	s.Require().NoError(smallBuffers(sandbox))
+	asked = time.Now()
 	_, err = fmt.Fprintf(sandbox, "CONNECT outside.test:443 HTTP/1.1\r\nHost: outside.test:443\r\nProxy-Authorization: %s\r\n\r\n",
 		basic("sbx", s.credential))
 	s.Require().NoError(err)
@@ -1120,7 +1122,7 @@ func (s *ProxySuite) blindTunnel(idle time.Duration) (sandbox, host net.Conn) {
 	s.Require().NotNil(host)
 	s.T().Cleanup(func() { _ = host.Close() })
 	s.Require().NoError(smallBuffers(host))
-	return sandbox, host
+	return sandbox, host, asked
 }
 
 // closedWithin is the time conn took to end, the connection closed by its peer and not a read
@@ -1139,11 +1141,10 @@ func (s *ProxySuite) closedWithin(conn net.Conn, since time.Time) time.Duration 
 // and both ends are closed, not before the idle timeout.
 func (s *ProxySuite) TestATunnelToAnAllowedDomainThatCarriesNothingIsClosedAtTheIdleTimeout() {
 	const idle = 300 * time.Millisecond
-	sandbox, host := s.blindTunnel(idle)
-	opened := time.Now()
+	sandbox, host, asked := s.blindTunnel(idle)
 
-	sandboxEnd := s.closedWithin(sandbox, opened)
-	hostEnd := s.closedWithin(host, opened)
+	sandboxEnd := s.closedWithin(sandbox, asked)
+	hostEnd := s.closedWithin(host, asked)
 
 	s.GreaterOrEqual(sandboxEnd, idle)
 	s.GreaterOrEqual(hostEnd, idle)
@@ -1160,7 +1161,7 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainThatKeepsCarryingBytesStaysOpen
 		sandboxSends, hostSends bool
 	}{{"the sandbox sends", true, false}, {"the host sends", false, true}, {"both send", true, true}} {
 		s.Run(direction.name, func() {
-			sandbox, host := s.blindTunnel(idle)
+			sandbox, host, _ := s.blindTunnel(idle)
 			var sent, received atomic.Int64
 			var drained sync.WaitGroup
 			drain := func(conn net.Conn) {
@@ -1268,7 +1269,7 @@ func (s *ProxySuite) TestATunnelToAnAllowedDomainWhoseEndReadsNothingIsClosedAtT
 	}{{"the host reads nothing", true, false}, {"the sandbox reads nothing", false, true}, {"neither reads", true, true}} {
 		s.Run(stalled.name, func() {
 			before := s.tunnelsOpen()
-			sandbox, host := s.blindTunnel(idle)
+			sandbox, host, _ := s.blindTunnel(idle)
 			s.Require().Eventually(func() bool { return s.metric("router_sandbox_egress_tunnels_open", nil) == before+1 },
 				// Chosen, not measured: a bound only (Eventually returns when the gauge moves); a tunnel opens
 				// in milliseconds, 5 s covers a loaded machine.
