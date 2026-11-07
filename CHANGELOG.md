@@ -456,6 +456,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### After a voice failover the kept reply no longer waits for the lost voice to close
+
+A reply or check-in kept for the voice that replaces a lost one goes to that voice as soon as it is open. Before, it waited for the lost voice to close first, up to 2 s for ElevenLabs. The agent still waits for that close when it stops (AI-2974).
+
 ### A caller turn answered through the subagent or a tool counts in the turn latency
 
 A caller turn whose reply said nothing and handed the work to the subagent or a tool is timed to the first audio of the first line said for it: a hold or update line while the work runs, or the answer it came back with. `router_agent_turn_latency_seconds` observes it once, and its `SpeechEndToAudioMs` in the session's turn events shows the same wait; before, both left the slowest turns out. A filler in the turn's own reply still ends the wait, so the answer after it adds nothing. A turn a scheduled task or a reminder fires into the call is no longer observed, since nobody in the call waited on it; its turn event keeps its timings (AI-2969).

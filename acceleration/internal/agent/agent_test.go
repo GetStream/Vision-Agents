@@ -569,9 +569,10 @@ type stubTTS struct {
 	// synthesisRelease.
 	synthesizing     chan struct{}
 	synthesisRelease <-chan struct{}
-	// closing, if set, is closed when Close is entered, which then waits for closeRelease,
-	// the way ElevenLabs waits for its server to close the socket. closes counts the Closes
-	// that returned.
+	// closing, if set, is closed when Close is entered, which then ends the voice's events
+	// and waits for closeRelease, the way ElevenLabs waits for its server to close the socket.
+	// Its events ended, nothing reading them holds the agent's Close: only the close does.
+	// closes counts the Closes that returned.
 	closing      chan struct{}
 	closeRelease <-chan struct{}
 	closes       int
@@ -686,6 +687,7 @@ func (s *stubTTS) Close() error {
 	s.closing = nil
 	s.mu.Unlock()
 	if closing != nil {
+		s.emitter.Close()
 		close(closing)
 		<-release
 	}
