@@ -461,6 +461,10 @@ A caller turn whose reply said nothing and handed the work to the subagent or a 
 
 When a voice fails before any of a finished reply's audio went out (staging: ElevenLabs refusing the agent's voice on its first word), the voice that replaces it says the reply, and the turn is not abandoned. Before, the reply was dropped (`cause=voice_lost`, `turn_abandoned=true`) and the caller heard nothing. A greeting or a check-in none of which was heard is said the same way, and so is what the lost voice had of a reply the model is still writing. What the model writes while the next voice opens is said by that voice after it; before, it went to the lost voice and was never heard. A reply or line partly heard, and one with no voice left to say it, are still cut off as before (AI-2970).
 
+### A check-in the voice lost before any of it was heard is said in the next voice
+
+An agent not acting on chorus-asr says its check-ins and updates as murmurs, and a lost voice let go of every murmur, so such a line refused on its first word was dropped and the caller heard nothing until the next check-in (staging: 2.8 s later). It is now said once in the voice that replaces the lost one, under its own id, as a greeting is; one partly heard is reported cut off. A murmur ("mhm") is still never said again (AI-2973).
+
 ### A call refused because the app has no Stream Video is the customer's setup, not the router's fault
 
 A voice session whose call Stream refuses with `video is not enabled for your account` or `video is not enabled on this server` (code 17) now counts in `router_session_ends_total` as `create_no_video`, fault `customer_config`, stage `starting`, where it counted as `create_failed`, fault `router`. A create refused because the customer's own Stream app has no agent call type counts as `create_no_call_type`, and one refused because it has no agent channel type, or one clients may rewrite, as `create_no_channel_type`, both fault `customer_config`, stage `starting`; they were not counted at all. Every other join refusal still counts as `create_failed`, and the 400 answers are unchanged (AI-2949).
