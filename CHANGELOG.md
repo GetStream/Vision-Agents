@@ -455,7 +455,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### The router's log no longer prints a key a provider echoed in its error
 
-Every value the router and the agent binary log, the message included, goes through the redactor the requests table uses, uncapped: a provider error that echoes `Authorization: Bearer <key>`, such as in the `agent failure` and `could not review the call` lines, keeps its text with the key shown as `[redacted]`. A line with nothing to redact is unchanged (AI-2966).
+Every value the router and the agent binary log, the message included, goes through the redactor the requests table uses, uncapped: a provider error that echoes `Authorization: Bearer <key>`, such as in the `agent failure` and `could not review the call` lines, keeps its text with the key shown as `[redacted]`. A line with nothing to redact is unchanged (AI-2966, #1838).
 
 ### A provider key in a URL is redacted from stored failures and stream socket errors
 
