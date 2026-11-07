@@ -159,21 +159,22 @@ func TestTheRoutersSentryEventsKeepAProvidersReasonAndNotTheKeyItEchoed(t *testi
 	require.Equal(t, reason, sent[0].Breadcrumbs[0].Message)
 }
 
-// The logger main builds takes a key out of a startup failure: a ROUTER_ENV that names one is
-// refused, and the refusal is logged without it.
+// The logger main builds takes a key out of a startup failure: a config path that names one is
+// unreadable, and the failure is logged without it. A path, not ROUTER_ENV: the integration
+// build's testenv resets ROUTER_ENV in the child.
 func TestTheRouterBinaryLogsAStartupFailureWithoutTheKeyInIt(t *testing.T) {
-	if os.Getenv("ROUTER_MAIN_TEST") == "1" {
-		os.Args = []string{"router"}
+	if path := os.Getenv("ROUTER_MAIN_TEST_CONFIG"); path != "" {
+		os.Args = []string{"router", "--config", path}
 		main()
 		return
 	}
 	key := rand.Text()
 	command := exec.Command(os.Args[0], "-test.run=^TestTheRouterBinaryLogsAStartupFailureWithoutTheKeyInIt$")
-	command.Env = append(os.Environ(), "ROUTER_MAIN_TEST=1", "ROUTER_ENV=Bearer sk-test-"+key)
+	command.Env = append(os.Environ(), "ROUTER_MAIN_TEST_CONFIG=/missing/Bearer sk-test-"+key)
 	var stderr bytes.Buffer
 	command.Stderr = &stderr
-	require.Error(t, command.Run(), "the router started with an unknown ROUTER_ENV")
+	require.Error(t, command.Run(), "the router started with a config it cannot read")
 
 	require.NotContains(t, stderr.String(), key)
-	require.Contains(t, stderr.String(), `msg="router stopped" error="config: unknown ROUTER_ENV \"[redacted]\"`)
+	require.Contains(t, stderr.String(), `msg="router stopped" error="config: read /missing/[redacted] open /missing/[redacted]`)
 }
