@@ -116,6 +116,42 @@ func SafeLogText(text string) string {
 // that must send the whole text, such as a refusal naming what the caller sent, or a log line,
 // which has no cap (RedactLogAttr), uses this; everything stored uses SafeLogText.
 func RedactLogText(text string) string {
+	if !mayHoldCredential(text) {
+		return text
+	}
+	return redactCredentials(text)
+}
+
+// credentialWords are the words every rule in redactCredentials needs, in any case: bearer
+// (bearerCredential, encodedBearer), authorization and cookie (authorizationHeader,
+// encodedAuthorization), key and token (queryCredential, and api_key, access_token or
+// refresh_token in credentialText), password and secret (credentialText), the @ of
+// urlCredential and the sk- of providerCredential.
+var credentialWords = []string{"bearer", "authorization", "cookie", "key", "token", "password", "secret", "@", "sk-"}
+
+// mayHoldCredential is false for a text no rule can match, which is most of what is logged,
+// so it skips the regular expressions. The rules fold case as Unicode does, where K is also
+// the Kelvin sign and s the long s, so a text with either is checked in full.
+func mayHoldCredential(text string) bool {
+	if strings.ContainsRune(text, '\u212a') || strings.ContainsRune(text, '\u017f') {
+		return true
+	}
+	for i := 0; i < len(text); i++ {
+		c := text[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		for _, w := range credentialWords {
+			if c == w[0] && len(text)-i >= len(w) && strings.EqualFold(text[i:i+len(w)], w) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// redactCredentials is RedactLogText with no check first.
+func redactCredentials(text string) string {
 	text = redactUnlessWord(bearerCredential, text)
 	text = authorizationHeader.ReplaceAllString(text, "[redacted]")
 	text = redactUnlessWord(credentialText, text)

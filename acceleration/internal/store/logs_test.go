@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -175,6 +176,42 @@ func TestRedactLogTextTakesAValueThatIsNotAWord(t *testing.T) {
 		if result := RedactLogText(text); result != want {
 			t.Errorf("RedactLogText(%q) = %q, want %q", text, result, want)
 		}
+	}
+}
+
+// mayHoldCredential lets through every text a rule redacts: one row per rule and per word it
+// needs, in any case, with the Kelvin sign and the long s the rules fold to k and s.
+func TestEveryTextARuleRedactsPassesTheCheck(t *testing.T) {
+	secret := rand.Text()
+	for _, text := range []string{
+		"sent BEARER " + secret,
+		"h=bearer%20" + secret,
+		"Proxy-Authorization: Basic " + secret,
+		"Set-Cookie: session=" + secret,
+		"h=Authorization%3A%20Basic%20" + secret,
+		"h=COOKIE%3D" + secret,
+		"x_api_key=" + secret,
+		"ApiKey: " + secret,
+		"refresh-token=" + secret,
+		"ACCESS_TOKEN=" + secret,
+		"client_SECRET=" + secret,
+		`{"Password":"` + secret + `"}`,
+		"wss://live.example/ws?KEY=" + secret,
+		"https://ipinfo.io/json?Token=" + secret,
+		"https://user:" + secret + "@example.com",
+		"used sk-" + secret,
+		"https://ipinfo.io/json?to\u212aen=" + secret,
+		"pa\u017f\u017fword=" + secret,
+	} {
+		if redactCredentials(text) == text {
+			t.Errorf("no rule redacts %q: the row tests nothing", text)
+		}
+		if !mayHoldCredential(text) {
+			t.Errorf("the check skips %q, which a rule redacts", text)
+		}
+	}
+	if mayHoldCredential(`llmrouter: post "https://api.example.com/v1/chat/completions": context deadline exceeded`) {
+		t.Error("the check lets a line with none of the words through")
 	}
 }
 
@@ -348,5 +385,32 @@ func TestRedactLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
 	want := logged(t, false, "agent failure", args...)
 	if got := logged(t, true, "agent failure", args...); got != want {
 		t.Fatalf("the line changed:\n got %s\nwant %s", got, want)
+	}
+}
+
+// BenchmarkLogLine is the cost of RedactLogAttr on a router line with no key in it, typical and
+// with a 4 KB error, against the same handler with no ReplaceAttr, which is what the router
+// logged with before it.
+func BenchmarkLogLine(b *testing.B) {
+	typical := errors.New(`llmrouter: post "https://api.example.com/v1/chat/completions": context deadline exceeded`)
+	long := errors.New(strings.Repeat("upstream said the model is overloaded, retry later; ", 80))
+	for _, run := range []struct {
+		name    string
+		replace func([]string, slog.Attr) slog.Attr
+		err     error
+	}{
+		{"typical/plain", nil, typical},
+		{"typical/redacted", RedactLogAttr, typical},
+		{"long/plain", nil, long},
+		{"long/redacted", RedactLogAttr, long},
+	} {
+		b.Run(run.name, func(b *testing.B) {
+			logger := slog.New(slog.NewTextHandler(io.Discard, &slog.HandlerOptions{ReplaceAttr: run.replace}))
+			b.ReportAllocs()
+			for b.Loop() {
+				logger.Info("served a request", "request_id", "01HZX3Q9V8M2", "model", "openai/gpt-4o-mini",
+					"status", 200, "duration", 312*time.Millisecond, "error", run.err)
+			}
+		})
 	}
 }
