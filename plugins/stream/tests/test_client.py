@@ -680,7 +680,7 @@ class TestSessions:
     @pytest.mark.parametrize(
         "end_reason, state",
         [
-            ("closed", "paused"),
+            ("reason_from_a_newer_router", "paused"),
             ("VOICEMAIL", "Ended"),
             ("", "live "),
         ],
@@ -709,14 +709,17 @@ class TestSessions:
         self, api: stream.Client, router: Router
     ):
         router.sessions = [
-            {**router._session("session-1"), "end_reason": "model_failed"},
+            {
+                **router._session("session-1"),
+                "end_reason": "reason_from_a_newer_router",
+            },
             {**router._session("session-2"), "end_reason": "hangup"},
         ]
 
         page = await api.agent("docs").sessions.query()
 
         assert [str(session.end_reason) for session in page.items] == [
-            "model_failed",
+            "reason_from_a_newer_router",
             "hangup",
         ]
 
@@ -751,9 +754,17 @@ class TestSessions:
             "mode": "native",
         }
         with pytest.raises(ValueError):
-            reasons("closed")
+            reasons("reason_from_a_newer_router")
 
-    @pytest.mark.parametrize("end_reason", [5, None, {"value": "closed"}, ["closed"]])
+    @pytest.mark.parametrize(
+        "end_reason",
+        [
+            5,
+            None,
+            {"value": "reason_from_a_newer_router"},
+            ["reason_from_a_newer_router"],
+        ],
+    )
     async def test_a_reason_that_is_not_a_string_is_still_refused(
         self, api: stream.Client, router: Router, end_reason: Any
     ):

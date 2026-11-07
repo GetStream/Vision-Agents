@@ -446,6 +446,30 @@ func (s *BandwidthSuite) TestEachFinalStatusIsAnOutcome() {
 	}
 }
 
+// bandwidthRejected is a disconnect of a rejected outbound call, with the fields Bandwidth
+// documents (https://dev.bandwidth.com/docs/voice/webhooks/disconnect) and sipResponseCode as given.
+func bandwidthRejected(sipResponseCode string) []byte {
+	return []byte(`{"eventType":"disconnect","eventTime":"2026-03-01T10:00:05.000Z","direction":"outbound",` +
+		`"callId":"c-1","startTime":"2026-03-01T10:00:00.000Z","endTime":"2026-03-01T10:00:05.000Z",` +
+		`"cause":"busy","sipStatusLine":"SIP/2.0 486 Busy Here",` +
+		`"sipResponseCode":` + sipResponseCode + `}`)
+}
+
+func (s *BandwidthSuite) TestARejectionCarriesItsSIPCode() {
+	status, err := s.provider.ReadStatus("application/json", bandwidthRejected("486"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "busy", SIPCode: 486}, status)
+}
+
+func (s *BandwidthSuite) TestASIPCodeThatIsNoNumberLeavesTheStatusAsItIs() {
+	for _, odd := range []string{`{"code":486}`, `"busy"`, `null`} {
+		status, err := s.provider.ReadStatus("application/json", bandwidthRejected(odd))
+		s.Require().NoError(err, odd)
+		s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "busy"}, status, odd)
+	}
+}
+
 func (s *BandwidthSuite) TestAProgressReportDecidesNothing() {
 	status, err := s.provider.ReadStatus("application/json", []byte(`{"eventType":"answer","callId":"c-1"}`))
 	s.Require().NoError(err)

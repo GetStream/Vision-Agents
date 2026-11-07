@@ -364,7 +364,45 @@ func (s *VonageSuite) TestAProgressReportDecidesNothing() {
 	status, err := s.provider.ReadStatus("application/json", []byte(`{"uuid":"call-9","status":"ringing"}`))
 	s.Require().NoError(err)
 
-	s.Equal(phone.CallStatus{Word: "ringing"}, status)
+	s.Equal(phone.CallStatus{Word: "ringing", Ringing: true}, status)
+}
+
+// vonageRejected is a rejected event as Vonage's webhook reference lists its fields
+// (https://developer.vonage.com/en/voice/voice-api/webhook-reference), with sip_code as given.
+func vonageRejected(sipCode string) []byte {
+	return []byte(`{"uuid":"aaaaaaaa-bbbb-cccc-dddd-0123456789ab","conversation_uuid":"CON-aaaaaaaa-bbbb-cccc-dddd-0123456789ab",` +
+		`"status":"rejected","detail":"invalid_number","direction":"outbound","timestamp":"2026-03-01T10:00:00.000Z",` +
+		`"sip_code":` + sipCode + `}`)
+}
+
+func (s *VonageSuite) TestOnlyRingingMarksThePhoneRinging() {
+	for _, word := range []string{"started", "answered", "busy", "completed", "failed", "unanswered"} {
+		status, err := s.provider.ReadStatus("application/json", []byte(`{"uuid":"call-9","status":"`+word+`"}`))
+		s.Require().NoError(err)
+		s.False(status.Ringing, word)
+	}
+}
+
+func (s *VonageSuite) TestARejectionCarriesItsSIPCode() {
+	status, err := s.provider.ReadStatus("application/json", vonageRejected("404"))
+	s.Require().NoError(err)
+
+	s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "rejected", SIPCode: 404}, status)
+}
+
+func (s *VonageSuite) TestASIPCodeSentAsAStringIsRead() {
+	status, err := s.provider.ReadStatus("application/json", vonageRejected(`"480"`))
+	s.Require().NoError(err)
+
+	s.Equal(480, status.SIPCode)
+}
+
+func (s *VonageSuite) TestASIPCodeThatIsNoNumberLeavesTheStatusAsItIs() {
+	for _, odd := range []string{`{"code":404}`, `"busy"`, `404.5`, `null`} {
+		status, err := s.provider.ReadStatus("application/json", vonageRejected(odd))
+		s.Require().NoError(err, odd)
+		s.Equal(phone.CallStatus{Result: phone.CallBusy, Word: "rejected"}, status, odd)
+	}
 }
 
 func (s *VonageSuite) TestAStatusItCannotReadIsRefused() {

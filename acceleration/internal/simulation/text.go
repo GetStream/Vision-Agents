@@ -193,7 +193,7 @@ func (w *written) acted() []store.SimulationTool {
 func ran(event agent.ToolRan) store.SimulationTool {
 	used := store.SimulationTool{Name: event.Tool, Arguments: event.Arguments, Result: event.Result}
 	if event.Err != nil {
-		used.Error = event.Err.Error()
+		used.Error = store.SafeLogText(event.Err.Error())
 	}
 	return used
 }

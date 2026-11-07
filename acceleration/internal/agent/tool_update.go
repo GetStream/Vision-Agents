@@ -102,7 +102,7 @@ func (a *Agent) sayToolUpdate() {
 		}()
 		line, err := a.compose(ctx, fmt.Sprintf(statusPurpose, update.text))
 		if err != nil {
-			a.logger.Warn("could not write a tool's status to say", "error", err)
+			a.logger.Warn("could not write a tool's status to say", append(a.replyModel(), "error", err)...)
 			return
 		}
 		a.mu.Lock()

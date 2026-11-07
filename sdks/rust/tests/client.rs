@@ -491,7 +491,11 @@ fn session_with(fields: serde_json::Value) -> serde_json::Value {
 async fn a_value_this_sdk_does_not_list_reads_as_it_was_sent() {
     // A newer router can end a session for a reason this SDK was not built with. Close
     // spellings of a listed value are not folded into it.
-    for (reason, state) in [("closed", "paused"), ("VOICEMAIL", "Ended"), ("", "live ")] {
+    for (reason, state) in [
+        ("reason_from_a_newer_router", "paused"),
+        ("VOICEMAIL", "Ended"),
+        ("", "live "),
+    ] {
         let server = Server::start().await;
         let answer = session_with(json!({"end_reason": reason, "state": state}));
         server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);
@@ -526,7 +530,7 @@ async fn a_page_of_sessions_reads_a_value_this_sdk_does_not_list() {
         Method::POST,
         "/v1/agents/sessions/query",
         200,
-        json!({"items": [session_with(json!({"end_reason": "model_failed"})),
+        json!({"items": [session_with(json!({"end_reason": "reason_from_a_newer_router"})),
                          session_with(json!({"end_reason": "hangup"}))],
                "has_more": false}),
     );
@@ -547,7 +551,9 @@ async fn a_page_of_sessions_reads_a_value_this_sdk_does_not_list() {
     assert_eq!(
         reasons,
         [
-            Some(types::SessionEndReason::Unlisted("model_failed".into())),
+            Some(types::SessionEndReason::Unlisted(
+                "reason_from_a_newer_router".into()
+            )),
             Some(types::SessionEndReason::Hangup)
         ]
     );
@@ -580,8 +586,12 @@ async fn a_listed_value_reads_as_its_variant_and_is_written_back_unchanged() {
 
 #[tokio::test]
 async fn a_value_a_caller_parses_is_still_one_the_spec_lists() {
-    assert!("closed".parse::<types::SessionEndReason>().is_err());
-    assert!(types::SessionEndReason::try_from("closed").is_err());
+    assert!(
+        "reason_from_a_newer_router"
+            .parse::<types::SessionEndReason>()
+            .is_err()
+    );
+    assert!(types::SessionEndReason::try_from("reason_from_a_newer_router").is_err());
     assert!(types::SessionState::try_from("paused".to_string()).is_err());
     assert_eq!(
         "voicemail".parse::<types::SessionEndReason>().unwrap(),
@@ -591,7 +601,11 @@ async fn a_value_a_caller_parses_is_still_one_the_spec_lists() {
 
 #[tokio::test]
 async fn a_reason_that_is_not_a_string_is_still_a_decode_error() {
-    for reason in [json!(5), json!({"value": "closed"}), json!(["closed"])] {
+    for reason in [
+        json!(5),
+        json!({"value": "reason_from_a_newer_router"}),
+        json!(["reason_from_a_newer_router"]),
+    ] {
         let server = Server::start().await;
         let answer = session_with(json!({"end_reason": reason}));
         server.route(Method::GET, "/v1/agents/sessions/s1", 200, answer);

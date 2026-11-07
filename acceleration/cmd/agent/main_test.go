@@ -3,14 +3,19 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"errors"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"os/exec"
 	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/require"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sttrouter"
 )
@@ -68,4 +73,54 @@ func TestTheAgentsFloorControlIsItsOwn(t *testing.T) {
 		_, err = floorControlOf(named, nil)
 		require.ErrorContains(t, err, "stream/chorus-asr, or empty")
 	}
+}
+
+// A provider that echoes the request's headers in its error puts the key the agent sent into the
+// failure; the agent's log keeps the provider's reason and not the key, and still logs at its level.
+func TestTheAgentsLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	var out bytes.Buffer
+	logger := newLogger(&out, slog.LevelWarn)
+	logger.Info("below the level")
+	logger.Error("agent failure", "error", errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n"+
+		"request headers: Authorization: Bearer sk-test-"+key))
+
+	require.NotContains(t, out.String(), key)
+	require.NotContains(t, out.String(), "below the level")
+	require.Contains(t, out.String(), `msg="agent failure" error="502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"`)
+}
+
+// The logger main builds takes a key out of a failure: a -floor-control that names one is
+// refused, and the refusal is logged without it.
+func TestTheAgentBinaryLogsAFailureWithoutTheKeyInIt(t *testing.T) {
+	if value := os.Getenv("AGENT_MAIN_TEST_FLOOR_CONTROL"); value != "" {
+		os.Args = []string{"agent", "-call", "c1", "-demo=false", "-floor-control", value}
+		main()
+		return
+	}
+	key := rand.Text()
+	command := exec.Command(os.Args[0], "-test.run=^TestTheAgentBinaryLogsAFailureWithoutTheKeyInIt$")
+	command.Env = append(os.Environ(), "AGENT_MAIN_TEST_FLOOR_CONTROL=Bearer sk-test-"+key)
+	var stderr bytes.Buffer
+	command.Stderr = &stderr
+	require.Error(t, command.Run(), "the agent took a -floor-control it does not know")
+
+	require.NotContains(t, stderr.String(), key)
+	require.Contains(t, stderr.String(), `msg="agent stopped" error="-floor-control is stream/chorus-asr, or empty for the default flow controller, got \"[redacted]\""`)
+}
+
+// A provider that echoes the request's headers puts the key into the failure the agent
+// reports; what it prints keeps the reason and not the key.
+func TestTheAgentPrintsAFailureWithoutTheKeyItEchoed(t *testing.T) {
+	key := rand.Text()
+	failure := errors.New("502 Bad Gateway: upstream error\nrequest headers: Authorization: Bearer sk-test-" + key)
+	events := make(chan agent.Event, 2)
+	events <- agent.Error{Context: "llm", Err: failure}
+	events <- agent.ToolRan{Tool: "lookup", Err: failure}
+	close(events)
+	var stderr bytes.Buffer
+	report(events, nil, &stderr)
+
+	require.Equal(t, "llm failed: 502 Bad Gateway: upstream error\nrequest headers: [redacted]\n"+
+		"  lookup failed: 502 Bad Gateway: upstream error\nrequest headers: [redacted]\n", stderr.String())
 }

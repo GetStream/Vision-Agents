@@ -4,9 +4,11 @@ package api
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -244,6 +246,28 @@ func (s *SocketSessionSuite) TestARefusedCallWaitsForTheCallerToAnswerItsClose()
 
 	s.Equal(websocket.ClosePolicyViolation, closed.Code)
 	s.heldUntilAnswered(held)
+}
+
+// A refusal that names what the caller sent is not cut, as the requests table cuts a text, but it
+// never carries a key: a name or an id with one in it is refused with the key taken out.
+func (s *SocketSessionSuite) TestARefusalNamingWhatTheCallerSentNeverCarriesAKey() {
+	key := rand.Text()
+	long := strings.Repeat("x", 9000)
+	for name, session := range map[string]map[string]any{
+		"an agent no config has": {"agent": long + "?key=" + key},
+		"an id no session has":   {"id": long + "?key=" + key},
+	} {
+		s.Run(name, func() {
+			connection := s.serverClient.opens("/v1/agents/socket")
+			s.Require().NoError(connection.WriteJSON(map[string]any{"type": "start", "session": session}))
+
+			refused := s.readFrame(connection)
+
+			s.Equal("error", refused["type"], "the socket answered %v", refused)
+			s.Contains(refused["error"], long)
+			s.NotContains(refused["error"], key)
+		})
+	}
 }
 
 // A socket session carries its own audio, so voice started on it names no Stream call either.

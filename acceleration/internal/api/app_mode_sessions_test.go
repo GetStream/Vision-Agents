@@ -4,9 +4,12 @@ package api
 
 import (
 	"encoding/json"
+	"maps"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
@@ -21,6 +24,41 @@ type AppModeSessionsSuite struct {
 
 func TestAppModeSessionsSuite(t *testing.T) {
 	runSuite(t, new(AppModeSessionsSuite))
+}
+
+// counted is the value of the series name with labels in the registry /metrics serves, 0 for
+// one not there.
+func (s *AppModeSessionsSuite) counted(name string, labels map[string]string) float64 {
+	families, err := prometheus.DefaultGatherer.Gather()
+	s.Require().NoError(err)
+	for _, family := range families {
+		if family.GetName() != name {
+			continue
+		}
+		for _, metric := range family.GetMetric() {
+			got := map[string]string{}
+			for _, pair := range metric.GetLabel() {
+				got[pair.GetName()] = pair.GetValue()
+			}
+			if maps.Equal(got, labels) {
+				return metric.GetCounter().GetValue()
+			}
+		}
+	}
+	return 0
+}
+
+// endsOf is how many sessions were counted ended under reason, a customer_config failure
+// while starting.
+func (s *AppModeSessionsSuite) endsOf(reason string) float64 {
+	return s.counted("router_session_ends_total", map[string]string{
+		"reason": reason, "failed": "true", "fault": "customer_config", "stage": "starting"})
+}
+
+// startupsFailed is how many web voice starts were counted as failed in the create stage.
+func (s *AppModeSessionsSuite) startupsFailed() float64 {
+	return s.counted("router_agent_startup_failures_total", map[string]string{
+		"stage": "create", "kind": "web", "cause": "error"})
 }
 
 func (s *AppModeSessionsSuite) SetupTest() {
@@ -55,32 +93,40 @@ func (s *AppModeSessionsSuite) TestAPersistedTextSessionIntoAnUnsafeAppIsRefused
 		ChannelTypes: map[string]map[string][]string{"agent": {"user": {"update-channel-owner"}}},
 		CallTypes:    []string{"agent"},
 	})
+	ended := s.endsOf("create_no_channel_type")
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "restrict the channel type's grants")
+	s.Equal(1.0, s.endsOf("create_no_channel_type")-ended, "the refusal is an end for the customer's setup")
 }
 
 func (s *AppModeSessionsSuite) TestAPersistedTextSessionIntoAnAppWithoutTheChannelTypeIsRefused() {
 	own := s.giveApp(s.customerID(), 4242, "own-key")
 	own.SetApp(chattest.App{ID: 4242, CallTypes: []string{"agent"}})
+	ended := s.endsOf("create_no_channel_type")
 
 	status, failure := s.serverClient.failure(http.MethodPost, "/v1/agents/sessions", textSession(nil))
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Contains(failure, "no agent channel type")
+	s.Equal(1.0, s.endsOf("create_no_channel_type")-ended, "the refusal is an end for the customer's setup")
 }
 
 func (s *AppModeSessionsSuite) TestAVoiceSessionIntoAnAppWithoutTheCallTypeIsRefused() {
 	// Stream used to refuse the call itself, saying only that the call type does not exist.
 	own := s.giveApp(s.customerID(), 4242, "own-key")
 	own.SetApp(chattest.App{ID: 4242, ChannelTypes: map[string]map[string][]string{"agent": {}}})
+	ended, started := s.endsOf("create_no_call_type"), s.startupsFailed()
 
 	status, failure := s.errorOf(http.MethodPost, "/v1/agents/sessions", CreateSessionRequest{StartVoice: pointerTo(true)})
 
 	s.Equal(http.StatusBadRequest, status)
 	s.Equal(codeNotConfigured, failure.Code)
+	s.Equal(1.0, s.endsOf("create_no_call_type")-ended, "the refusal is an end for the customer's setup")
+	// Other suites fail voice starts too, so this is a floor.
+	s.GreaterOrEqual(s.startupsFailed()-started, 1.0, "the start-up is counted failed in the create stage")
 	s.Contains(failure.Message, `getstream api CreateCallType --request '{"name":"agent"}'`)
 	// The check fires before anything is written to the customer's app: no orphan channel.
 	for _, r := range own.Requests("own-key") {

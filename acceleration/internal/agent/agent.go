@@ -426,6 +426,8 @@ type Agent struct {
 	// hearings tally what each participant has been heard to say, kept for the whole call
 	// so a line at its end covers those who left.
 	hearings map[string]*hearing
+	// carried is what the call carried that is not one participant's (CallAudio).
+	carried carried
 	// learnedTerms are names the caller said and the agent has said back, which the
 	// transcriber is told to expect for the rest of the call (keyterms.go).
 	learnedTerms []string
@@ -455,6 +457,9 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
+	// held is the reply a voice replacing a lost one is to say, and what of it that voice
+	// has still to be sent. Nil while no voice is replaced or it has been sent all of it.
+	held *heldReply
 	// saying is the reply as the caller has heard it so far, so a controller ruling on
 	// words that overlap it can tell a correction from the line echoing back. It is the
 	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
@@ -550,7 +555,10 @@ type Agent struct {
 	// delegated work coming back is attributed to the person who is waiting for it.
 	lastParticipant stt.Participant
 	lastHeardAt     time.Time
-	lastSpokeAt     time.Time
+	// talkedAt is when the caller last said more than a murmur (takesFloor), which is what
+	// overtakes a check-in held for the next voice.
+	talkedAt    time.Time
+	lastSpokeAt time.Time
 	// voiceOut is when the agent's voice went out on the edge's track, which is when an echo
 	// of it on the caller's line can be in their audio (withoutEcho).
 	voiceOut voiceOut
@@ -768,6 +776,7 @@ func New(options Options) (*Agent, error) {
 	agent.converse = newConverse(settling, listening, emitter, record, 0, logger)
 	agent.converse.onHeard = options.OnHeard
 	agent.turns = newTurnTracker(owner, agent.finishTurn)
+	agent.turns.native = agent.native
 	agent.nativeMode.Store(native)
 
 	if options.Memory != nil {
@@ -802,6 +811,12 @@ func (a *Agent) finishTurn(turn Turn) {
 		"first_audible_frame_ms", turn.FirstAudibleFrameMs,
 		"speech_end_to_audible_ms", turn.SpeechEndToAudibleMs,
 		"interrupted", turn.Interrupted)
+	// Only a caller's turn is timed from when they stopped: the agent's own lines, a tool's
+	// answer among them, start the clock when the agent starts them. A turn a scheduled task
+	// fired answers nobody's silence either.
+	if started.kind == kindCaller && !started.scheduled {
+		observeTurnLatency(turn, started.pipeline)
+	}
 	a.emitter.Send(turn)
 	if a.turnStore != nil {
 		a.turnStore.Record(turn)
@@ -861,9 +876,12 @@ func (a *Agent) Join(ctx context.Context) error {
 	a.mu.Unlock()
 
 	if !a.options.Text {
+		startup := StartupOf(ctx)
+		startup.JoinStarted(time.Now())
 		if err := a.options.Edge.Join(a.ctx); err != nil {
 			return stack.Wrap(fmt.Errorf("agent: join edge: %w", err))
 		}
+		startup.JoinEnded(time.Now())
 		a.running.Add(1)
 		go a.consumeEdge()
 
@@ -1347,7 +1365,7 @@ func (a *Agent) Greet(ctx context.Context, greeting string, vary bool) error {
 	if vary {
 		line, err := a.compose(ctx, fmt.Sprintf(greetPurpose, greeting))
 		if err != nil {
-			a.logger.Warn("could not vary the greeting, saying it as written", "error", err)
+			a.logger.Warn("could not vary the greeting, saying it as written", append(a.replyModel(), "error", err)...)
 		} else if line != "" {
 			greeting = line
 		}
@@ -1488,6 +1506,9 @@ func (a *Agent) close() error {
 	p, released := a.releasePipeline(false)
 	failures = append(failures, released...)
 
+	// A caller turn still waiting for a line said for it gets none now, and is reported while
+	// the emitter still takes it.
+	a.turns.giveUp()
 	// Left is sent before the emitter closes, and the emitter closes before the consumers
 	// are waited on: a consumer blocked emitting to a caller that has stopped reading has
 	// to be let go of, or shutdown would depend on someone draining the channel.
@@ -1539,6 +1560,7 @@ func (a *Agent) consumeEdge() {
 		}
 		// A native model hears one stream rather than one per participant.
 		if a.native() {
+			a.carried.native.Store(true)
 			a.hear(inbound)
 			continue
 		}
@@ -1568,6 +1590,7 @@ func (a *Agent) consumeRoster(roster Roster) {
 // attend reports one arrival or departure.
 func (a *Agent) attend(attendance Attendance) {
 	if attendance.Joined {
+		a.carried.attended.Store(true)
 		a.mu.Lock()
 		delete(a.departed, attendance.Participant.ID)
 		a.mu.Unlock()
@@ -1765,6 +1788,9 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 				"confidence", typed.Confidence, "latency_ms", typed.ProcessingTimeMs)
 			a.mu.Lock()
 			a.lastHeardAt = time.Now()
+			if takesFloor(typed.Text) {
+				a.talkedAt = a.lastHeardAt
+			}
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
 			if typed.Interim {
@@ -2287,6 +2313,9 @@ func (a *Agent) respondTurn(
 	a.mu.Unlock()
 
 	a.turns.started(turnID, kindCaller)
+	if scheduled {
+		a.turns.scheduledTurn(turnID)
+	}
 	a.turns.begin(turnID, participant, listened.at, listened.revisedAt, listened.sttLatencyMs)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Prompt: text})
 
@@ -2536,7 +2565,7 @@ func (a *Agent) checkIn(participant stt.Participant, purpose string) {
 		}()
 		line, err := a.compose(ctx, purpose)
 		if err != nil {
-			a.logger.Warn("could not write a line to say", "kind", kind, "error", err)
+			a.logger.Warn("could not write a line to say", append(a.replyModel(), "kind", kind, "error", err)...)
 			return
 		}
 		a.sayComposed(participant, line, purpose, asked)
@@ -2726,13 +2755,13 @@ func (a *Agent) generate(turn harness.Turn, screen string) error {
 		a.logger.Debug("a turn arrived while the models were changing, so it was dropped", "turn", turn.ID)
 		return nil
 	}
-	current := a.harness
+	current, model := a.harness, a.llm
 	ctx, cancel := context.WithCancel(a.chargedLocked(a.ctx, a.scheduled))
 	a.generatingCancel[turn.ID] = cancel
 	a.pumps.Add(1)
 	a.mu.Unlock()
 
-	go a.startReply(current, turn, ctx, screen)
+	go a.startReply(current, model, turn, ctx, screen)
 	return nil
 }
 
@@ -2759,7 +2788,7 @@ func (a *Agent) chargedLocked(ctx context.Context, scheduled bool) context.Conte
 // the check had still not finished by the time the model began answering. A turn the
 // policy refuses has cost some tokens nobody will read, which is the trade.
 func (a *Agent) startReply(
-	current *harness.Harness, turn harness.Turn, ctx context.Context, screen string,
+	current *harness.Harness, model *llmrouter.Session, turn harness.Turn, ctx context.Context, screen string,
 ) {
 	defer a.pumps.Done()
 	defer a.finishGenerate(turn.ID)
@@ -2788,7 +2817,7 @@ func (a *Agent) startReply(
 		a.mu.Lock()
 		replies := a.replies
 		a.mu.Unlock()
-		replies <- llm.ResponseFailed{ResponseID: turn.ID, Err: err, Context: "llm"}
+		replies <- createFailed(turn.ID, model, err)
 		replies <- llm.ResponseCompleted{Response: llm.Response{ID: turn.ID, Status: llm.StatusFailed}}
 		return
 	}
@@ -2974,7 +3003,7 @@ func (a *Agent) handle(event llm.Event) {
 			a.emitter.Send(Error{Err: typed.Err, Context: "llm", TurnID: typed.ResponseID})
 			return
 		}
-		a.fail(typed.Err, "llm")
+		a.fail(typed.Err, "llm", "provider", typed.Provider, "model", typed.Model)
 
 	case llm.ResponseCompleted:
 		if !a.speaking(typed.Response.ID) {
@@ -3119,6 +3148,11 @@ func (a *Agent) finish(response llm.Response) {
 		if err := a.closeUtterance(response.ID); err != nil {
 			a.fail(err, "tts")
 		}
+	}
+	// A reply that handed work on and said nothing leaves the caller waiting for what is said
+	// for it later. In writing nothing is heard, so there is nothing to wait for.
+	if !a.options.Text && (len(calls) > 0 || a.harness.Delegating() || a.harness.Pending()) {
+		a.turns.owes(response.ID, "")
 	}
 	// How many syntheses the turn produces is only settled once the reply is, and it is
 	// what tells the tracker when the turn has finished being spoken.
@@ -3315,6 +3349,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// lost is set once the voice has gone, which a provider may say twice: as a fatal error
 	// and as the socket dropping.
 	lost := false
+	// handedOver is the turn the voice that replaced this one says again, whose audio and
+	// completions from this voice are no longer the turn's.
+	handedOver := ""
+	handed := func(synthesisID string) bool { return handedOver != "" && turnOf(synthesisID) == handedOver }
 	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
 	// caller hears as the agent trailing off and their phone hears as it having finished.
 	leveller := audio.NewLeveller()
@@ -3329,6 +3367,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	for event := range voice.Events() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
+			if handed(typed.SynthesisID) {
+				// Paid for and never published, as audio of an abandoned turn is.
+				a.turns.dropped(handedOver, typed.Audio.DurationMs())
+				continue
+			}
 			// Audio from an abandoned turn is dropped here rather than published, so
 			// barge-in silences the agent even while the provider is still sending.
 			//
@@ -3357,7 +3400,7 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 			if marks {
 				// Publishing returns once the chunk is queued, which for a long one is well
 				// after the participants could have heard it begin, so the edge says when.
-				err = marked.PublishAudioMarked(speech, withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard))
+				err = marked.PublishAudioMarked(speech, a.carried.marked(withUtterance(a.turns.marksFor(turnOf(typed.SynthesisID)), heard)))
 			} else {
 				err = a.options.Edge.PublishAudio(speech)
 			}
@@ -3394,6 +3437,12 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"caller_talking", a.converse.Listening())
 
 		case tts.SynthesisComplete:
+			if handed(typed.SynthesisID) {
+				// Taken, it would settle the turn before the next voice has said it.
+				a.logger.Debug("the lost voice finished an utterance the next one says",
+					"synthesis", typed.SynthesisID, "synthesis_cut", typed.Interrupted)
+				continue
+			}
 			done := a.takeUtterance(typed.SynthesisID)
 			if !typed.Interrupted && typed.Characters > 0 && typed.AudioDurationMs > 0 {
 				// Cut short, a synthesis was billed all of its text and made only part of its
@@ -3453,14 +3502,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 			if !lost {
 				lost = true
-				a.loseVoice(p, voice)
+				handedOver = a.loseVoice(p, voice)
 			}
 
 		case tts.Error:
 			if typed.Fatal {
 				if !lost {
 					lost = true
-					a.loseVoice(p, voice)
+					handedOver = a.loseVoice(p, voice)
 				}
 			} else if typed.SynthesisID == "" {
 				// A failure naming an utterance still settles it, since the router turns
@@ -3673,7 +3722,8 @@ func (a *Agent) follow() error {
 	a.mu.Unlock()
 
 	// This turn is deliberately not measured. A Turn reports the wait between someone
-	// finishing a sentence and hearing the answer start, and nobody said anything here.
+	// finishing a sentence and hearing the answer start, and nobody said anything here. Its
+	// first audio still ends the wait of a caller turn that said nothing and handed work on.
 	a.turns.started(turnID, kindFollowUp)
 	a.emitter.Send(Responding{TurnID: turnID, Participant: participant, Continues: continues})
 
@@ -3772,14 +3822,24 @@ func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message)
+		return a.sendSentence(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message, true)
 	}
 
-	if a.openTurn != turnID {
+	opens := a.openTurn != turnID
+	if opens {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text}, message)
+	return a.sendSentence(voice, turnID, tts.Request{ID: turnID, Text: text}, message, opens)
+}
+
+// sendSentence sends a request of a reply to the voice, unless it is held for the voice
+// replacing a lost one. counted is whether it was counted as being said.
+func (a *Agent) sendSentence(voice *ttsrouter.Session, turnID string, request tts.Request, message MessageSpan, counted bool) error {
+	if a.hold(turnID, request, message, counted) {
+		return nil
+	}
+	return a.synthesize(voice, turnID, request, message)
 }
 
 // speakWhole says a piece of text that is already complete, as one utterance. Its message,
@@ -3807,7 +3867,11 @@ func (a *Agent) closeUtterance(turnID string) error {
 	if voice == nil || !voice.Streaming() || a.openTurn != turnID {
 		return nil
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Final: true})
+	request := tts.Request{ID: turnID, Final: true}
+	if a.hold(turnID, request, MessageSpan{}, false) {
+		return nil
+	}
+	return voice.Synthesize(request)
 }
 
 // expectedSyntheses is how many syntheses a finished reply will produce in total. A
@@ -3945,7 +4009,9 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	now := time.Now()
 	voiced, played := a.voiced, now.Sub(a.voicedAt)
 	cut := a.cutShortLocked(turnID, now)
-	outstanding := a.generating || a.audioOutstandingLocked(turnID)
+	// A reply held for the voice replacing a lost one has none of its speech in flight, and
+	// none of it was heard.
+	outstanding := a.generating || a.audioOutstandingLocked(turnID) || a.heldLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
 	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
 	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
@@ -4234,12 +4300,34 @@ func (a *Agent) settleVoice(voice *ttsrouter.Session) {
 
 // fail reports a failure without ending the conversation. One bad turn is a lost reply,
 // not a lost call.
-func (a *Agent) fail(err error, context string) {
+func (a *Agent) fail(err error, context string, attrs ...any) {
 	if err == nil {
 		return
 	}
-	a.logger.Error("agent failure", "context", context, "error", err)
+	a.logger.Error("agent failure", append(append([]any{"context", context}, attrs...), "error", err)...)
 	a.emitter.Send(Error{Err: err, Context: context})
+}
+
+// replyModel is the provider and model the reply model routes to, as log attributes, so a
+// search for either finds the line of a line the agent could not write.
+func (a *Agent) replyModel() []any {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if a.llm == nil {
+		return nil
+	}
+	return []any{"provider", a.llm.Provider(), "model", a.llm.Model()}
+}
+
+// createFailed is a reply whose request never started, sent on as a reply that failed
+// mid-stream is. It names the model it was asked of, so the failure line does too.
+func createFailed(turnID string, model *llmrouter.Session, err error) llm.ResponseFailed {
+	failed := llm.ResponseFailed{ResponseID: turnID, Err: err, Context: "llm"}
+	// A harness with no text model fails its turn before asking anyone.
+	if model != nil {
+		failed.Provider, failed.Model = model.Provider(), model.Model()
+	}
+	return failed
 }
 
 // lastExchange is the turn just finished: what was asked and what was answered. It is the

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/redis/rueidis"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
@@ -47,6 +48,8 @@ type Service struct {
 	publicURL string
 	// outcomes keeps how each placed call ended. Nil without a store.
 	outcomes *outcome.Keeper
+	// redis keeps the arriving calls the router refused (Refused). Nil marks none.
+	redis rueidis.Client
 	// unanswered ends the session of a placed call nobody will answer. Nil leaves it to the
 	// session's start timeout.
 	unanswered func(ctx context.Context, customerID, sessionID string)
@@ -88,7 +91,11 @@ type ServiceOptions struct {
 	// vendors say so rather than placing a call nothing will answer.
 	PublicURL string
 	// Now is the clock call legs are timed by. Nil is the wall clock.
-	Now    func() time.Time
+	Now func() time.Time
+	// Redis is where an arriving call the router refused is marked (Refused), for the node
+	// that ends its leg, whichever it is, to count it failed. Without it such a call is
+	// counted completed.
+	Redis  rueidis.Client
 	Logger *slog.Logger
 }
 
@@ -112,10 +119,15 @@ func NewService(options ServiceOptions) (*Service, error) {
 		gate:      options.Gate,
 		publicURL: strings.TrimSuffix(options.PublicURL, "/"),
 		clock:     options.Now,
+		redis:     options.Redis,
 		logger:    options.Logger,
 	}
 	if options.Store != nil {
-		service.outcomes = outcome.NewKeeper(options.Store, service.now)
+		vendors := []string{SIPTrunkVendor}
+		for _, vendor := range options.Registry.Vendors() {
+			vendors = append(vendors, vendor.Vendor)
+		}
+		service.outcomes = outcome.NewKeeper(options.Store, service.now, vendors, options.Logger)
 	}
 	return service, nil
 }
@@ -1190,7 +1202,13 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 		if shared {
 			s.forgetCallResource(ctx, resource)
 		}
-		s.forgetOutcome(ctx, token, callID)
+		// The vendor was asked: dialMeter reserves nothing, so routing.Call fails only in the dial.
+		// A request that went away mid-dial is no refusal, though: the phone may be ringing.
+		if ctx.Err() == nil {
+			s.forgetRefused(ctx, token, held.Vendor, callID)
+		} else {
+			s.forgetOutcome(ctx, token, callID)
+		}
 		return Placed{}, stack.Wrap(err)
 	}
 
@@ -1236,6 +1254,14 @@ func (s *Service) call(ctx context.Context, request CallRequest, sent *bool) (Pl
 // on a request that may be gone, and logs a failure rather than mask the one it follows.
 func (s *Service) forgetOutcome(ctx context.Context, token, callID string) {
 	if err := s.outcomes.Failed(context.WithoutCancel(ctx), token); err != nil {
+		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
+	}
+}
+
+// forgetRefused is forgetOutcome for a call the vendor was asked to dial and refused, which is
+// counted as refused.
+func (s *Service) forgetRefused(ctx context.Context, token, vendor, callID string) {
+	if err := s.outcomes.Refused(context.WithoutCancel(ctx), token, vendor); err != nil {
 		s.logger.Error("could not forget a call that did not place", "call", callID, "error", err)
 	}
 }
@@ -1486,7 +1512,10 @@ func (s *Service) report(ctx context.Context, token string, status CallStatus) (
 	if err != nil {
 		return outcome.Call{}, err
 	}
-	call, err := s.outcomes.Reported(ctx, token, reported, status.Word)
+	call, err := s.outcomes.Reported(ctx, token, outcome.Report{
+		Outcome: reported, Word: status.Word, SIPCode: status.SIPCode, Ringing: status.Ringing,
+		PostDialDelay: status.PostDialDelay,
+	})
 	if errors.Is(err, outcome.ErrUnknownCall) {
 		return outcome.Call{}, stack.Wrap(ErrUnknownStatus)
 	}

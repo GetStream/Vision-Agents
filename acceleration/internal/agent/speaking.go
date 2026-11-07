@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"slices"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,6 +38,8 @@ type utterance struct {
 	// reply's message. Agent.mu guards both.
 	text    string
 	message MessageSpan
+	// closed is set once a streaming voice was told the utterance is over. Agent.mu guards it.
+	closed bool
 	// published is set once any of its audio went to the edge.
 	published atomic.Bool
 	// publishedUs is how much of its audio went to the edge, in microseconds.
@@ -168,6 +171,11 @@ func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.
 func (a *Agent) sending(turnID, synthesisID, text string, message MessageSpan) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.sendingLocked(turnID, synthesisID, text, message)
+}
+
+// sendingLocked is sending with Agent.mu held.
+func (a *Agent) sendingLocked(turnID, synthesisID, text string, message MessageSpan) {
 	heard := a.heard[synthesisID]
 	if heard == nil {
 		if _, done := a.finished[synthesisID]; done {
@@ -210,6 +218,73 @@ func (a *Agent) forgetUtterancesLocked() {
 	clear(a.heard)
 	clear(a.finished)
 	a.finishedOrder = a.finishedOrder[:0]
+}
+
+// unsaidUtterance is what a voice replacing a lost one is to be sent of an utterance: its
+// synthesis, the text and where that is in the reply's message, and whether it ends the
+// utterance. counts is whether it is an utterance being said rather than more of one, and
+// counted whether that is counted now.
+type unsaidUtterance struct {
+	synthesisID string
+	text        string
+	message     MessageSpan
+	final       bool
+	counts      bool
+	counted     bool
+}
+
+// heldReply is a reply the voice that replaces a lost one goes on with, and what of it that
+// voice has still to be sent, in the order of the reply's message: what the lost voice said
+// none of, and what was written for it while the next was opened. written is whether the
+// model had finished writing it when the voice was lost, and lostAt when that was.
+type heldReply struct {
+	turnID  string
+	unsaid  []unsaidUtterance
+	written bool
+	lostAt  time.Time
+}
+
+// hold keeps a request for a reply held for the voice replacing a lost one, which would
+// otherwise go to the lost voice or ahead of what is held, and reports whether it did.
+// counted is whether the request was counted as being said.
+func (a *Agent) hold(turnID string, request tts.Request, message MessageSpan, counted bool) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	if !a.heldLocked(turnID) {
+		// A voice lost once it was told the utterance is over hands that on with it.
+		if heard := a.heard[request.ID]; heard != nil && request.Final && request.Text == "" {
+			heard.closed = true
+		}
+		return false
+	}
+	a.held.unsaid = append(a.held.unsaid, unsaidUtterance{
+		synthesisID: request.ID, text: request.Text, message: message, final: request.Final,
+		counts: counted, counted: counted,
+	})
+	return true
+}
+
+// heldLocked reports whether a turn is held for the voice that replaces a lost one.
+// Agent.mu must be held.
+func (a *Agent) heldLocked(turnID string) bool {
+	return a.held != nil && a.held.turnID == turnID
+}
+
+// unsaidLocked is every utterance of a turn the voice has not finished, in the order of the
+// reply's message. A streaming voice's utterance of a reply still being written is not over
+// until it was told so. Agent.mu must be held.
+func (a *Agent) unsaidLocked(turnID string, streaming bool) []unsaidUtterance {
+	var unsaid []unsaidUtterance
+	for _, heard := range a.heard {
+		if heard.turnID == turnID {
+			unsaid = append(unsaid, unsaidUtterance{
+				synthesisID: heard.synthesisID, text: heard.text, message: heard.message,
+				final: !streaming || !a.generating || heard.closed, counts: true,
+			})
+		}
+	}
+	slices.SortFunc(unsaid, func(x, y unsaidUtterance) int { return x.message.Start - y.message.Start })
+	return unsaid
 }
 
 // cutShort is the utterance of a turn being heard when it was cut off, how many

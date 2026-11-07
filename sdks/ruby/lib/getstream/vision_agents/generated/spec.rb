@@ -2548,7 +2548,7 @@ module GetStream
           required: %w[actor].freeze, open: false
         }.freeze,
         "ModelCallTiming" => {
-          properties: %w[duration_ms error_code input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
+          properties: %w[duration_ms error_code error_message input_tokens model operation_id output_tokens provider purpose started_at success ttft_ms].freeze,
           required: %w[model provider started_at success].freeze, open: false
         }.freeze,
         "ModelOverwrites" => {
@@ -2852,7 +2852,7 @@ module GetStream
           required: %w[url].freeze, open: false
         }.freeze,
         "Session" => {
-          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_reason forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
+          properties: %w[agent agent_id call_id call_outcome call_type closed_at config_id context_truncated conversation_id created_at custom description end_fault end_reason end_stage forked_from id incognito instructions last_response_at llm modality mode model_overwrites project_id review_notes review_score state sts stt subagent summary text title tts usage user_id video voice].freeze,
           required: %w[agent_id call_id call_type created_at id modality state user_id].freeze, open: false
         }.freeze,
         "SessionCall" => {

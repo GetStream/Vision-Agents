@@ -15,6 +15,7 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/stretchr/testify/suite"
 
+	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/keypool/keypooltest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
@@ -862,4 +863,51 @@ func (s *RealtimeSocketSuite) TestTheKeyCodeOnAnotherFrameTypeIsNotAnInvalidKey(
 
 	s.Zero(counted)
 	s.ErrorContains(err, "expected session.created, got response.done")
+}
+
+// rateLimitsFrame is OpenAI's example rate_limits.updated, with a limit it does not document
+// and a later tokens with no remaining added, which says nothing of what is left:
+// https://developers.openai.com/api/reference/resources/realtime/server-events (rate_limits.updated).
+const rateLimitsFrame = `{"event_id":"event_5758","type":"rate_limits.updated","rate_limits":[` +
+	`{"name":"requests","limit":1000,"remaining":999,"reset_seconds":60},` +
+	`{"name":"tokens","limit":50000,"remaining":49950,"reset_seconds":60},` +
+	`{"name":"images","limit":10,"remaining":4,"reset_seconds":60},` +
+	`{"name":"tokens","limit":50000}]}`
+
+// rateLimitsKept starts a session on apiKey, has the server send rateLimitsFrame and then an
+// error frame, and returns the headroom series under keyVar once the error was heard: the
+// frames are handled in order, so the rate limits were by then.
+func (s *RealtimeSocketSuite) rateLimitsKept(apiKey, keyVar string) map[string]float64 {
+	fake := newFakeRealtime(false)
+	defer fake.close()
+	provider, conn := s.connect(fake, Options{Vendor: OpenAI, APIKey: apiKey})
+	defer provider.Close()
+
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage, []byte(rateLimitsFrame)))
+	s.Require().NoError(conn.WriteMessage(websocket.TextMessage,
+		[]byte(`{"type":"error","error":{"type":"server_error","code":"server_error","message":"after the rate limits"}}`)))
+	s.until(provider, func(event sts.Event) bool {
+		failed, ok := event.(sts.Error)
+		return ok && strings.Contains(failed.Err.Error(), "after the rate limits")
+	})
+	return keypooltest.Series(s.T(), "router_vendor_ratelimit_remaining", keyVar)
+}
+
+func (s *RealtimeSocketSuite) TestTheRateLimitsTheSessionReportsAreKeptUnderItsKey() {
+	keyVar := "RT_" + rand.Text() + "_API_KEY"
+	s.T().Setenv(keyVar, "rt-other-"+rand.Text()+",rt-session-"+rand.Text())
+	// The pool's first key takes this turn, so the session is opened on its second.
+	keypool.FromEnv("", keyVar).Next()
+
+	kept := s.rateLimitsKept(keypool.Getenv(keyVar), keyVar)
+
+	s.Equal(map[string]float64{"1/requests": 999, "1/tokens": 49950}, kept)
+}
+
+func (s *RealtimeSocketSuite) TestTheRateLimitsOfACustomersKeyAreNotKept() {
+	keyVar := "RT_" + rand.Text() + "_API_KEY"
+	s.T().Setenv(keyVar, "rt-router-"+rand.Text())
+	keypool.Getenv(keyVar)
+
+	s.Empty(s.rateLimitsKept("rt-customer-"+rand.Text(), keyVar))
 }

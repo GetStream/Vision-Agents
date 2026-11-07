@@ -202,6 +202,9 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			return nil, err
 		}
 		var failures []error
+		// failed are the candidates that failed this response, each beside its failure in
+		// failures: failovers once a later one answers.
+		var failed []routing.ProviderConfig
 		for _, candidate := range calling(candidates, params) {
 			if ctx.Err() != nil {
 				return nil, stack.Wrap(ctx.Err())
@@ -217,13 +220,18 @@ func (r *Router) Start(ctx context.Context, request Request) (*Session, error) {
 			}
 			if err != nil {
 				failures = append(failures, err)
+				failed = append(failed, candidate.Config)
 				continue
 			}
 			stream, err := child.create(ctx, params)
 			if err != nil {
 				session.releaseChild(child)
 				failures = append(failures, err)
+				failed = append(failed, candidate.Config)
 				continue
+			}
+			for i, config := range failed {
+				routing.CountHandover(routing.LLM, config, failures[i])
 			}
 			return stream.Observe(func(event llm.Event) {
 				if _, done := event.(llm.ResponseCompleted); done {

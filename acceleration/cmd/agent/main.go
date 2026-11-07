@@ -10,6 +10,7 @@ import (
 	"errors"
 	"flag"
 	"fmt"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -112,11 +113,11 @@ func main() {
 	if *verbose {
 		level = slog.LevelDebug
 	}
-	logger := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: level}))
+	logger := newLogger(os.Stderr, level)
 	slog.SetDefault(logger)
 
 	if err := run(options, logger); err != nil {
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		logger.Error("agent stopped", "error", err)
 		os.Exit(1)
 	}
 }
@@ -186,6 +187,12 @@ func (o options) agent() string {
 		return trimmed
 	}
 	return o.callID
+}
+
+// newLogger is the agent's logger, which writes text to w and takes every credential out of
+// what it prints: a provider's error can echo the key it was sent.
+func newLogger(w io.Writer, level slog.Level) *slog.Logger {
+	return slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{Level: level, ReplaceAttr: store.RedactLogAttr}))
 }
 
 func run(options options, logger *slog.Logger) error {
@@ -309,7 +316,7 @@ func run(options options, logger *slog.Logger) error {
 		defer transcript.Close()
 	}
 
-	go report(voiceAgent, transcript)
+	go report(voiceAgent.Events(), transcript, os.Stderr)
 
 	if err := voiceAgent.Join(ctx); err != nil {
 		return err
@@ -432,10 +439,11 @@ func openBrowser(link string) error {
 	}
 }
 
-// report prints the conversation as it happens and stores it. Interim work is left to
-// -verbose logging: what a reader wants is what was said.
-func report(voiceAgent *agent.Agent, transcript *chatlog.Log) {
-	for event := range voiceAgent.Events() {
+// report prints the conversation as it happens and stores it, its failures to stderr with
+// any key a provider echoed in them taken out. Interim work is left to -verbose logging: what
+// a reader wants is what was said.
+func report(events <-chan agent.Event, transcript *chatlog.Log, stderr io.Writer) {
+	for event := range events {
 		if transcript != nil {
 			transcript.Record(event)
 		}
@@ -461,12 +469,12 @@ func report(voiceAgent *agent.Agent, transcript *chatlog.Log) {
 			fmt.Printf("  pressed %s\n", typed.Digits)
 		case agent.ToolRan:
 			if typed.Err != nil {
-				fmt.Fprintf(os.Stderr, "  %s failed: %v\n", typed.Tool, typed.Err)
+				fmt.Fprintf(stderr, "  %s failed: %s\n", typed.Tool, store.RedactLogText(fmt.Sprint(typed.Err)))
 			}
 		case agent.Interrupted:
 			fmt.Println("(interrupted)")
 		case agent.Error:
-			fmt.Fprintf(os.Stderr, "%s failed: %v\n", typed.Context, typed.Err)
+			fmt.Fprintf(stderr, "%s failed: %s\n", typed.Context, store.RedactLogText(fmt.Sprint(typed.Err)))
 		}
 	}
 }
