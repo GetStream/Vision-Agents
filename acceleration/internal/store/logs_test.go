@@ -145,6 +145,8 @@ func TestRedactLogTextKeepsProseAndChallenges(t *testing.T) {
 		"auth: open secret: cipher: message authentication failed",
 		"phone: open sip trunk password: cipher: message authentication failed",
 		"store: rotate guest secret: context canceled",
+		"store: set guest secret: EOF",
+		"auth: open secret: ERROR #23505 duplicate key value",
 		"apikey: the key is required",
 		"needs_reauthorization: the provider no longer takes the credential",
 		"usage: USAGE_INGEST_TOKEN is required: the bearer token producers and routers call with",
@@ -173,6 +175,7 @@ func TestRedactLogTextTakesAValueThatIsNotAWord(t *testing.T) {
 		"secret: password: " + secret:                         "secret: [redacted]",
 		"bearer of Bearer " + secret:                          "bearer of [redacted]",
 		"Bearer private-token":                                "[redacted]",
+		"Bearer ABCDEFGHI":                                    "[redacted]",
 		`Bearer error="invalid_token", Bearer ` + secret:      `Bearer error="invalid_token", [redacted]`,
 	} {
 		if result := RedactLogText(text); result != want {

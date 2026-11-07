@@ -74,10 +74,10 @@ var bearerCredential = regexp.MustCompile(`(?i)\bbearer\s+([^\s"\x27,;}]+)`)
 var credentialText = regexp.MustCompile(`(?i)(?:api[_-]?key|access[_-]?token|refresh[_-]?token|password|secret|authorization|cookie)["\x27]?\s*[=:]\s*(?:"(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|([^\s,;}]+))`)
 
 // word is a value that reads as prose rather than a credential: letters, lower case after the
-// first, with underscores, as an auth-param name has, and the punctuation that ends a clause or
-// an auth-param name after it. A key or token has a digit, a capital past its first letter or
-// another symbol in it.
-var word = regexp.MustCompile(`^[A-Za-z][a-z_]*[=.:!?)]*$`)
+// first, with underscores, as an auth-param name has, or up to 8 capitals, as an error code
+// (EOF, ERROR) has, and the punctuation that ends a clause or an auth-param name after it. A key
+// or token has a digit, a mix of cases, another symbol or more length in it.
+var word = regexp.MustCompile(`^(?:[A-Za-z][a-z_]*|[A-Z]{1,8})[=.:!?)]*$`)
 var authorizationHeader = regexp.MustCompile(`(?im)\b(?:authorization|proxy-authorization|cookie|set-cookie)\s*:\s*[^\r\n]+`)
 var urlCredential = regexp.MustCompile(`(?i)([a-z][a-z0-9+.-]*://)[^\s/@]+:[^\s/@]+@`)
 var providerCredential = regexp.MustCompile(`\bsk-[a-zA-Z0-9_-]{8,}`)
