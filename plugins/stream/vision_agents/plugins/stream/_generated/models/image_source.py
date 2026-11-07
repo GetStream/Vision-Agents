@@ -54,7 +54,7 @@ class ImageSource:
         if isinstance(_detail, Unset):
             detail = UNSET
         else:
-            detail = ImageSourceDetail(_detail)
+            detail = ImageSourceDetail._decode(_detail)
 
         image_source = cls(
             url=url,

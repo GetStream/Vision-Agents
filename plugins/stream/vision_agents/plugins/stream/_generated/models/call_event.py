@@ -82,7 +82,7 @@ class CallEvent:
         d = dict(src_dict)
         at = datetime.datetime.fromisoformat(d.pop("at"))
 
-        kind = DecisionKind(d.pop("kind"))
+        kind = DecisionKind._decode(d.pop("kind"))
 
         reason = d.pop("reason")
 

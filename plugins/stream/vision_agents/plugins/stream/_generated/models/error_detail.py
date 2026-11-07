@@ -115,7 +115,7 @@ class ErrorDetail:
 
         message = d.pop("message")
 
-        type_ = ErrorType(d.pop("type"))
+        type_ = ErrorType._decode(d.pop("type"))
 
         error_detail = cls(
             code=code,

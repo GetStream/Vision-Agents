@@ -62,7 +62,7 @@ class RollupRequest:
         if isinstance(_granularity, Unset):
             granularity = UNSET
         else:
-            granularity = Granularity(_granularity)
+            granularity = Granularity._decode(_granularity)
 
         rollup_request = cls(
             from_=from_,

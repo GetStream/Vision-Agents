@@ -53,7 +53,7 @@ class CampaignTimeZone:
         d = dict(src_dict)
         fallback = d.pop("fallback")
 
-        mode = CampaignTimeZoneMode(d.pop("mode"))
+        mode = CampaignTimeZoneMode._decode(d.pop("mode"))
 
         fixed = d.pop("fixed", UNSET)
 

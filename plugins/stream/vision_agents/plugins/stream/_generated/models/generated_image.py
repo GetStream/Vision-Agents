@@ -66,7 +66,7 @@ class GeneratedImage:
 
         height = d.pop("height")
 
-        media_type = GeneratedImageMediaType(d.pop("media_type"))
+        media_type = GeneratedImageMediaType._decode(d.pop("media_type"))
 
         width = d.pop("width")
 

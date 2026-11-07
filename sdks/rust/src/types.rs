@@ -33,16 +33,7 @@ pub struct Account {
 }
 ///Where balance_micros stands: exhausted at or below 0, low at or below the threshold.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AccountBalanceState {
     #[serde(rename = "ok")]
@@ -51,6 +42,9 @@ pub enum AccountBalanceState {
     Low,
     #[serde(rename = "exhausted")]
     Exhausted,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AccountBalanceState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -58,6 +52,7 @@ impl ::std::fmt::Display for AccountBalanceState {
             Self::Ok => f.write_str("ok"),
             Self::Low => f.write_str("low"),
             Self::Exhausted => f.write_str("exhausted"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -88,16 +83,7 @@ impl ::std::convert::TryFrom<::std::string::String> for AccountBalanceState {
 }
 ///Whose threshold it is: the tier's, the one Stream set for this organization, or the organization policy's balance_warning_micros, which wins over both.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AccountBalanceWarningSource {
     #[serde(rename = "tier")]
@@ -106,6 +92,9 @@ pub enum AccountBalanceWarningSource {
     Account,
     #[serde(rename = "organization_policy")]
     OrganizationPolicy,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AccountBalanceWarningSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -113,6 +102,7 @@ impl ::std::fmt::Display for AccountBalanceWarningSource {
             Self::Tier => f.write_str("tier"),
             Self::Account => f.write_str("account"),
             Self::OrganizationPolicy => f.write_str("organization_policy"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -143,28 +133,23 @@ impl ::std::convert::TryFrom<::std::string::String> for AccountBalanceWarningSou
 }
 ///suspended: Stream refuses every request of the organization, free work included, until it restores it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AccountStatus {
     #[serde(rename = "active")]
     Active,
     #[serde(rename = "suspended")]
     Suspended,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AccountStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Active => f.write_str("active"),
             Self::Suspended => f.write_str("suspended"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -210,28 +195,23 @@ pub struct ActivityBucket {
 }
 ///Separate from Granularity, and coarser, because distinct users cannot be summed: a month of them is who came back rather than the sum of its days.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ActivityGranularity {
     #[serde(rename = "daily")]
     Daily,
     #[serde(rename = "monthly")]
     Monthly,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ActivityGranularity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Daily => f.write_str("daily"),
             Self::Monthly => f.write_str("monthly"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -689,28 +669,23 @@ pub struct AgentConnectorSelection {
 }
 ///fixed is the app's own connection named by connection_id, the same for every session. session is the connection the session's verified end user picks when the session is created, which has to be their own. When they pick none, it is their connection to the connector if exactly one of theirs is connected. For a session the router opens itself, the end user is nobody for an MCP event, which it opens as the app, or for a WhatsApp or SMS message the sender (phone:+E164) or the user the number is linked to. Such a session also uses that user's only connected connection when none is named.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentConnectorSelectionType {
     #[serde(rename = "fixed")]
     Fixed,
     #[serde(rename = "session")]
     Session,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentConnectorSelectionType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Fixed => f.write_str("fixed"),
             Self::Session => f.write_str("session"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -780,16 +755,7 @@ pub struct AgentLogPage {
 }
 ///`AgentLogSeverity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentLogSeverity {
     #[serde(rename = "info")]
@@ -798,6 +764,9 @@ pub enum AgentLogSeverity {
     Warn,
     #[serde(rename = "error")]
     Error,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentLogSeverity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -805,6 +774,7 @@ impl ::std::fmt::Display for AgentLogSeverity {
             Self::Info => f.write_str("info"),
             Self::Warn => f.write_str("warn"),
             Self::Error => f.write_str("error"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -835,16 +805,7 @@ impl ::std::convert::TryFrom<::std::string::String> for AgentLogSeverity {
 }
 ///`AgentLogSource`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentLogSource {
     #[serde(rename = "user")]
@@ -855,6 +816,9 @@ pub enum AgentLogSource {
     Tool,
     #[serde(rename = "system")]
     System,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentLogSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -863,6 +827,7 @@ impl ::std::fmt::Display for AgentLogSource {
             Self::Agent => f.write_str("agent"),
             Self::Tool => f.write_str("tool"),
             Self::System => f.write_str("system"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -894,28 +859,23 @@ impl ::std::convert::TryFrom<::std::string::String> for AgentLogSource {
 }
 ///Whether the agent is spoken to or written to. A voice agent joins a call, transcribes what it hears and speaks its replies. A text agent holds the same conversation in writing, so it uses neither speech target and a session created from it needs no call to join.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentMode {
     #[serde(rename = "voice")]
     Voice,
     #[serde(rename = "text")]
     Text,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Voice => f.write_str("voice"),
             Self::Text => f.write_str("text"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -979,16 +939,7 @@ pub struct AgentResponseItem {
 }
 ///`AgentResponseItemKind`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentResponseItemKind {
     #[serde(rename = "said")]
@@ -1005,6 +956,9 @@ pub enum AgentResponseItemKind {
     Blocked,
     #[serde(rename = "error")]
     Error,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentResponseItemKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1016,6 +970,7 @@ impl ::std::fmt::Display for AgentResponseItemKind {
             Self::Answer => f.write_str("answer"),
             Self::Blocked => f.write_str("blocked"),
             Self::Error => f.write_str("error"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1068,16 +1023,7 @@ pub struct AgentResponsePage {
 }
 ///cancelled is a turn the caller interrupted, which is a different thing from one that failed: nothing went wrong, and what had already been said still counts. refused is a turn the prompt injection screen refused: a rewind or a fork carries what it asked forward as withheld.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentResponseStatus {
     #[serde(rename = "running")]
@@ -1090,6 +1036,9 @@ pub enum AgentResponseStatus {
     Cancelled,
     #[serde(rename = "refused")]
     Refused,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentResponseStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1099,6 +1048,7 @@ impl ::std::fmt::Display for AgentResponseStatus {
             Self::Failed => f.write_str("failed"),
             Self::Cancelled => f.write_str("cancelled"),
             Self::Refused => f.write_str("refused"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1138,25 +1088,20 @@ pub struct AgentReview {
 }
 ///What the agent is for in the app, beyond answering people. agent_moderator is the app's moderator agent, which reviews flagged messages. One live agent per app holds a role: giving it to a second is refused, and a test copy (tagged draft_of) may share the role of the agent it copies. Left out on an update or a sync, the stored role stays. Omit it for an ordinary agent.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AgentRole {
     #[serde(rename = "agent_moderator")]
     AgentModerator,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AgentRole {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::AgentModerator => f.write_str("agent_moderator"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1307,16 +1252,7 @@ pub struct AudioSource {
 }
 ///created, updated or deleted for a change somebody made one at a time. synced is a whole agent directory written at once by POST /v1/agents/sync, and is what a later sync measures the edits made since against.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuditAction {
     #[serde(rename = "created")]
@@ -1327,6 +1263,9 @@ pub enum AuditAction {
     Deleted,
     #[serde(rename = "synced")]
     Synced,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuditAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1335,6 +1274,7 @@ impl ::std::fmt::Display for AuditAction {
             Self::Updated => f.write_str("updated"),
             Self::Deleted => f.write_str("deleted"),
             Self::Synced => f.write_str("synced"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1445,16 +1385,7 @@ pub struct AuditQuery {
 }
 ///What the change was made to. All of them are configuration: what an agent does while it runs is traffic, and is read from the sessions and the logs instead. price_list is the deployment's own, changed through the management API, and is never listed for an app. end_user is one of the app's end users whose id was forgotten in the usage records, named by the id that replaced it. limit is one of the organization's spend limits, named by its id, a reset of one, named reset:<id>, or a grant, named grant:<id>; a change staff made through the management API is kept under the organization's id. provider_key is a key the app keeps for its own account at a vendor, named <provider>/<region>; its changes show the key's last four characters at most, never the key.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuditResourceType {
     #[serde(rename = "agent_config")]
@@ -1479,6 +1410,9 @@ pub enum AuditResourceType {
     Limit,
     #[serde(rename = "provider_key")]
     ProviderKey,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuditResourceType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1494,6 +1428,7 @@ impl ::std::fmt::Display for AuditResourceType {
             Self::EndUser => f.write_str("end_user"),
             Self::Limit => f.write_str("limit"),
             Self::ProviderKey => f.write_str("provider_key"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1532,16 +1467,7 @@ impl ::std::convert::TryFrom<::std::string::String> for AuditResourceType {
 }
 ///Which client made it, from the X-Stream-Client header. api is a caller that named no client: it reached the API directly, which is all that can be said about it. manage is the management API, called with the manage key, which no header can claim.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuditSource {
     #[serde(rename = "dashboard")]
@@ -1554,6 +1480,9 @@ pub enum AuditSource {
     Api,
     #[serde(rename = "manage")]
     Manage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuditSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1563,6 +1492,7 @@ impl ::std::fmt::Display for AuditSource {
             Self::Sdk => f.write_str("sdk"),
             Self::Api => f.write_str("api"),
             Self::Manage => f.write_str("manage"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1608,28 +1538,23 @@ pub struct Authorization {
 }
 ///consent for a connection no account was connected to yet, reconnect for one that has been connected before, which must come back with the same provider account.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum AuthorizationKind {
     #[serde(rename = "consent")]
     Consent,
     #[serde(rename = "reconnect")]
     Reconnect,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for AuthorizationKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Consent => f.write_str("consent"),
             Self::Reconnect => f.write_str("reconnect"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1747,16 +1672,7 @@ pub struct BusinessProfile {
 }
 ///`BusinessProfileLegalEntityType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileLegalEntityType {
     #[serde(rename = "corporation")]
@@ -1769,6 +1685,9 @@ pub enum BusinessProfileLegalEntityType {
     SoleProprietor,
     #[serde(rename = "other")]
     Other,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileLegalEntityType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1778,6 +1697,7 @@ impl ::std::fmt::Display for BusinessProfileLegalEntityType {
             Self::Partnership => f.write_str("partnership"),
             Self::SoleProprietor => f.write_str("sole_proprietor"),
             Self::Other => f.write_str("other"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1810,16 +1730,7 @@ impl ::std::convert::TryFrom<::std::string::String> for BusinessProfileLegalEnti
 }
 ///`BusinessProfileOrganizationType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileOrganizationType {
     #[serde(rename = "private")]
@@ -1830,6 +1741,9 @@ pub enum BusinessProfileOrganizationType {
     Nonprofit,
     #[serde(rename = "government")]
     Government,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileOrganizationType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1838,6 +1752,7 @@ impl ::std::fmt::Display for BusinessProfileOrganizationType {
             Self::Public => f.write_str("public"),
             Self::Nonprofit => f.write_str("nonprofit"),
             Self::Government => f.write_str("government"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1924,16 +1839,7 @@ pub struct BusinessProfileRequest {
 }
 ///`BusinessProfileRequestLegalEntityType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileRequestLegalEntityType {
     #[serde(rename = "corporation")]
@@ -1946,6 +1852,9 @@ pub enum BusinessProfileRequestLegalEntityType {
     SoleProprietor,
     #[serde(rename = "other")]
     Other,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileRequestLegalEntityType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -1955,6 +1864,7 @@ impl ::std::fmt::Display for BusinessProfileRequestLegalEntityType {
             Self::Partnership => f.write_str("partnership"),
             Self::SoleProprietor => f.write_str("sole_proprietor"),
             Self::Other => f.write_str("other"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -1987,16 +1897,7 @@ impl ::std::convert::TryFrom<::std::string::String> for BusinessProfileRequestLe
 }
 ///`BusinessProfileRequestOrganizationType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum BusinessProfileRequestOrganizationType {
     #[serde(rename = "private")]
@@ -2007,6 +1908,9 @@ pub enum BusinessProfileRequestOrganizationType {
     Nonprofit,
     #[serde(rename = "government")]
     Government,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for BusinessProfileRequestOrganizationType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2015,6 +1919,7 @@ impl ::std::fmt::Display for BusinessProfileRequestOrganizationType {
             Self::Public => f.write_str("public"),
             Self::Nonprofit => f.write_str("nonprofit"),
             Self::Government => f.write_str("government"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2147,28 +2052,23 @@ pub struct Call {
 }
 ///`CallDirection`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CallDirection {
     #[serde(rename = "inbound")]
     Inbound,
     #[serde(rename = "outbound")]
     Outbound,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CallDirection {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Inbound => f.write_str("inbound"),
             Self::Outbound => f.write_str("outbound"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2224,16 +2124,7 @@ failed: the vendor could not place it, for a bad number or a carrier fault.
 canceled: the vendor says the call was hung up before an answer.
 unknown: the vendor reports nothing about how it ended, and the phone never joined.*/
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CallOutcome {
     #[serde(rename = "completed")]
@@ -2248,6 +2139,9 @@ pub enum CallOutcome {
     Canceled,
     #[serde(rename = "unknown")]
     Unknown,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CallOutcome {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2258,6 +2152,7 @@ impl ::std::fmt::Display for CallOutcome {
             Self::Failed => f.write_str("failed"),
             Self::Canceled => f.write_str("canceled"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2451,28 +2346,23 @@ pub struct CampaignNext {
 }
 ///How the contact ends: successful counts as converted.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CampaignNextEnd {
     #[serde(rename = "successful")]
     Successful,
     #[serde(rename = "unsuccessful")]
     Unsuccessful,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CampaignNextEnd {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Successful => f.write_str("successful"),
             Self::Unsuccessful => f.write_str("unsuccessful"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2570,16 +2460,7 @@ pub struct CampaignSequence {
 }
 ///Where a campaign is: draft until it is launched, scheduled until its start_at, running while it rings people, paused while it rings nobody new, stopped for good, completed once it has nobody left to ring.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CampaignState {
     #[serde(rename = "draft")]
@@ -2594,6 +2475,9 @@ pub enum CampaignState {
     Stopped,
     #[serde(rename = "completed")]
     Completed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CampaignState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2604,6 +2488,7 @@ impl ::std::fmt::Display for CampaignState {
             Self::Paused => f.write_str("paused"),
             Self::Stopped => f.write_str("stopped"),
             Self::Completed => f.write_str("completed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2670,28 +2555,23 @@ pub struct CampaignTimeZone {
 }
 ///contact reads the hours where each contact is: their time_zone, else their number's, else fallback. fixed reads them in fixed.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CampaignTimeZoneMode {
     #[serde(rename = "contact")]
     Contact,
     #[serde(rename = "fixed")]
     Fixed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CampaignTimeZoneMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Contact => f.write_str("contact"),
             Self::Fixed => f.write_str("fixed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2721,28 +2601,23 @@ impl ::std::convert::TryFrom<::std::string::String> for CampaignTimeZoneMode {
 }
 ///What a campaign rings. standard rings the contacts it was given; auto_enroll is refused for now. Fixed once the campaign is created.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CampaignType {
     #[serde(rename = "standard")]
     Standard,
     #[serde(rename = "auto_enroll")]
     AutoEnroll,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CampaignType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Standard => f.write_str("standard"),
             Self::AutoEnroll => f.write_str("auto_enroll"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2782,16 +2657,7 @@ pub struct CampaignVoicemail {
 hang_up: end the call at once, saying nothing.
 leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CampaignVoicemailAction {
     #[serde(rename = "off")]
@@ -2800,6 +2666,9 @@ pub enum CampaignVoicemailAction {
     HangUp,
     #[serde(rename = "leave_message")]
     LeaveMessage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CampaignVoicemailAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2807,6 +2676,7 @@ impl ::std::fmt::Display for CampaignVoicemailAction {
             Self::Off => f.write_str("off"),
             Self::HangUp => f.write_str("hang_up"),
             Self::LeaveMessage => f.write_str("leave_message"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2872,28 +2742,23 @@ pub struct ChannelAccount {
 }
 ///How a sender becomes an end user. phone makes each number an end user of its own, phone:+15551234567, so anybody who writes is answered. link answers only a number somebody tied to an end user with a code from POST /v1/agents/channels/links, which is what an agent reading a person's own calendar or orders needs. Omitted is phone.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ChannelIdentity {
     #[serde(rename = "phone")]
     Phone,
     #[serde(rename = "link")]
     Link,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ChannelIdentity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Phone => f.write_str("phone"),
             Self::Link => f.write_str("link"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -2923,16 +2788,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ChannelIdentity {
 }
 ///A channel a conversation can be carried over.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ChannelKind {
     #[serde(rename = "whatsapp")]
@@ -2941,6 +2797,9 @@ pub enum ChannelKind {
     Sms,
     #[serde(rename = "imessage")]
     Imessage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ChannelKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -2948,6 +2807,7 @@ impl ::std::fmt::Display for ChannelKind {
             Self::Whatsapp => f.write_str("whatsapp"),
             Self::Sms => f.write_str("sms"),
             Self::Imessage => f.write_str("imessage"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3102,16 +2962,7 @@ pub struct ClassifyQuestion {
 }
 ///noul is yes or no, answered as the probability of yes. choice picks one of named options. score places the state along ordered levels.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ClassifyQuestionType {
     #[serde(rename = "noul")]
@@ -3120,6 +2971,9 @@ pub enum ClassifyQuestionType {
     Choice,
     #[serde(rename = "score")]
     Score,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ClassifyQuestionType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3127,6 +2981,7 @@ impl ::std::fmt::Display for ClassifyQuestionType {
             Self::Noul => f.write_str("noul"),
             Self::Choice => f.write_str("choice"),
             Self::Score => f.write_str("score"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3286,16 +3141,7 @@ pub struct ConnectionCredentials {
 }
 ///current when the connection reads its connector's latest revision, or an earlier one that differs from it only in what a config is checked against (sensitive, and which tools only read or send data out), outdated when a later one changes what the connection reads, and broken when a later one marked it as not working: the connection is given no credential until it moves to the latest revision, by a consent that connects it again or, for a bearer or api_key connection, by saving its token or key again, and for a none connection by saving its empty credentials again.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionDefinitionStatus {
     #[serde(rename = "current")]
@@ -3304,6 +3150,9 @@ pub enum ConnectionDefinitionStatus {
     Outdated,
     #[serde(rename = "broken")]
     Broken,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionDefinitionStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3311,6 +3160,7 @@ impl ::std::fmt::Display for ConnectionDefinitionStatus {
             Self::Current => f.write_str("current"),
             Self::Outdated => f.write_str("outdated"),
             Self::Broken => f.write_str("broken"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3405,28 +3255,23 @@ pub struct ConnectionOwner {
 }
 ///app is the app's own account, user one user's.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionOwnerType {
     #[serde(rename = "app")]
     App,
     #[serde(rename = "user")]
     User,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionOwnerType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::App => f.write_str("app"),
             Self::User => f.write_str("user"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3486,16 +3331,7 @@ pub struct ConnectionRequest {
 }
 ///pending until an account is connected, then connected, needs_reauthorization once the provider stops accepting its credential, and disconnected when it is deleted.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionStatus {
     #[serde(rename = "pending")]
@@ -3506,6 +3342,9 @@ pub enum ConnectionStatus {
     NeedsReauthorization,
     #[serde(rename = "disconnected")]
     Disconnected,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3514,6 +3353,7 @@ impl ::std::fmt::Display for ConnectionStatus {
             Self::Connected => f.write_str("connected"),
             Self::NeedsReauthorization => f.write_str("needs_reauthorization"),
             Self::Disconnected => f.write_str("disconnected"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3643,16 +3483,7 @@ pub struct ConnectionValidationRequest {
 }
 ///connected: the credential works and the tools were listed. pending: no credentials yet. needs_reauthorization: the provider no longer takes the credential, so only a reconnect helps, or, with code connector_credential_rejected, saving credentials again. needs_scopes: the tools were listed, and the grant lacks scopes they need; missing_scopes names them, and a consent that asks for them helps. needs_reapproval: the tools were listed, and the provider changed the schema of a tool sessions pinned for the connection's current grant, so sessions leave it out until it is approved again; changed_tools names them, and POST .../tools/approve approves them, as does a reconnect of an OAuth connection, which begins a new grant. failed: the provider could not be reached or listed nothing usable, or the provider refused a consent (code connector_consent_refused); error says why.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectionValidationStatus {
     #[serde(rename = "connected")]
@@ -3667,6 +3498,9 @@ pub enum ConnectionValidationStatus {
     NeedsReapproval,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectionValidationStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3677,6 +3511,7 @@ impl ::std::fmt::Display for ConnectionValidationStatus {
             Self::NeedsScopes => f.write_str("needs_scopes"),
             Self::NeedsReapproval => f.write_str("needs_reapproval"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3748,16 +3583,7 @@ pub struct Connector {
 }
 ///grant_created: a consent or a credentials write gave the connection a grant. grant_refreshed: the router renewed its credential. grant_revoked: the grant ended, because the provider refused or revoked it or the connection was deleted. token_export: the app's backend exported its access credential. proxy_call: a direct call went to the provider through the connection. tool_reapproved: the app's backend approved tools at the schema the provider lists now (POST .../tools/approve); tools names them.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorAuditAction {
     #[serde(rename = "grant_created")]
@@ -3772,6 +3598,9 @@ pub enum ConnectorAuditAction {
     ProxyCall,
     #[serde(rename = "tool_reapproved")]
     ToolReapproved,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorAuditAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -3782,6 +3611,7 @@ impl ::std::fmt::Display for ConnectorAuditAction {
             Self::TokenExport => f.write_str("token_export"),
             Self::ProxyCall => f.write_str("proxy_call"),
             Self::ToolReapproved => f.write_str("tool_reapproved"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3928,28 +3758,23 @@ pub struct ConnectorClient {
 }
 ///How a private_key_jwt assertion is signed, and set only for it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorClientAlg {
     #[serde(rename = "RS256")]
     Rs256,
     #[serde(rename = "PS256")]
     Ps256,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorClientAlg {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Rs256 => f.write_str("RS256"),
             Self::Ps256 => f.write_str("PS256"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -3979,16 +3804,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectorClientAlg {
 }
 ///How the OAuth client authenticates at the token endpoint, as the IANA OAuth token endpoint authentication methods registry spells it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorClientAuthMethod {
     #[serde(rename = "none")]
@@ -4001,6 +3817,9 @@ pub enum ConnectorClientAuthMethod {
     PrivateKeyJwt,
     #[serde(rename = "tls_client_auth")]
     TlsClientAuth,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorClientAuthMethod {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4010,6 +3829,7 @@ impl ::std::fmt::Display for ConnectorClientAuthMethod {
             Self::ClientSecretBasic => f.write_str("client_secret_basic"),
             Self::PrivateKeyJwt => f.write_str("private_key_jwt"),
             Self::TlsClientAuth => f.write_str("tls_client_auth"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4042,16 +3862,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ConnectorClientAuthMetho
 }
 ///operator is this deployment's own client, customer one the app registered, managed one the router created for the app (PUT /v1/agents/connectors/{id}/provider-app), dcr one registered on the fly (RFC 7591) and cimd one named by a metadata document.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorClientRegistrationMethod {
     #[serde(rename = "operator")]
@@ -4064,6 +3875,9 @@ pub enum ConnectorClientRegistrationMethod {
     Dcr,
     #[serde(rename = "cimd")]
     Cimd,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorClientRegistrationMethod {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4073,6 +3887,7 @@ impl ::std::fmt::Display for ConnectorClientRegistrationMethod {
             Self::Managed => f.write_str("managed"),
             Self::Dcr => f.write_str("dcr"),
             Self::Cimd => f.write_str("cimd"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4144,28 +3959,23 @@ pub struct ConnectorEventDestinationSecret {
 }
 ///Which deliveries a destination is sent. unhandled: the ones the router acts on in no way, such as a Slack button click, a reaction or a modal submission, and a message no agent of the app answers: the app's own code next to the router's agent. all: every verified delivery, messages and grant events included, but the provider's URL handshake: the app runs its own agent. Either way a message an agent of the app answers is still answered there. A Slack reply that does not mention the bot, in a thread the agent is not in yet, is unhandled when it arrives. If the mention that starts the thread arrives within 10 minutes, as when Slack retries the mention, the agent answers the reply too. The forward is not taken back, and no event says that the agent answered it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorEventForward {
     #[serde(rename = "unhandled")]
     Unhandled,
     #[serde(rename = "all")]
     All,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorEventForward {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Unhandled => f.write_str("unhandled"),
             Self::All => f.write_str("all"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4229,16 +4039,7 @@ pub struct ConnectorOAuthClient {
 }
 ///How the app's own OAuth client authenticates at the token endpoint (RFC 7591 section 2): none for a public client, which has no secret, client_secret_basic or client_secret_post.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorOAuthClientAuthMethod {
     #[serde(rename = "none")]
@@ -4247,6 +4048,9 @@ pub enum ConnectorOAuthClientAuthMethod {
     ClientSecretBasic,
     #[serde(rename = "client_secret_post")]
     ClientSecretPost,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorOAuthClientAuthMethod {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4254,6 +4058,7 @@ impl ::std::fmt::Display for ConnectorOAuthClientAuthMethod {
             Self::None => f.write_str("none"),
             Self::ClientSecretBasic => f.write_str("client_secret_basic"),
             Self::ClientSecretPost => f.write_str("client_secret_post"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4304,28 +4109,23 @@ pub struct ConnectorOAuthClientRequest {
 }
 ///cancel stops waiting for the call when the turn is interrupted, and tells the provider to stop it unless cancellable is false. wait lets the call finish, up to the binding's timeout, and its result goes into the conversation for the next turn.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ConnectorOnInterrupt {
     #[serde(rename = "cancel")]
     Cancel,
     #[serde(rename = "wait")]
     Wait,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ConnectorOnInterrupt {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Cancel => f.write_str("cancel"),
             Self::Wait => f.write_str("wait"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4530,16 +4330,7 @@ pub struct ContactPage {
 }
 ///Where a contact is: enrolled while waiting to be rung, in_progress while a call to them happens or is being read, completed once the sequence is done with them, rejected when their number was refused before any call, stopped when they were left unrung, failed when a call could not be made.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ContactStage {
     #[serde(rename = "enrolled")]
@@ -4554,6 +4345,9 @@ pub enum ContactStage {
     Stopped,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ContactStage {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4564,6 +4358,7 @@ impl ::std::fmt::Display for ContactStage {
             Self::Rejected => f.write_str("rejected"),
             Self::Stopped => f.write_str("stopped"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4632,28 +4427,23 @@ pub struct CreateOptOutRequest {
 }
 ///Omitted is api.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CreateOptOutRequestSource {
     #[serde(rename = "api")]
     Api,
     #[serde(rename = "dashboard")]
     Dashboard,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CreateOptOutRequestSource {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Api => f.write_str("api"),
             Self::Dashboard => f.write_str("dashboard"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -4929,16 +4719,7 @@ pub struct CreditEntry {
 }
 ///`CreditEntryKind`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CreditEntryKind {
     #[serde(rename = "top_up")]
@@ -4953,6 +4734,9 @@ pub enum CreditEntryKind {
     DisputeReversal,
     #[serde(rename = "adjustment")]
     Adjustment,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CreditEntryKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -4963,6 +4747,7 @@ impl ::std::fmt::Display for CreditEntryKind {
             Self::Dispute => f.write_str("dispute"),
             Self::DisputeReversal => f.write_str("dispute_reversal"),
             Self::Adjustment => f.write_str("adjustment"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5089,16 +4874,7 @@ pub struct CustomModelRequest {
 }
 ///Whether the host trains on what it is sent. Declared with retention, or a session with a data policy is never routed here.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum CustomModelRequestTrainsOnData {
     #[serde(rename = "yes")]
@@ -5107,6 +4883,9 @@ pub enum CustomModelRequestTrainsOnData {
     No,
     #[serde(rename = "unknown")]
     Unknown,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for CustomModelRequestTrainsOnData {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5114,6 +4893,7 @@ impl ::std::fmt::Display for CustomModelRequestTrainsOnData {
             Self::Yes => f.write_str("yes"),
             Self::No => f.write_str("no"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5159,16 +4939,7 @@ pub struct DataChange {
 }
 ///`DataChangeOp`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DataChangeOp {
     #[serde(rename = "insert")]
@@ -5177,6 +4948,9 @@ pub enum DataChangeOp {
     Update,
     #[serde(rename = "delete")]
     Delete,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DataChangeOp {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5184,6 +4958,7 @@ impl ::std::fmt::Display for DataChangeOp {
             Self::Insert => f.write_str("insert"),
             Self::Update => f.write_str("update"),
             Self::Delete => f.write_str("delete"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5252,16 +5027,7 @@ pub struct DataPolicy {
 }
 ///What a conversation decided. Asking puts a settled turn to the flow controller; waiting leaves it because the caller has not finished; ignoring drops speech meant for somebody else; answering replies to it; queueing holds it until the agent has stopped talking; interrupting abandons the reply being spoken and shortening ends it early; a backchannel is a listening noise that never reaches the model; superseding drops a ruling about words that have since changed; compacting replaces old history with a summary; delegating hands work to the subagent and settling is that work coming back, answered or not.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DecisionKind {
     #[serde(rename = "ask")]
@@ -5290,6 +5056,9 @@ pub enum DecisionKind {
     Settle,
     #[serde(rename = "fail")]
     Fail,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DecisionKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5307,6 +5076,7 @@ impl ::std::fmt::Display for DecisionKind {
             Self::Delegate => f.write_str("delegate"),
             Self::Settle => f.write_str("settle"),
             Self::Fail => f.write_str("fail"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5367,16 +5137,7 @@ pub struct DetectionBox {
 }
 ///Why a detection found nothing, absent when it completed. unsupported_option is a class, setting or overwrite no candidate could honour; provider_failed anything else a provider did wrong; timeout the 30 seconds running out; cancelled the caller hanging up.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DetectionErrorCode {
     #[serde(rename = "unsupported_option")]
@@ -5387,6 +5148,9 @@ pub enum DetectionErrorCode {
     Timeout,
     #[serde(rename = "cancelled")]
     Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DetectionErrorCode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5395,6 +5159,7 @@ impl ::std::fmt::Display for DetectionErrorCode {
             Self::ProviderFailed => f.write_str("provider_failed"),
             Self::Timeout => f.write_str("timeout"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5482,28 +5247,23 @@ pub struct DetectionResult {
 }
 ///Whether the image was looked at. A failed detection says why in error_code and error.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DetectionStatus {
     #[serde(rename = "completed")]
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DetectionStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5533,28 +5293,23 @@ impl ::std::convert::TryFrom<::std::string::String> for DetectionStatus {
 }
 ///Whether this kind of work is left to the customer's own dispatch worker.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DispatchSetting {
     #[serde(rename = "enabled")]
     Enabled,
     #[serde(rename = "disabled")]
     Disabled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DispatchSetting {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Enabled => f.write_str("enabled"),
             Self::Disabled => f.write_str("disabled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5590,16 +5345,7 @@ pub struct DuplicateCampaignRequest {
 }
 ///none, all, or the contacts never rung, which a stopped or completed campaign alone knows.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum DuplicateCampaignRequestContacts {
     #[serde(rename = "none")]
@@ -5608,6 +5354,9 @@ pub enum DuplicateCampaignRequestContacts {
     All,
     #[serde(rename = "not_contacted")]
     NotContacted,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for DuplicateCampaignRequestContacts {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5615,6 +5364,7 @@ impl ::std::fmt::Display for DuplicateCampaignRequestContacts {
             Self::None => f.write_str("none"),
             Self::All => f.write_str("all"),
             Self::NotContacted => f.write_str("not_contacted"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5665,28 +5415,23 @@ pub struct EndCallSettings {
 }
 ///What decides a turn is over: a long enough pause, or a model reading the words and judging the sentence finished.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Endpointing {
     #[serde(rename = "silence")]
     Silence,
     #[serde(rename = "semantic")]
     Semantic,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Endpointing {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Silence => f.write_str("silence"),
             Self::Semantic => f.write_str("semantic"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5716,16 +5461,7 @@ impl ::std::convert::TryFrom<::std::string::String> for Endpointing {
 }
 ///What the agent does with episode cards, the same for every channel: its phone calls, the app chat, and the SMS, WhatsApp, iMessage and Slack threads of its channel connections. off writes none and reads none. record writes each conversation's card and its summary into the person's omni-channel, and no session reads them. on writes them as record does, and a session starts with the person's other cards. Turning record into on reads what record wrote.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum EpisodeCardsMode {
     #[serde(rename = "off")]
@@ -5734,6 +5470,9 @@ pub enum EpisodeCardsMode {
     Record,
     #[serde(rename = "on")]
     On,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for EpisodeCardsMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5741,6 +5480,7 @@ impl ::std::fmt::Display for EpisodeCardsMode {
             Self::Off => f.write_str("off"),
             Self::Record => f.write_str("record"),
             Self::On => f.write_str("on"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5798,16 +5538,7 @@ pub struct ErrorResponse {
 }
 ///The kind of failure, which decides the status it is answered with: invalid_request 400, authentication 401, payment_required 402, permission 403, not_found 404, method_not_allowed 405, not_acceptable 406, conflict 409, gone 410, payload_too_large 413, unsupported_media_type 415, rate_limited 429, internal 500, unavailable 503, timeout 504.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ErrorType {
     #[serde(rename = "invalid_request")]
@@ -5840,6 +5571,9 @@ pub enum ErrorType {
     Unavailable,
     #[serde(rename = "timeout")]
     Timeout,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ErrorType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -5859,6 +5593,7 @@ impl ::std::fmt::Display for ErrorType {
             Self::Internal => f.write_str("internal"),
             Self::Unavailable => f.write_str("unavailable"),
             Self::Timeout => f.write_str("timeout"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -5952,28 +5687,23 @@ pub struct GeneratedImage {
 }
 ///What the picture is, read off the picture itself rather than the provider's label.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum GeneratedImageMediaType {
     #[serde(rename = "image/png")]
     ImagePng,
     #[serde(rename = "image/jpeg")]
     ImageJpeg,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for GeneratedImageMediaType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ImagePng => f.write_str("image/png"),
             Self::ImageJpeg => f.write_str("image/jpeg"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6003,28 +5733,23 @@ impl ::std::convert::TryFrom<::std::string::String> for GeneratedImageMediaType 
 }
 ///`Granularity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Granularity {
     #[serde(rename = "hourly")]
     Hourly,
     #[serde(rename = "daily")]
     Daily,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Granularity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Hourly => f.write_str("hourly"),
             Self::Daily => f.write_str("daily"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6062,28 +5787,23 @@ pub struct Greeting {
 }
 ///exact says the text word for word. variation has the model say its own variation of it on every call, so callers do not hear the same opening each time. A speech-to-speech model cannot say exact words, so it always says its own rendering of the text.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum GreetingMode {
     #[serde(rename = "exact")]
     Exact,
     #[serde(rename = "variation")]
     Variation,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for GreetingMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Exact => f.write_str("exact"),
             Self::Variation => f.write_str("variation"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6145,25 +5865,20 @@ pub struct GuestUserRequest {
 }
 ///Which harness the agent's sessions run: what hands work to the subagent, loads skills, compacts the conversation and starts the sandbox. Set on the agent, never on a session. Omit it for the default, the only one there is.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Harness {
     #[serde(rename = "default")]
     Default,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Harness {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Default => f.write_str("default"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6199,28 +5914,23 @@ pub struct HealthStatus {
 }
 ///`HealthStatusStatus`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum HealthStatusStatus {
     #[serde(rename = "ok")]
     Ok,
     #[serde(rename = "degraded")]
     Degraded,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for HealthStatusStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Ok => f.write_str("ok"),
             Self::Degraded => f.write_str("degraded"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6262,28 +5972,23 @@ pub struct HistoryMessage {
 }
 ///user is what a person said, assistant what the agent answered. These are the only turns a resumed conversation hands the model; instructions say anything a system message would.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum HistoryRole {
     #[serde(rename = "user")]
     User,
     #[serde(rename = "assistant")]
     Assistant,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for HistoryRole {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::User => f.write_str("user"),
             Self::Assistant => f.write_str("assistant"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6334,25 +6039,20 @@ pub struct ImageContentPart {
 }
 ///`ImageContentPartType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageContentPartType {
     #[serde(rename = "image_url")]
     ImageUrl,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageContentPartType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ImageUrl => f.write_str("image_url"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6381,16 +6081,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ImageContentPartType {
 }
 ///Why a generation drew nothing, absent when it completed. content_filtered is a safety filter refusing the prompt or the picture; unsupported_option a size, shape or setting no candidate could honour; provider_failed anything else a provider did wrong; timeout the 240 seconds running out; cancelled the caller hanging up.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageErrorCode {
     #[serde(rename = "content_filtered")]
@@ -6403,6 +6094,9 @@ pub enum ImageErrorCode {
     Timeout,
     #[serde(rename = "cancelled")]
     Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageErrorCode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6412,6 +6106,7 @@ impl ::std::fmt::Display for ImageErrorCode {
             Self::ProviderFailed => f.write_str("provider_failed"),
             Self::Timeout => f.write_str("timeout"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6478,28 +6173,23 @@ pub struct ImageGenerationRequest {
 }
 ///Whether the pictures were drawn. A failed generation says why in error_code and error.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageGenerationStatus {
     #[serde(rename = "completed")]
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageGenerationStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6557,28 +6247,23 @@ pub struct ImageOptions {
 }
 ///The encoding, on a model that can be asked for one.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageOptionsOutputFormat {
     #[serde(rename = "png")]
     Png,
     #[serde(rename = "jpeg")]
     Jpeg,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageOptionsOutputFormat {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Png => f.write_str("png"),
             Self::Jpeg => f.write_str("jpeg"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6616,16 +6301,7 @@ pub struct ImageSource {
 }
 ///`ImageSourceDetail`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ImageSourceDetail {
     #[serde(rename = "auto")]
@@ -6634,6 +6310,9 @@ pub enum ImageSourceDetail {
     Low,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ImageSourceDetail {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6641,6 +6320,7 @@ impl ::std::fmt::Display for ImageSourceDetail {
             Self::Auto => f.write_str("auto"),
             Self::Low => f.write_str("low"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6744,16 +6424,7 @@ pub struct InvocationArgument {
 }
 ///The argument's JSON type.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum InvocationArgumentType {
     #[serde(rename = "object")]
@@ -6768,6 +6439,9 @@ pub enum InvocationArgumentType {
     Boolean,
     #[serde(rename = "null")]
     Null,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for InvocationArgumentType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6778,6 +6452,7 @@ impl ::std::fmt::Display for InvocationArgumentType {
             Self::Number => f.write_str("number"),
             Self::Boolean => f.write_str("boolean"),
             Self::Null => f.write_str("null"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6811,16 +6486,7 @@ impl ::std::convert::TryFrom<::std::string::String> for InvocationArgumentType {
 }
 ///customer_auth: the provider refused the connection's credential, or it had none; reconnect it. external_server: the provider answered with a failure or could not be reached. client_timeout: the router stopped waiting before the provider answered, and nothing says it got the call. outcome_unknown: the call was sent and cut off, by the binding's timeout or an interrupted turn, so it may have been done. denied: the router refused it before anything was sent.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum InvocationErrorType {
     #[serde(rename = "customer_auth")]
@@ -6833,6 +6499,9 @@ pub enum InvocationErrorType {
     OutcomeUnknown,
     #[serde(rename = "denied")]
     Denied,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for InvocationErrorType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6842,6 +6511,7 @@ impl ::std::fmt::Display for InvocationErrorType {
             Self::ClientTimeout => f.write_str("client_timeout"),
             Self::OutcomeUnknown => f.write_str("outcome_unknown"),
             Self::Denied => f.write_str("denied"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -6882,16 +6552,7 @@ pub struct KnowledgeDocument {
 }
 ///Where the document has got to. Pending is an uploaded file waiting to be read or being read; failed is one that could not be read, and error says why. Text posted is indexed when it is written.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum KnowledgeDocumentState {
     #[serde(rename = "pending")]
@@ -6900,6 +6561,9 @@ pub enum KnowledgeDocumentState {
     Indexed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for KnowledgeDocumentState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -6907,6 +6571,7 @@ impl ::std::fmt::Display for KnowledgeDocumentState {
             Self::Pending => f.write_str("pending"),
             Self::Indexed => f.write_str("indexed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7001,16 +6666,7 @@ pub struct KnowledgeUrlRequest {
 }
 ///Where the page has got to. Pending means it has been added and its first read is queued or being retried; failed means every attempt failed.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum KnowledgeUrlState {
     #[serde(rename = "pending")]
@@ -7019,6 +6675,9 @@ pub enum KnowledgeUrlState {
     Indexed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for KnowledgeUrlState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7026,6 +6685,7 @@ impl ::std::fmt::Display for KnowledgeUrlState {
             Self::Pending => f.write_str("pending"),
             Self::Indexed => f.write_str("indexed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7227,16 +6887,7 @@ pub struct LimitGrantRevocation {
 }
 ///Where a grant stands: live (it is drawn once a limit of its subject is spent), used (it paid for its amount), expired (past expires_at) or revoked.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitGrantState {
     #[serde(rename = "live")]
@@ -7247,6 +6898,9 @@ pub enum LimitGrantState {
     Expired,
     #[serde(rename = "revoked")]
     Revoked,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitGrantState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7255,6 +6909,7 @@ impl ::std::fmt::Display for LimitGrantState {
             Self::Used => f.write_str("used"),
             Self::Expired => f.write_str("expired"),
             Self::Revoked => f.write_str("revoked"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7331,16 +6986,7 @@ pub struct LimitInput {
 }
 ///The window a limit counts spend over, in UTC: the day, the week from Monday, 14 days counted from Monday 2024-01-01, or the calendar month.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitInterval {
     #[serde(rename = "daily")]
@@ -7351,6 +6997,9 @@ pub enum LimitInterval {
     Biweekly,
     #[serde(rename = "monthly")]
     Monthly,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitInterval {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7359,6 +7008,7 @@ impl ::std::fmt::Display for LimitInterval {
             Self::Weekly => f.write_str("weekly"),
             Self::Biweekly => f.write_str("biweekly"),
             Self::Monthly => f.write_str("monthly"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7390,16 +7040,7 @@ impl ::std::convert::TryFrom<::std::string::String> for LimitInterval {
 }
 ///Whose ids a limit names. A key's or a user's limit at organization or app level is a default for every key or user there, each counted on its own; at api_key or user level it names one. The most specific level wins. Every other subject has one level: the organization, a category and a team are organization level; an app, and a category or team within one, app level.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitLevel {
     #[serde(rename = "organization")]
@@ -7410,6 +7051,9 @@ pub enum LimitLevel {
     ApiKey,
     #[serde(rename = "user")]
     User,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitLevel {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7418,6 +7062,7 @@ impl ::std::fmt::Display for LimitLevel {
             Self::App => f.write_str("app"),
             Self::ApiKey => f.write_str("api_key"),
             Self::User => f.write_str("user"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7483,16 +7128,7 @@ pub struct LimitResetInput {
 }
 ///Whose spend a limit counts: the organization, one app, a key, an end user of an app, a usage category across the organization or within one app, or a team across the organization or within one app. A team is the user's team, as its token names it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LimitSubject {
     #[serde(rename = "organization")]
@@ -7511,6 +7147,9 @@ pub enum LimitSubject {
     Team,
     #[serde(rename = "app_team")]
     AppTeam,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LimitSubject {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7523,6 +7162,7 @@ impl ::std::fmt::Display for LimitSubject {
             Self::AppCategory => f.write_str("app_category"),
             Self::Team => f.write_str("team"),
             Self::AppTeam => f.write_str("app_team"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7642,28 +7282,23 @@ pub struct LlmOptions {
 }
 ///Whether the answer is prose or a JSON object.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LlmOptionsFormat {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "json_object")]
     JsonObject,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LlmOptionsFormat {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::JsonObject => f.write_str("json_object"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7693,16 +7328,7 @@ impl ::std::convert::TryFrom<::std::string::String> for LlmOptionsFormat {
 }
 ///How long the model may think before answering, on the models that think.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LlmOptionsReasoningEffort {
     #[serde(rename = "minimal")]
@@ -7713,6 +7339,9 @@ pub enum LlmOptionsReasoningEffort {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LlmOptionsReasoningEffort {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7721,6 +7350,7 @@ impl ::std::fmt::Display for LlmOptionsReasoningEffort {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7752,16 +7382,7 @@ impl ::std::convert::TryFrom<::std::string::String> for LlmOptionsReasoningEffor
 }
 ///`LlmOptionsVerbosity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum LlmOptionsVerbosity {
     #[serde(rename = "low")]
@@ -7770,6 +7391,9 @@ pub enum LlmOptionsVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for LlmOptionsVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7777,6 +7401,7 @@ impl ::std::fmt::Display for LlmOptionsVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -7913,16 +7538,7 @@ impl ::std::convert::From<::std::vec::Vec<ContentPart>> for MessageContent {
 }
 ///What kind of work was done. The first nine are routed across providers; sts is speech to speech, one native audio model in place of a transcriber, a text model and a voice. decision_model is a decision model: it answers named questions about a piece of text with a typed value and the probability behind it rather than with prose, which is what a guardrail asks before a reply is spoken. image is pictures drawn from a prompt, detection is boxes found in one, and ocr is the text of a page read from a picture of it. Memory, knowledge and phone are recorded but not routed, since there is one memory store, one knowledge base and one vendor per number, so the provider paths do not serve them while the statistics paths do.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Modality {
     #[serde(rename = "stt")]
@@ -7949,6 +7565,9 @@ pub enum Modality {
     Knowledge,
     #[serde(rename = "phone")]
     Phone,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Modality {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -7965,6 +7584,7 @@ impl ::std::fmt::Display for Modality {
             Self::Memory => f.write_str("memory"),
             Self::Knowledge => f.write_str("knowledge"),
             Self::Phone => f.write_str("phone"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8060,16 +7680,7 @@ pub struct ModelOverwrites {
 }
 ///How hard to reason before answering. It becomes the reasoning effort on the request, which is the vocabulary the providers that support one already speak, and means nothing to a model that does not reason.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ModelOverwritesThinking {
     #[serde(rename = "none")]
@@ -8082,6 +7693,9 @@ pub enum ModelOverwritesThinking {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ModelOverwritesThinking {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8091,6 +7705,7 @@ impl ::std::fmt::Display for ModelOverwritesThinking {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8123,16 +7738,7 @@ impl ::std::convert::TryFrom<::std::string::String> for ModelOverwritesThinking 
 }
 ///How much detail to give. Dropped for models that do not take it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ModelOverwritesVerbosity {
     #[serde(rename = "low")]
@@ -8141,6 +7747,9 @@ pub enum ModelOverwritesVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ModelOverwritesVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8148,6 +7757,7 @@ impl ::std::fmt::Display for ModelOverwritesVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8200,16 +7810,7 @@ pub struct NumberSearchResult {
 }
 ///Why a page was not read, absent when it was. provider_failed is every candidate failing; timeout the 150 seconds running out; cancelled the caller hanging up.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum OcrErrorCode {
     #[serde(rename = "provider_failed")]
@@ -8218,6 +7819,9 @@ pub enum OcrErrorCode {
     Timeout,
     #[serde(rename = "cancelled")]
     Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for OcrErrorCode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8225,6 +7829,7 @@ impl ::std::fmt::Display for OcrErrorCode {
             Self::ProviderFailed => f.write_str("provider_failed"),
             Self::Timeout => f.write_str("timeout"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8304,28 +7909,23 @@ pub struct OcrResult {
 }
 ///Whether the page was read. A failed reading says why in error_code and error.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum OcrStatus {
     #[serde(rename = "completed")]
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for OcrStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8388,16 +7988,7 @@ pub struct OptOut {
 }
 ///The channel a recipient opted out of, or all of them.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum OptOutChannel {
     #[serde(rename = "sms")]
@@ -8410,6 +8001,9 @@ pub enum OptOutChannel {
     Imessage,
     #[serde(rename = "all")]
     All,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for OptOutChannel {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8419,6 +8013,7 @@ impl ::std::fmt::Display for OptOutChannel {
             Self::Whatsapp => f.write_str("whatsapp"),
             Self::Imessage => f.write_str("imessage"),
             Self::All => f.write_str("all"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8460,16 +8055,7 @@ pub struct OptOutPage {
 }
 ///What a number can carry. The names are Telnyx's feature names, because they are the widest vocabulary any of these vendors offers.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PhoneCapability {
     #[serde(rename = "voice")]
@@ -8488,6 +8074,9 @@ pub enum PhoneCapability {
     InternationalSms,
     #[serde(rename = "local_calling")]
     LocalCalling,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PhoneCapability {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8500,6 +8089,7 @@ impl ::std::fmt::Display for PhoneCapability {
             Self::HdVoice => f.write_str("hd_voice"),
             Self::InternationalSms => f.write_str("international_sms"),
             Self::LocalCalling => f.write_str("local_calling"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8562,16 +8152,7 @@ pub struct PhoneNumber {
 }
 ///What kind of number it is, which decides who pays for the call.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PhoneNumberType {
     #[serde(rename = "local")]
@@ -8580,6 +8161,9 @@ pub enum PhoneNumberType {
     TollFree,
     #[serde(rename = "mobile")]
     Mobile,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PhoneNumberType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8587,6 +8171,7 @@ impl ::std::fmt::Display for PhoneNumberType {
             Self::Local => f.write_str("local"),
             Self::TollFree => f.write_str("toll_free"),
             Self::Mobile => f.write_str("mobile"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8617,16 +8202,7 @@ impl ::std::convert::TryFrom<::std::string::String> for PhoneNumberType {
 }
 ///`PhoneOperation`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PhoneOperation {
     #[serde(rename = "search")]
@@ -8641,6 +8217,9 @@ pub enum PhoneOperation {
     Dial,
     #[serde(rename = "send_digits")]
     SendDigits,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PhoneOperation {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8651,6 +8230,7 @@ impl ::std::fmt::Display for PhoneOperation {
             Self::Attach => f.write_str("attach"),
             Self::Dial => f.write_str("dial"),
             Self::SendDigits => f.write_str("send_digits"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -8812,16 +8392,7 @@ pub struct PolicyDataPolicy {
 }
 ///Whose policy: an organization's, an app's, or one end user's.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PolicyScope {
     #[serde(rename = "organization")]
@@ -8830,6 +8401,9 @@ pub enum PolicyScope {
     App,
     #[serde(rename = "user")]
     User,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PolicyScope {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -8837,6 +8411,7 @@ impl ::std::fmt::Display for PolicyScope {
             Self::Organization => f.write_str("organization"),
             Self::App => f.write_str("app"),
             Self::User => f.write_str("user"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9039,16 +8614,7 @@ pub struct PriceChangeInput {
 }
 ///What wrote the change: seed is a database's first load from the router's price files, release the items a release's price files had that the database lacked, and api a change made through the management API.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum PriceChangeKind {
     #[serde(rename = "seed")]
@@ -9057,6 +8623,9 @@ pub enum PriceChangeKind {
     Release,
     #[serde(rename = "api")]
     Api,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for PriceChangeKind {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9064,6 +8633,7 @@ impl ::std::fmt::Display for PriceChangeKind {
             Self::Seed => f.write_str("seed"),
             Self::Release => f.write_str("release"),
             Self::Api => f.write_str("api"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9467,16 +9037,7 @@ pub struct Quota {
 }
 ///Who set a number of a quota: the user's own policy, the app's, the organization's, or the router's default. The router's default counts the user's devices only; every other counts the app's backend acting for the user too.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum QuotaLevel {
     #[serde(rename = "user")]
@@ -9487,6 +9048,9 @@ pub enum QuotaLevel {
     Organization,
     #[serde(rename = "default")]
     Default,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for QuotaLevel {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9495,6 +9059,7 @@ impl ::std::fmt::Display for QuotaLevel {
             Self::App => f.write_str("app"),
             Self::Organization => f.write_str("organization"),
             Self::Default => f.write_str("default"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9583,16 +9148,7 @@ pub struct RecordingSource {
 }
 ///Where a job has got to. A failed job carries the reason in `error`, and a completed one carries its result.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum RecordingStatus {
     #[serde(rename = "queued")]
@@ -9603,6 +9159,9 @@ pub enum RecordingStatus {
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for RecordingStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9611,6 +9170,7 @@ impl ::std::fmt::Display for RecordingStatus {
             Self::Running => f.write_str("running"),
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9651,16 +9211,7 @@ pub struct RefusedContact {
 }
 ///Why a contact was not added: invalid_number is a number that cannot be read, duplicate one the campaign already holds or the request repeats, invalid_variable more than 50 variables, a variable with a bad name, or a value too long or over more than one line, invalid_time_zone a time zone that is not an IANA one.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum RefusedReason {
     #[serde(rename = "invalid_number")]
@@ -9671,6 +9222,9 @@ pub enum RefusedReason {
     InvalidVariable,
     #[serde(rename = "invalid_time_zone")]
     InvalidTimeZone,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for RefusedReason {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9679,6 +9233,7 @@ impl ::std::fmt::Display for RefusedReason {
             Self::Duplicate => f.write_str("duplicate"),
             Self::InvalidVariable => f.write_str("invalid_variable"),
             Self::InvalidTimeZone => f.write_str("invalid_time_zone"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9741,16 +9296,7 @@ pub struct ResumeHistory {
 }
 ///Who moved a use case: the app, Stream staff or the vendor.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ReviewActor {
     #[serde(rename = "app")]
@@ -9759,6 +9305,9 @@ pub enum ReviewActor {
     Staff,
     #[serde(rename = "vendor")]
     Vendor,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ReviewActor {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9766,6 +9315,7 @@ impl ::std::fmt::Display for ReviewActor {
             Self::App => f.write_str("app"),
             Self::Staff => f.write_str("staff"),
             Self::Vendor => f.write_str("vendor"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9816,16 +9366,7 @@ pub struct ReviewCause {
 }
 ///approve sends the use case to the vendor; request_changes hands it back to the app to edit; reject ends it.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ReviewDecision {
     #[serde(rename = "approve")]
@@ -9834,6 +9375,9 @@ pub enum ReviewDecision {
     RequestChanges,
     #[serde(rename = "reject")]
     Reject,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ReviewDecision {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -9841,6 +9385,7 @@ impl ::std::fmt::Display for ReviewDecision {
             Self::Approve => f.write_str("approve"),
             Self::RequestChanges => f.write_str("request_changes"),
             Self::Reject => f.write_str("reject"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -9976,25 +9521,20 @@ pub struct Run {
 }
 ///Where the agent may run code it writes. A text agent runs it itself; a voice agent hands it to the subagent, since running code takes seconds a call has none of. Omit it and the agent works everything out in its head.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Sandbox {
     #[serde(rename = "daytona")]
     Daytona,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Sandbox {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Daytona => f.write_str("daytona"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10043,16 +9583,7 @@ pub struct SandboxLimits {
 }
 ///What a sandbox may reach: nothing, an allow list, or anything.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SandboxLimitsNetwork {
     #[serde(rename = "none")]
@@ -10061,6 +9592,9 @@ pub enum SandboxLimitsNetwork {
     AllowList,
     #[serde(rename = "any")]
     Any,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SandboxLimitsNetwork {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10068,6 +9602,7 @@ impl ::std::fmt::Display for SandboxLimitsNetwork {
             Self::None => f.write_str("none"),
             Self::AllowList => f.write_str("allow_list"),
             Self::Any => f.write_str("any"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10169,28 +9704,23 @@ pub struct ScheduledTask {
 }
 ///agent when the model made it in a conversation, api when a backend did.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskCreatedBy {
     #[serde(rename = "agent")]
     Agent,
     #[serde(rename = "api")]
     Api,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskCreatedBy {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Agent => f.write_str("agent"),
             Self::Api => f.write_str("api"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10279,16 +9809,7 @@ pub struct ScheduledTaskRunPage {
 }
 ///running (retries included), delivered, failed, or missed (it fell outside the grace period, its call would have rung more than 15 minutes late, or it came while the task was paused).
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskRunState {
     #[serde(rename = "running")]
@@ -10299,6 +9820,9 @@ pub enum ScheduledTaskRunState {
     Failed,
     #[serde(rename = "missed")]
     Missed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskRunState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10307,6 +9831,7 @@ impl ::std::fmt::Display for ScheduledTaskRunState {
             Self::Delivered => f.write_str("delivered"),
             Self::Failed => f.write_str("failed"),
             Self::Missed => f.write_str("missed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10338,28 +9863,23 @@ impl ::std::convert::TryFrom<::std::string::String> for ScheduledTaskRunState {
 }
 ///schedule when it came due, manual when it was run by hand.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskRunTrigger {
     #[serde(rename = "schedule")]
     Schedule,
     #[serde(rename = "manual")]
     Manual,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskRunTrigger {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Schedule => f.write_str("schedule"),
             Self::Manual => f.write_str("manual"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10411,16 +9931,7 @@ pub struct ScheduledTaskSchedule {
 }
 ///active, paused, completed (a one-shot that ran, or a recurrence past its end), or failed (a one-shot whose occurrence failed, or a recurrence auto-paused after five failed occurrences in a row, a run that failed with already_called not counting; resume clears it).
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ScheduledTaskState {
     #[serde(rename = "active")]
@@ -10431,6 +9942,9 @@ pub enum ScheduledTaskState {
     Completed,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ScheduledTaskState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10439,6 +9953,7 @@ impl ::std::fmt::Display for ScheduledTaskState {
             Self::Paused => f.write_str("paused"),
             Self::Completed => f.write_str("completed"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10481,16 +9996,7 @@ pub struct SearchAnswer {
 }
 ///How much work a search is worth. instant answers from the index in a few hundred milliseconds; deep crawls and reasons over what it finds and can take tens of seconds. Providers offer different ladders, so each one maps these four onto its own.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SearchDepth {
     #[serde(rename = "instant")]
@@ -10501,6 +10007,9 @@ pub enum SearchDepth {
     Standard,
     #[serde(rename = "deep")]
     Deep,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SearchDepth {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10509,6 +10018,7 @@ impl ::std::fmt::Display for SearchDepth {
             Self::Fast => f.write_str("fast"),
             Self::Standard => f.write_str("standard"),
             Self::Deep => f.write_str("deep"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10575,16 +10085,7 @@ pub struct SearchOptions {
 }
 ///`SearchOptionsContentsItem`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SearchOptionsContentsItem {
     #[serde(rename = "text")]
@@ -10593,6 +10094,9 @@ pub enum SearchOptionsContentsItem {
     Highlights,
     #[serde(rename = "summary")]
     Summary,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SearchOptionsContentsItem {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10600,6 +10104,7 @@ impl ::std::fmt::Display for SearchOptionsContentsItem {
             Self::Text => f.write_str("text"),
             Self::Highlights => f.write_str("highlights"),
             Self::Summary => f.write_str("summary"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10785,16 +10290,7 @@ pub struct SessionConnectorBinding {
 }
 ///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionEndReason {
     #[serde(rename = "agent_hangup")]
@@ -10809,6 +10305,9 @@ pub enum SessionEndReason {
     Unanswered,
     #[serde(rename = "voicemail")]
     Voicemail,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionEndReason {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10819,6 +10318,7 @@ impl ::std::fmt::Display for SessionEndReason {
             Self::Start => f.write_str("start"),
             Self::Unanswered => f.write_str("unanswered"),
             Self::Voicemail => f.write_str("voicemail"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10905,16 +10405,7 @@ pub struct SessionMemory {
 }
 ///How the user took part: text for a conversation held in writing, voice for a call, and video once the agent has seen the user's video. It only moves up, from text or voice to video.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionModality {
     #[serde(rename = "text")]
@@ -10923,6 +10414,9 @@ pub enum SessionModality {
     Voice,
     #[serde(rename = "video")]
     Video,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionModality {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10930,6 +10424,7 @@ impl ::std::fmt::Display for SessionModality {
             Self::Text => f.write_str("text"),
             Self::Voice => f.write_str("voice"),
             Self::Video => f.write_str("video"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -10960,16 +10455,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionModality {
 }
 ///How the session hears and speaks: a transcriber, a conversation model and a voice; one speech-to-speech model; or in writing.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionMode {
     #[serde(rename = "cascade")]
@@ -10978,6 +10464,9 @@ pub enum SessionMode {
     Native,
     #[serde(rename = "text")]
     Text,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -10985,6 +10474,7 @@ impl ::std::fmt::Display for SessionMode {
             Self::Cascade => f.write_str("cascade"),
             Self::Native => f.write_str("native"),
             Self::Text => f.write_str("text"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11067,25 +10557,20 @@ pub struct SessionRespondCommand {
 }
 ///`SessionRespondCommandType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionRespondCommandType {
     #[serde(rename = "respond")]
     Respond,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionRespondCommandType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Respond => f.write_str("respond"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11139,16 +10624,7 @@ pub struct SessionSettingsRequest {
 }
 ///`SessionSettingsRequestThinking`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionSettingsRequestThinking {
     #[serde(rename = "none")]
@@ -11161,6 +10637,9 @@ pub enum SessionSettingsRequestThinking {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionSettingsRequestThinking {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11170,6 +10649,7 @@ impl ::std::fmt::Display for SessionSettingsRequestThinking {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11202,16 +10682,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionSettingsRequestTh
 }
 ///`SessionSettingsRequestVerbosity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionSettingsRequestVerbosity {
     #[serde(rename = "low")]
@@ -11220,6 +10691,9 @@ pub enum SessionSettingsRequestVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionSettingsRequestVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11227,6 +10701,7 @@ impl ::std::fmt::Display for SessionSettingsRequestVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11300,28 +10775,23 @@ impl<'de> ::serde::Deserialize<'de> for SessionSortDirection {
 }
 ///updated_at is the most recently active first. relevance is the best match first, and only sorts a text search.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionSortField {
     #[serde(rename = "updated_at")]
     UpdatedAt,
     #[serde(rename = "relevance")]
     Relevance,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionSortField {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::UpdatedAt => f.write_str("updated_at"),
             Self::Relevance => f.write_str("relevance"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11351,28 +10821,23 @@ impl ::std::convert::TryFrom<::std::string::String> for SessionSortField {
 }
 ///Whether the agent is still in the call.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionState {
     #[serde(rename = "live")]
     Live,
     #[serde(rename = "ended")]
     Ended,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Live => f.write_str("live"),
             Self::Ended => f.write_str("ended"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11444,28 +10909,23 @@ pub struct SessionToolApproval {
 }
 ///Who runs it. A client tool runs on a person's device: in a persistent conversation its call is shown as awaiting the device of the person whose command it answers (their user and the command's client_id), with its arguments, which every channel member can read. The caller still answers it over the events socket, once the device has reported. Defaults to server.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SessionToolExecutor {
     #[serde(rename = "server")]
     Server,
     #[serde(rename = "client")]
     Client,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SessionToolExecutor {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Server => f.write_str("server"),
             Self::Client => f.write_str("client"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11593,16 +11053,7 @@ pub struct SimulationCase {
 }
 ///Why the conversation stopped.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationCaseEnded {
     #[serde(rename = "complete")]
@@ -11613,6 +11064,9 @@ pub enum SimulationCaseEnded {
     Timeout,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationCaseEnded {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11621,6 +11075,7 @@ impl ::std::fmt::Display for SimulationCaseEnded {
             Self::Turns => f.write_str("turns"),
             Self::Timeout => f.write_str("timeout"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11652,16 +11107,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SimulationCaseEnded {
 }
 ///`SimulationCaseState`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationCaseState {
     #[serde(rename = "pending")]
@@ -11676,6 +11122,9 @@ pub enum SimulationCaseState {
     Errored,
     #[serde(rename = "cancelled")]
     Cancelled,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationCaseState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -11686,6 +11135,7 @@ impl ::std::fmt::Display for SimulationCaseState {
             Self::Failed => f.write_str("failed"),
             Self::Errored => f.write_str("errored"),
             Self::Cancelled => f.write_str("cancelled"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11753,28 +11203,23 @@ pub struct SimulationDeclaration {
 }
 ///Text when left out.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationDeclarationMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationDeclarationMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11816,28 +11261,23 @@ pub struct SimulationLine {
 }
 ///`SimulationMode`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11907,28 +11347,23 @@ pub struct SimulationRequest {
 }
 ///Text hands the agent the words, which tests everything between hearing and answering. Audio generates speech and runs the whole pipeline, so what is judged is what a caller would actually have heard. Text when left out.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationRequestMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationRequestMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -11989,28 +11424,23 @@ pub struct SimulationRun {
 }
 ///`SimulationRunMode`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationRunMode {
     #[serde(rename = "text")]
     Text,
     #[serde(rename = "audio")]
     Audio,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationRunMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
             Self::Audio => f.write_str("audio"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12040,16 +11470,7 @@ impl ::std::convert::TryFrom<::std::string::String> for SimulationRunMode {
 }
 ///A run passed only if every one of its conversations did. A conversation that never got as far as a ruling leaves the run errored rather than failed.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SimulationRunState {
     #[serde(rename = "running")]
@@ -12062,6 +11483,9 @@ pub enum SimulationRunState {
     Cancelled,
     #[serde(rename = "errored")]
     Errored,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SimulationRunState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12071,6 +11495,7 @@ impl ::std::fmt::Display for SimulationRunState {
             Self::Failed => f.write_str("failed"),
             Self::Cancelled => f.write_str("cancelled"),
             Self::Errored => f.write_str("errored"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12122,16 +11547,7 @@ pub struct SipTrunk {
 }
 ///`SipTrunkTransport`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SipTrunkTransport {
     #[serde(rename = "udp")]
@@ -12140,6 +11556,9 @@ pub enum SipTrunkTransport {
     Tcp,
     #[serde(rename = "tls")]
     Tls,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SipTrunkTransport {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12147,6 +11566,7 @@ impl ::std::fmt::Display for SipTrunkTransport {
             Self::Udp => f.write_str("udp"),
             Self::Tcp => f.write_str("tcp"),
             Self::Tls => f.write_str("tls"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12320,28 +11740,23 @@ pub struct SpendHardLimitWindow {
 }
 ///Whose spend is counted, or whose usage events are listed: the calling app's, or every app's of its organization. organization is server-side only.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum SpendScope {
     #[serde(rename = "app")]
     App,
     #[serde(rename = "organization")]
     Organization,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for SpendScope {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::App => f.write_str("app"),
             Self::Organization => f.write_str("organization"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12446,28 +11861,23 @@ pub struct StreamSettings {
 }
 ///Whose Stream app the router acts in. deployment is one app, the router's own, for every app it serves; app is each app's own.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StreamTenancy {
     #[serde(rename = "deployment")]
     Deployment,
     #[serde(rename = "app")]
     App,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StreamTenancy {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Deployment => f.write_str("deployment"),
             Self::App => f.write_str("app"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12497,16 +11907,7 @@ impl ::std::convert::TryFrom<::std::string::String> for StreamTenancy {
 }
 ///Whether a Stream app holds a type the router needs. unknown is a type Stream could not be asked about.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StreamTypeState {
     #[serde(rename = "present")]
@@ -12517,6 +11918,9 @@ pub enum StreamTypeState {
     Unsafe,
     #[serde(rename = "unknown")]
     Unknown,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StreamTypeState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12525,6 +11929,7 @@ impl ::std::fmt::Display for StreamTypeState {
             Self::Missing => f.write_str("missing"),
             Self::Unsafe => f.write_str("unsafe"),
             Self::Unknown => f.write_str("unknown"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12556,16 +11961,7 @@ impl ::std::convert::TryFrom<::std::string::String> for StreamTypeState {
 }
 ///Which Stream app the calling app's work is written into: this_app is its own, deployment_app is the router's own app, shared with every app it serves that has none, and nowhere is no app at all, so conversations are not kept and calls cannot be made.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StreamWritesInto {
     #[serde(rename = "this_app")]
@@ -12574,6 +11970,9 @@ pub enum StreamWritesInto {
     DeploymentApp,
     #[serde(rename = "nowhere")]
     Nowhere,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StreamWritesInto {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12581,6 +11980,7 @@ impl ::std::fmt::Display for StreamWritesInto {
             Self::ThisApp => f.write_str("this_app"),
             Self::DeploymentApp => f.write_str("deployment_app"),
             Self::Nowhere => f.write_str("nowhere"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -12661,16 +12061,7 @@ pub struct StsOptions {
 }
 ///What decides the caller has finished: a silence timer, a model reading the words, or nothing, which leaves the turns to the caller. Omitting it leaves the vendor's default. Only some models read the words, so semantic is a term.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum StsOptionsTurnDetection {
     #[serde(rename = "server_vad")]
@@ -12679,6 +12070,9 @@ pub enum StsOptionsTurnDetection {
     Semantic,
     #[serde(rename = "none")]
     None,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for StsOptionsTurnDetection {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -12686,6 +12080,7 @@ impl ::std::fmt::Display for StsOptionsTurnDetection {
             Self::ServerVad => f.write_str("server_vad"),
             Self::Semantic => f.write_str("semantic"),
             Self::None => f.write_str("none"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13030,25 +12425,20 @@ pub struct TextContentPart {
 }
 ///`TextContentPartType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TextContentPartType {
     #[serde(rename = "text")]
     Text,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TextContentPartType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Text => f.write_str("text"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13086,28 +12476,23 @@ pub struct TextMatch {
 }
 ///What the model optimises for.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum Tier {
     #[serde(rename = "low-latency")]
     LowLatency,
     #[serde(rename = "high-quality")]
     HighQuality,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for Tier {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::LowLatency => f.write_str("low-latency"),
             Self::HighQuality => f.write_str("high-quality"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13226,25 +12611,20 @@ pub struct ToolApprovalCommand {
 }
 ///`ToolApprovalCommandType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ToolApprovalCommandType {
     #[serde(rename = "tool_approval")]
     ToolApproval,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ToolApprovalCommandType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ToolApproval => f.write_str("tool_approval"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13288,25 +12668,20 @@ pub struct ToolResultCommand {
 }
 ///`ToolResultCommandType`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum ToolResultCommandType {
     #[serde(rename = "tool_result")]
     ToolResult,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for ToolResultCommandType {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::ToolResult => f.write_str("tool_result"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13361,16 +12736,7 @@ pub struct TranscriptEntity {
 }
 ///What a finished transcript is rendered as. json carries the words and speakers; srt and vtt are subtitle files. Recording only.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TranscriptFormat {
     #[serde(rename = "json")]
@@ -13379,6 +12745,9 @@ pub enum TranscriptFormat {
     Srt,
     #[serde(rename = "vtt")]
     Vtt,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TranscriptFormat {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13386,6 +12755,7 @@ impl ::std::fmt::Display for TranscriptFormat {
             Self::Json => f.write_str("json"),
             Self::Srt => f.write_str("srt"),
             Self::Vtt => f.write_str("vtt"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13444,16 +12814,7 @@ pub struct TranscriptMessage {
 }
 ///Why the agent said the line unasked: the call's greeting, a check-in on a caller gone quiet, or an update on work still running. Absent on an answer.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TranscriptMessagePurpose {
     #[serde(rename = "greeting")]
@@ -13462,6 +12823,9 @@ pub enum TranscriptMessagePurpose {
     Checkin,
     #[serde(rename = "update")]
     Update,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TranscriptMessagePurpose {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13469,6 +12833,7 @@ impl ::std::fmt::Display for TranscriptMessagePurpose {
             Self::Greeting => f.write_str("greeting"),
             Self::Checkin => f.write_str("checkin"),
             Self::Update => f.write_str("update"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13550,28 +12915,23 @@ pub struct Transcription {
 }
 ///How faithfully the transcript follows what was said. verbatim keeps the ums, the repetitions and the false starts; smart removes them, tidies the grammar and formats the result, which is why it cannot also diarize or time the words - they may no longer be the words that were spoken. Almost no provider offers both, so this narrows where a request can go.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum TranscriptionMode {
     #[serde(rename = "verbatim")]
     Verbatim,
     #[serde(rename = "smart")]
     Smart,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for TranscriptionMode {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::Verbatim => f.write_str("verbatim"),
             Self::Smart => f.write_str("smart"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13853,16 +13213,7 @@ pub struct UpdateSessionRequest {
 }
 ///`UpdateSessionRequestThinking`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum UpdateSessionRequestThinking {
     #[serde(rename = "none")]
@@ -13875,6 +13226,9 @@ pub enum UpdateSessionRequestThinking {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for UpdateSessionRequestThinking {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13884,6 +13238,7 @@ impl ::std::fmt::Display for UpdateSessionRequestThinking {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -13916,16 +13271,7 @@ impl ::std::convert::TryFrom<::std::string::String> for UpdateSessionRequestThin
 }
 ///`UpdateSessionRequestVerbosity`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum UpdateSessionRequestVerbosity {
     #[serde(rename = "low")]
@@ -13934,6 +13280,9 @@ pub enum UpdateSessionRequestVerbosity {
     Medium,
     #[serde(rename = "high")]
     High,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for UpdateSessionRequestVerbosity {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -13941,6 +13290,7 @@ impl ::std::fmt::Display for UpdateSessionRequestVerbosity {
             Self::Low => f.write_str("low"),
             Self::Medium => f.write_str("medium"),
             Self::High => f.write_str("high"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -14279,16 +13629,7 @@ pub struct UseCaseReview {
 }
 ///Where a use case stands. draft, changes_requested and vendor_rejected can be edited and submitted; submitted waits on Stream's review; vendor_pending on the vendor's; approved numbers may send. rejected is final.
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum UseCaseStatus {
     #[serde(rename = "draft")]
@@ -14305,6 +13646,9 @@ pub enum UseCaseStatus {
     Approved,
     #[serde(rename = "vendor_rejected")]
     VendorRejected,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for UseCaseStatus {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -14316,6 +13660,7 @@ impl ::std::fmt::Display for UseCaseStatus {
             Self::VendorPending => f.write_str("vendor_pending"),
             Self::Approved => f.write_str("approved"),
             Self::VendorRejected => f.write_str("vendor_rejected"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -14430,16 +13775,7 @@ pub struct VoiceBinding {
 }
 ///`VoiceBindingState`
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum VoiceBindingState {
     #[serde(rename = "pending")]
@@ -14448,6 +13784,9 @@ pub enum VoiceBindingState {
     Ready,
     #[serde(rename = "failed")]
     Failed,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for VoiceBindingState {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
@@ -14455,6 +13794,7 @@ impl ::std::fmt::Display for VoiceBindingState {
             Self::Pending => f.write_str("pending"),
             Self::Ready => f.write_str("ready"),
             Self::Failed => f.write_str("failed"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }
@@ -14572,28 +13912,23 @@ pub struct VoiceSampleRequest {
 /**hang_up: end the call at once, saying nothing.
 leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.*/
 #[derive(
-    ::serde::Deserialize,
-    ::serde::Serialize,
-    Clone,
-    Copy,
-    Debug,
-    Eq,
-    Hash,
-    Ord,
-    PartialEq,
-    PartialOrd,
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
 pub enum VoicemailAction {
     #[serde(rename = "hang_up")]
     HangUp,
     #[serde(rename = "leave_message")]
     LeaveMessage,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
 }
 impl ::std::fmt::Display for VoicemailAction {
     fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
         match *self {
             Self::HangUp => f.write_str("hang_up"),
             Self::LeaveMessage => f.write_str("leave_message"),
+            Self::Unlisted(ref value) => f.write_str(value),
         }
     }
 }

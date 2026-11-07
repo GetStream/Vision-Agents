@@ -357,6 +357,10 @@ Every reply the agent abandons logs one INFO line, `the agent was interrupted`, 
 
 ## Breaking Changes
 
+### Rust: the string enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm
+
+Each of the Rust SDK's 133 string enums has a new `Unlisted(String)` variant that holds a value the SDK does not list, so none of them is `Copy` any more. Clone one where you copied it, and add an `Unlisted(_)` arm to a `match` on one that has no wildcard. The Python client has no such break (AI-2951).
+
 ### `episode_cards` is `off`, `record` or `on`
 
 An agent config's `episode_cards` is a string now, no longer a boolean: `off` (the default) writes no episode card and reads none, `record` writes each conversation's card and its summary while no session reads them, and `on` writes and reads them, as `true` did. A config stored with `true` reads as `on` and one with `false` as `off`; a boolean sent is refused with a 400 `validation_failed`. Every channel follows the mode the same way: under `off` an SMS, WhatsApp, iMessage or Slack thread no longer opens an episode, so it costs no card and no summary, and it is answered as before (AI-2856, #1791).
@@ -414,6 +418,10 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### Photos an agent cannot see are refused before they are uploaded
 
 A question with photos and a `request_id`, on `createResponse` or the session socket's `respond`, sent to an agent with neither a vision skill nor a conversation model that accepts images, was refused only after its photos were uploaded and the person's message written, leaving a message in the channel that nothing would answer. It is now refused first, with the same 400 `not_configured`, and nothing is uploaded or written.
+
+### The Python and Rust clients read an enum value they do not list
+
+A session that a newer router ended for a reason this client was not built with, such as `closed`, made `sessions.get` and `query` raise in Python (`ValueError`) and fail in Rust (`Error::Decode`). This was true of every enum in an answer. The value now reads as it was sent and is written back the same way: in Python as a member of the enum that carries it (`str(session.end_reason) == "closed"`), in Rust as the new `Unlisted(String)` variant. A listed value reads as before, and a value a caller builds or parses is still checked. In Rust these enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm (AI-2951).
 
 ### A call that began before its number's link stays before it
 
@@ -475,6 +483,10 @@ A link's own host and path no longer name what kind of thing its ID is: `see htt
 ### What the agent wrote is no source when a tool reads it back
 
 A tool that reads back a note or a message the agent sent no longer gives a number in it, and one that reads back what the agent said or sent no longer gives a stand-in name in it. A near miss of the caller's number, a number to put the caller through to, or a name such as `John Doe` that the agent made up and a tool then read back is refused as before the read-back. A number the agent only said on the call, as when it reads one back to confirm it, still counts when a tool lists it. Only the agent's own lines are cut from a result, so a number or name the tool wrote beside them, on another line, or before the agent wrote it, still counts, a number in any of its written forms. A read-back message also gives no channel through a field of its own, as `"channel_id"` in its blocks, when its text is the agent's line with that ID; a field of any other result still does (AI-2886, AI-2883, #1795).
+
+### A number the agent sent is read as the number guards read one
+
+The guards that refuse a number nobody gave and a transfer to a number no tool gave read each line the agent sent as they read a number. A line holds the number only where it is written as one: `Booked at 10:56, 30 min` holds no 5630, so a tool line with a 5630 of its own where that line stands still gives it. A line read back with the number in another of its forms, `Sales: +1 5550100199` for the agent's `Sales: 5550100199`, is still the agent's and gives no number to put the caller through to. A result that writes back only the arguments of the call it answers, `{"last4":"5630"}` to `last4=5630`, gives no number either; a record or a listing with data of the tool's own beside it still does (AI-2925, AI-2926, AI-2927, #1831).
 
 ### A short video is sampled into the frames it has
 
