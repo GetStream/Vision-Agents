@@ -36,14 +36,7 @@ type Transcript struct {
 	// words or the final may be a second away. A revision without it is the words as the
 	// speaker left them at a pause, which a listener that reads pauses itself acts on.
 	// Providers that leave turn-taking to the listener never set it.
-	Interim bool
-	// Floor says the agent's floor control timed the words: a model that hears the speaker's
-	// audio ended the utterance at a pause it ruled on, whichever transcriber wrote the words,
-	// and AudioDurationMs and ProcessingTimeMs are its clock's, the utterance's audio and how
-	// long after it the words went out. A final with it is the end of the turn, and its words
-	// will not change. Only the floor control's own transcriber sets it, on what it sends
-	// whether it wrote the words or another transcriber did.
-	Floor            bool
+	Interim          bool
 	Confidence       float64
 	Language         string
 	Provider         string

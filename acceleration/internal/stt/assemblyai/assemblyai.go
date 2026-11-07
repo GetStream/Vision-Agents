@@ -72,13 +72,8 @@ const (
 // and settled about 300 ms later, still well inside what a conversation puts up with.
 const DefaultMode = ModeMaxAccuracy
 
-// Client frame types. ForceEndpoint ends the turn in progress at once: the server answers with
-// its Turn carrying end_of_turn, without waiting for silence, and the session goes on
-// (assemblyai.com/docs/streaming/message-sequence, read 2026-11-07).
-const (
-	clientTypeTerminate     = "Terminate"
-	clientTypeForceEndpoint = "ForceEndpoint"
-)
+// Client frame types.
+const clientTypeTerminate = "Terminate"
 
 // Server frame types.
 const (
@@ -296,32 +291,6 @@ func (s *STT) ProcessAudio(pcm stt.PcmData, participant stt.Participant) error {
 
 // Events returns transcript revisions.
 func (s *STT) Events() <-chan stt.Event { return s.emitter.Events() }
-
-// Finalize asks the server to end the turn in progress now (stt.Finalizer), after the audio
-// still waiting to fill a frame, padded with silence to the shortest the server takes, as
-// terminate sends it: the turn's final comes as any does.
-func (s *STT) Finalize() error {
-	s.mu.Lock()
-	closed, started := s.closed, s.started
-	s.mu.Unlock()
-	if closed || !started || s.conn == nil {
-		return errors.New("assemblyai: session not open")
-	}
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	if len(s.pending) > 0 {
-		tail := make([]byte, max(len(s.pending), chunkBytes(minChunkMs)))
-		copy(tail, s.pending)
-		s.pending = s.pending[:0]
-		if err := s.conn.WriteMessage(websocket.BinaryMessage, tail); err != nil {
-			return fmt.Errorf("assemblyai: write audio: %w", err)
-		}
-	}
-	if err := s.conn.WriteMessage(websocket.TextMessage, []byte(`{"type":"`+clientTypeForceEndpoint+`"}`)); err != nil {
-		return fmt.Errorf("assemblyai: force endpoint: %w", err)
-	}
-	return nil
-}
 
 // Close sends what audio is left, asks the server to settle the turn in progress, waits
 // for it to finish, then tears the connection down.

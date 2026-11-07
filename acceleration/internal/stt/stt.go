@@ -113,12 +113,3 @@ type Retuner interface {
 	// SetKeyterms replaces the terms the transcriber expects, for the rest of the stream.
 	SetKeyterms(terms []string) error
 }
-
-// Finalizer is a provider that can be told the run of speech in progress is over: it writes
-// its final of the audio it was sent at once, rather than when it hears the run end, and the
-// next audio begins another run. One that cannot settles a run when it hears it end.
-type Finalizer interface {
-	// Finalize asks for the final of the run in progress. It does not wait for it: it comes
-	// as any final does, on Events.
-	Finalize() error
-}

@@ -892,21 +892,6 @@ func (s *ConfigSuite) TestTheAudioFloorsInterimsAreOnOrOff() {
 	s.Equal("off", settings.Agent.AudioFloorInterims)
 }
 
-func (s *ConfigSuite) TestTheAudioFloorsToolAcknowledgmentAndSteeringAreOnOrOff() {
-	s.T().Setenv("ROUTER_CHORUS_ASR_TOOL_ACKNOWLEDGMENT", "yes")
-	_, _, err := Load("")
-	s.ErrorContains(err, "ROUTER_CHORUS_ASR_TOOL_ACKNOWLEDGMENT")
-	s.T().Setenv("ROUTER_CHORUS_ASR_TOOL_ACKNOWLEDGMENT", "off")
-	s.T().Setenv("ROUTER_CHORUS_ASR_TOOL_STEERING", "always")
-	_, _, err = Load("")
-	s.ErrorContains(err, "ROUTER_CHORUS_ASR_TOOL_STEERING")
-	s.T().Setenv("ROUTER_CHORUS_ASR_TOOL_STEERING", "on")
-	settings, _, err := Load("")
-	s.Require().NoError(err)
-	s.Equal("off", settings.Agent.AudioFloorToolAcknowledgment)
-	s.Equal("on", settings.Agent.AudioFloorToolSteering)
-}
-
 // The router waits 250ms for a ruling while the caller talks over the agent unless the
 // deployment says otherwise, from 100ms to 450ms: a longer wait can't keep the agent's stop
 // within 800 ms of the caller's first word, and is refused when the settings load.

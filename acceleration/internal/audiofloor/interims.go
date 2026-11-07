@@ -86,8 +86,6 @@ func (t *Transcriber) send(transcript stt.Transcript) string {
 	if transcript.Final() {
 		s.final = transcript.Utterance
 	}
-	// Whoever wrote the words, the session timed them: it ended the utterance.
-	transcript.Floor = true
 	if transcript.Utterance >= s.utterance {
 		s.stable = same && !transcript.Final() && carriesOn(s.text, transcript.Text)
 		s.utterance, s.upTo, s.text = transcript.Utterance, upTo, transcript.Text
