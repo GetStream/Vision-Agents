@@ -18,8 +18,8 @@ class TestRouter < LocalRouterTest
   end
 
   def test_an_option_the_block_does_not_have_is_refused
-    assert_raises(VA::ConfigurationError) { router.search("x", reslts: 5) }
-    assert_raises(VA::ConfigurationError) { router.stt.realtime(diarise: true) }
+    assert_raises(SA::ConfigurationError) { router.search("x", reslts: 5) }
+    assert_raises(SA::ConfigurationError) { router.stt.realtime(diarise: true) }
     assert_empty @router.requests
   end
 
@@ -52,7 +52,7 @@ class TestRouter < LocalRouterTest
       peer.send_frame(type: "closed")
     end
 
-    error = assert_raises(VA::Error) { router.llm.realtime(target: "nobody/nothing") }
+    error = assert_raises(SA::Error) { router.llm.realtime(target: "nobody/nothing") }
     assert_equal "no provider serves that", error.message
   end
 
@@ -138,7 +138,7 @@ class TestRouter < LocalRouterTest
   def test_a_failed_recording_is_raised
     @router.on(:post, "/v1/stt/recordings", body: { "id" => "job_1", "status" => "failed", "error" => "bad audio" })
 
-    error = assert_raises(VA::Error) { router.stt.recording("\x00\x01".b) }
+    error = assert_raises(SA::Error) { router.stt.recording("\x00\x01".b) }
     assert_equal "bad audio", error.message
     assert_equal({ "audio" => "AAE=" }, @router.last(:post, "/v1/stt/recordings").json["source"])
   end
@@ -156,7 +156,7 @@ class TestRouter < LocalRouterTest
   end
 
   def test_configuring_needs_a_named_router
-    assert_raises(VA::ConfigurationError) { router("").configure_tts(voice: "Kore") }
+    assert_raises(SA::ConfigurationError) { router("").configure_tts(voice: "Kore") }
   end
 
   def test_router_folders_are_stored_by_name_and_stamped
@@ -167,7 +167,7 @@ class TestRouter < LocalRouterTest
     @router.on(:get, "/v1/router/configs", body: [])
     @router.on(:post, "/v1/router/configs") { |request| [201, request.json.merge("id" => "cfg_1")] }
 
-    stored = VA::Router.sync(root, client: client)
+    stored = SA::Router.sync(root, client: client)
 
     assert_equal ["healthcare"], stored.map { |config| config["name"] }
     assert_equal({ "name" => "healthcare", "stt" => { "providers" => ["deepgram"] } },
@@ -183,7 +183,7 @@ class TestRouter < LocalRouterTest
     FileUtils.mkdir_p(File.join(root, "healthcare"))
     File.write(File.join(root, "healthcare", "router.yaml"), "sst:\n  providers: [deepgram]\n")
 
-    assert_raises(VA::ConfigurationError) { VA::Router.sync(root, client: client) }
+    assert_raises(SA::ConfigurationError) { SA::Router.sync(root, client: client) }
   ensure
     FileUtils.rm_rf(root)
   end

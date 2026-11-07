@@ -3,10 +3,10 @@
 require "fileutils"
 require "minitest/autorun"
 require "tmpdir"
-require "getstream/vision_agents"
+require "stream_agents"
 require_relative "support/local_router"
 
-VA = GetStream::VisionAgents
+SA = StreamAgents
 
 # A test against a LocalRouter, torn down afterwards. Nothing here reads the environment:
 # every client is built from the router's url and a customer id.
@@ -22,7 +22,7 @@ class LocalRouterTest < Minitest::Test
   end
 
   def client
-    @client ||= VA::Client.new(url: @router.url, customer_id: CUSTOMER)
+    @client ||= SA::Client.new(url: @router.url, customer_id: CUSTOMER)
   end
 
   # Waits for a condition a background thread makes true.

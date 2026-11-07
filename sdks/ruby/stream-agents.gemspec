@@ -1,10 +1,10 @@
 # frozen_string_literal: true
 
-require_relative "lib/getstream/vision_agents/version"
+require_relative "lib/stream_agents/version"
 
 Gem::Specification.new do |spec|
   spec.name = "stream-agents"
-  spec.version = GetStream::VisionAgents::VERSION
+  spec.version = StreamAgents::VERSION
   spec.authors = ["Stream"]
   spec.email = ["support@getstream.io"]
   spec.summary = "Server-side Ruby SDK for the Stream Agents acceleration backend"

@@ -22,9 +22,9 @@ Net::HTTP.singleton_class.prepend(RegionalRedirect)
 
 class TestRegion < LocalRouterTest
   REGIONAL_HOST = "accelerate-us-east4.gcp.stream-io-api.com"
-  CLEARED = [VA::Backend::URL_ENV, VA::Backend::REGION_ENV, VA::Backend::CUSTOMER_ENV,
-             VA::Backend::AUTHENTICATE_ENV].freeze
-  CREDENTIALS = { VA::Backend::API_KEY_ENV => "test-key", VA::Backend::API_SECRET_ENV => "test-secret" }.freeze
+  CLEARED = [SA::Backend::URL_ENV, SA::Backend::REGION_ENV, SA::Backend::CUSTOMER_ENV,
+             SA::Backend::AUTHENTICATE_ENV].freeze
+  CREDENTIALS = { SA::Backend::API_KEY_ENV => "test-key", SA::Backend::API_SECRET_ENV => "test-secret" }.freeze
 
   def setup
     super
@@ -54,33 +54,33 @@ class TestRegion < LocalRouterTest
   end
 
   def test_the_default_client_reads_simulations
-    assert_reads_simulations(VA::Client.new)
+    assert_reads_simulations(SA::Client.new)
   end
 
   def test_an_explicit_region_reads_simulations
-    assert_reads_simulations(VA::Client.new(region: "us-east4"))
+    assert_reads_simulations(SA::Client.new(region: "us-east4"))
   end
 
   def test_a_region_from_the_environment_reads_simulations
-    ENV[VA::Backend::REGION_ENV] = "us-east4"
+    ENV[SA::Backend::REGION_ENV] = "us-east4"
 
-    assert_reads_simulations(VA::Client.new)
+    assert_reads_simulations(SA::Client.new)
   end
 
   def test_a_conflicting_url_and_region_are_refused
-    assert_raises(VA::ConfigurationError) { VA::Client.new(region: "europe-west4", url: VA::Backend::DEFAULT_URL) }
+    assert_raises(SA::ConfigurationError) { SA::Client.new(region: "europe-west4", url: SA::Backend::DEFAULT_URL) }
   end
 
   def test_an_invalid_region_with_a_url_is_refused
-    assert_raises(VA::ConfigurationError) do
-      VA::Client.new(region: "us-east4.evil.com/x", url: VA::Backend::DEFAULT_URL)
+    assert_raises(SA::ConfigurationError) do
+      SA::Client.new(region: "us-east4.evil.com/x", url: SA::Backend::DEFAULT_URL)
     end
   end
 
   def test_a_regional_client_can_act_for_a_user
-    user = VA::Client.new(region: "us-east4").as_user("jean", "user-token")
+    user = SA::Client.new(region: "us-east4").as_user("jean", "user-token")
 
-    assert_equal VA::Backend::DEFAULT_URL, user.backend.url
+    assert_equal SA::Backend::DEFAULT_URL, user.backend.url
     assert_equal "jean", user.backend.user_id
     assert_reads_simulations(user)
     assert_equal "Bearer user-token", @router.last(:get, "/v1/agents/simulations").headers["authorization"]

@@ -11,11 +11,11 @@ class TestAgent < LocalRouterTest
   end
 
   def edge
-    VA::Edge.new(api_key: "key", api_secret: "secret", base_url: @router.url, monitor_url: "https://demo.example")
+    SA::Edge.new(api_key: "key", api_secret: "secret", base_url: @router.url, monitor_url: "https://demo.example")
   end
 
   def agent(**options)
-    VA::Agent.new(config: "support", client: client, edge: edge, **options)
+    SA::Agent.new(config: "support", client: client, edge: edge, **options)
   end
 
   def session_request
@@ -31,7 +31,7 @@ class TestAgent < LocalRouterTest
                     end
 
     assert_empty @router.seen(:post, CALLS)
-    assert_equal VA::Edge::Call.new(id: "sess_1", type: "agent"), call
+    assert_equal SA::Edge::Call.new(id: "sess_1", type: "agent"), call
     assert started
     assert_equal({ "agent" => "support", "user_id" => "support", "user_name" => "support", "agent_id" => "support",
                    "tags" => { "env" => "production", "team" => "7" },
@@ -40,7 +40,7 @@ class TestAgent < LocalRouterTest
   end
 
   def test_join_is_not_given_a_call_to_name
-    assert_raises(VA::ConfigurationError) { agent.join("call-1") }
+    assert_raises(SA::ConfigurationError) { agent.join("call-1") }
     assert_empty @router.requests
   end
 
@@ -64,7 +64,7 @@ class TestAgent < LocalRouterTest
     started = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     participants = agent.join { |session| session.participants }
 
-    assert_equal [VA::Participant.new("p1", "ada", "Ada")], participants
+    assert_equal [SA::Participant.new("p1", "ada", "Ada")], participants
     assert_operator Process.clock_gettime(Process::CLOCK_MONOTONIC) - started, :>=, 0.2
   end
 
@@ -85,7 +85,7 @@ class TestAgent < LocalRouterTest
       peer.send_frame(type: "heard", text: "hello")
       peer.receive_type("close", timeout: 10)
     end
-    call = VA::InboundCall.from("call_id" => "agent:inbound-1", "session_id" => "inbound-1",
+    call = SA::InboundCall.from("call_id" => "agent:inbound-1", "session_id" => "inbound-1",
                                 "called_number" => "+15550100", "caller_number" => "+15550199")
 
     agent.join(call, wait_for_end: false) { assert call.wait_for_phone_participant(timeout: 5) }
@@ -98,16 +98,16 @@ class TestAgent < LocalRouterTest
   end
 
   def test_an_inbound_call_that_names_no_session_is_refused
-    call = VA::InboundCall.from("call_id" => "pstn-1", "called_number" => "+15550100")
+    call = SA::InboundCall.from("call_id" => "pstn-1", "called_number" => "+15550100")
 
-    assert_raises(VA::ConfigurationError) { agent.join(call) }
+    assert_raises(SA::ConfigurationError) { agent.join(call) }
     assert_empty @router.seen(:post, "/v1/agents/sessions")
   end
 
   def test_the_caller_cannot_be_waited_for_before_joining
-    call = VA::InboundCall.new(call_id: "pstn-1")
+    call = SA::InboundCall.new(call_id: "pstn-1")
 
-    assert_raises(VA::ConfigurationError) { call.wait_for_phone_participant(timeout: 0) }
+    assert_raises(SA::ConfigurationError) { call.wait_for_phone_participant(timeout: 0) }
   end
 
   def test_responses_create_names_the_turn
@@ -146,7 +146,7 @@ class TestAgent < LocalRouterTest
   end
 
   def test_responses_need_a_conversation
-    assert_raises(VA::ConfigurationError) { agent.responses }
+    assert_raises(SA::ConfigurationError) { agent.responses }
   end
 
   def test_a_tool_call_is_answered_with_its_request_and_turn
@@ -159,7 +159,7 @@ class TestAgent < LocalRouterTest
       results << peer.receive_type("tool_result")
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new
+    tools = SA::Tools.new
     tools.register("weather", description: "Weather for a city", executor: "client",
                               display_title: "Checking the sky") { |args| { city: args["city"], sky: "clear" } }
     tools.register("broken", description: "Always fails") { raise ArgumentError, "no sky today" }
@@ -187,7 +187,7 @@ class TestAgent < LocalRouterTest
       release << true
       results << peer.receive_type("tool_result", timeout: 0.5)
     end
-    tools = VA::Tools.new.register("slow", description: "Takes a while") { release.pop(timeout: 5) && "late" }
+    tools = SA::Tools.new.register("slow", description: "Takes a while") { release.pop(timeout: 5) && "late" }
 
     agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
       assert_nil results.pop(timeout: 5)
@@ -205,7 +205,7 @@ class TestAgent < LocalRouterTest
       3.times { frames << peer.receive(timeout: 5) }
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("search", description: "Search flights") do |_args, tool_call_context|
+    tools = SA::Tools.new.register("search", description: "Search flights") do |_args, tool_call_context|
       seen << tool_call_context
       tool_call_context.update("checking three airlines")
       tool_call_context.say("Still looking, one moment.")
@@ -221,8 +221,8 @@ class TestAgent < LocalRouterTest
     end
     tool_call_context = seen.pop(timeout: 1)
     assert_equal %w[t1 sess_1 turn_2], [tool_call_context.id, tool_call_context.session_id, tool_call_context.turn_id]
-    assert_equal VA::ToolUser.new("sam", "Sam", { "tier" => "gold" }), tool_call_context.user
-    assert_equal VA::ToolConversation.new("agent:kept", { "line" => "support" }), tool_call_context.conversation
+    assert_equal SA::ToolUser.new("sam", "Sam", { "tier" => "gold" }), tool_call_context.user
+    assert_equal SA::ToolConversation.new("agent:kept", { "line" => "support" }), tool_call_context.conversation
     assert tool_call_context.approved?
   end
 
@@ -240,7 +240,7 @@ class TestAgent < LocalRouterTest
       results << peer.receive_type("tool_result")
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+    tools = SA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
       tool_call_context.disallow_interruptions
       release.pop(timeout: 5)
       tool_call_context.cancelled? ? "stopped" : "charged"
@@ -261,7 +261,7 @@ class TestAgent < LocalRouterTest
       wrote << (peer.receive_type("tool_result", timeout: 0.5) || :nothing)
       peer.receive_type("close", timeout: 10)
     end
-    tools = VA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
+    tools = SA::Tools.new.register("charge", description: "Charge the card") do |_args, tool_call_context|
       tool_call_context.disallow_interruptions
       wrote << :charged
     end
@@ -279,7 +279,7 @@ class TestAgent < LocalRouterTest
       results << peer.receive_type("tool_result")
       results << peer.receive_type("tool_result", timeout: 0.3)
     end
-    tools = VA::Tools.new.register("weather", description: "Weather") { "clear" }
+    tools = SA::Tools.new.register("weather", description: "Weather") { "clear" }
 
     agent(tools: tools).join(participant_wait_timeout: 0, wait_for_end: false) do
       assert_equal "t2", results.pop(timeout: 5)&.fetch("tool_call_id")
@@ -314,7 +314,7 @@ class TestAgent < LocalRouterTest
     @router.on(:post, "/v1/agents/sessions", body: { "id" => "sess_9" })
     @router.on(:post, "/v1/agents/sessions/sess_9/stop", status: 204)
 
-    assert_raises(VA::RouterError) { agent.join(participant_wait_timeout: 0) }
+    assert_raises(SA::RouterError) { agent.join(participant_wait_timeout: 0) }
     assert_equal 1, @router.seen(:post, "/v1/agents/sessions/sess_9/stop").size
     assert_empty @router.seen(:delete, "/v1/agents/sessions/sess_9")
   end
@@ -338,7 +338,7 @@ class TestAgent < LocalRouterTest
     support = agent
 
     support.chat do |session|
-      assert_raises(VA::ConfigurationError) { support.monitor_url }
+      assert_raises(SA::ConfigurationError) { support.monitor_url }
       assert_equal "sess_1", session.voice.start["call_id"]
       assert session.voice.started?
       assert support.monitor_url.start_with?("https://demo.example/join/sess_1?")
@@ -352,7 +352,7 @@ class TestAgent < LocalRouterTest
 
   def test_reply_answers_the_conversation_the_message_came_from
     serve_session
-    message = VA::InboundMessage.from("channel_id" => "room-1", "agent_id" => "support-1", "text" => "hi")
+    message = SA::InboundMessage.from("channel_id" => "room-1", "agent_id" => "support-1", "text" => "hi")
 
     agent.reply(message) { nil }
 
@@ -382,7 +382,7 @@ class TestAgent < LocalRouterTest
   def test_a_call_placed_for_no_session_is_not_joined
     @router.on(:post, "/v1/phone/calls", status: 202, body: { "vendor_call_id" => "CA123", "status" => "queued" })
 
-    assert_raises(VA::RouterError) { agent.outbound_call(from: "+15550100", to: "+15550199") }
+    assert_raises(SA::RouterError) { agent.outbound_call(from: "+15550100", to: "+15550199") }
     assert_empty @router.seen(:post, "/v1/agents/sessions")
   end
 
@@ -407,10 +407,10 @@ class TestAgent < LocalRouterTest
   def test_the_harness_is_synced_onto_the_config_and_never_sent_with_a_session
     serve_session
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
-    skills = [VA::Skill.new(name: "research", description: "Looks things up", instructions: "Search first",
+    skills = [SA::Skill.new(name: "research", description: "Looks things up", instructions: "Search first",
                             deadline: 30)]
     support = agent(harness: "default", pipeline: { subagent: "llm-thinking" }, skills: skills,
-                    sandbox: VA::Sandbox.daytona)
+                    sandbox: SA::Sandbox.daytona)
 
     support.chat { nil }
     support.sync
@@ -424,7 +424,7 @@ class TestAgent < LocalRouterTest
     assert_equal "daytona", synced["sandbox"]
     assert_equal [{ "name" => "research", "description" => "Looks things up", "instructions" => "Search first",
                     "capture_video" => false, "deadline_ms" => 30_000, "config_id" => "" }], synced["skills"]
-    expected = VA::Folder.fingerprint(VA::Folder.fingerprint("", "", "", skills, [], []),
+    expected = SA::Folder.fingerprint(SA::Folder.fingerprint("", "", "", skills, [], []),
                                       "defaultllm-thinkingdaytona", "map[]", [], [], [])
     assert_equal expected, synced["hash"]
   end
@@ -455,15 +455,15 @@ class TestAgent < LocalRouterTest
   def test_update_config_needs_a_stored_config
     @router.on(:get, "/v1/agents/configs", body: [])
 
-    assert_raises(VA::Error) { agent.update_config(guardrail: "x") }
+    assert_raises(SA::Error) { agent.update_config(guardrail: "x") }
     assert_empty @router.seen(:patch, %r{\A/v1/agents/configs/})
   end
 
   def test_what_cannot_be_an_agent_is_refused
-    assert_raises(VA::ConfigurationError) { VA::Agent.new(client: client) }
-    assert_raises(VA::ConfigurationError) { agent(pipeline: { lmm: "fast" }) }
-    assert_raises(VA::ConfigurationError) do
-      agent(skills: [VA::Skill.new(name: "research", description: "", instructions: "x")])
+    assert_raises(SA::ConfigurationError) { SA::Agent.new(client: client) }
+    assert_raises(SA::ConfigurationError) { agent(pipeline: { lmm: "fast" }) }
+    assert_raises(SA::ConfigurationError) do
+      agent(skills: [SA::Skill.new(name: "research", description: "", instructions: "x")])
     end
   end
 
@@ -472,7 +472,7 @@ class TestAgent < LocalRouterTest
     support = agent
 
     support.chat
-    assert_raises(VA::ConfigurationError) { support.chat }
+    assert_raises(SA::ConfigurationError) { support.chat }
     support.close
   end
 
@@ -487,8 +487,8 @@ class TestAgent < LocalRouterTest
   end
 
   def test_user_ids_are_made_from_names
-    assert_equal "ada-lovelace", VA::Agent.user_id_of("  Ada Lovelace!")
-    assert_equal "vision-agent", VA::Agent.user_id_of("!!!")
+    assert_equal "ada-lovelace", SA::Agent.user_id_of("  Ada Lovelace!")
+    assert_equal "vision-agent", SA::Agent.user_id_of("!!!")
   end
 
   def folder
@@ -505,12 +505,12 @@ class TestAgent < LocalRouterTest
   def test_sync_stores_the_folder_in_one_request_and_stamps_it
     root = folder
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
-    jean = VA::Agent.new(folder: root, client: client)
+    jean = SA::Agent.new(folder: root, client: client)
 
     jean.sync
 
     request = @router.last(:post, "/v1/agents/sync").json
-    assert_equal VA::Folder.load(root).fingerprint, request["hash"]
+    assert_equal SA::Folder.load(root).fingerprint, request["hash"]
     assert_equal({ "name" => "jean", "hash" => request["hash"], "instructions" => "You are Jean.",
                    "guardrail" => "Never quote prices.", "llm" => "openai/gpt-5.6",
                    "knowledge" => [{ "source" => "pricing.md", "text" => "# Pricing\n\nA penny.\n" }],
@@ -526,7 +526,7 @@ class TestAgent < LocalRouterTest
     File.write(File.join(root, "agent.yaml"), "name: jean\ndispatch:\n  text: enabled\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
     assert_equal({ "text" => "enabled" }, @router.last(:post, "/v1/agents/sync").json["dispatch"])
   ensure
@@ -541,7 +541,7 @@ class TestAgent < LocalRouterTest
                "  network_allow_list: [10.0.0.0/8]\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
     assert_equal({ "setup" => ["pip install bpy==5.2.2"], "timeout_ms" => 300_000, "memory_gb" => 4,
                    "network" => true, "allowed_domains" => ["api.example.com"],
@@ -559,7 +559,7 @@ class TestAgent < LocalRouterTest
     File.write(File.join(root, "skills/think.md"), "---\ndescription: Work it out\n---\nReason it through.\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
     pdf, think = @router.last(:post, "/v1/agents/sync").json["skills"]
     assert_equal({ "reference/forms.md" => "# Forms\n" }, pdf["files"])
@@ -578,7 +578,7 @@ class TestAgent < LocalRouterTest
                "- name: lunch\n  scenario: Order a club\n  assertion: One club\n  variations: 3\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
     request = @router.last(:post, "/v1/agents/sync").json
     assert_equal({ "text" => "Bonjour", "mode" => "exact" }, request["greeting"])
@@ -587,7 +587,7 @@ class TestAgent < LocalRouterTest
     assert_equal [{ "url" => "https://example.com/plans", "refresh_hours" => 24 }], request["knowledge_urls"]
     assert_equal [{ "name" => "lunch", "scenario" => "Order a club", "assertion" => "One club", "variations" => 3 }],
                  request["simulations"]
-    assert_equal VA::Folder.load(root).fingerprint, request["hash"]
+    assert_equal SA::Folder.load(root).fingerprint, request["hash"]
   ensure
     FileUtils.rm_rf(File.dirname(root))
   end
@@ -596,7 +596,7 @@ class TestAgent < LocalRouterTest
     root = folder
     File.write(File.join(root, "agent.yaml"), "name: jean\n#{yaml}")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
     @router.last(:post, "/v1/agents/sync").json
   ensure
     FileUtils.rm_rf(File.dirname(root))
@@ -719,7 +719,7 @@ class TestAgent < LocalRouterTest
   def test_sync_refuses_a_connection_that_no_app_connection_matches
     serve_connections([{ "id" => "conn_a", "label" => "staging" }])
 
-    error = assert_raises(VA::ConfigurationError) do
+    error = assert_raises(SA::ConfigurationError) do
       sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
     end
 
@@ -730,7 +730,7 @@ class TestAgent < LocalRouterTest
   def test_sync_refuses_a_label_that_matches_several_app_connections
     serve_connections([{ "id" => "conn_a", "label" => "prod" }, { "id" => "conn_b", "label" => "prod" }])
 
-    error = assert_raises(VA::ConfigurationError) do
+    error = assert_raises(SA::ConfigurationError) do
       sync_declaring("connectors:\n  - name: linear\n    connection: prod\n")
     end
 
@@ -747,7 +747,7 @@ class TestAgent < LocalRouterTest
   end
 
   def test_sync_refuses_plugins_and_posts_nothing
-    error = assert_raises(VA::ConfigurationError) { sync_declaring("plugins: [linear, slack]\n") }
+    error = assert_raises(SA::ConfigurationError) { sync_declaring("plugins: [linear, slack]\n") }
 
     assert error.message.end_with?("/jean/agent.yaml: plugins is no longer read: plugins were replaced by " \
                                    "connectors, so name the provider under connectors"), error.message
@@ -770,10 +770,10 @@ class TestAgent < LocalRouterTest
     FileUtils.mkdir_p(root)
     File.write(File.join(root, "agent.yaml"), "name: jean\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
-    VA::Agent.new(folder: root, client: client).sync # stamps the folder
+    SA::Agent.new(folder: root, client: client).sync # stamps the folder
     File.write(File.join(root, "agent.yaml"), "name: jean\nplugins: [linear]\n")
 
-    error = assert_raises(VA::ConfigurationError) { VA::Agent.new(folder: root, client: client).sync }
+    error = assert_raises(SA::ConfigurationError) { SA::Agent.new(folder: root, client: client).sync }
 
     assert_includes error.message, "plugins is no longer read"
     assert_equal 1, @router.seen(:post, "/v1/agents/sync").size
@@ -786,9 +786,9 @@ class TestAgent < LocalRouterTest
     File.write(File.join(root, "agent.yaml"), "name: jean\n")
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
     FileUtils.mkdir_p(File.join(root, "simulations"))
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
     without, empty = @router.seen(:post, "/v1/agents/sync").map(&:json)
     refute without.key?("simulations")
@@ -801,9 +801,9 @@ class TestAgent < LocalRouterTest
     root = folder
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
     @router.on(:get, "/v1/agents/configs", body: [{ "name" => "jean", "id" => "cfg_1" }])
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
-    result = VA::Agent.new(folder: root, client: client).sync
+    result = SA::Agent.new(folder: root, client: client).sync
 
     assert_equal({ "unchanged" => true, "config" => { "name" => "jean", "id" => "cfg_1" } }, result)
     assert_equal 1, @router.seen(:post, "/v1/agents/sync").size
@@ -816,9 +816,9 @@ class TestAgent < LocalRouterTest
     root = folder
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false, "config" => { "name" => "jean" } })
     @router.on(:get, "/v1/agents/configs", body: [])
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
-    VA::Agent.new(folder: root, client: client).sync
+    SA::Agent.new(folder: root, client: client).sync
 
     assert_equal 2, @router.seen(:post, "/v1/agents/sync").size
   ensure
@@ -829,11 +829,11 @@ class TestAgent < LocalRouterTest
     root = folder
     @router.on(:post, "/v1/agents/sync", body: { "unchanged" => false })
 
-    VA::Agent.new(folder: root, client: client, cost_tracking: { env: "production" }).sync
+    SA::Agent.new(folder: root, client: client, cost_tracking: { env: "production" }).sync
 
     request = @router.last(:post, "/v1/agents/sync").json
     assert_equal({ "team" => "voice", "env" => "production" }, request["tags"])
-    expected = VA::Folder.fingerprint(VA::Folder.load(root).fingerprint, "", "map[env:production]", [], [], [])
+    expected = SA::Folder.fingerprint(SA::Folder.load(root).fingerprint, "", "map[env:production]", [], [], [])
     assert_equal expected, request["hash"]
   ensure
     FileUtils.rm_rf(File.dirname(root))
@@ -917,8 +917,8 @@ class TestSessions < LocalRouterTest
     assert_equal "llm-thinking", updated["llm"]
     assert_equal({ "title" => "Pricing", "llm" => "llm-thinking", "thinking" => "high", "sts" => "" },
                  @router.last(:patch, "/v1/agents/sessions/sess_1").json)
-    assert_raises(VA::ConfigurationError) { session.update(model: "llm-fast") }
-    assert_raises(VA::ConfigurationError) { session.update(subagent: "llm-thinking") }
+    assert_raises(SA::ConfigurationError) { session.update(model: "llm-fast") }
+    assert_raises(SA::ConfigurationError) { session.update(subagent: "llm-thinking") }
   end
 
   def test_an_ended_session_is_renamed_deleted_and_forgotten_by_id
@@ -954,7 +954,7 @@ end
 
 class TestResponses < LocalRouterTest
   def responses
-    VA::Responses.new(client, "sess_1")
+    SA::Responses.new(client, "sess_1")
   end
 
   def test_rewind_goes_back_to_a_response
@@ -968,13 +968,13 @@ class TestResponses < LocalRouterTest
     refused = LocalRouter.failure("invalid_request", "invalid_request", "fork a persisted conversation instead")
     @router.on(:post, "/v1/agents/sessions/sess_1/rewind", status: 400, body: refused)
 
-    error = assert_raises(VA::RouterError) { responses.rewind("resp_1") }
+    error = assert_raises(SA::RouterError) { responses.rewind("resp_1") }
     assert_equal 400, error.status
     assert_equal "rewindSession: fork a persisted conversation instead", error.message
   end
 
   def test_rewind_needs_an_id
-    assert_raises(VA::ConfigurationError) { responses.rewind(VA::AgentResponse.new(client, { "id" => "" })) }
+    assert_raises(SA::ConfigurationError) { responses.rewind(SA::AgentResponse.new(client, { "id" => "" })) }
   end
 
   def test_items_are_read_a_page_at_a_time_by_cursor
@@ -994,7 +994,7 @@ class TestResponses < LocalRouterTest
 
   def test_one_turns_items
     @router.on(:get, "/v1/agents/sessions/sess_1/responses/items", body: { "items" => [], "has_more" => false })
-    turn = VA::AgentResponse.new(client, { "id" => "resp_1", "session_id" => "sess_1" })
+    turn = SA::AgentResponse.new(client, { "id" => "resp_1", "session_id" => "sess_1" })
 
     turn.items.list(limit: 10, cursor: "c1")
 
@@ -1021,7 +1021,7 @@ class TestResponses < LocalRouterTest
     end
 
     parent = client.agent("docs").sessions.create
-    fork = parent.fork(response_id: VA::AgentResponse.new(client, { "id" => "resp_1" }), title: "Branch")
+    fork = parent.fork(response_id: SA::AgentResponse.new(client, { "id" => "resp_1" }), title: "Branch")
     fork.close
     parent.close
 

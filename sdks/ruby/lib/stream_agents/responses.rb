@@ -1,0 +1,146 @@
+# frozen_string_literal: true
+
+require "securerandom"
+
+module StreamAgents
+  # The things one or more turns were made of, in the order they happened.
+  #
+  # Read rather than watched: this is what the backend wrote down, so it reads the same
+  # whether the conversation is still going or ended last week. Deltas are not here; a
+  # caller who wants to watch words arrive reads Session#events.
+  class Items
+    include Enumerable
+
+    # How many are read per request, and as many as the router hands over at once.
+    PAGE = 200
+    CEILING = 1000
+
+    def initialize(client, session_id, response_id = nil)
+      @client = client
+      @session_id = session_id
+      # nil for every turn in the session, set for one turn's own items.
+      @response_id = response_id
+    end
+
+    # Yields every item, oldest first, fetching a page at a time.
+    def each(page: PAGE, &block)
+      return enum_for(:each, page: page) unless block
+
+      size = [page, CEILING].min
+      cursor = nil
+      loop do
+        read = list(limit: size, cursor: cursor)
+        read["items"].each(&block)
+        cursor = read["next_cursor"]
+        break unless read["has_more"] && cursor
+      end
+    end
+
+    # One page, for a caller doing its own paging. A nil cursor is the first page, and the
+    # page's next_cursor the next.
+    #
+    # @return [Hash] the AgentResponseItemPage: items, has_more and next_cursor.
+    def list(limit: nil, cursor: nil)
+      @client.get("/v1/agents/sessions/{id}/responses/items",
+                  path: { id: @session_id },
+                  query: { response_id: @response_id, limit: limit, cursor: cursor })
+    end
+
+    def all
+      to_a
+    end
+  end
+
+  # One turn, and a way to read what it was made of.
+  #
+  # Responses#create returns as soon as the agent has started answering rather than when it
+  # has finished, so this is a handle on an answer in progress.
+  class AgentResponse
+    attr_reader :created, :items
+
+    def initialize(client, created)
+      @created = created
+      @items = Items.new(client, created["session_id"], created["id"])
+    end
+
+    # The backend's id for this turn, empty for a session that records nothing. Not the
+    # turn_id socket events carry.
+    def id
+      @created["id"].to_s
+    end
+
+    def status
+      @created["status"].to_s
+    end
+  end
+
+  # A session's turns.
+  class Responses
+    attr_reader :items
+
+    def initialize(client, session_id)
+      @client = client
+      @session_id = session_id
+      @items = Items.new(client, session_id)
+    end
+
+    # Asks the agent something and names the turn it answers as.
+    #
+    # @param images [Array<Hash>] ImageSource hashes, each a url and an optional detail.
+    def create(text, images: nil)
+      answer(text, nil, images: images)
+    end
+
+    # Dispatch#answer's way in.
+    #
+    # @api private
+    # @param request_id [String] the request id of the inbound message being answered, kept
+    #   with its images. Empty generates one for a question of text alone; one with images
+    #   goes without.
+    def answer(text, request_id, images: nil)
+      # Only a question of text alone is given an id of its own; one with images goes without.
+      request_id = images.to_a.any? ? nil : SecureRandom.hex(16) if request_id.to_s.empty?
+      created = @client.post("/v1/agents/sessions/{id}/responses",
+                             path: { id: @session_id },
+                             body: { text: text, images: images, request_id: request_id })
+      AgentResponse.new(@client, created)
+    end
+
+    # A page of the turns so far, oldest first. A nil cursor is the first page, and the
+    # page's next_cursor the next.
+    #
+    # @return [Hash] the AgentResponsePage: items, has_more and next_cursor.
+    def list(limit: nil, cursor: nil)
+      @client.get("/v1/agents/sessions/{id}/responses",
+                  path: { id: @session_id }, query: { limit: limit, cursor: cursor })
+    end
+
+    # Goes back to a response and carries on from there.
+    #
+    # The reply being spoken is abandoned and later turns are no longer listed. The response
+    # itself is kept. A conversation kept in Stream Chat cannot be rewound, because the
+    # channel would still hold the later turns: fork it at the response instead.
+    #
+    # @param to [AgentResponse, Hash, String] the response, a response row, any item of it,
+    #   or its id.
+    def rewind(to)
+      response_id = Responses.id_of(to)
+      if response_id.empty?
+        raise ConfigurationError,
+              "that response has no id, which is what a session that records nothing hands back; " \
+              "there is nothing to rewind to"
+      end
+
+      @client.post("/v1/agents/sessions/{id}/rewind",
+                   path: { id: @session_id }, body: { response_id: response_id })
+    end
+
+    def self.id_of(response)
+      case response
+      when AgentResponse then response.id
+      when Hash then (response["response_id"] || response["id"]).to_s
+      else response.to_s
+      end
+    end
+  end
+end

@@ -10,7 +10,7 @@ class TestDispatch < LocalRouterTest
   end
 
   def dispatch
-    @dispatch ||= VA::Dispatch.new(capacity: 2, report_every: 0.05, client: client)
+    @dispatch ||= SA::Dispatch.new(capacity: 2, report_every: 0.05, client: client)
   end
 
   def run_until_closed
@@ -88,9 +88,9 @@ class TestDispatch < LocalRouterTest
 
   def test_answer_has_the_model_answer_with_the_server_credential_acting_for_the_writer
     @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
-    server = VA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
-    worker = VA::Dispatch.new(client: server)
-    message = VA::InboundMessage.from({ "session_id" => "sess_1", "request_id" => "req_1", "text" => "hi",
+    server = SA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
+    worker = SA::Dispatch.new(client: server)
+    message = SA::InboundMessage.from({ "session_id" => "sess_1", "request_id" => "req_1", "text" => "hi",
                                         "user_id" => "ada" })
 
     answered = worker.answer(message)
@@ -100,11 +100,11 @@ class TestDispatch < LocalRouterTest
     assert_equal({ "text" => "hi", "request_id" => "req_1" }, request.json)
     assert_equal "ada", request.headers["x-stream-user-id"]
     assert_equal "server", request.headers["stream-auth-type"]
-    assert_raises(VA::ConfigurationError) { worker.answer(VA::InboundMessage.from({ "text" => "hi" })) }
+    assert_raises(SA::ConfigurationError) { worker.answer(SA::InboundMessage.from({ "text" => "hi" })) }
   end
 
   def test_a_message_frame_carries_its_photos_in_order
-    message = VA::InboundMessage.from(
+    message = SA::InboundMessage.from(
       { "text" => "what is this?",
         "images" => [{ "url" => "https://example.com/a.png", "mime_type" => "image/png" },
                      "https://example.com/skipped.png",
@@ -112,9 +112,9 @@ class TestDispatch < LocalRouterTest
                      { "url" => "https://example.com/c.webp", "mime_type" => 5 }] }
     )
 
-    assert_equal [VA::InboundImage.new(url: "https://example.com/a.png", mime_type: "image/png"),
-                  VA::InboundImage.new(url: "https://example.com/b.jpg", mime_type: ""),
-                  VA::InboundImage.new(url: "https://example.com/c.webp", mime_type: "")],
+    assert_equal [SA::InboundImage.new(url: "https://example.com/a.png", mime_type: "image/png"),
+                  SA::InboundImage.new(url: "https://example.com/b.jpg", mime_type: ""),
+                  SA::InboundImage.new(url: "https://example.com/c.webp", mime_type: "")],
                  message.images
   end
 
@@ -129,12 +129,12 @@ class TestDispatch < LocalRouterTest
       { "images" => [nil, 3, "https://example.com/a.png", [], {}] },
       { "images" => [{ "url" => "" }, { "url" => 7 }, { "url" => nil }, { "mime_type" => "image/png" }] }
     ].each do |frame|
-      assert_equal [], VA::InboundMessage.from(frame).images, frame.inspect
+      assert_equal [], SA::InboundMessage.from(frame).images, frame.inspect
     end
   end
 
   def test_a_message_built_without_photos_has_none
-    message = VA::InboundMessage.new(channel_id: "", channel_type: "agent", agent_id: "", config_id: "",
+    message = SA::InboundMessage.new(channel_id: "", channel_type: "agent", agent_id: "", config_id: "",
                                      session_id: "sess_1", request_id: "", text: "hi", message_id: "",
                                      user_id: "ada", user_name: "", custom: {}, at: nil)
 
@@ -143,7 +143,7 @@ class TestDispatch < LocalRouterTest
 
   def test_a_message_built_from_the_arguments_it_had_before_photos_keeps_each_in_its_place
     at = Time.utc(2026, 1, 2, 3, 4, 5)
-    message = VA::InboundMessage.new("room-1", "agent", "agent_1", "cfg_1", "sess_1", "req_1", "hi", "msg_1",
+    message = SA::InboundMessage.new("room-1", "agent", "agent_1", "cfg_1", "sess_1", "req_1", "hi", "msg_1",
                                      "ada", "Ada", { "k" => "v" }, at)
 
     assert_equal "msg_1", message.message_id
@@ -154,13 +154,13 @@ class TestDispatch < LocalRouterTest
 
   def test_answer_shows_the_photos_to_the_model_on_its_request_id
     @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
-    message = VA::InboundMessage.from(
+    message = SA::InboundMessage.from(
       { "session_id" => "sess_1", "request_id" => "req_1", "text" => "what is this?", "user_id" => "ada",
         "images" => [{ "url" => "https://example.com/a.png", "mime_type" => "image/png" },
                      { "url" => "https://example.com/b.jpg" }] }
     )
 
-    VA::Dispatch.new(client: client).answer(message)
+    SA::Dispatch.new(client: client).answer(message)
 
     assert_equal({ "text" => "what is this?", "request_id" => "req_1",
                    "images" => [{ "url" => "https://example.com/a.png" }, { "url" => "https://example.com/b.jpg" }] },
@@ -169,10 +169,10 @@ class TestDispatch < LocalRouterTest
 
   def test_answer_with_photos_and_no_request_id_sends_none
     @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
-    message = VA::InboundMessage.from({ "session_id" => "sess_1", "text" => "", "user_id" => "ada",
+    message = SA::InboundMessage.from({ "session_id" => "sess_1", "text" => "", "user_id" => "ada",
                                         "images" => [{ "url" => "https://example.com/a.png" }] })
 
-    VA::Dispatch.new(client: client).answer(message)
+    SA::Dispatch.new(client: client).answer(message)
 
     assert_equal({ "text" => "", "images" => [{ "url" => "https://example.com/a.png" }] },
                  @router.last(:post, "/v1/agents/sessions/sess_1/responses").json)
@@ -180,10 +180,10 @@ class TestDispatch < LocalRouterTest
 
   def test_answer_behind_the_proxy_keeps_the_server_token
     @router.on(:post, "/v1/agents/sessions/sess_1/responses", body: { "id" => "resp_1", "session_id" => "sess_1" })
-    server = VA::Client.new(url: @router.url, api_key: "key", api_secret: "secret", authenticate: true)
-    message = VA::InboundMessage.from({ "session_id" => "sess_1", "text" => "hi", "user_id" => "ada" })
+    server = SA::Client.new(url: @router.url, api_key: "key", api_secret: "secret", authenticate: true)
+    message = SA::InboundMessage.from({ "session_id" => "sess_1", "text" => "hi", "user_id" => "ada" })
 
-    VA::Dispatch.new(client: server).answer(message)
+    SA::Dispatch.new(client: server).answer(message)
 
     headers = @router.last(:post, "/v1/agents/sessions/sess_1/responses").headers
     assert_equal "ada", headers["x-stream-user-id"]
@@ -193,10 +193,10 @@ class TestDispatch < LocalRouterTest
   end
 
   def test_a_message_a_session_is_holding_is_not_given_an_agent
-    message = VA::InboundMessage.from({ "session_id" => "sess_1", "channel_id" => "room-1", "text" => "hi" })
+    message = SA::InboundMessage.from({ "session_id" => "sess_1", "channel_id" => "room-1", "text" => "hi" })
 
-    refused = assert_raises(VA::ConfigurationError) do
-      dispatch.get_or_create_agent(message) { VA::Agent.new(config: "support", client: client) }
+    refused = assert_raises(SA::ConfigurationError) do
+      dispatch.get_or_create_agent(message) { SA::Agent.new(config: "support", client: client) }
     end
     assert_match(/answer/, refused.message)
   end
@@ -222,7 +222,7 @@ class TestDispatch < LocalRouterTest
   def test_a_message_is_answered_by_one_agent_per_channel
     agents = Thread::Queue.new
     dispatch.wait_for_message do |message|
-      agents << dispatch.get_or_create_agent(message) { VA::Agent.new(config: "support", client: client) }
+      agents << dispatch.get_or_create_agent(message) { SA::Agent.new(config: "support", client: client) }
     end
 
     run_until_closed do |peer|
@@ -340,12 +340,12 @@ class TestDispatch < LocalRouterTest
     assert_equal 0, peer.receive_type("host_tools")["timeout_ms"]
     peer.send_frame(type: "hosting_refused", agent_id: "my-agent", reason: "another customer's agent")
 
-    refused = assert_raises(VA::Error) { runner.join(5) }
+    refused = assert_raises(SA::Error) { runner.join(5) }
     assert_equal "the router refused to host tools for agent my-agent: another customer's agent", refused.message
   end
 
   def test_a_handler_or_hosted_tools_are_needed_before_running
-    assert_raises(VA::ConfigurationError) { dispatch.run }
-    assert_raises(VA::ConfigurationError) { dispatch.host(client.agent("my-agent")) }
+    assert_raises(SA::ConfigurationError) { dispatch.run }
+    assert_raises(SA::ConfigurationError) { dispatch.host(client.agent("my-agent")) }
   end
 end

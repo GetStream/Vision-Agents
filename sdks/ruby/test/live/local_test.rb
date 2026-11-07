@@ -13,7 +13,7 @@ class TestLiveRouter < Minitest::Test
 
   def setup
     skip "set VISION_AGENTS_URL to run against a router" if URL.empty?
-    @api = VA::Client.new(url: URL, customer_id: CUSTOMER)
+    @api = SA::Client.new(url: URL, customer_id: CUSTOMER)
     @opened = []
   end
 
@@ -32,7 +32,7 @@ class TestLiveRouter < Minitest::Test
   def model
     @model ||= %w[llm-fast llm-thinking llm-flow].find do |target|
       @api.get("/v1/{modality}/routes/{target}", path: { modality: "llm", target: target })
-    rescue VA::RouterError => e
+    rescue SA::RouterError => e
       raise unless e.status == 404
     end || flunk("this deployment resolves none of the conversation models")
   end
@@ -109,7 +109,7 @@ class TestLiveRouter < Minitest::Test
   def test_a_conversation_kept_in_stream_chat_is_forked_rather_than_rewound
     session = open
 
-    error = assert_raises(VA::RouterError) { session.responses.rewind("anything") }
+    error = assert_raises(SA::RouterError) { session.responses.rewind("anything") }
     assert_equal 400, error.status
 
     forked = session.fork(title: "asked again").tap { |fork| @opened << fork }
@@ -137,8 +137,8 @@ class TestLiveRouter < Minitest::Test
     File.write(File.join(root, "agent.yaml"), "llm: #{model}\n")
     File.write(File.join(root, "instructions.md"), "You are a test agent. Answer in one word.\n")
 
-    first = VA::Agent.new(folder: root, client: @api).sync
-    second = VA::Agent.new(folder: root, client: @api).sync
+    first = SA::Agent.new(folder: root, client: @api).sync
+    second = SA::Agent.new(folder: root, client: @api).sync
 
     assert_equal File.basename(root), first.dig("config", "name")
     assert_equal true, second["unchanged"]
@@ -150,7 +150,7 @@ class TestLiveRouter < Minitest::Test
   end
 
   def test_a_worker_is_told_its_id
-    dispatch = VA::Dispatch.new(client: @api).wait_for_call { nil }
+    dispatch = SA::Dispatch.new(client: @api).wait_for_call { nil }
     runner = Thread.new { dispatch.run }
 
     deadline = Process.clock_gettime(Process::CLOCK_MONOTONIC) + 10

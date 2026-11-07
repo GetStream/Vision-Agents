@@ -24,11 +24,11 @@ class TestFolder < Minitest::Test
                              "Take your time and reason it through.\n")
     write("knowledge/pricing.md", "# Pricing\n\nA call costs a penny.\n")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
 
     assert_equal "jean", folder.name
     assert_equal "You are Jean.", folder.instructions
-    assert_equal [VA::Skill.new(name: "think", description: "Work something out before answering",
+    assert_equal [SA::Skill.new(name: "think", description: "Work something out before answering",
                                 instructions: "Take your time and reason it through.", deadline: 30.0)],
                  folder.skills
     assert_equal ["pricing.md"], folder.knowledge.map(&:source)
@@ -40,11 +40,11 @@ class TestFolder < Minitest::Test
     write("skills/think.md", "---\ndescription: Work it out\ndeadline: 30s\n---\nReason it through.\n")
     write("knowledge/pricing.md", "# Pricing\n\nA penny.\n")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
     assert_equal "02a7b2c8428f31e3a2b93ca2f5a6ec70", folder.fingerprint
 
     write("knowledge/urls.yaml", "- https://example.com/plans\n")
-    refute_equal folder.fingerprint, VA::Folder.load(@root).fingerprint
+    refute_equal folder.fingerprint, SA::Folder.load(@root).fingerprint
   end
 
   def test_skill_folders_fingerprint_the_way_go_does
@@ -59,7 +59,7 @@ class TestFolder < Minitest::Test
     write("skills/pdf/.DS_Store", "\x00\xff".b)
     write("knowledge/pricing.md", "# Pricing\n\nA penny.\n")
 
-    assert_equal "e47f7807b97bbcbdee683c6c481d1d36", VA::Folder.load(@root).fingerprint
+    assert_equal "e47f7807b97bbcbdee683c6c481d1d36", SA::Folder.load(@root).fingerprint
   end
 
   def test_a_skill_folder_brings_its_nested_text_files_and_leaves_hidden_ones
@@ -71,7 +71,7 @@ class TestFolder < Minitest::Test
     write("skills/pdf/.hidden/notes.md", "hidden\n")
     write("skills/pdf/.DS_Store", "\x00\xff".b)
 
-    skill = VA::Folder.load(@root).skills[0]
+    skill = SA::Folder.load(@root).skills[0]
 
     assert_equal "pdf", skill.name
     assert_equal "Fill the form.", skill.instructions
@@ -83,31 +83,31 @@ class TestFolder < Minitest::Test
   def test_moving_a_skill_into_a_folder_keeps_its_fingerprint_until_it_brings_a_file
     write("agent.yaml", "name: jean\n")
     write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
-    single = VA::Folder.load(@root).fingerprint
+    single = SA::Folder.load(@root).fingerprint
 
     FileUtils.mkdir_p(File.join(@root, "skills/pdf"))
     FileUtils.mv(File.join(@root, "skills/pdf.md"), File.join(@root, "skills/pdf/SKILL.md"))
-    assert_equal single, VA::Folder.load(@root).fingerprint
-    refute VA::Folder.load(@root).skills[0].request.key?(:files)
+    assert_equal single, SA::Folder.load(@root).fingerprint
+    refute SA::Folder.load(@root).skills[0].request.key?(:files)
 
     write("skills/pdf/forms.md", "# Forms\n")
-    refute_equal single, VA::Folder.load(@root).fingerprint
+    refute_equal single, SA::Folder.load(@root).fingerprint
   end
 
   def test_a_skill_folder_that_is_not_a_skill_is_refused
     write("agent.yaml", "name: jean\n")
     write("skills/pdf/forms.md", "# Forms\n")
-    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    error = assert_raises(SA::ConfigurationError) { SA::Folder.load(@root) }
     assert_includes error.message, "has no SKILL.md, so it is not a skill"
 
     write("skills/pdf/SKILL.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
     write("skills/pdf.md", "---\ndescription: Fill PDF forms\n---\nFill the form.\n")
-    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    error = assert_raises(SA::ConfigurationError) { SA::Folder.load(@root) }
     assert_equal 'skill "pdf" is both pdf and pdf.md', error.message
 
     FileUtils.rm(File.join(@root, "skills/pdf.md"))
     write("skills/pdf/logo.png", "\x89PNG\xff".b)
-    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    error = assert_raises(SA::ConfigurationError) { SA::Folder.load(@root) }
     assert_includes error.message, "logo.png is not text, and a skill brings only text files"
   end
 
@@ -123,7 +123,7 @@ class TestFolder < Minitest::Test
     write("simulations/a.yml", "- name: breakfast\n  scenario: Eggs\n  assertion: Eggs\n  max_turns: 4\n  tags: {}\n")
     write("simulations/notes.txt", "not a simulation")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
 
     assert_equal 24, folder.knowledge_urls[1].refresh_hours
     assert_equal ["breakfast", 'lunch <order> & "change"', "dinner"], folder.simulations.map(&:name)
@@ -135,15 +135,15 @@ class TestFolder < Minitest::Test
     ["0", "1.5", "daily"].each do |hours|
       write("knowledge/urls.yaml", "- url: https://example.com/plans\n  refresh_hours: #{hours}\n")
 
-      assert_raises(VA::ConfigurationError, hours) { VA::Folder.load(@root) }
+      assert_raises(SA::ConfigurationError, hours) { SA::Folder.load(@root) }
     end
   end
 
   def test_an_empty_simulations_directory_is_not_the_same_as_none
     write("agent.yaml", "name: jean\n")
-    without = VA::Folder.load(@root)
+    without = SA::Folder.load(@root)
     FileUtils.mkdir_p(File.join(@root, "simulations"))
-    empty = VA::Folder.load(@root)
+    empty = SA::Folder.load(@root)
 
     assert_nil without.simulations
     assert_equal [], empty.simulations
@@ -157,7 +157,7 @@ class TestFolder < Minitest::Test
      "name: a\n"].each do |yaml|
       write("simulations/one.yaml", yaml)
 
-      assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+      assert_raises(SA::ConfigurationError, yaml) { SA::Folder.load(@root) }
     end
   end
 
@@ -166,7 +166,7 @@ class TestFolder < Minitest::Test
     write("simulations/a.yaml", "- name: lunch\n  scenario: s\n  assertion: x\n")
     write("simulations/b.yaml", "- name: lunch\n  scenario: t\n  assertion: y\n")
 
-    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    error = assert_raises(SA::ConfigurationError) { SA::Folder.load(@root) }
     assert_includes error.message, "a.yaml"
   end
 
@@ -176,7 +176,7 @@ class TestFolder < Minitest::Test
     write("knowledge/logo.png", "not a document")
     write("knowledge/empty.md", "   \n")
 
-    assert_equal ["reference/api.md"], VA::Folder.load(@root).knowledge.map(&:source)
+    assert_equal ["reference/api.md"], SA::Folder.load(@root).knowledge.map(&:source)
   end
 
   def test_declared_pages_are_read_without_being_ingested
@@ -186,11 +186,11 @@ class TestFolder < Minitest::Test
                                  "  description: What each plan includes.\n")
     write("knowledge/reference/urls.yaml", "the urls we used to have\n")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
 
     assert_equal ["pricing.md", "reference/urls.yaml"], folder.knowledge.map(&:source)
-    assert_equal [VA::KnowledgeURL.new(url: "https://example.com/pricing"),
-                  VA::KnowledgeURL.new(url: "https://example.com/plans", title: "Plans",
+    assert_equal [SA::KnowledgeURL.new(url: "https://example.com/pricing"),
+                  SA::KnowledgeURL.new(url: "https://example.com/plans", title: "Plans",
                                        description: "What each plan includes.")], folder.knowledge_urls
   end
 
@@ -200,24 +200,24 @@ class TestFolder < Minitest::Test
       write("agent.yaml", "name: jean\n")
       write("knowledge/urls.yaml", declaration)
 
-      assert_raises(VA::ConfigurationError, declaration) { VA::Folder.load(@root) }
+      assert_raises(SA::ConfigurationError, declaration) { SA::Folder.load(@root) }
     end
   end
 
   def test_a_skill_needs_a_description_and_can_be_renamed
     write("agent.yaml", "name: jean\n")
     write("skills/01-think.md", "---\nname: think\ndescription: Work something out\n---\nReason it through.\n")
-    assert_equal "think", VA::Folder.load(@root).skills[0].name
+    assert_equal "think", SA::Folder.load(@root).skills[0].name
 
     write("skills/think.md", "Just a body, with nothing saying when to use it.\n")
-    assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_raises(SA::ConfigurationError) { SA::Folder.load(@root) }
   end
 
   def test_the_declaration_says_what_the_agent_is_called_and_runs_on
     write("agent.yaml", "name: receptionist\nllm: openai/gpt-5.6\nsts: \"\"\nkeyterms: [Vision Agents]\n" \
                         "video:\n  source: camera\ngreeting:\n  text: Hello\n  mode: exact\nharness: default\n")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
 
     assert_equal "receptionist", folder.name
     assert_equal "openai/gpt-5.6", folder.settings["llm"]
@@ -238,7 +238,7 @@ class TestFolder < Minitest::Test
      "end_of_turn: {}\n"].each do |yaml|
       write("agent.yaml", yaml)
 
-      assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+      assert_raises(SA::ConfigurationError, yaml) { SA::Folder.load(@root) }
     end
   end
 
@@ -246,7 +246,7 @@ class TestFolder < Minitest::Test
     write("agent.yaml", "name: jean\nconnectors:\n  - linear\n  - name: issues\n    connector: linear\n" \
                         "    tools: [list_*]\n    connection: prod\n    required: true\n")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
 
     assert_equal [{ "name" => "linear", "connector" => "", "tools" => nil, "connection" => nil, "required" => nil },
                   { "name" => "issues", "connector" => "linear", "tools" => ["list_*"], "connection" => "prod",
@@ -275,7 +275,7 @@ class TestFolder < Minitest::Test
     }.each do |yaml, message|
       write("agent.yaml", "name: jean\n#{yaml}")
 
-      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+      error = assert_raises(SA::ConfigurationError, yaml) { SA::Folder.load(@root) }
 
       assert_includes error.message, message
     end
@@ -292,12 +292,12 @@ class TestFolder < Minitest::Test
       "floor_control: {}\n" => {} }.each do |yaml, want|
       write("agent.yaml", "name: jean\n#{yaml}")
 
-      assert_equal want, VA::Folder.load(@root).settings["floor_control"], yaml
+      assert_equal want, SA::Folder.load(@root).settings["floor_control"], yaml
     end
     ["floor_control:\n", "floor_control: ~\n"].each do |yaml|
       write("agent.yaml", "name: jean\n#{yaml}")
 
-      assert_nil VA::Folder.load(@root).settings["floor_control"], yaml
+      assert_nil SA::Folder.load(@root).settings["floor_control"], yaml
     end
   end
 
@@ -313,7 +313,7 @@ class TestFolder < Minitest::Test
         "floor_control.max_wait_ms must be an integer" }.each do |yaml, message|
       write("agent.yaml", "name: jean\n#{yaml}")
 
-      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+      error = assert_raises(SA::ConfigurationError, yaml) { SA::Folder.load(@root) }
 
       assert_includes error.message, message
     end
@@ -323,30 +323,30 @@ class TestFolder < Minitest::Test
   def test_an_end_of_turn_is_refused_by_name
     write("agent.yaml", "name: jean\nend_of_turn:\n  max_wait_ms: 900\n")
 
-    error = assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    error = assert_raises(SA::ConfigurationError) { SA::Folder.load(@root) }
 
     assert_includes error.message, "end_of_turn is not a setting"
   end
 
   def test_the_fingerprint_hashes_agent_yaml_as_written_connectors_included
     write("agent.yaml", "name: jean\n")
-    plain = VA::Folder.load(@root).fingerprint
+    plain = SA::Folder.load(@root).fingerprint
     write("agent.yaml", "name: jean\nconnectors: [linear]\n")
 
-    assert_equal VA::Folder.fingerprint("name: jean\nconnectors: [linear]", "", "", [], [], []),
-                 VA::Folder.load(@root).fingerprint
-    refute_equal plain, VA::Folder.load(@root).fingerprint
+    assert_equal SA::Folder.fingerprint("name: jean\nconnectors: [linear]", "", "", [], [], []),
+                 SA::Folder.load(@root).fingerprint
+    refute_equal plain, SA::Folder.load(@root).fingerprint
   end
 
   def test_a_directory_without_a_declaration_is_not_an_agent
     write("instructions.md", "You are Jean.\n")
 
-    assert_raises(VA::ConfigurationError) { VA::Folder.load(@root) }
+    assert_raises(SA::ConfigurationError) { SA::Folder.load(@root) }
   end
 
   def test_the_stamp_records_the_hash_and_when
     write("agent.yaml", "name: jean\n")
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
     assert_nil folder.stamp
 
     folder.write_stamp("abc")
@@ -364,7 +364,7 @@ class TestFolder < Minitest::Test
      "plugins: [linear]\nconnectors:\n  - name: issues\n    connector: linear\n"].each do |yaml|
       write("agent.yaml", "name: jean\n#{yaml}")
 
-      error = assert_raises(VA::ConfigurationError, yaml) { VA::Folder.load(@root) }
+      error = assert_raises(SA::ConfigurationError, yaml) { SA::Folder.load(@root) }
 
       assert_equal "#{File.join(@root, "agent.yaml")}: plugins is no longer read: plugins were replaced by " \
                    "connectors, so name the provider under connectors", error.message, yaml
@@ -375,7 +375,7 @@ class TestFolder < Minitest::Test
     ["plugins: []\n", "plugins:\n", "plugins: ~\n", "plugins: null\n"].each do |yaml|
       write("agent.yaml", "name: jean\n#{yaml}connectors:\n  - linear\n")
 
-      folder = VA::Folder.load(@root)
+      folder = SA::Folder.load(@root)
 
       assert_equal ["linear"], folder.settings["connectors"].map { |each| each["name"] }, yaml
     end
@@ -384,7 +384,7 @@ class TestFolder < Minitest::Test
   def test_connectors_null_loads_without_error_and_is_not_stored
     write("agent.yaml", "name: jean\nconnectors: null\n")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
 
     assert_nil folder.settings["connectors"]
   end
@@ -392,7 +392,7 @@ class TestFolder < Minitest::Test
   def test_a_non_string_connector_entry_is_treated_as_its_string_value
     write("agent.yaml", "name: jean\nconnectors:\n  - 123\n")
 
-    folder = VA::Folder.load(@root)
+    folder = SA::Folder.load(@root)
 
     assert_equal "123", folder.settings["connectors"].first["name"]
   end

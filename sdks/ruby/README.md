@@ -17,9 +17,9 @@ for Stream calls of your own, and `websocket-driver` for the sockets.
 ## An agent on a call
 
 ```ruby
-require "getstream/vision_agents"
+require "stream_agents"
 
-agent = GetStream::VisionAgents::Agent.new(
+agent = StreamAgents::Agent.new(
   config: "support",
   cost_tracking: { env: "production", team: "voice" },
   memory_filter: { user_id: current_user.id, plan: "pro" },
@@ -97,7 +97,7 @@ dropped. A call the router addresses to another watcher (`run: false`) is left a
 | `api_key` + `api_secret` | a process you run |
 
 ```ruby
-api = GetStream::VisionAgents::Client.new
+api = StreamAgents::Client.new
 agent = api.agent("support", cost_tracking: { env: "production" })
 ```
 
@@ -127,16 +127,16 @@ The worker connects out and the router pushes calls and messages down the socket
 you run has to be publicly reachable.
 
 ```ruby
-dispatch = GetStream::VisionAgents::Dispatch.new(capacity: 4)
+dispatch = StreamAgents::Dispatch.new(capacity: 4)
 
 dispatch.wait_for_call do |call|
-  GetStream::VisionAgents::Agent.new(config: "support").join(call)
+  StreamAgents::Agent.new(config: "support").join(call)
 end
 
 dispatch.wait_for_message do |message|
   next dispatch.answer(message) unless message.session_id.empty?
 
-  dispatch.get_or_create_agent(message) { GetStream::VisionAgents::Agent.new(config: "support") }
+  dispatch.get_or_create_agent(message) { StreamAgents::Agent.new(config: "support") }
           .reply(message)
 end
 
@@ -160,13 +160,13 @@ A worker can also run an agent's tools for every session under it, whoever opene
 as a conversation started from a browser. The tools are hosted under the agent's config name:
 
 ```ruby
-support = GetStream::VisionAgents::Client.new.agent("support")
+support = StreamAgents::Client.new.agent("support")
 support.tools.register("lookup_order", description: "An order by id",
                        parameters: { type: "object", properties: { id: { type: "string" } } }) do |args|
   orders.find(args["id"])
 end
 
-dispatch = GetStream::VisionAgents::Dispatch.new
+dispatch = StreamAgents::Dispatch.new
 dispatch.host(support, tool_timeout: 30)
 dispatch.run
 ```
@@ -210,7 +210,7 @@ agents/jean/
 ```
 
 ```ruby
-agent = GetStream::VisionAgents::Agent.new(folder: "agents/jean")
+agent = StreamAgents::Agent.new(folder: "agents/jean")
 agent.sync
 agent.join { ... }
 ```
@@ -329,7 +329,7 @@ tts:
 ```
 
 ```ruby
-GetStream::VisionAgents::Router.sync("routers", client: api)
+StreamAgents::Router.sync("routers", client: api)
 router = api.router("healthcare", tags: { env: "production" })
 
 router.stt.realtime do |stt|
@@ -358,7 +358,7 @@ docker run --rm -v "$PWD/../..:/repo" -v va-ruby-bundle:/usr/local/bundle -w /re
 
 `rake` checks the generated table is current, then runs the unit tests against a real HTTP
 and websocket server on a local port. `script/generate` regenerates
-`lib/getstream/vision_agents/generated/spec.rb` after the spec moves.
+`lib/stream_agents/generated/spec.rb` after the spec moves.
 
 The live suite is opt-in and talks to a running router:
 

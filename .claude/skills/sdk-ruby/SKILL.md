@@ -14,14 +14,14 @@ official `ruby:4.0` image. Never install gems on the host.
 
 ## The gem
 
-One gem, `stream-agents`, `require "getstream/vision_agents"`, module
-`GetStream::VisionAgents`. Stream's own gems are `getstream-ruby` (`GetStreamRuby::Client`,
-generated code under `GetStream::`), `stream-chat-ruby` (maintenance mode) and `stream-ruby`;
-the name sits beside the current one without claiming its namespace.
+One gem, `stream-agents`, `require "stream_agents"`, module `StreamAgents`. Stream's own
+gems are `getstream-ruby` (`GetStreamRuby::Client`, generated code under `GetStream::`),
+`stream-chat-ruby` (maintenance mode) and `stream-ruby`; the module sits beside theirs
+without claiming any of their namespaces.
 `lib/stream-agents.rb` exists only so `Bundler.require` finds it.
 
 ```
-lib/getstream/vision_agents.rb     requires everything, in order
+lib/stream_agents.rb               requires everything, in order
   generated/spec.rb                OPERATIONS and SCHEMAS, from the spec. Never edit
   backend.rb client.rb             who is calling; one method per HTTP verb
   socket.rb                        TCP/TLS + websocket-driver, one reader thread
@@ -57,7 +57,7 @@ What is not a dependency, and why:
 ## Generated from the spec, not a generated client
 
 `script/generate` reads `acceleration/api/openapi.yaml` and writes
-`lib/getstream/vision_agents/generated/spec.rb`: every operation's method, path, path and
+`lib/stream_agents/generated/spec.rb`: every operation's method, path, path and
 query parameters, body schema, whether it is a socket, and every object schema's property
 names. `Client#get/post/put/patch/delete(template, path:, query:, body:)` look the template up
 there, so a path, query key or body key the spec lacks is refused before a request is made,

@@ -38,12 +38,12 @@ class TestClient < LocalRouterTest
   end
 
   def test_what_the_spec_does_not_have_is_refused_before_sending
-    assert_raises(VA::ConfigurationError) { client.get("/v1/nothing") }
-    assert_raises(VA::ConfigurationError) { client.get("/v1/agents/configs", query: { nme: "docs" }) }
-    assert_raises(VA::ConfigurationError) { client.post("/v1/agents/guests", body: { nmae: "Ada" }) }
-    assert_raises(VA::ConfigurationError) { client.post("/v1/agents/sessions/{id}/rewind", path: { id: "s" }, body: {}) }
-    assert_raises(VA::ConfigurationError) { client.get("/v1/agents/sessions/{id}") }
-    assert_raises(VA::ConfigurationError) { client.get("/v1/dispatch") }
+    assert_raises(SA::ConfigurationError) { client.get("/v1/nothing") }
+    assert_raises(SA::ConfigurationError) { client.get("/v1/agents/configs", query: { nme: "docs" }) }
+    assert_raises(SA::ConfigurationError) { client.post("/v1/agents/guests", body: { nmae: "Ada" }) }
+    assert_raises(SA::ConfigurationError) { client.post("/v1/agents/sessions/{id}/rewind", path: { id: "s" }, body: {}) }
+    assert_raises(SA::ConfigurationError) { client.get("/v1/agents/sessions/{id}") }
+    assert_raises(SA::ConfigurationError) { client.get("/v1/dispatch") }
     assert_empty @router.requests
   end
 
@@ -57,7 +57,7 @@ class TestClient < LocalRouterTest
     slow_down = LocalRouter.failure("rate_limited", "rate_limited", "slow down")
     @router.on(:post, "/v1/agents/sessions", status: 429, body: slow_down, headers: { "Retry-After" => "3" })
 
-    error = assert_raises(VA::RouterError) { client.post("/v1/agents/sessions", body: { start_voice: true }) }
+    error = assert_raises(SA::RouterError) { client.post("/v1/agents/sessions", body: { start_voice: true }) }
 
     assert_equal 429, error.status
     assert_equal "createSession", error.operation
@@ -70,7 +70,7 @@ class TestClient < LocalRouterTest
     missing = LocalRouter.failure("not_found", "agent_config_not_found", "there is no agent config called docs")
     @router.on(:post, "/v1/agents/sessions", status: 404, body: missing, headers: { "X-Request-Id" => "req_1" })
 
-    error = assert_raises(VA::RouterError) { client.post("/v1/agents/sessions", body: { agent: "docs" }) }
+    error = assert_raises(SA::RouterError) { client.post("/v1/agents/sessions", body: { agent: "docs" }) }
 
     assert_equal 404, error.status
     assert_equal "createSession: there is no agent config called docs", error.message
@@ -84,7 +84,7 @@ class TestClient < LocalRouterTest
     @router.on(:get, "/v1/agents/configs", status: 502, body: "<html>bad gateway</html>\n",
                                            headers: { "X-Request-Id" => "req_2" })
 
-    error = assert_raises(VA::RouterError) { client.get("/v1/agents/configs") }
+    error = assert_raises(SA::RouterError) { client.get("/v1/agents/configs") }
 
     assert_equal 502, error.status
     assert_equal "listAgentConfigs: <html>bad gateway</html>", error.message
@@ -99,8 +99,8 @@ class TestClient < LocalRouterTest
     @router.on(:get, "/v1/agents/configs", status: 400, body: { "error" => "name is too long" })
     @router.on(:delete, "/v1/agents/sessions/s1", status: 503)
 
-    old = assert_raises(VA::RouterError) { client.get("/v1/agents/configs") }
-    empty = assert_raises(VA::RouterError) { client.delete("/v1/agents/sessions/{id}", path: { id: "s1" }) }
+    old = assert_raises(SA::RouterError) { client.get("/v1/agents/configs") }
+    empty = assert_raises(SA::RouterError) { client.delete("/v1/agents/sessions/{id}", path: { id: "s1" }) }
 
     assert_equal "listAgentConfigs: name is too long", old.message
     assert_nil old.code
@@ -109,15 +109,15 @@ class TestClient < LocalRouterTest
   end
 
   def test_a_router_that_is_not_there_is_status_zero
-    gone = VA::Client.new(url: "http://127.0.0.1:1", customer_id: CUSTOMER)
+    gone = SA::Client.new(url: "http://127.0.0.1:1", customer_id: CUSTOMER)
 
-    error = assert_raises(VA::RouterError) { gone.get("/v1/agents/configs") }
+    error = assert_raises(SA::RouterError) { gone.get("/v1/agents/configs") }
 
     assert_equal 0, error.status
   end
 
   def test_a_socket_that_is_refused_is_a_router_error
-    error = assert_raises(VA::RouterError) { client.socket("/v1/dispatch") }
+    error = assert_raises(SA::RouterError) { client.socket("/v1/dispatch") }
 
     assert_equal 404, error.status
     assert_equal "not_found", error.code
@@ -127,7 +127,7 @@ class TestClient < LocalRouterTest
     expired = LocalRouter.failure("authentication", "unauthenticated", "the token has expired")
     @router.on(:get, "/v1/dispatch", status: 401, body: expired, headers: { "X-Request-Id" => "req_3" })
 
-    error = assert_raises(VA::RouterError) { client.socket("/v1/dispatch") }
+    error = assert_raises(SA::RouterError) { client.socket("/v1/dispatch") }
 
     assert_equal 401, error.status
     assert_equal "GET /v1/dispatch: the token has expired", error.message
@@ -152,9 +152,9 @@ class TestClient < LocalRouterTest
     ensure
       io&.close
     end
-    draining = VA::Client.new(url: "http://127.0.0.1:#{server.addr[1]}", customer_id: CUSTOMER)
+    draining = SA::Client.new(url: "http://127.0.0.1:#{server.addr[1]}", customer_id: CUSTOMER)
 
-    error = assert_raises(VA::RouterError) { draining.socket("/v1/dispatch") }
+    error = assert_raises(SA::RouterError) { draining.socket("/v1/dispatch") }
 
     assert_equal 503, error.status
     assert_equal "GET /v1/dispatch: the router is draining", error.message
@@ -167,7 +167,7 @@ class TestClient < LocalRouterTest
   def test_a_guest_is_minted_and_acted_for
     @router.on(:post, "/v1/agents/guests", body: { "id" => "guest_1", "token" => "tok", "name" => "Guest" })
     @router.on(:post, "/v1/agents/sessions/query", body: { "items" => [], "has_more" => false })
-    keyed = VA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
+    keyed = SA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
 
     guest = keyed.guest_user(name: "Ada")
     keyed.as_guest(guest).agent("support").sessions.query
@@ -182,13 +182,13 @@ class TestClient < LocalRouterTest
   def test_claiming_a_guest_is_server_side_only
     @router.on(:post, "/v1/agents/guests/claim",
                body: { "guest_id" => "guest_1", "user_id" => "ada", "sessions_moved" => 2 })
-    keyed = VA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
+    keyed = SA::Client.new(url: @router.url, api_key: "key", api_secret: "secret")
 
     assert_equal 2, keyed.claim_guest_user("guest_1", "ada")["sessions_moved"]
     assert_equal({ "guest_id" => "guest_1", "user_id" => "ada" }, @router.last(:post, "/v1/agents/guests/claim").json)
 
-    device = VA::Client.new(url: @router.url, api_key: "key", token: "user-token", user_id: "ada")
-    assert_raises(VA::ConfigurationError) { device.claim_guest_user("guest_1", "ada") }
+    device = SA::Client.new(url: @router.url, api_key: "key", token: "user-token", user_id: "ada")
+    assert_raises(SA::ConfigurationError) { device.claim_guest_user("guest_1", "ada") }
   end
 
   def test_a_router_comes_from_the_client
@@ -231,24 +231,24 @@ class TestClient < LocalRouterTest
 
     assert_nil client.memories.truncate("ada")
     assert_equal 1, @router.seen(:delete, "/v1/agents/users/ada/memories").size
-    assert_raises(VA::ConfigurationError) { client.memories.truncate("") }
+    assert_raises(SA::ConfigurationError) { client.memories.truncate("") }
   end
 end
 
 class TestBackend < Minitest::Test
   def test_a_server_credential_signs_a_server_token
-    headers = VA::Backend.new(url: "http://router", api_key: "key", api_secret: "secret", user_id: "ada").headers
+    headers = SA::Backend.new(url: "http://router", api_key: "key", api_secret: "secret", user_id: "ada").headers
 
     assert_equal "server", headers["Stream-Auth-Type"]
     assert_equal "ada", headers["X-Stream-User-Id"]
     header, payload, signature = headers["Authorization"].delete_prefix("Bearer ").split(".")
-    expected = VA::Backend.encode(OpenSSL::HMAC.digest("SHA256", "secret", "#{header}.#{payload}"))
+    expected = SA::Backend.encode(OpenSSL::HMAC.digest("SHA256", "secret", "#{header}.#{payload}"))
     assert_equal expected, signature
     assert_equal true, JSON.parse(payload.tr("-_", "+/").unpack1("m"))["server"]
   end
 
   def test_behind_the_proxy_a_user_token_is_minted
-    headers = VA::Backend.new(url: "http://router", api_key: "key", api_secret: "secret", user_id: "ada",
+    headers = SA::Backend.new(url: "http://router", api_key: "key", api_secret: "secret", user_id: "ada",
                               authenticate: true).headers
 
     assert_equal "jwt", headers["stream-auth-type"]
@@ -257,28 +257,28 @@ class TestBackend < Minitest::Test
   end
 
   def test_acting_for_a_user_keeps_the_customer_header
-    headers = VA::Backend.new(url: "http://router", customer_id: "acme").acting_for("ada").headers
+    headers = SA::Backend.new(url: "http://router", customer_id: "acme").acting_for("ada").headers
 
     assert_equal({ "X-Customer-Id" => "acme", "X-Stream-User-Id" => "ada" }, headers)
   end
 
   def test_naming_no_router_goes_to_the_hosted_one_through_the_proxy
-    saved = ENV.delete(VA::Backend::URL_ENV)
-    backend = VA::Backend.new(api_key: "key", token: "token-for-ada", user_id: "ada")
+    saved = ENV.delete(SA::Backend::URL_ENV)
+    backend = SA::Backend.new(api_key: "key", token: "token-for-ada", user_id: "ada")
 
-    assert_equal VA::Backend::DEFAULT_URL, backend.url
+    assert_equal SA::Backend::DEFAULT_URL, backend.url
     assert backend.authenticate?
   ensure
-    ENV[VA::Backend::URL_ENV] = saved if saved
+    ENV[SA::Backend::URL_ENV] = saved if saved
   end
 
   def test_a_router_named_by_url_leaves_the_proxy_off
-    refute VA::Backend.new(url: "http://router", customer_id: "acme").authenticate?
+    refute SA::Backend.new(url: "http://router", customer_id: "acme").authenticate?
   end
 
   def test_a_region_is_the_hosted_router_there
-    with_env(VA::Backend::URL_ENV => nil, VA::Backend::REGION_ENV => nil) do
-      backend = VA::Backend.new(region: "us-east4", customer_id: "acme", api_key: "key", api_secret: "secret")
+    with_env(SA::Backend::URL_ENV => nil, SA::Backend::REGION_ENV => nil) do
+      backend = SA::Backend.new(region: "us-east4", customer_id: "acme", api_key: "key", api_secret: "secret")
 
       assert_equal "https://accelerate-us-east4.gcp.stream-io-api.com", backend.url
       assert backend.authenticate?
@@ -286,11 +286,11 @@ class TestBackend < Minitest::Test
   end
 
   def test_a_region_in_the_environment_gives_way_to_a_url_there
-    with_env(VA::Backend::URL_ENV => "http://localhost:8080", VA::Backend::REGION_ENV => "us-east4") do
-      assert_equal "http://localhost:8080", VA::Backend.new(customer_id: "acme").url
+    with_env(SA::Backend::URL_ENV => "http://localhost:8080", SA::Backend::REGION_ENV => "us-east4") do
+      assert_equal "http://localhost:8080", SA::Backend.new(customer_id: "acme").url
     end
-    with_env(VA::Backend::URL_ENV => nil, VA::Backend::REGION_ENV => "us-east4") do
-      backend = VA::Backend.new(customer_id: "acme", api_key: "key", api_secret: "secret")
+    with_env(SA::Backend::URL_ENV => nil, SA::Backend::REGION_ENV => "us-east4") do
+      backend = SA::Backend.new(customer_id: "acme", api_key: "key", api_secret: "secret")
 
       assert_equal "https://accelerate-us-east4.gcp.stream-io-api.com", backend.url
       assert backend.authenticate?
@@ -298,32 +298,32 @@ class TestBackend < Minitest::Test
   end
 
   def test_a_region_passed_in_beats_a_url_in_the_environment
-    with_env(VA::Backend::URL_ENV => "http://localhost:8080") do
-      backend = VA::Backend.new(region: "europe-west4", customer_id: "acme", api_key: "key", api_secret: "secret")
+    with_env(SA::Backend::URL_ENV => "http://localhost:8080") do
+      backend = SA::Backend.new(region: "europe-west4", customer_id: "acme", api_key: "key", api_secret: "secret")
 
       assert_equal "https://accelerate-europe-west4.gcp.stream-io-api.com", backend.url
     end
   end
 
   def test_a_url_and_a_region_together_are_refused
-    assert_raises(VA::ConfigurationError) do
-      VA::Backend.new(url: "https://acceleration.example.com", region: "us-east4", customer_id: "acme")
+    assert_raises(SA::ConfigurationError) do
+      SA::Backend.new(url: "https://acceleration.example.com", region: "us-east4", customer_id: "acme")
     end
   end
 
   def test_anything_but_a_region_name_is_refused
     ["US-EAST4", "us-east4.evil.com/x", "us_east4", "useast4", "us-east", "us-east4\n"].each do |name|
-      error = assert_raises(VA::ConfigurationError, name) { VA::Backend.new(region: name, customer_id: "acme") }
+      error = assert_raises(SA::ConfigurationError, name) { SA::Backend.new(region: name, customer_id: "acme") }
       assert_includes error.message, name.inspect
     end
   end
 
   def test_a_key_without_a_secret_or_token_is_refused
-    assert_raises(VA::ConfigurationError) { VA::Backend.new(url: "http://router", api_key: "key", api_secret: "") }
+    assert_raises(SA::ConfigurationError) { SA::Backend.new(url: "http://router", api_key: "key", api_secret: "") }
   end
 
   def test_sockets_use_the_websocket_scheme
-    backend = VA::Backend.new(url: "https://router.example/", customer_id: "acme")
+    backend = SA::Backend.new(url: "https://router.example/", customer_id: "acme")
 
     assert_equal "wss://router.example/v1/dispatch", backend.socket_url("/v1/dispatch")
     assert backend.server_side?
