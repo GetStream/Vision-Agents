@@ -322,6 +322,12 @@ The generator is the one Stream Chat and Stream Video generate their clients wit
 beside this one (`../chat`) and Go. Its `DefaultAPI` and models run on StreamCore's
 `DefaultAPITransport` and `DefaultAPIClientMiddleware`, which `Backend.swift` implements.
 
+A spec change to the client part fails the `swift` CI job until the client is regenerated, and
+only someone with access to the private `chat` repository can. Check `chat` out at the commit
+in `core/generated.json`'s `generator` field before you regenerate, unless you mean to move the
+generator. The check's rules are tested: `uv run --no-project --with pytest --with pyyaml pytest
+-c /dev/null --rootdir=sdks/swift --confcutdir=sdks/swift sdks/swift/test_generate.py`.
+
 The generated code is `internal`, and every type crossing the public API is hand-written in
 `Models.swift`. That is what lets the spec churn without breaking anybody: a field added to
 `Session` is a generated field nobody outside the module can see until it is wrapped.

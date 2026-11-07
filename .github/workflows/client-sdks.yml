@@ -165,6 +165,10 @@ jobs:
       - name: Client operations are still client-side and the client is up to date
         run: uv run sdks/swift/generate.py --check
 
+      # generate.py's own rules: what makes the client stale and what does not.
+      - name: generate.py tests
+        run: uv run --no-project --with pytest --with pyyaml pytest -c /dev/null --rootdir=sdks/swift --confcutdir=sdks/swift sdks/swift/test_generate.py
+
       # Both builds resolve into one checkout directory and compile into one DerivedData, so
       # the Stream SDKs and WebRTC are fetched and built once a run rather than twice.
       - uses: actions/cache/restore@v4
