@@ -555,7 +555,10 @@ type Agent struct {
 	// delegated work coming back is attributed to the person who is waiting for it.
 	lastParticipant stt.Participant
 	lastHeardAt     time.Time
-	lastSpokeAt     time.Time
+	// talkedAt is when the caller last said more than a murmur (takesFloor), which is what
+	// overtakes a check-in held for the next voice.
+	talkedAt    time.Time
+	lastSpokeAt time.Time
 	// voiceOut is when the agent's voice went out on the edge's track, which is when an echo
 	// of it on the caller's line can be in their audio (withoutEcho).
 	voiceOut voiceOut
@@ -1785,6 +1788,9 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 				"confidence", typed.Confidence, "latency_ms", typed.ProcessingTimeMs)
 			a.mu.Lock()
 			a.lastHeardAt = time.Now()
+			if takesFloor(typed.Text) {
+				a.talkedAt = a.lastHeardAt
+			}
 			a.lastParticipant = typed.Participant
 			a.mu.Unlock()
 			if typed.Interim {

@@ -236,11 +236,12 @@ type unsaidUtterance struct {
 // heldReply is a reply the voice that replaces a lost one goes on with, and what of it that
 // voice has still to be sent, in the order of the reply's message: what the lost voice said
 // none of, and what was written for it while the next was opened. written is whether the
-// model had finished writing it when the voice was lost.
+// model had finished writing it when the voice was lost, and lostAt when that was.
 type heldReply struct {
 	turnID  string
 	unsaid  []unsaidUtterance
 	written bool
+	lostAt  time.Time
 }
 
 // hold keeps a request for a reply held for the voice replacing a lost one, which would
