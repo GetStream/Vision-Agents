@@ -84,6 +84,12 @@ func (r ruledFirst) Hear(ctx context.Context, turn harness.FlowTurn) (harness.De
 	return r.v.hearer.Hear(ctx, turn)
 }
 
+// HearDeadline is how long the model has to rule on turn, as its client says
+// (audiofloor.Client.HearDeadline).
+func (r ruledFirst) HearDeadline(turn harness.FlowTurn) time.Duration {
+	return r.v.hearer.HearDeadline(turn)
+}
+
 // asksOnPauses says the transcriber is to ask about each pause for the agent: acting, the
 // model decides when the turn ends, from the audio, and writes its words in the same pass.
 func (v *audioFloor) asksOnPauses() bool { return v != nil }
@@ -252,7 +258,8 @@ func (p pauseAsker) Speaking() bool {
 // the caller talked on, as the agent does on a provisional ruling about a revision's words
 // (overlapRuled): its own voice heard back on the caller's line is dropped from the words
 // first, as from any chorus-asr transcript, and an echo alone, or a murmur, is no reason to
-// stop.
+// stop. Whether the caller had heard any of the agent's answer when they began says whether
+// a stop's words are spent on it (answerHeardBefore).
 func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Ruled) {
 	a := p.a
 	left, ok := a.droppingEcho(transcriptOf(participant, ruled), "a check over the agent")
@@ -264,7 +271,39 @@ func (p pauseAsker) Overheard(participant stt.Participant, ruled audiofloor.Rule
 			"participant", participant.ID, "text", left, "floor", ruled.Ruling.Floor)
 		return
 	}
-	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.floor()))
+	a.act(a.converse.Overheard(ruled.Ruling, participant, left, ruled.Utterance, a.answerHeardBefore(ruled.Began), a.floor()))
+}
+
+// GivenWay says the agent has given the floor up to the caller over the turn it is on: it
+// stopped it (abandonReply), and is on none, or shortened it (shorten) and is playing out the
+// tail. A turn it takes after gives the floor back to it.
+func (p pauseAsker) GivenWay() bool {
+	a := p.a
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.gaveWay != "" && (a.speakingTurn == "" || a.speakingTurn == a.gaveWay)
+}
+
+// HeardBefore says the caller had heard the agent when they began at, as a stop over it is
+// spent by (answerHeardBefore): some of its answer to their turn, as its voice played it, or
+// a line of its own.
+func (p pauseAsker) HeardBefore(at time.Time) bool { return p.a.answerHeardBefore(at) }
+
+// answerHeardBefore says whether the caller had heard any of the agent's answer to their turn, the
+// speech a stop over it silences, before at, when they began the utterance the stop was ruled
+// in: the reply, or what the agent went on to say of a tool's result. A caller who began before
+// any of it went out was not stopping it: they went on with their own turn, as a caller who
+// says more before hearing any of the reply does (stale). Speech that answers no turn of
+// theirs, and a beginning that is not known, are taken as heard.
+func (a *Agent) answerHeardBefore(at time.Time) bool {
+	if at.IsZero() {
+		return true
+	}
+	a.mu.Lock()
+	speaking := a.speakingTurn
+	a.mu.Unlock()
+	heard, answering := a.turns.answerHeardBefore(speaking, at)
+	return heard || !answering
 }
 
 // customerTools are the tools a customer declared. The router's own stay out of the model's

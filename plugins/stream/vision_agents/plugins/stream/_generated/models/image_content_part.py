@@ -51,7 +51,7 @@ class ImageContentPart:
         d = dict(src_dict)
         image_url = ImageSource.from_dict(d.pop("image_url"))
 
-        type_ = ImageContentPartType(d.pop("type"))
+        type_ = ImageContentPartType._decode(d.pop("type"))
 
         image_content_part = cls(
             image_url=image_url,

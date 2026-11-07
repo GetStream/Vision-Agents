@@ -3,6 +3,7 @@
 package agent
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/config"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 )
 
 // The loop's contract (deploy/chorus-asr/README.md, "The loop's contract"), a check a line,
@@ -31,7 +33,7 @@ func TestAudioFloorContract(t *testing.T) {
 	h.warm(t)
 	k := &contract{floorHarness: h, clips: map[string][]int16{}}
 	for _, name := range []string{"mmhmm", "hmhm", "okay", "right", "yeah", "laugh", "stoponly", "wait", "holdon", "okaystop", "andlisbon",
-		"stopporto", "weatherporto", "dontstop", "memberid", "andporto", "noporto"} {
+		"stopporto", "weatherporto", "dontstop", "memberid", "andporto", "noporto", "makeitsix"} {
 		k.clips[name] = fixture(t, name)
 	}
 	h.lines = map[string][]int16{listReply: fixture(t, "list"), questionReply: fixture(t, "question")}
@@ -48,11 +50,17 @@ func TestAudioFloorContract(t *testing.T) {
 	for _, name := range []string{"stoponly", "wait", "holdon", "okaystop"} {
 		t.Run("C2 "+name+" stops the agent, which stays quiet", func(t *testing.T) { k.stopsAndQuiet(t, name) })
 	}
+	t.Run("C2 wait over a reply whose tool's follow-up has begun stops both, which stay quiet", func(t *testing.T) {
+		k.stopsReplyAndFollowUp(t, "wait")
+	})
 	t.Run("C3 and in Lisbon over a forecast is answered", func(t *testing.T) { k.stopsAndAnswered(t, "andlisbon", "lisbon", false) })
 	t.Run("C3 stop, what about Porto in one breath is answered once, about Porto", func(t *testing.T) {
 		k.stopsAndAnswered(t, "stopporto", "porto", true)
 	})
 	t.Run("C3 stop, then a question 1 s later, the question answered", k.stopThenQuestion)
+	t.Run("C3 wait, make it six… in one breath, stopped on its first words, is answered on all of them", func(t *testing.T) {
+		k.correctedAtLength(t, "makeitsix")
+	})
 	t.Run("C4 a shortened reply stops within 250 ms of the ruling", func(t *testing.T) { k.shortened(t, "andporto") })
 	t.Run("C4 a check-in talked over stops", k.checkInTalkedOver)
 	t.Run("C5 don't stop over the agent: one ruling acted on, no second wait", func(t *testing.T) { k.oneWait(t, "dontstop") })
@@ -152,6 +160,58 @@ func (k *contract) stopsAndQuiet(t *testing.T, name string) {
 	assert.Len(t, all[Responding](c), 1, "one reply, the question's")
 }
 
+// C2. "Wait" 2 s into the list, which called a tool: the agent took its next turn, to say what
+// the tool came back with, while the list was still playing. Both stop within stopWithin of the
+// first word, none of either is heard after, and nothing is answered for 5 s.
+func (k *contract) stopsReplyAndFollowUp(t *testing.T, name string) {
+	release := make(chan struct{})
+	tools := &stubToolRunner{result: "Lisbon: sunny all week", run: func(context.Context, llm.ToolCall) ([]llm.ContentPart, error) {
+		<-release
+		return llm.TextParts("Lisbon: sunny all week"), nil
+	}}
+	c := k.startWith(t, callSetup{mode: audiofloor.Act, instructions: replayInstructions, languages: []string{"en"}, tools: tools})
+	c.model.mu.Lock()
+	c.model.reply = []string{listReply}
+	c.model.calls = []llm.ToolCall{{ID: "call-1", Name: "get_weather", Arguments: `{"city":"Lisbon"}`}}
+	// The follow-up is still being written when the caller talks over the list.
+	c.model.then = []string{}
+	c.model.mu.Unlock()
+	c.edge.pause(time.Second)
+	c.edge.say("weather", k.weather)
+	c.until(func() bool { return len(c.edge.replyStarts()) > 0 }, 20*time.Second, "the reply began")
+	close(release)
+	c.until(func() bool { return len(c.model.requests()) == 2 }, 5*time.Second, "the tool's follow-up began")
+	time.Sleep(2 * time.Second)
+	over := c.edge.say(name, k.clips[name])
+	c.edge.pause(6 * time.Second)
+	c.settle(2*time.Second, time.Minute)
+	defer c.report()
+
+	assert.Empty(t, all[Error](c), "no failure")
+	requests := c.model.requests()
+	if !assert.Len(t, requests, 2, "the question's reply, and the tool's follow-up") {
+		return
+	}
+	reply, followUp := requests[0].ID, requests[1].ID
+	stopped, ok := c.interrupted(over.began())
+	if !assert.True(t, ok, "the agent was stopped") {
+		return
+	}
+	took := stopped.At.Sub(over.began())
+	assert.LessOrEqual(t, took, stopWithin, "the agent stopped %s after the caller's first word", took.Round(time.Millisecond))
+	var cut []string
+	for _, i := range all[Interrupted](c) {
+		if !i.At.Before(over.began()) {
+			cut = append(cut, i.E.TurnID)
+		}
+	}
+	assert.ElementsMatch(t, []string{reply, followUp}, cut, "the list and the follow-up were each stopped once")
+	quietFrom := stopped.At.Add(frameSlack)
+	assert.Empty(t, c.edge.heardBetween(quietFrom, quietFrom.Add(5*time.Second)), "the agent was heard after it stopped")
+	assert.Empty(t, c.decisionsAfter(over.began(), string(ActAnswer)), "nothing answered after the stop")
+	assert.Len(t, all[Responding](c), 2, "the question's reply and the tool's follow-up, and no more")
+}
+
 // C3. A correction or a request over the forecast list: the agent gives way, and the caller is
 // answered once, on what they said after the words the stop was ruled on. oneBreath says the
 // line is said with no gap the policy's first check would catch.
@@ -207,6 +267,41 @@ func (c *call) gaveWay(t *testing.T, said *cue) {
 		return
 	}
 	assert.LessOrEqual(t, stopped.At.Sub(said.began()), stopWithin, "the agent stopped %s after the caller's first word", stopped.At.Sub(said.began()).Round(time.Millisecond))
+}
+
+// C3. "Wait. Make it six, and one of us is gluten free instead." over the list, in one breath:
+// the stop is ruled on its first words, and the checks that go on for as long as the caller
+// does stop nothing more and spend none of what they hear. The correction is answered once, on
+// all its words, the stop's with them.
+func (k *contract) correctedAtLength(t *testing.T, name string) {
+	c := k.overTheList(t, 4*time.Second)
+	over := c.edge.say(name, withGapsUnder(k.clips[name], 150*time.Millisecond))
+	c.until(func() bool { return c.answered(over).ok }, 30*time.Second, "the correction was answered")
+	c.settle(4*time.Second, time.Minute)
+	defer c.report()
+
+	assert.Empty(t, all[Error](c), "no failure")
+	c.gaveWay(t, over)
+	var stops int
+	for _, d := range c.decisionsAfter(over.began(), string(ActInterrupt)) {
+		if strings.HasPrefix(d.E.Reason, "the caller is still talking") {
+			stops++
+		}
+	}
+	assert.LessOrEqual(t, stops, 1, "the checks after the stop ruled as if the agent were still talking")
+	assert.Empty(t, c.decisionsAfter(over.began(), string(ActIgnore)), "the correction was set aside as the stop's words")
+	answers := c.decisionsAfter(over.began(), string(ActAnswer))
+	if assert.Len(t, answers, 1, "answered once") {
+		assert.Contains(t, wordsOfText(answers[0].E.Text), "gluten", "the correction's end")
+		assert.Contains(t, wordsOfText(answers[0].E.Text), "wait", "the stop's words")
+	}
+	replies := all[Responding](c)
+	if assert.Len(t, replies, 2, "the question's reply, and one to the correction") {
+		assert.Contains(t, wordsOfText(replies[1].E.Prompt), "gluten")
+		assert.Contains(t, wordsOfText(replies[1].E.Prompt), "wait")
+	}
+	assert.Empty(t, c.hearerMissed(), "every turn ruled by the Hearer")
+	k.measured(t, "C3 "+name, c.answered(over))
 }
 
 // C3. "Stop." over the list, then 1 s later "What's the weather in Porto?": the agent stops,

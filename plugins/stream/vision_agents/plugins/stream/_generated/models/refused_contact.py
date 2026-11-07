@@ -53,7 +53,7 @@ class RefusedContact:
         d = dict(src_dict)
         index = d.pop("index")
 
-        reason = RefusedReason(d.pop("reason"))
+        reason = RefusedReason._decode(d.pop("reason"))
 
         to_number = d.pop("to_number")
 

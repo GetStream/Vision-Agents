@@ -106,7 +106,7 @@ class ContactAttempt:
         if isinstance(_call_outcome, Unset):
             call_outcome = UNSET
         else:
-            call_outcome = CallOutcome(_call_outcome)
+            call_outcome = CallOutcome._decode(_call_outcome)
 
         _ended_at = d.pop("ended_at", UNSET)
         ended_at: datetime.datetime | Unset

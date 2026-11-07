@@ -153,9 +153,9 @@ class LimitGrant:
 
         remaining_micros = d.pop("remaining_micros")
 
-        state = LimitGrantState(d.pop("state"))
+        state = LimitGrantState._decode(d.pop("state"))
 
-        subject = LimitSubject(d.pop("subject"))
+        subject = LimitSubject._decode(d.pop("subject"))
 
         used_micros = d.pop("used_micros")
 

@@ -158,11 +158,11 @@ class ScheduledTaskRun:
 
         started_at = _parse_started_at(d.pop("started_at"))
 
-        state = ScheduledTaskRunState(d.pop("state"))
+        state = ScheduledTaskRunState._decode(d.pop("state"))
 
         task_id = d.pop("task_id")
 
-        trigger = ScheduledTaskRunTrigger(d.pop("trigger"))
+        trigger = ScheduledTaskRunTrigger._decode(d.pop("trigger"))
 
         scheduled_task_run = cls(
             attempts=attempts,

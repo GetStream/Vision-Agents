@@ -62,7 +62,7 @@ class HistoryMessage:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        role = HistoryRole(d.pop("role"))
+        role = HistoryRole._decode(d.pop("role"))
 
         text = d.pop("text")
 
