@@ -30,7 +30,7 @@ android {
 }
 
 base {
-    archivesName = "vision-agents-core"
+    archivesName = "stream-agents"
 }
 
 kotlin {

@@ -7,7 +7,7 @@ phone's Stream token are all swift_assistant's. Only the app is here. The web ap
 
 ```
 settings.gradle.kts   builds the app against sdks/kotlin as it is in this checkout
-app/                  the phone half: Compose over vision-agents-core and Stream's AI components
+app/                  the phone half: Compose over stream-agents and Stream's AI components
 ```
 
 ## Run it

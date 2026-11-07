@@ -1,6 +1,6 @@
 # Kotlin SDK
 
-One Android library for talking to an agent from an Android app: `io.getstream:vision-agents-core`,
+One Android library for talking to an agent from an Android app: `io.getstream:stream-agents`,
 package `io.getstream.visionagents.android.core`. It holds sessions, responses, the event socket
 and the conversation as `StateFlow`; the Stream Chat channel a text conversation is kept in; and
 joining the call, so the conversation can be spoken. It depends on Stream Chat (7.18.0) and

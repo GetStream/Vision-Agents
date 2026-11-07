@@ -24,7 +24,7 @@ rootProject.name = "android-assistant"
 // sdks/swift/core.
 includeBuild("../../../sdks/kotlin") {
     dependencySubstitution {
-        substitute(module("io.getstream:vision-agents-core")).using(project(":core"))
+        substitute(module("io.getstream:stream-agents")).using(project(":core"))
     }
 }
 

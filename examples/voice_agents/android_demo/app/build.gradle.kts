@@ -42,7 +42,7 @@ android {
 }
 
 dependencies {
-    implementation(libs.vision.agents.core)
+    implementation(libs.stream.agents)
     implementation(libs.stream.chat.ai.compose)
     implementation(libs.okhttp)
 
