@@ -865,8 +865,8 @@ func (a *Agent) owedLocked(turnID string) bool {
 // sayAgain has the voice that replaced a lost one say what the lost one was sent of a
 // reply none of which was heard, each utterance under its own synthesis as before, so the
 // turn is told it was spoken once each has finished. The utterances are already counted.
-// It stops once the caller has taken the floor or this voice is lost too: what is sent
-// after is billed and never heard.
+// It stops once the caller has taken the floor, this voice is lost too or a settings swap
+// replaced it: what is sent after is billed and never heard.
 func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 	a.mu.Lock()
 	performs := a.performs
@@ -879,7 +879,7 @@ func (a *Agent) sayAgain(voice *ttsrouter.Session, held *heldReply) {
 			a.mu.Unlock()
 			return
 		}
-		if len(held.unsaid) == 0 || !a.owedLocked(held.turnID) {
+		if len(held.unsaid) == 0 || !a.owedLocked(held.turnID) || a.tts != voice {
 			a.unsentLocked(held)
 			a.held = nil
 			a.mu.Unlock()
