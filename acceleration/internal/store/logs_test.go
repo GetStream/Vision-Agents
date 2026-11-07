@@ -642,6 +642,26 @@ func TestRedactSentryEventKeepsAValueNestedDeep(t *testing.T) {
 	}
 }
 
+// What lies past the budget is left as it was, not dropped.
+func TestRedactSentryEventKeepsWhatLiesPastTheBudget(t *testing.T) {
+	rows := make([]any, 3*maxContextNodes)
+	for i := range rows {
+		rows[i] = map[string]any{"n": i}
+	}
+
+	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"c": {"rows": rows}}}, nil)
+
+	got := event.Contexts["c"]["rows"].([]any)
+	if len(got) != len(rows) {
+		t.Fatalf("rows lost: %d of %d", len(got), len(rows))
+	}
+	for i, row := range got {
+		if row == nil {
+			t.Fatalf("row %d past the budget was dropped", i)
+		}
+	}
+}
+
 // What an event says with no key in it reaches Sentry as it did before: the same text and
 // the same values, of the same types. A typed value is the very value, not a copy of it.
 func TestRedactSentryEventLeavesAnEventWithNoKeyAsItWas(t *testing.T) {
