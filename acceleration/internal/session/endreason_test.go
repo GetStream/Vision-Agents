@@ -22,6 +22,7 @@ func (s *EndReasonSuite) TestTheReasonsThatEndACallAreTheOnesTheOutcomeCounterKn
 		TimeoutStart: false, TimeoutUnanswered: false, EndClosed: false, EndShutdown: false,
 		EndCreateFailed: false, EndCreateVendorFailed: false, EndCreateConfigRefused: false,
 		EndCreateNoCredit: false, EndCreateNoVideo: false,
+		EndCreateNoCallType: false, EndCreateNoChannelType: false,
 		EndAgentFailed: false, EndModelFailed: false, EndModelConfigRefused: false, EndModelNoCredit: false,
 	}
 	for _, info := range EndReasons {

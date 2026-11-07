@@ -43,6 +43,13 @@ const (
 	// EndCreateNoVideo is a session Create gave up on because its call refused the agent: the
 	// customer's Stream account has Video off, or their app's server runs none (agent.ErrNoVideo).
 	EndCreateNoVideo EndReason = "create_no_video"
+	// EndCreateNoCallType is a session Create refused because the customer's own Stream app has
+	// no agent call type to make the call in (ErrNoAgentCallType).
+	EndCreateNoCallType EndReason = "create_no_call_type"
+	// EndCreateNoChannelType is a session Create refused because the customer's own Stream app
+	// has no agent channel type to keep the conversation in, or one that clients may rewrite
+	// (ErrNoAgentChannelType, ErrUnsafeAgentChannelType).
+	EndCreateNoChannelType EndReason = "create_no_channel_type"
 	// EndAgentFailed is a session whose agent left the call by itself, or answered no turn, for
 	// a failure of the router's own, such as its playback queue filling.
 	EndAgentFailed EndReason = "agent_failed"
@@ -121,6 +128,10 @@ var EndReasons = []EndInfo{
 		FaultCustomerConfig, StageStarting, true},
 	{EndCreateNoCredit, "the credit or spend limits refused the session's work", FaultCustomerCredit, StageStarting, true},
 	{EndCreateNoVideo, "the call refused the agent: the app's Stream account or server has no video",
+		FaultCustomerConfig, StageStarting, true},
+	{EndCreateNoCallType, "the customer's Stream app has no agent call type to make the call in",
+		FaultCustomerConfig, StageStarting, true},
+	{EndCreateNoChannelType, "the customer's Stream app has no safe agent channel type to keep the conversation in",
 		FaultCustomerConfig, StageStarting, true},
 	{EndAgentFailed, "the agent left the call or answered no turn for a failure of the router's own",
 		FaultRouter, StageConversation, true},
