@@ -13,12 +13,14 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
+	"github.com/GetStream/getstream-go-webrtc/coordinator"
 	"github.com/GetStream/getstream-go-webrtc/pc"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -71,6 +73,9 @@ type Options struct {
 	HTTPClient *http.Client
 
 	Logger *slog.Logger
+
+	// clientOptions are the SDK's, for a test to point the client at a coordinator of its own.
+	clientOptions []rtc.Option
 }
 
 // User is who the agent is in the call.
@@ -165,11 +170,9 @@ func (e *Edge) Join(ctx context.Context) error {
 	// in the SDK, which has no signaling client yet to report its stats through.
 	call := client.Call(e.options.CallType, e.options.CallID)
 	signalingStarted := time.Now()
-	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
-		e.listen(remote)
-	})), rtc.WithPublisherPeerConfiguration(publisherPeer))
+	joined, err := e.joinCall(ctx, call)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err))
+		return err
 	}
 	e.call = call
 	signalingMs := float64(time.Since(signalingStarted).Microseconds()) / 1000
@@ -212,6 +215,49 @@ func (e *Edge) Join(ctx context.Context) error {
 	})
 	return nil
 }
+
+// joinCall signals the join of call. A refusal for an account or a server that runs no video
+// is also agent.ErrNoVideo.
+func (e *Edge) joinCall(ctx context.Context, call *rtc.Call) (*sfu_events.JoinResponse, error) {
+	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
+		e.listen(remote)
+	})), rtc.WithPublisherPeerConfiguration(publisherPeer))
+	if err != nil {
+		if videoOff(err) {
+			err = noVideo{err}
+		}
+		return nil, stack.Wrap(fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err))
+	}
+	return joined, nil
+}
+
+// codeNotAllowed is the code Stream refuses a video request with when the customer's account
+// has Video off or the server its app is on runs none: 17, Not Allowed
+// (https://getstream.io/docs/platform/api-error-codes/). The code alone is not enough: Stream
+// answers 17 to a join a call type's permissions refuse, or to a single-use call that has
+// ended, as well.
+const codeNotAllowed = 17
+
+// noVideoMessages are Stream's words for the two refusals, inside a message that names the
+// request first: JoinCall failed with error: "video is not enabled on this server".
+var noVideoMessages = []string{"video is not enabled for your account", "video is not enabled on this server"}
+
+// videoOff reports whether err is Stream refusing a join because the customer's account or
+// its app's server runs no video.
+func videoOff(err error) bool {
+	refused, ok := errors.AsType[*coordinator.Error](err)
+	return ok && refused.Code == codeNotAllowed && slices.ContainsFunc(noVideoMessages, func(words string) bool {
+		return strings.Contains(refused.Message, words)
+	})
+}
+
+// noVideo is a join refused for an account or a server that runs no video. It reads as the
+// refusal it wraps, so the answer a caller gets keeps Stream's words, and it is agent.ErrNoVideo.
+type noVideo struct{ error }
+
+func (noVideo) Is(target error) bool { return target == agent.ErrNoVideo }
+
+func (n noVideo) Unwrap() error { return n.error }
 
 // SFU is the SFU the call is on now, satisfying agent.SFUReporter. It is zero before the join.
 func (e *Edge) SFU() agent.SFU {
@@ -352,7 +398,8 @@ func (e *Edge) connect() (*rtc.Client, error) {
 	}
 
 	if e.options.UserToken != "" {
-		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken))
+		client, err := rtc.NewClient(e.options.APIKey, user, rtc.StaticToken(e.options.UserToken),
+			e.options.clientOptions...)
 		if err != nil {
 			return nil, stack.Wrap(fmt.Errorf("streamedge: connect: %w", err))
 		}
