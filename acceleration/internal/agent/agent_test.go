@@ -6620,36 +6620,58 @@ func (s *AgentSuite) TestTheGreetingIsSaidAsTheGreeting() {
 	}, "the greeting was never reported as the greeting")
 }
 
-func (s *AgentSuite) TestALineALostVoiceWasSayingIsReportedCutOff() {
-	// A greeting said in a voice out of quota was never heard, and a transcript kept it as
-	// still being said for the rest of the call.
+// partlyHeardGreeting has the agent greet in a voice that says none of it on its own, has the
+// caller hear the start of it, and returns its turn.
+func (s *AgentSuite) partlyHeardGreeting() string {
 	s.join(false)
 	s.voice.silent = true
 	s.replacement = newStubTTS(false)
 	s.Require().NoError(s.agent.Say(s.ctx, "Hi, thanks for getting in touch."))
-	var turn string
-	s.eventually(func() bool {
-		for _, event := range s.reported() {
-			if said, ok := event.(Said); ok {
-				turn = said.TurnID
-				return true
-			}
-		}
-		return false
-	}, "the greeting was never reported")
+	s.eventually(func() bool { return countOf[Said](s.reported()) == 1 }, "the greeting was never reported")
+	said, _ := firstOf[Said](s.reported())
+	s.voice.emitter.Send(tts.AudioChunk{
+		SynthesisID: said.TurnID,
+		Audio:       audio.PcmData{Samples: make([]int16, 160), SampleRate: 16_000, Channels: 1},
+	})
+	s.eventually(func() bool { return len(s.edge.heard()) == 1 }, "none of the greeting was heard")
+	return said.TurnID
+}
+
+func (s *AgentSuite) TestALineALostVoiceWasSayingIsReportedCutOff() {
+	// A greeting said in a voice out of quota was cut off, and a transcript kept it as still
+	// being said for the rest of the call. The caller heard the start of it, so said again
+	// from the top they would hear it twice.
+	turn := s.partlyHeardGreeting()
 
 	s.voice.emitter.Send(tts.Error{
 		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
 	})
 
+	s.eventually(func() bool { return s.cutOff(turn) }, "the line the lost voice was saying was never reported cut off")
+	s.never(func() bool { return len(s.replacement.spoken()) > 0 }, "a greeting partly heard was said again")
+}
+
+func (s *AgentSuite) TestALineNoneOfWhichWasHeardIsSaidInTheVoiceThatReplacesTheLostOne() {
+	// Cut off with the voice, the caller would get no greeting at all.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.Require().NoError(s.agent.Say(s.ctx, "Hi, thanks for getting in touch."))
+	s.eventually(func() bool { return countOf[Said](s.reported()) == 1 }, "the greeting was never reported")
+	greeting, _ := firstOf[Said](s.reported())
+
+	s.voice.emitter.Send(tts.Error{
+		Provider: "stub", Model: "stub-tts", Err: errors.New("quota exceeded"), Context: "read", Fatal: true,
+	})
+
+	s.eventually(func() bool { return len(s.replacement.spoken()) > 0 }, "the greeting was not said in the next voice")
+	s.Equal("Hi, thanks for getting in touch.", said(s.replacement.spoken()))
 	s.eventually(func() bool {
-		for _, event := range s.reported() {
-			if cut, ok := event.(Interrupted); ok && cut.TurnID == turn {
-				return true
-			}
-		}
-		return false
-	}, "the line the lost voice was saying was never reported cut off")
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == greeting.TurnID
+	}, "the greeting was never reported spoken")
+	s.False(s.cutOff(greeting.TurnID), "a greeting the next voice says was reported cut off")
+	s.Equal(1, countOf[Said](s.reported()), "the greeting was reported said twice")
 }
 
 func (s *AgentSuite) TestALineTheVoiceWouldNotTakeIsReportedCutOff() {

@@ -730,14 +730,14 @@ func (a *Agent) loseVoice(p *pipeline, lost *ttsrouter.Session) string {
 	// plays out. A reply the model is still writing goes on in the voice that replaces
 	// this one, so it is left to finish, and a murmur was never a reply.
 	//
-	// A reply to the caller none of whose sound went out is not over: they heard nothing of
-	// it, so the voice that replaces this one says it, as a provider refusing the agent's
-	// voice on its first word otherwise leaves them waiting in silence for an answer. A line
-	// the agent said of its own accord is still cut off.
+	// A reply or a line none of whose sound went out is not over: the caller heard nothing
+	// of it, so the voice that replaces this one says it, as a provider refusing the agent's
+	// voice on its first word otherwise leaves them waiting in silence for an answer, or
+	// with no greeting at all.
 	cut, again := "", ""
 	if lost == a.tts && a.speakingTurn != "" && !a.generating &&
 		!strings.HasPrefix(a.speakingTurn, backchannelPrefix) {
-		if replace && a.voiced != a.speakingTurn && len(unsaid) > 0 && !ownLine(a.speakingTurn) {
+		if replace && a.voiced != a.speakingTurn && len(unsaid) > 0 {
 			again = a.speakingTurn
 		} else {
 			cut = a.speakingTurn

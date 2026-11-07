@@ -455,7 +455,7 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ### A reply the voice lost before any of it was heard is said in the next voice
 
-When a voice fails before any of a finished reply's audio went out (staging: ElevenLabs refusing the agent's voice on its first word), the voice that replaces it says the reply, and the turn is not abandoned. Before, the reply was dropped (`cause=voice_lost`, `turn_abandoned=true`) and the caller heard nothing. A reply partly heard, a line the agent said of its own accord, and a reply with no voice left to say it are still cut off as before (AI-2970).
+When a voice fails before any of a finished reply's audio went out (staging: ElevenLabs refusing the agent's voice on its first word), the voice that replaces it says the reply, and the turn is not abandoned. Before, the reply was dropped (`cause=voice_lost`, `turn_abandoned=true`) and the caller heard nothing. A greeting or a check-in none of which was heard is said the same way. A reply or line partly heard, and one with no voice left to say it, are still cut off as before (AI-2970).
 
 ### The router's log no longer prints a key a provider echoed in its error
 
