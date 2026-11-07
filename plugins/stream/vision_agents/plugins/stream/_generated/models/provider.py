@@ -137,7 +137,7 @@ class Provider:
 
         region = d.pop("region")
 
-        tier = Tier(d.pop("tier"))
+        tier = Tier._decode(d.pop("tier"))
 
         _benchmark = d.pop("benchmark", UNSET)
         benchmark: ProviderBenchmark | Unset

@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
@@ -399,4 +400,23 @@ func (s *SessionSuite) TestASessionHeldElsewhereIsNotHere() {
 	s.manages()
 
 	s.False(s.manager.EndUnanswered("acme", "held-elsewhere"))
+}
+
+// Defect: a second phone caller heard before the card asked for the caller took the card from
+// the first, so the card went to whoever joined last.
+func (s *SessionSuite) TestTheFirstPhoneCallerToJoinIsTheCaller() {
+	s.manages()
+	first := stt.Participant{ID: "caller-1", UserID: "sip-+15550100160"}
+	second := stt.Participant{ID: "caller-2", UserID: "sip-+15550100170"}
+	created := s.rings(inbound())
+	events := s.watches(created)
+
+	s.call().arrives(first)
+	s.saw(events, first, true)
+	s.call().arrives(second)
+	s.saw(events, second, true)
+
+	ctx, cancel := context.WithTimeout(s.ctx, settleFor)
+	defer cancel()
+	s.Equal("+15550100160", created.awaitCaller(ctx))
 }

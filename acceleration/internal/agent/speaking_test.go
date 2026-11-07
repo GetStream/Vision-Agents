@@ -8,10 +8,14 @@ import (
 	"slices"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 	"unicode/utf8"
 
+	"github.com/stretchr/testify/require"
+
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stsrouter"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/stt"
@@ -552,4 +556,79 @@ func (s *AgentSuite) TestALineSaidAsWrittenIsAllOfItsMessage() {
 	whole := &MessageSpan{End: 20}
 	s.Equal(whole, speaking.Message)
 	s.Equal(whole, spoke.Message)
+}
+
+// What the agent is saying, for the flow controller, is the turn's text so far, or before it has
+// any the agent's last line; and that line is the turn's own once the turn has kept it, or else
+// the line before a turn that has said and written nothing yet, as the answer after a tool's
+// result is until its first words.
+func TestWhatTheAgentIsSayingIsItsTurnsOrTheLineBefore(t *testing.T) {
+	history := []llm.Message{
+		{Role: llm.User, Content: "Where is my order?"},
+		{Role: llm.Assistant, Content: "Let me look that up.", ToolCalls: []llm.ToolCall{{ID: "c1", Name: "lookup_order"}}},
+		{Role: llm.ToolResult, ToolCallID: "c1", Content: `{"status":"shipped"}`},
+	}
+	a := &Agent{speakingTurn: "turn-2", keptReply: "turn-1"}
+	reply, unsaid := a.replyLocked(history)
+	require.Equal(t, "Let me look that up.", reply)
+	require.True(t, unsaid, "the answer after the result has said nothing yet")
+
+	a.speakingTurn = "turn-1"
+	reply, unsaid = a.replyLocked(history)
+	require.Equal(t, "Let me look that up.", reply)
+	require.False(t, unsaid, "the line the turn kept is the one it is saying")
+
+	a.speakingTurn, a.saying = "turn-2", "It shipped"
+	reply, unsaid = a.replyLocked(history)
+	require.Equal(t, "It shipped", reply)
+	require.False(t, unsaid, "the turn's own words so far")
+}
+
+// A reply the model finished is kept as the turn's line, which is what the agent goes on saying
+// while its audio plays out.
+func (s *AgentSuite) TestAFinishedReplyIsKeptAsItsTurnsLine() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = []string{"Sunny and warm."}
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon tomorrow")
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the reply never finished")
+	responding, _ := firstOf[Responding](s.reported())
+	s.agent.mu.Lock()
+	defer s.agent.mu.Unlock()
+	s.Equal(responding.TurnID, s.agent.keptReply)
+}
+
+// What the caller has heard of a reply is told from how long they have been hearing it, at the
+// voice's speaking rate on the call, cut back to a whole word: what the model is told the agent
+// "has so far said", as its rows were. With no rate measured yet the agent can't tell; with
+// none of the reply out nothing was heard; and with every utterance of it finished, all of it.
+func TestWhatTheCallerHasHeardOfTheReply(t *testing.T) {
+	reply := "Tomorrow in Lisbon it will be sunny and warm, with a high of twenty four degrees."
+	a := &Agent{heard: map[string]*utterance{}, speakingTurn: "turn-1", voiced: "turn-1"}
+	u := &utterance{agent: a, turnID: "turn-1", synthesisID: "turn-1", text: reply, message: MessageSpan{End: utf8.RuneCountInString(reply)}}
+	u.published.Store(true)
+	u.publishedUs.Store(10_000_000)
+	pulled := time.Now()
+	u.pulledAt.Store(pulled.UnixNano())
+	a.heard[u.synthesisID] = u
+	now := pulled.Add(2 * time.Second)
+
+	_, measured := a.replyHeardLocked(reply, now)
+	require.False(t, measured, "no syntheses finished on the call: no rate to tell by")
+
+	a.voicedChars, a.voicedMs = 150, 10_000 // 15 characters a second
+	heard, measured := a.replyHeardLocked(reply, now)
+	require.True(t, measured)
+	require.Equal(t, "Tomorrow in Lisbon it will be", heard, "2 s at 15 a second, to a whole word")
+
+	a.voiced = ""
+	heard, measured = a.replyHeardLocked(reply, now)
+	require.True(t, measured)
+	require.Empty(t, heard, "none of the reply has gone out")
+
+	a.voiced = "turn-1"
+	delete(a.heard, u.synthesisID)
+	heard, _ = a.replyHeardLocked(reply, now)
+	require.Equal(t, reply, heard, "every utterance of it finished")
 }

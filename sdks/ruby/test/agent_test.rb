@@ -609,6 +609,21 @@ class TestAgent < LocalRouterTest
     end
   end
 
+  # agent.yaml's floor_control goes as written, {} and a model the router does not know included,
+  # and a file that names none sends none, so the stored choice stays.
+  def test_sync_sends_the_floor_control_the_agent_declared
+    { "floor_control:\n  model: stream/chorus-asr\n  max_wait_ms: 800\n" =>
+        { "model" => "stream/chorus-asr", "max_wait_ms" => 800 },
+      "floor_control: {model: stream/chorus-asr}\n" => { "model" => "stream/chorus-asr" },
+      "floor_control: {}\n" => {},
+      "floor_control:\n  model: other\n" => { "model" => "other" } }.each do |declared, want|
+      assert_equal want, sync_declaring(declared)["floor_control"], declared
+    end
+    ["floor_control:\n", "llm: openai/gpt-5.6\n"].each do |declared|
+      refute sync_declaring(declared).key?("floor_control"), declared
+    end
+  end
+
   def test_sync_without_connectors_sends_none_and_leaves_the_fingerprint_alone
     request = sync_declaring("")
 

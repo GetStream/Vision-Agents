@@ -134,7 +134,7 @@ class SearchOptions:
         if _contents is not UNSET:
             contents = []
             for contents_item_data in _contents:
-                contents_item = SearchOptionsContentsItem(contents_item_data)
+                contents_item = SearchOptionsContentsItem._decode(contents_item_data)
 
                 contents.append(contents_item)
 
@@ -143,7 +143,7 @@ class SearchOptions:
         if isinstance(_depth, Unset):
             depth = UNSET
         else:
-            depth = SearchDepth(_depth)
+            depth = SearchDepth._decode(_depth)
 
         exclude_domains = cast(list[str], d.pop("exclude_domains", UNSET))
 

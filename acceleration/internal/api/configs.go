@@ -155,6 +155,12 @@ func (s *Server) createAgentConfig(ctx context.Context, request *createAgentConf
 	if message, ok := schedulingComplaint(config); !ok {
 		return nil, invalidRequest(message)
 	}
+	if failure, refused := s.floorControlRefusal(request.Body.FloorControl, request.Body.EndOfTurn); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.floorControlComplaint(ctx, config.FloorControl, store.FloorControl{}); !ok {
+		return nil, invalidRequest(message)
+	}
 	if message, ok := callsComplaint(config.Calls); !ok {
 		return nil, invalidRequest(message)
 	}
@@ -257,7 +263,7 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	// Kept for the same reason: a client that does not know the setting must not turn the
 	// cards off by saving.
 	if request.Body.EpisodeCards == nil {
-		config.EpisodeCards = existing.EpisodeCards
+		config.EpisodeCards, config.EpisodeCardsRecord = existing.EpisodeCards, existing.EpisodeCardsRecord
 	}
 	// Kept for the same reason: a client that does not know the role must not take it away
 	// from the agent the chat worker looks for by it.
@@ -279,7 +285,14 @@ func (s *Server) updateAgentConfig(ctx context.Context, request *updateAgentConf
 	config.Scheduling = schedulingOr(existing.Scheduling, request.Body.Scheduling)
 	config.Calls = callsOr(existing.Calls, request.Body.Calls)
 	config.ResumeHistory = resumeHistoryOr(existing.ResumeHistory, request.Body.ResumeHistory)
+	config.FloorControl = floorControlOr(existing.FloorControl, request.Body.FloorControl)
 	if message, ok := schedulingComplaint(config); !ok {
+		return nil, invalidRequest(message)
+	}
+	if failure, refused := s.floorControlRefusal(request.Body.FloorControl, request.Body.EndOfTurn); refused {
+		return nil, failure
+	}
+	if _, message, ok := s.floorControlComplaint(ctx, config.FloorControl, existing.FloorControl); !ok {
 		return nil, invalidRequest(message)
 	}
 	if message, ok := callsComplaint(config.Calls); !ok {
@@ -1526,7 +1539,9 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 		config.VideoMaxFrames = value(request.Video.MaxFrames)
 	}
 	applyDispatch(&config, request.Dispatch)
-	config.EpisodeCards = value(request.EpisodeCards)
+	if request.EpisodeCards != nil {
+		setEpisodeCards(&config, *request.EpisodeCards)
+	}
 	if request.Tools != nil {
 		config.ProgressiveTools = value(request.Tools.Progressive)
 		config.ToolOutputRetention = options.Retention(value(request.Tools.OutputRetention))
@@ -1534,6 +1549,7 @@ func storedConfig(request AgentConfigRequest, customerID string) store.AgentConf
 	config.Scheduling = schedulingOf(request.Scheduling)
 	config.Calls = callsOf(request.Calls)
 	config.ResumeHistory = resumeHistoryOr(store.ResumeHistory{}, request.ResumeHistory)
+	config.FloorControl = floorControlOr(store.FloorControl{}, request.FloorControl)
 	config.ReviewInstructions = reviewOf("", request.Review)
 	return config
 }
@@ -1617,13 +1633,14 @@ func agentConfigOf(config store.AgentConfig) AgentConfig {
 	}
 	rendered.Harness = &named
 	rendered.Dispatch = dispatchOf(config)
-	episodeCards := config.EpisodeCards
+	episodeCards := episodeCardsOf(config)
 	rendered.EpisodeCards = &episodeCards
 	progressive := config.ProgressiveTools
 	rendered.Tools = &AgentTools{Progressive: &progressive, OutputRetention: optional(string(config.ToolOutputRetention))}
 	rendered.Scheduling = renderedScheduling(config.Scheduling)
 	rendered.Calls = renderedCalls(config.Calls)
 	rendered.ResumeHistory = renderedResumeHistory(config.ResumeHistory)
+	rendered.FloorControl = renderedFloorControl(config.FloorControl)
 	if len(config.Skills) > 0 {
 		skills := config.Skills
 		rendered.Skills = &skills
@@ -1875,7 +1892,7 @@ type deleteAgentConfigRequest struct {
 // AgentConfigRequest is the AgentConfigRequest schema.
 type AgentConfigRequest struct {
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call under this agent, and each run of messages a Stream user writes to it in an agent channel of the app chat, writes an episode card into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number or by the app chat's Stream user id. On, a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none, and neither an app chat nor a user's token reads any in an app with auth checks off. Off by default, and then a session runs as it always did. Left out on an update, the stored setting stays."`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty" doc:"What this agent does with episode cards, for each phone call under it, each run of messages a Stream user writes to it in an agent channel of the app chat, and each thread of its SMS, WhatsApp, iMessage and Slack channel connections. record and on write the conversation's card, and its summary once it ends, into the person's omni-channel: an agent channel for each person and agent, keyed by the caller's E.164 number, the app chat's Stream user id or the Slack user. Only on reads them: a session on a thread channel, on an app chat's agent channel whose members are the person alone or the person and the agent, or on a phone call under this agent also starts with the person's other episode cards: a summary, or the last lines of the episode's channel while there is none. So does a session the person's own app opens with a token signed for that Stream user, unless the conversation it carries on is shared with its members or has any other member, or anybody else is on its call. An app chat's agent channel that anybody else is a member of or wrote in reads none. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any. off by default, and then a conversation writes no card and a session runs as it always did. Left out on an update, the stored setting stays."`
 	Greeting           *Greeting                `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty" doc:"A guardrail.md: frontmatter saying how a turn is screened - decision_model, webhook or llm - then the policy in prose. A turn the policy refuses is answered with the refusal and never reaches the model. Empty means every turn is answered."`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1892,6 +1909,8 @@ type AgentConfigRequest struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty" doc:"Whether the agent may schedule tasks for its users, and the defaults those tasks take. Left out on an update, the stored settings stay."`
 	Calls              *AgentCalls              `json:"calls,omitempty" doc:"The tools an agent on a phone call is offered: end the call, press keys, transfer. Left out, transfer and press are on and end_call is off. On an update, a tool left out keeps its stored settings and a tool sent replaces its settings whole."`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty" doc:"How a conversation is handed back to the model when a session under this agent carries it on: reopened, resumed by id, joined by voice or forked. Each field set here wins over the app's and the organization's policy, and a session request's wins over this; a field set nowhere is the router's default: replies as text, the newest 100 turns within 60000 characters. Left out on an update, the stored settings stay."`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. A session request's wins over this. Left out or null on a create, the default flow controller; left out or null on an update, the stored choice stays; an empty object is the default flow controller again."`
+	EndOfTurn          any                      `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	Plugins            *[]retiredPlugin         `json:"plugins,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	PluginEvents       *[]map[string]any        `json:"plugin_events,omitempty" deprecated:"true" doc:"No longer read: plugins were replaced by connectors, so name the provider under connectors. A non-empty list is refused (400); an empty one names nothing."`
 	McpServers         *[]map[string]any        `json:"mcp_servers,omitempty" deprecated:"true" doc:"No longer read: a server named by URL is now a custom connector, so create one for its URL and name it under connectors. A non-empty list is refused (400); an empty one names nothing."`
@@ -1915,7 +1934,7 @@ type AgentConfigRequest struct {
 type AgentConfig struct {
 	CreatedAt          time.Time                `json:"created_at"`
 	Dispatch           *AgentDispatch           `json:"dispatch,omitempty"`
-	EpisodeCards       *bool                    `json:"episode_cards,omitempty" doc:"Whether each phone call and each app chat conversation under this agent writes an episode card into the person's omni-channel, and each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in starts with the person's other cards. Neither an app chat nor a user's token reads any in an app with auth checks off."`
+	EpisodeCards       *EpisodeCardsMode        `json:"episode_cards,omitempty" doc:"What this agent does with episode cards. record and on write a card into the person's omni-channel for each phone call, app chat conversation and SMS, WhatsApp, iMessage or Slack thread under this agent. Only on has each session on a thread channel, an app chat's agent channel of the person and the agent alone, a phone call, or a session the person's own app opens with their token that nobody else is in start with the person's other cards. In an app with auth checks off the app chat writes no card, and neither an app chat nor a user's token reads any."`
 	Greeting           *Greeting                `json:"greeting,omitempty"`
 	Guardrail          *string                  `json:"guardrail,omitempty"`
 	Harness            *Harness                 `json:"harness,omitempty"`
@@ -1933,6 +1952,7 @@ type AgentConfig struct {
 	Scheduling         *AgentScheduling         `json:"scheduling,omitempty"`
 	Calls              *AgentCalls              `json:"calls,omitempty"`
 	ResumeHistory      *ResumeHistory           `json:"resume_history,omitempty"`
+	FloorControl       *FloorControl            `json:"floor_control,omitempty" doc:"The model that controls the floor in this agent's sessions, and how long a caller may wait once they stop. Absent for the default flow controller."`
 	Connectors         *[]AgentConnectorBinding `json:"connectors,omitempty" doc:"The bindings exactly as they were written. Absent when there are none."`
 	LeftOutConnectors  *[]LeftOutConnector      `json:"left_out_connectors,omitempty" readOnly:"true" doc:"The connectors agent.yaml names that the last sync left out, because the app has no connection by the id or label they name: an agent that runs without them until the connection exists and it syncs again. Only a sync writes them. Absent when there are none."`
 	Channels           *AgentChannels           `json:"channels,omitempty"`
@@ -1993,6 +2013,24 @@ type ResumeHistory struct {
 func (*ResumeHistory) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "How a conversation is handed back to the model when a session carries it on."
 	return schema
+}
+
+// episodeCardsOf is the mode a config's two columns store: episode_cards is on, whatever
+// episode_cards_record says, as the previous release reads it.
+func episodeCardsOf(config store.AgentConfig) EpisodeCardsMode {
+	switch {
+	case config.EpisodeCards:
+		return EpisodeCardsOn
+	case config.EpisodeCardsRecord:
+		return EpisodeCardsRecord
+	}
+	return EpisodeCardsOff
+}
+
+// setEpisodeCards stores mode as the config's two columns (episodeCardsOf).
+func setEpisodeCards(config *store.AgentConfig, mode EpisodeCardsMode) {
+	config.EpisodeCards = mode == EpisodeCardsOn
+	config.EpisodeCardsRecord = mode == EpisodeCardsRecord
 }
 
 // resumeHistoryOr writes the fields a caller sent over stored: a field left out keeps

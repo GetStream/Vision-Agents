@@ -75,6 +75,13 @@ describe("LiveReasoning", () => {
     );
   });
 
+  it("reads the window under custom, as stream-chat 10 has it", () => {
+    reasoning.read({ id: "reply", custom: { reasoning: { id: "r1", offset: 0, text: "The order was " } } });
+    reasoning.read({ id: "reply", custom: { reasoning: { id: "r1", offset: 14, text: "delivered unopened." } } });
+
+    assert.equal(reasoning.get("reply", "r1"), "The order was delivered unopened.");
+  });
+
   it("changes nothing for a message with no window", () => {
     reasoning.read({ id: "reply" });
 

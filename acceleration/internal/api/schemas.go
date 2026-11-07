@@ -277,6 +277,8 @@ type CreateSessionRequest struct {
 	Memory               *SessionMemory     `json:"memory,omitempty"`
 	MinConfidence        *float64           `json:"min_confidence,omitempty" doc:"How sure the transcriber must be before the agent answers rather than checks what was meant."`
 	ModelOverwrites      *ModelOverwrites   `json:"model_overwrites,omitempty"`
+	FloorControl         *FloorControl      `json:"floor_control,omitempty" doc:"The model that controls the floor in this session, and how long a caller may wait once they stop, over the agent config's. Left out or null, the config's; an empty object is the default flow controller. The session keeps what it was opened with. Server-side only: a device sending it is refused with a 403, because whether a model rules when the agent answers is the app's to decide."`
+	EndOfTurn            any                `json:"end_of_turn,omitempty" hidden:"true"` // refused: floor_control's max_wait_ms replaced it
 	ResumeHistory        *ResumeHistory     `json:"resume_history,omitempty" doc:"How a conversation this session carries on is handed back to the model, over the agent config's and the app's and organization's policy, field by field: a field given here wins, one left out keeps the next level's. The session keeps what it was opened with, so reopening it after it ended reads the conversation the same way. Server-side only: a device sending it is refused with a 403, because what the model is sent is billed to the app."`
 	Navigating           *bool              `json:"navigating,omitempty" doc:"The agent placed this call, so let recordings finish and answer their menus." default:"false"`
 	Phone                *SessionPhone      `json:"phone,omitempty"`
@@ -413,6 +415,17 @@ func (e AgentRole) Valid() bool {
 		return false
 	}
 }
+
+// EpisodeCardsMode is what an agent config does with episode cards: write none, write them
+// and their summaries while no session reads them, or write them and read them.
+type EpisodeCardsMode string
+
+// Defines values for EpisodeCardsMode.
+const (
+	EpisodeCardsOff    EpisodeCardsMode = "off"
+	EpisodeCardsRecord EpisodeCardsMode = "record"
+	EpisodeCardsOn     EpisodeCardsMode = "on"
+)
 
 // HistoryMessage is one message of a conversation the caller kept itself. Its name, text
 // and created_at are what a TranscriptMessage calls them; a transcript line is not reused
@@ -959,6 +972,22 @@ func (VoicemailAction) Schema(registry huma.Registry) *huma.Schema {
 		"hang_up", "leave_message")
 }
 
+// CampaignVoicemailAction is what a campaign's agent does on reaching an answering machine.
+type CampaignVoicemailAction string
+
+const (
+	CampaignVoicemailActionOff          CampaignVoicemailAction = "off"
+	CampaignVoicemailActionHangUp       CampaignVoicemailAction = "hang_up"
+	CampaignVoicemailActionLeaveMessage CampaignVoicemailAction = "leave_message"
+)
+
+func (CampaignVoicemailAction) Schema(registry huma.Registry) *huma.Schema {
+	return namedEnum(registry, "CampaignVoicemailAction", "off: the agent talks to a machine as to a person. The default.\n"+
+		"hang_up: end the call at once, saying nothing.\n"+
+		"leave_message: say message once the greeting has ended or once the call counts as a machine, then hang up.",
+		"off", "hang_up", "leave_message")
+}
+
 func (*SessionPhone) TransformSchema(_ huma.Registry, schema *huma.Schema) *huma.Schema {
 	schema.Description = "The number the session acts from, which is what turns transferring on."
 	return schema
@@ -1001,7 +1030,7 @@ func (CallOutcome) Schema(registry huma.Registry) *huma.Schema {
 
 // SessionRespondCommand is the SessionRespondCommand schema.
 type SessionRespondCommand struct {
-	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. Text only when present." pattern:"^[A-Za-z0-9_-]{1,128}$"`
+	RequestId *string                   `json:"request_id,omitempty" doc:"Generated and sent by the SDKs, one per question, so a retry is answered once. Required for personal persistent text conversations, and ignored by a session not kept in Stream Chat. With one, images are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message." pattern:"^[A-Za-z0-9_-]{1,128}$"`
 	Images    *[]ImageSource            `json:"images,omitempty"`
 	Text      string                    `json:"text"`
 	Type      SessionRespondCommandType `json:"type" enum:"respond"`

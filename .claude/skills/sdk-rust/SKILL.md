@@ -56,10 +56,15 @@ Schema type union, and **schema `default`s are dropped**, so no default is ever 
 caller did not choose (nil means omit, as in every SDK). Structs get `Default` so a request is
 `..Default::default()`.
 
-Trade-off to know: typify's enums are strict. A value the spec does not list fails decoding
-with `Error::Decode`. That is right for request types, and means a router that ships a new
-enum value before the spec says so breaks this SDK. Fix the spec and regenerate; do not add
-catch-all variants by hand. Never hand-edit the generated files.
+Every string enum gets one more variant from the generator (`unlisted` in
+`generate/src/main.rs`): `Unlisted(String)`, `#[serde(untagged)]`, so a value the spec does not
+list decodes rather than failing with `Error::Decode`, and is written back as it came. serde
+tries it only after the named variants, so a listed value decodes as before. A router adds
+values before every SDK is released (AI-2951: six new session `end_reason`s), and a rollback
+leaves them in stored rows. `FromStr` and `TryFrom` stay strict, so a caller who parses a value
+gets an error rather than `Unlisted`. The cost: these enums are not `Copy`, and a `match` on
+one needs an arm for `Unlisted`. Integer enums (`SessionSortDirection`) stay strict. Never
+hand-edit the generated files.
 
 ## Errors
 
@@ -72,8 +77,8 @@ even though it carries a `HealthStatus`: a degraded router is not an answer to a
 `RouterFailure` (`#[non_exhaustive]`) is `status`, `operation`, and the envelope's `message`,
 `kind` (its `type`, a string), `code` and `doc_url`, plus `request_id` from `X-Request-Id`.
 Every answer outside 2xx and every refused upgrade goes through `Error::refused`. It reads the
-generated `ErrorResponse`, or reads the envelope field by field when its `type` is one the spec
-does not list yet. Any other body (a proxy's HTML, the old `{"error": "..."}`) is trimmed into
+generated `ErrorResponse` (a `type` the spec does not list yet is `ErrorType::Unlisted`), or reads
+the envelope field by field when it leaves out a field the spec requires. Any other body (a proxy's HTML, the old `{"error": "..."}`) is trimmed into
 the message, or the status line when empty, and the other three fields stay empty. It is boxed
 because seven fields inline push every `Result` past clippy's `result_large_err`.
 

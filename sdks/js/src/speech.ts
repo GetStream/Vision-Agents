@@ -1,3 +1,4 @@
+import { messageField } from "./message-field.js";
 import { flag, number, text, type Frame } from "./socket.js";
 
 /**
@@ -662,8 +663,7 @@ function turnIdOf(turn: unknown): string {
   if (typeof turn !== "object" || turn === null) {
     return "";
   }
-  const message = turn as { turn_id?: unknown; custom?: { turn_id?: unknown } };
-  const named = message.turn_id ?? message.custom?.turn_id;
+  const named = messageField(turn, "turn_id");
   return typeof named === "string" ? named : "";
 }
 
@@ -672,9 +672,10 @@ function turnIdOf(turn: unknown): string {
  * `source: "agent"` or `ai_generated`, each top level in stream-chat 9 or under `custom` in 10.
  */
 function agentWriting(message: object): boolean {
-  const fields = message as Record<string, unknown> & { custom?: Record<string, unknown> };
-  const field = (key: string): unknown => fields[key] ?? fields.custom?.[key];
-  return field("generating") === true && (field("source") === "agent" || field("ai_generated") === true);
+  return (
+    messageField(message, "generating") === true &&
+    (messageField(message, "source") === "agent" || messageField(message, "ai_generated") === true)
+  );
 }
 
 /**

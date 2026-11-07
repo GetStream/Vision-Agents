@@ -28,8 +28,10 @@ class ScheduledTaskRun:
             failures in a row), outside_window (a WhatsApp thread task whose person last wrote over 24 hours ago, with no
             template to send), thread_gone (a thread task's thread no longer exists or is not its user's),
             connection_removed (a thread task's line was removed), or, refused for money, account_suspended,
-            insufficient_credits, system_limit_reached or spend_limit_reached; on a missed run, task_paused (a run's time
-            came while its task was paused). The full error is in the router's logs. Null otherwise.
+            insufficient_credits, system_limit_reached, spend_limit_reached or user_limit_reached, none of which is tried
+            again, or spend_check_unavailable (the router could not check what the organization has spent, so the run is
+            tried again); on a missed run, task_paused (a run's time came while its task was paused). The full error is in
+            the router's logs. Null otherwise.
         finished_at (datetime.datetime | None):
         id (str):
         scheduled_for (str): When the occurrence was due, RFC 3339 with the task zone's offset.
@@ -156,11 +158,11 @@ class ScheduledTaskRun:
 
         started_at = _parse_started_at(d.pop("started_at"))
 
-        state = ScheduledTaskRunState(d.pop("state"))
+        state = ScheduledTaskRunState._decode(d.pop("state"))
 
         task_id = d.pop("task_id")
 
-        trigger = ScheduledTaskRunTrigger(d.pop("trigger"))
+        trigger = ScheduledTaskRunTrigger._decode(d.pop("trigger"))
 
         scheduled_task_run = cls(
             attempts=attempts,

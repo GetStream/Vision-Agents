@@ -108,13 +108,13 @@ class ManageLimitInput:
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
         d = dict(src_dict)
-        interval = LimitInterval(d.pop("interval"))
+        interval = LimitInterval._decode(d.pop("interval"))
 
         limit_micros = d.pop("limit_micros")
 
         organization_id = d.pop("organization_id")
 
-        subject = LimitSubject(d.pop("subject"))
+        subject = LimitSubject._decode(d.pop("subject"))
 
         api_key = d.pop("api_key", UNSET)
 
@@ -127,7 +127,7 @@ class ManageLimitInput:
         if isinstance(_level, Unset):
             level = UNSET
         else:
-            level = LimitLevel(_level)
+            level = LimitLevel._decode(_level)
 
         note = d.pop("note", UNSET)
 

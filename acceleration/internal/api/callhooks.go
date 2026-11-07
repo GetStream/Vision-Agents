@@ -271,6 +271,8 @@ func (s *Server) dispatchArrivingCall(r *http.Request, origin hookOrigin, event 
 		s.logger.Error("nobody could answer an arriving call",
 			"call", event.CallCid, "customer", number.CustomerID,
 			"number", number.E164, "error", err)
+		s.refuseArrivingCall(r.Context(), number, callType, callID, "refused an arriving call no worker could take",
+			"call", event.CallCid, "customer", number.CustomerID, "number", number.E164)
 		return
 	}
 	s.pinHook(origin, number.CustomerID, event.CallCid)
@@ -388,8 +390,8 @@ func (s *Server) refuseArrivingCall(ctx context.Context, number store.PhoneNumbe
 }
 
 // endCallEpisodes closes the episodes of an ended call and has them summarized off the request
-// (omnichannel.Closer.EndCall, T55). Only a call under an agent config with episode_cards on
-// has one; any other call matches no row, so nothing is written and no Stream is reached, and
+// (omnichannel.Closer.EndCall, T55). Only a call under an agent config with episode_cards record
+// or on has one; any other call matches no row, so nothing is written and no Stream is reached, and
 // the answer is the 200 it was before. A failure is logged and answered 200 as well: Stream
 // retries a non-2xx, and the episode is read by its last lines until it closes.
 func (s *Server) endCallEpisodes(r *http.Request, origin hookOrigin, event callEvent) {

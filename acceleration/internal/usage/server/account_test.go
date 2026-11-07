@@ -239,9 +239,9 @@ func (s *ServerSuite) TestTheCustomerViewOfUsageFiltersAndPagesAsListUsageDoes()
 		[]uuid.UUID{first.Items[0].UsageID, first.Items[1].UsageID, second.Items[0].UsageID})
 
 	var keyed usage.CustomerUsagePage
-	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage?api_key=hook:chat", &keyed)
+	s.customerView(usage.PathAccounts+"/"+s.organization+"/usage?origin=hook:chat", &keyed)
 	s.Require().Len(keyed.Items, 1)
-	s.Equal("hook:chat", keyed.Items[0].APIKey)
+	s.Equal("hook:chat", keyed.Items[0].Origin)
 
 	for _, refused := range []string{"?user_id=u1", "?team=finance&category=support", "?cursor=not-a-cursor"} {
 		status, answer := s.read(usage.PathAccounts+"/"+s.organization+"/usage"+refused, "Authorization", "Bearer "+s.service.Token)

@@ -66,19 +66,19 @@ func (s *MeteringSuite) booking(credit int64) (*bookings, string) {
 }
 
 func (s *MeteringSuite) TestANumberIsBookedItsFirstMonthBeforeItIsBought() {
-	money, e164 := s.booking(1_200_000)
+	money, e164 := s.booking(1_080_000)
 
 	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: e164, Owner: s.owner()})
 	s.Require().NoError(err)
 
-	s.Equal([]int64{1_200_000}, money.booked, "the first month as its row is priced: the offer resold at the factor")
+	s.Equal([]int64{1_080_000}, money.booked, "the first month as its row is priced: the offer resold at the factor")
 	s.Equal(1, money.charged, "charged once the month is billed")
 	s.Zero(money.released)
-	s.Equal(int64(1_200_000), s.row(ModelNumber).CostMicros)
+	s.Equal(int64(1_080_000), s.row(ModelNumber).CostMicros)
 }
 
 func (s *MeteringSuite) TestANumberTheCreditDoesNotCoverIsNotBought() {
-	money, e164 := s.booking(1_199_999)
+	money, e164 := s.booking(1_079_999)
 
 	_, err := s.service.Buy(s.ctx, Purchase{Vendor: s.vendor.vendor, E164: e164, Owner: s.owner()})
 	s.Require().ErrorIs(err, dlc.ErrUnpaid)

@@ -1,0 +1,37 @@
+{# openapi-python-client 0.29.1's enum_property.py.jinja, but a string enum is read with _decode (str_enum.py.jinja),
+   which keeps a value this client does not list. #}
+{% macro construct_function(property, source) %}
+{% if property.value_type.__name__ == "str" %}
+{{ property.class_info.name }}._decode({{ source }})
+{% else %}
+{{ property.class_info.name }}({{ source }})
+{% endif %}
+{% endmacro %}
+
+{% from "property_templates/property_macros.py.jinja" import construct_template %}
+
+{% macro construct(property, source) %}
+{{ construct_template(construct_function, property, source) }}
+{% endmacro %}
+
+{% macro check_type_for_construct(property, source) %}isinstance({{ source }}, {{ property.value_type.__name__ }}){% endmacro %}
+
+{% macro transform(property, source, destination, declare_type=True, skip_unset=False) %}
+{% set transformed = source + ".value" %}
+{% set type_string = property.get_type_string(json=True) | as_unembedded_code %}
+{% if property.required %}
+{{ destination }} = {{ transformed }}
+{%- else %}
+{% if not skip_unset %}{{ destination }}{% if declare_type %}: {{ type_string }}{% endif %} = UNSET{% endif +%}
+if not isinstance({{ source }}, Unset):
+    {{ destination }} = {{ transformed }}
+{% endif %}
+{% endmacro %}
+
+{% macro multipart(property, source, name) %}
+files.append(({{ name }},  (None, str({{ source }}.value).encode(), "text/plain")))
+{% endmacro %}
+
+{% macro transform_header(source) %}
+str({{ source }})
+{% endmacro %}

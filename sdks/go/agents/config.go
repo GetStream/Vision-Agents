@@ -276,6 +276,7 @@ func declareSettings(body *acceleration.SyncAgentRequest, settings Settings) {
 		body.Scheduling = &declared
 	}
 	body.Calls = declareCalls(settings.Calls)
+	body.FloorControl = declareFloorControl(settings.FloorControl)
 	if len(settings.Keyterms) > 0 {
 		body.Keyterms = &settings.Keyterms
 	}
@@ -321,6 +322,21 @@ func declareCalls(calls *CallSettings) *acceleration.AgentCalls {
 	}
 	if endCall.When != "" {
 		declared.EndCall.When = &endCall.When
+	}
+	return declared
+}
+
+// declareFloorControl is what the file says of floor_control for the wire, as written, or nil
+// when it says nothing, which leaves the stored choice. An empty mapping is sent as an empty
+// object, the default flow controller again.
+func declareFloorControl(settings *FloorControlSettings) *acceleration.FloorControl {
+	if settings == nil {
+		return nil
+	}
+	declared := &acceleration.FloorControl{Model: settings.Model}
+	if settings.MaxWaitMs != nil {
+		wait := int64(*settings.MaxWaitMs)
+		declared.MaxWaitMs = &wait
 	}
 	return declared
 }

@@ -1,15 +1,20 @@
 from __future__ import annotations
 
+import datetime
 from collections.abc import Mapping
-from typing import Any, TypeVar
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from attrs import define as _attrs_define
 from attrs import field as _attrs_field
 from typing_extensions import Self
 
-from ..models.call_outcome import CallOutcome
-from ..models.contact_state import ContactState
+from ..models.contact_stage import ContactStage
 from ..types import UNSET, Unset
+
+if TYPE_CHECKING:
+    from ..models.contact_attempt import ContactAttempt
+    from ..models.contact_variables import ContactVariables
+
 
 T = TypeVar("T", bound="Contact")
 
@@ -18,114 +23,196 @@ T = TypeVar("T", bound="Contact")
 class Contact:
     """
     Attributes:
-        attempts (int):
+        attempts_made (int): Attempts that placed at least one call.
+        attempts_total (int): The attempts the sequence makes at most.
+        converted (bool): They ended successfully.
+        created_at (datetime.datetime):
         id (str):
-        state (ContactState):
-        to_number (str):
-        call_id (str | Unset): The call this contact became, which is what the call paths take.
-        error (str | Unset): Why they could not be rung, when they could not be.
-        instructions (str | Unset):
-        outcome (CallOutcome | Unset): How a placed call ended.
-            completed: the person answered and the call ended.
-            busy: the line was busy or the person declined.
-            no_answer: it rang and nobody answered.
-            failed: the vendor could not place it, for a bad number or a carrier fault.
-            canceled: the vendor says the call was hung up before an answer.
-            unknown: the vendor reports nothing about how it ended, and the phone never joined.
-        vendor_call_id (str | Unset):
+        stage (ContactStage): Where a contact is: enrolled while waiting to be rung, in_progress while a call to them
+            happens or is being read, completed once the sequence is done with them, rejected when their number was refused
+            before any call, stopped when they were left unrung, failed when a call could not be made.
+        to_number (str): E.164.
+        variables (ContactVariables): Filled into the agent's {{placeholders}} on their calls.
+        zone (str): The IANA zone the calling hours are read in for them: the campaign's fixed zone, else their
+            time_zone, else their number's, else the campaign's fallback.
+        attempts (list[ContactAttempt] | None | Unset): Every dial made to them, oldest first. Only on a contact read
+            alone.
+        call_id (str | Unset): The last call placed to them, which is what the call paths take.
+        next_attempt_at (datetime.datetime | Unset): When they are next rung, while they are waiting to be.
+        outcome (str | Unset): The id of the outcome they ended with, once they have.
+        reason (str | Unset): Why they were rejected, failed or stopped.
+        time_zone (str | Unset): The IANA zone they were added with.
     """
 
-    attempts: int
+    attempts_made: int
+    attempts_total: int
+    converted: bool
+    created_at: datetime.datetime
     id: str
-    state: ContactState
+    stage: ContactStage
     to_number: str
+    variables: ContactVariables
+    zone: str
+    attempts: list[ContactAttempt] | None | Unset = UNSET
     call_id: str | Unset = UNSET
-    error: str | Unset = UNSET
-    instructions: str | Unset = UNSET
-    outcome: CallOutcome | Unset = UNSET
-    vendor_call_id: str | Unset = UNSET
+    next_attempt_at: datetime.datetime | Unset = UNSET
+    outcome: str | Unset = UNSET
+    reason: str | Unset = UNSET
+    time_zone: str | Unset = UNSET
     additional_properties: dict[str, Any] = _attrs_field(init=False, factory=dict)
 
     def to_dict(self) -> dict[str, Any]:
-        attempts = self.attempts
+        attempts_made = self.attempts_made
+
+        attempts_total = self.attempts_total
+
+        converted = self.converted
+
+        created_at = self.created_at.isoformat()
 
         id = self.id
 
-        state = self.state.value
+        stage = self.stage.value
 
         to_number = self.to_number
 
+        variables = self.variables.to_dict()
+
+        zone = self.zone
+
+        attempts: list[dict[str, Any]] | None | Unset
+        if isinstance(self.attempts, Unset):
+            attempts = UNSET
+        elif isinstance(self.attempts, list):
+            attempts = []
+            for attempts_type_0_item_data in self.attempts:
+                attempts_type_0_item = attempts_type_0_item_data.to_dict()
+                attempts.append(attempts_type_0_item)
+
+        else:
+            attempts = self.attempts
+
         call_id = self.call_id
 
-        error = self.error
+        next_attempt_at: str | Unset = UNSET
+        if not isinstance(self.next_attempt_at, Unset):
+            next_attempt_at = self.next_attempt_at.isoformat()
 
-        instructions = self.instructions
+        outcome = self.outcome
 
-        outcome: str | Unset = UNSET
-        if not isinstance(self.outcome, Unset):
-            outcome = self.outcome.value
+        reason = self.reason
 
-        vendor_call_id = self.vendor_call_id
+        time_zone = self.time_zone
 
         field_dict: dict[str, Any] = {}
         field_dict.update(self.additional_properties)
         field_dict.update(
             {
-                "attempts": attempts,
+                "attempts_made": attempts_made,
+                "attempts_total": attempts_total,
+                "converted": converted,
+                "created_at": created_at,
                 "id": id,
-                "state": state,
+                "stage": stage,
                 "to_number": to_number,
+                "variables": variables,
+                "zone": zone,
             }
         )
+        if attempts is not UNSET:
+            field_dict["attempts"] = attempts
         if call_id is not UNSET:
             field_dict["call_id"] = call_id
-        if error is not UNSET:
-            field_dict["error"] = error
-        if instructions is not UNSET:
-            field_dict["instructions"] = instructions
+        if next_attempt_at is not UNSET:
+            field_dict["next_attempt_at"] = next_attempt_at
         if outcome is not UNSET:
             field_dict["outcome"] = outcome
-        if vendor_call_id is not UNSET:
-            field_dict["vendor_call_id"] = vendor_call_id
+        if reason is not UNSET:
+            field_dict["reason"] = reason
+        if time_zone is not UNSET:
+            field_dict["time_zone"] = time_zone
 
         return field_dict
 
     @classmethod
     def from_dict(cls, src_dict: Mapping[str, Any]) -> Self:
+        from ..models.contact_attempt import ContactAttempt
+        from ..models.contact_variables import ContactVariables
+
         d = dict(src_dict)
-        attempts = d.pop("attempts")
+        attempts_made = d.pop("attempts_made")
+
+        attempts_total = d.pop("attempts_total")
+
+        converted = d.pop("converted")
+
+        created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
         id = d.pop("id")
 
-        state = ContactState(d.pop("state"))
+        stage = ContactStage._decode(d.pop("stage"))
 
         to_number = d.pop("to_number")
 
+        variables = ContactVariables.from_dict(d.pop("variables"))
+
+        zone = d.pop("zone")
+
+        def _parse_attempts(data: object) -> list[ContactAttempt] | None | Unset:
+            if data is None:
+                return data
+            if isinstance(data, Unset):
+                return data
+            try:
+                if not isinstance(data, list):
+                    raise TypeError()
+                attempts_type_0 = []
+                _attempts_type_0 = data
+                for attempts_type_0_item_data in _attempts_type_0:
+                    attempts_type_0_item = ContactAttempt.from_dict(
+                        attempts_type_0_item_data
+                    )
+
+                    attempts_type_0.append(attempts_type_0_item)
+
+                return attempts_type_0
+            except (TypeError, ValueError, AttributeError, KeyError):
+                pass
+            return cast(list[ContactAttempt] | None | Unset, data)
+
+        attempts = _parse_attempts(d.pop("attempts", UNSET))
+
         call_id = d.pop("call_id", UNSET)
 
-        error = d.pop("error", UNSET)
-
-        instructions = d.pop("instructions", UNSET)
-
-        _outcome = d.pop("outcome", UNSET)
-        outcome: CallOutcome | Unset
-        if isinstance(_outcome, Unset):
-            outcome = UNSET
+        _next_attempt_at = d.pop("next_attempt_at", UNSET)
+        next_attempt_at: datetime.datetime | Unset
+        if isinstance(_next_attempt_at, Unset):
+            next_attempt_at = UNSET
         else:
-            outcome = CallOutcome(_outcome)
+            next_attempt_at = datetime.datetime.fromisoformat(_next_attempt_at)
 
-        vendor_call_id = d.pop("vendor_call_id", UNSET)
+        outcome = d.pop("outcome", UNSET)
+
+        reason = d.pop("reason", UNSET)
+
+        time_zone = d.pop("time_zone", UNSET)
 
         contact = cls(
-            attempts=attempts,
+            attempts_made=attempts_made,
+            attempts_total=attempts_total,
+            converted=converted,
+            created_at=created_at,
             id=id,
-            state=state,
+            stage=stage,
             to_number=to_number,
+            variables=variables,
+            zone=zone,
+            attempts=attempts,
             call_id=call_id,
-            error=error,
-            instructions=instructions,
+            next_attempt_at=next_attempt_at,
             outcome=outcome,
-            vendor_call_id=vendor_call_id,
+            reason=reason,
+            time_zone=time_zone,
         )
 
         contact.additional_properties = d

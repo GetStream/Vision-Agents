@@ -6,6 +6,8 @@ from .account_balance_warning_source import AccountBalanceWarningSource
 from .account_status import AccountStatus
 from .activity_bucket import ActivityBucket
 from .activity_granularity import ActivityGranularity
+from .add_contacts_request import AddContactsRequest
+from .add_contacts_response import AddContactsResponse
 from .add_trunk_number_request import AddTrunkNumberRequest
 from .add_trunk_number_request_tags import AddTrunkNumberRequestTags
 from .agent_calls import AgentCalls
@@ -87,11 +89,31 @@ from .call_token import CallToken
 from .call_token_request import CallTokenRequest
 from .call_tokens import CallTokens
 from .call_usage import CallUsage
+from .calling_hours import CallingHours
+from .calling_hours_windows import CallingHoursWindows
+from .calling_window import CallingWindow
 from .campaign import Campaign
+from .campaign_analytics import CampaignAnalytics
+from .campaign_analytics_call_outcomes import CampaignAnalyticsCallOutcomes
+from .campaign_analytics_outcomes import CampaignAnalyticsOutcomes
+from .campaign_attempt import CampaignAttempt
+from .campaign_dial_day import CampaignDialDay
+from .campaign_next import CampaignNext
+from .campaign_next_end import CampaignNextEnd
+from .campaign_outcome import CampaignOutcome
+from .campaign_page import CampaignPage
 from .campaign_request import CampaignRequest
 from .campaign_request_tags import CampaignRequestTags
+from .campaign_route import CampaignRoute
+from .campaign_sequence import CampaignSequence
 from .campaign_state import CampaignState
+from .campaign_step import CampaignStep
 from .campaign_tags import CampaignTags
+from .campaign_time_zone import CampaignTimeZone
+from .campaign_time_zone_mode import CampaignTimeZoneMode
+from .campaign_type import CampaignType
+from .campaign_voicemail import CampaignVoicemail
+from .campaign_voicemail_action import CampaignVoicemailAction
 from .cancel_price_change_input import CancelPriceChangeInput
 from .candidate import Candidate
 from .channel_account import ChannelAccount
@@ -174,9 +196,13 @@ from .connector_setup import ConnectorSetup
 from .connector_setup_step import ConnectorSetupStep
 from .connector_tool_grant import ConnectorToolGrant
 from .contact import Contact
-from .contact_state import ContactState
-from .contacts_request import ContactsRequest
-from .contacts_request_contacts_item import ContactsRequestContactsItem
+from .contact_attempt import ContactAttempt
+from .contact_counts import ContactCounts
+from .contact_input import ContactInput
+from .contact_input_variables import ContactInputVariables
+from .contact_page import ContactPage
+from .contact_stage import ContactStage
+from .contact_variables import ContactVariables
 from .cost_source import CostSource
 from .create_opt_out_request import CreateOptOutRequest
 from .create_opt_out_request_source import CreateOptOutRequestSource
@@ -217,13 +243,17 @@ from .detection_request_tags import DetectionRequestTags
 from .detection_result import DetectionResult
 from .detection_status import DetectionStatus
 from .dispatch_setting import DispatchSetting
+from .duplicate_campaign_request import DuplicateCampaignRequest
+from .duplicate_campaign_request_contacts import DuplicateCampaignRequestContacts
 from .effective_quota import EffectiveQuota
 from .end_call_settings import EndCallSettings
 from .endpointing import Endpointing
+from .episode_cards_mode import EpisodeCardsMode
 from .equals_type_1 import EqualsType1
 from .error_detail import ErrorDetail
 from .error_response import ErrorResponse
 from .error_type import ErrorType
+from .floor_control import FloorControl
 from .fork_session_request import ForkSessionRequest
 from .fork_session_request_custom import ForkSessionRequestCustom
 from .generated_image import GeneratedImage
@@ -271,6 +301,7 @@ from .knowledge_url import KnowledgeUrl
 from .knowledge_url_declaration import KnowledgeUrlDeclaration
 from .knowledge_url_request import KnowledgeUrlRequest
 from .knowledge_url_state import KnowledgeUrlState
+from .launch_campaign_request import LaunchCampaignRequest
 from .left_out_connector import LeftOutConnector
 from .library_voice import LibraryVoice
 from .library_voices import LibraryVoices
@@ -390,6 +421,8 @@ from .quota_level import QuotaLevel
 from .rcs_profile import RCSProfile
 from .recording_source import RecordingSource
 from .recording_status import RecordingStatus
+from .refused_contact import RefusedContact
+from .refused_reason import RefusedReason
 from .respond_request import RespondRequest
 from .resume_history import ResumeHistory
 from .review_actor import ReviewActor
@@ -596,6 +629,8 @@ __all__ = (
     "AccountStatus",
     "ActivityBucket",
     "ActivityGranularity",
+    "AddContactsRequest",
+    "AddContactsResponse",
     "AddTrunkNumberRequest",
     "AddTrunkNumberRequestTags",
     "AgentCalls",
@@ -673,11 +708,31 @@ __all__ = (
     "CallTokenRequest",
     "CallTokens",
     "CallUsage",
+    "CallingHours",
+    "CallingHoursWindows",
+    "CallingWindow",
     "Campaign",
+    "CampaignAnalytics",
+    "CampaignAnalyticsCallOutcomes",
+    "CampaignAnalyticsOutcomes",
+    "CampaignAttempt",
+    "CampaignDialDay",
+    "CampaignNext",
+    "CampaignNextEnd",
+    "CampaignOutcome",
+    "CampaignPage",
     "CampaignRequest",
     "CampaignRequestTags",
+    "CampaignRoute",
+    "CampaignSequence",
     "CampaignState",
+    "CampaignStep",
     "CampaignTags",
+    "CampaignTimeZone",
+    "CampaignTimeZoneMode",
+    "CampaignType",
+    "CampaignVoicemail",
+    "CampaignVoicemailAction",
     "CancelPriceChangeInput",
     "Candidate",
     "ChannelAccount",
@@ -760,9 +815,13 @@ __all__ = (
     "ConnectorSetupStep",
     "ConnectorToolGrant",
     "Contact",
-    "ContactState",
-    "ContactsRequest",
-    "ContactsRequestContactsItem",
+    "ContactAttempt",
+    "ContactCounts",
+    "ContactInput",
+    "ContactInputVariables",
+    "ContactPage",
+    "ContactStage",
+    "ContactVariables",
     "CostSource",
     "CreateOptOutRequest",
     "CreateOptOutRequestSource",
@@ -803,13 +862,17 @@ __all__ = (
     "DetectionResult",
     "DetectionStatus",
     "DispatchSetting",
+    "DuplicateCampaignRequest",
+    "DuplicateCampaignRequestContacts",
     "EffectiveQuota",
     "EndCallSettings",
     "Endpointing",
+    "EpisodeCardsMode",
     "EqualsType1",
     "ErrorDetail",
     "ErrorResponse",
     "ErrorType",
+    "FloorControl",
     "ForkSessionRequest",
     "ForkSessionRequestCustom",
     "GeneratedImage",
@@ -855,6 +918,7 @@ __all__ = (
     "KnowledgeUrlDeclaration",
     "KnowledgeUrlRequest",
     "KnowledgeUrlState",
+    "LaunchCampaignRequest",
     "LeftOutConnector",
     "LibraryVoice",
     "LibraryVoices",
@@ -974,6 +1038,8 @@ __all__ = (
     "RCSProfile",
     "RecordingSource",
     "RecordingStatus",
+    "RefusedContact",
+    "RefusedReason",
     "RespondRequest",
     "ResumeHistory",
     "ReviewActor",

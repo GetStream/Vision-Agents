@@ -305,6 +305,7 @@ func (s *SinchSuite) TestDiallingWithoutTheApplicationCredentialsSaysWhichAreMis
 	})
 
 	s.ErrorContains(err, applicationKeyEnvVar)
+	s.ErrorIs(err, phone.ErrNotConfigured, "the setting is the deployment's to add")
 	s.Empty(s.seen.path)
 }
 

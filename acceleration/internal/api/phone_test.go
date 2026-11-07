@@ -79,14 +79,19 @@ func (s *PhoneSuite) TestSearchingAtAVendorThatIsNotOneIsRefused() {
 func (s *PhoneSuite) TestSearchingEveryVendorSaysNoneCanBeAsked() {
 	// Leaving the vendor out fans the search out, and no vendor here has credentials,
 	// which is a different answer from having nothing for sale.
-	status, failure := s.serverClient.failure(http.MethodGet,
+	status, payload := s.serverClient.call(http.MethodGet,
 		"/v1/phone/numbers/available?country=US&administrative_area=CO", nil)
 
+	var answered ErrorResponse
+	s.Require().NoError(json.Unmarshal(payload, &answered), string(payload))
 	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "no vendor has the credentials")
+	s.Contains(answered.Error.Message, "no vendor has the credentials")
+	s.Equal(codeNotConfigured, answered.Error.Code)
 }
 
 func (s *PhoneSuite) TestAnAppThatHasBoughtNothingHoldsNoNumbers() {
+	// Not the standard fixture: the campaign suites record numbers on it.
+	s.useApp(s.data.createApp())
 	var numbers []PhoneNumber
 	s.Require().Equal(http.StatusOK,
 		s.serverClient.do(http.MethodGet, "/v1/phone/numbers", nil, &numbers))
@@ -156,28 +161,30 @@ func (s *PhoneSuite) TestACallOrATransferToAPremiumRateNumberIsForbidden() {
 }
 
 // A gate that cannot read whether the callee opted out is neither a refusal nor a vendor
-// failure: the client is told what failed, not that the call is forbidden.
-func (s *PhoneSuite) TestACallWhoseGateCannotReadIsNotForbidden() {
+// failure: it is the router's own, a 500 that does not repeat what the database said.
+func (s *PhoneSuite) TestACallWhoseGateCannotReadIsAServerError() {
 	s.gateOnClosedStore()
 
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/calls", PlaceCallRequest{
 		From: "+15125551234", To: "+15550001111",
 	})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "database is closed")
+	s.Equal(http.StatusInternalServerError, status, "%s", payload)
+	s.Contains(string(payload), "something went wrong")
+	s.NotContains(string(payload), "database is closed")
 }
 
-func (s *PhoneSuite) TestATransferWhoseGateCannotReadIsNotForbidden() {
+func (s *PhoneSuite) TestATransferWhoseGateCannotReadIsAServerError() {
 	session := s.data.storedSession()
 	s.gateOnClosedStore()
 
-	status, failure := s.serverClient.failure(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
+	status, payload := s.serverClient.call(http.MethodPost, "/v1/phone/calls/transfer", TransferCallRequest{
 		From: "+15125551234", To: "+15550001111", SessionId: session,
 	})
 
-	s.Equal(http.StatusBadRequest, status)
-	s.Contains(failure, "database is closed")
+	s.Equal(http.StatusInternalServerError, status, "%s", payload)
+	s.Contains(string(payload), "something went wrong")
+	s.NotContains(string(payload), "database is closed")
 }
 
 // The session tests dial a premium-rate number, refused only once the session is let

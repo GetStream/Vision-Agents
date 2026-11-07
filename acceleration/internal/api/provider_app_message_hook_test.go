@@ -239,6 +239,7 @@ func (s *ProviderAppMessageHookSuite) TestACardWrittenAfterTheIdlePeriodLandsInT
 	bot := s.connectedBot(workspace, s.slack.InstallBot())
 	config := store.AgentConfig{
 		CustomerID: s.customerID(), Name: "slack-" + s.utils.uuid(), Mode: store.AgentModeText, LLM: "recites/recites-model",
+		EpisodeCards: true,
 		Connectors: []store.ConnectorBinding{{
 			Name: "slack", ConnectorID: "slack_bot",
 			Connection: store.ConnectionBinding{Type: "fixed", ConnectionID: bot.ConnectionID},

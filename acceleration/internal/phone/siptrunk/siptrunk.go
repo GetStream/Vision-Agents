@@ -237,7 +237,7 @@ func (p *Provider) ConfigureInbound(context.Context, phone.Inbound) error {
 
 // SendDigits cannot work: digits travel in the audio, which does not pass through here.
 func (p *Provider) SendDigits(context.Context, string, string) error {
-	return stack.Wrap(errors.New("phone: digits cannot be pressed on a call through a customer's own sip trunk"))
+	return stack.Wrap(phone.Invalid(errors.New("phone: digits cannot be pressed on a call through a customer's own sip trunk")))
 }
 
 // Supports says no filter: there is nothing to search.

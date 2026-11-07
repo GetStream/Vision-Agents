@@ -90,7 +90,9 @@ def sync_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Campaign | ErrorResponse]:
-    """One campaign
+    """One campaign, with its contacts counted by stage
+
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -119,7 +121,9 @@ def sync(
     *,
     client: AuthenticatedClient | Client,
 ) -> Campaign | ErrorResponse | None:
-    """One campaign
+    """One campaign, with its contacts counted by stage
+
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -143,7 +147,9 @@ async def asyncio_detailed(
     *,
     client: AuthenticatedClient | Client,
 ) -> Response[Campaign | ErrorResponse]:
-    """One campaign
+    """One campaign, with its contacts counted by stage
+
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.
@@ -170,7 +176,9 @@ async def asyncio(
     *,
     client: AuthenticatedClient | Client,
 ) -> Campaign | ErrorResponse | None:
-    """One campaign
+    """One campaign, with its contacts counted by stage
+
+     Server-side only: it needs a server-side token, so it cannot be reached from an end user's device.
 
     Args:
         id (str): The resource, as returned when it was created.

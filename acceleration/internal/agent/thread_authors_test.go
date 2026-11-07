@@ -129,8 +129,8 @@ func (s *AgentSuite) TestOnePersonInWritingReachesTheModelAsAtBase() {
 		s.Equal("be brief", withoutClock(asked.Instructions), author)
 		sent := make([]llm.Message, 0, len(harness.WithoutNotes(asked.Input)))
 		for _, message := range harness.WithoutNotes(asked.Input) {
-			// No provider reads Author (llm.Message).
-			message.Author = ""
+			// No provider reads Author or Typed (llm.Message).
+			message.Author, message.Typed = "", false
 			sent = append(sent, message)
 		}
 		s.Equal([]llm.Message{

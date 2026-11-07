@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +21,7 @@ import (
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/channels"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/dlc"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sandbox/daytona/daytonatest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
 )
@@ -33,6 +35,8 @@ const appSecret = "suite-app-secret"
 type ChannelsSuite struct {
 	RouterSuite
 	meta *metaAPI
+	// logged is what the router logged, at debug and up.
+	logged *lockedLog
 }
 
 func TestChannelsSuite(t *testing.T) {
@@ -41,6 +45,11 @@ func TestChannelsSuite(t *testing.T) {
 
 func (s *ChannelsSuite) SetupSuite() {
 	s.meta = &metaAPI{}
+	// The organization's money is read from a usage service of the suite's own, so the gate refuses
+	// as it does an organization that may not pay.
+	s.limited = true
+	s.logged = &lockedLog{}
+	s.logs = s.logged
 	s.daytona = daytonatest.Start(s.T())
 	s.channelAPI = httptest.NewTLSServer(http.HandlerFunc(s.meta.serve))
 	s.T().Cleanup(s.channelAPI.Close)
@@ -49,6 +58,7 @@ func (s *ChannelsSuite) SetupSuite() {
 
 func (s *ChannelsSuite) SetupTest() {
 	s.useApp(s.data.createApp())
+	s.usage.Credit(s.T(), s.app.organization.ID, 10_000_000)
 }
 
 func (s *ChannelsSuite) TestConnectingALineAnswersWithWhereToDeliver() {
@@ -464,10 +474,15 @@ func (s *ChannelsSuite) connect(number string) ChannelAccount {
 
 // agentOn is a text agent answering on a number, identifying a sender the way named.
 func (s *ChannelsSuite) agentOn(number, identity string) AgentConfig {
+	return s.agentOnModel(number, identity, "noted/noted-model")
+}
+
+// agentOnModel is agentOn, with the model named.
+func (s *ChannelsSuite) agentOnModel(number, identity, model string) AgentConfig {
 	request := AgentConfigRequest{
 		Name:     "channelled-" + s.utils.uuid(),
 		Mode:     pointerTo(AgentModeText),
-		Llm:      pointerTo("noted/noted-model"),
+		Llm:      pointerTo(model),
 		Channels: &AgentChannels{Whatsapp: &ChannelLineRequest{Number: number}},
 	}
 	if identity != "" {
@@ -477,6 +492,82 @@ func (s *ChannelsSuite) agentOn(number, identity string) AgentConfig {
 	s.Require().Equal(http.StatusCreated,
 		s.serverClient.do(http.MethodPost, "/v1/agents/configs", request, &config))
 	return config
+}
+
+// A message that arrives once the organization is suspended is not answered, and the router warns
+// naming the customer, since the person loses the text until the organization pays.
+func (s *ChannelsSuite) TestAMessageToASuspendedOrganizationIsNotAnsweredAndWarnsNamingTheCustomer() {
+	number := s.number()
+	line := s.connect(number)
+	s.agentOn(number, "")
+	writer := s.writer()
+	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "what is open?"))
+	s.Require().Equal("Noted.", s.answer(writer))
+	s.suspend(writer)
+
+	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "and tomorrow?"))
+
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `level=WARN msg="not answering a channel message" channel=whatsapp customer=`+s.customerID())
+	}, settleFor, 10*time.Millisecond, "the router never warned")
+	s.NotContains(s.logged.String(), writer, "the log names no number")
+	s.Len(s.meta.to(writer), 1, "only the answer to the first message")
+}
+
+// A reply the agent finishes after the organization was suspended is not written back, and the
+// router warns naming the customer.
+func (s *ChannelsSuite) TestAReplyOfASuspendedOrganizationIsNotWrittenBackAndWarnsNamingTheCustomer() {
+	number := s.number()
+	line := s.connect(number)
+	s.agentOnModel(number, "", "holding/holding-model")
+	writer := s.writer()
+	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "what is open?"))
+	s.Require().Equal("Held.", s.answer(writer))
+	model := s.holding
+	model.holds()
+	defer model.answers()
+	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "and tomorrow?"))
+	s.Require().Eventually(func() bool {
+		model.mu.Lock()
+		defer model.mu.Unlock()
+		return model.turns >= 2
+	}, settleFor, 10*time.Millisecond, "the second turn never began")
+	s.suspend(writer)
+
+	model.answers()
+
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `level=WARN msg="not writing back on a channel" channel=whatsapp customer=`+s.customerID())
+	}, settleFor, 10*time.Millisecond, "the router never warned")
+	s.NotContains(s.logged.String(), writer, "the log names no number")
+	s.Len(s.meta.to(writer), 1, "only the answer to the first message")
+}
+
+// A message the sandbox holds back stays an Info line, as it was: only an organization that may not
+// pay is a warning. The line says which rule held it and names no number.
+func (s *ChannelsSuite) TestAMessageTheSandboxHoldsBackIsLoggedAsInfo() {
+	s.holdSandbox(dlc.Sandbox{Enabled: true, Recipients: 2, MessagesPerDay: 1})
+	number := s.number()
+	line := s.connect(number)
+	s.agentOn(number, "")
+
+	writer := s.writer()
+	s.Require().Equal(http.StatusAccepted, s.deliver(line, writer, "msg-"+s.utils.uuid(), "what is open?"))
+
+	s.Require().Eventually(func() bool {
+		return strings.Contains(s.logged.String(), `level=INFO msg="not answering a channel message" channel=whatsapp reason=sandbox_recipient`)
+	}, settleFor, 10*time.Millisecond, "the router never logged the refusal")
+	s.NotContains(s.logged.String(), writer, "the refusal's text names the number, the log does not")
+	s.NotContains(s.logged.String(), `level=WARN msg="not answering a channel message"`)
+}
+
+// suspend suspends the test's organization and waits until the gate refuses the customer a text to
+// person for it: an organization's money is read after its first admission, which it admits.
+func (s *ChannelsSuite) suspend(person string) {
+	s.usage.Suspend(s.T(), s.app.organization.ID, "fraud review")
+	s.Require().Eventually(func() bool {
+		return errors.Is(s.gate.Allow(context.Background(), s.customerID(), dlc.WhatsApp, person), dlc.ErrUnpaid)
+	}, 10*time.Second, 50*time.Millisecond, "the organization's money is read")
 }
 
 // challenge is the verify token every line in this suite is connected with.

@@ -102,7 +102,7 @@ func New(options Options) (*Provider, error) {
 // SearchNumbers returns numbers Telnyx is offering in a country.
 func (p *Provider) SearchNumbers(ctx context.Context, search phone.Search) ([]phone.Available, error) {
 	if search.Country == "" {
-		return nil, stack.Wrap(errors.New("telnyx: a country is required to search for numbers"))
+		return nil, stack.Wrap(phone.Invalid(errors.New("telnyx: a country is required to search for numbers")))
 	}
 
 	// Telnyx filters with bracketed query parameters rather than a request body.
@@ -239,7 +239,7 @@ func (p *Provider) ConfigureInbound(ctx context.Context, inbound phone.Inbound) 
 		return err
 	}
 	if p.connectionID == "" {
-		return stack.Wrap(errors.New("telnyx: a connection id is required to route calls to the bridge"))
+		return stack.Wrap(phone.NotConfigured(errors.New("telnyx: a connection id is required to route calls to the bridge")))
 	}
 	id, err := p.idFor(ctx, inbound.E164)
 	if err != nil {
@@ -260,23 +260,23 @@ func (p *Provider) Dial(ctx context.Context, outbound phone.Outbound) (phone.Dia
 		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: %w", err))
 	}
 	if p.connectionID == "" {
-		return phone.Dialed{}, stack.Wrap(errors.New("telnyx: a connection id is required to place a call"))
+		return phone.Dialed{}, stack.Wrap(phone.NotConfigured(errors.New("telnyx: a connection id is required to place a call")))
 	}
 
 	// Unsupported is not consulted on every path here, so a term Telnyx would drop is
 	// refused.
 	seconds := int(outbound.RingTimeout.Seconds())
 	if outbound.RingTimeout > 0 && (seconds < minRingSeconds || seconds > maxRingSeconds) {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: telnyx rings for %d to %d seconds, not %d",
-			minRingSeconds, maxRingSeconds, seconds))
+		return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf("telnyx: telnyx rings for %d to %d seconds, not %d",
+			minRingSeconds, maxRingSeconds, seconds)))
 	}
 	if len(outbound.Headers) > 0 {
-		return phone.Dialed{}, stack.Wrap(errors.New(
-			"telnyx: custom SIP headers are not known to reach the person on a TeXML call"))
+		return phone.Dialed{}, stack.Wrap(phone.Invalid(errors.New(
+			"telnyx: custom SIP headers are not known to reach the person on a TeXML call")))
 	}
 	if !p.PlaysDigits(outbound.InitialDigits) {
-		return phone.Dialed{}, stack.Wrap(fmt.Errorf("telnyx: TeXML plays only %q, not %q",
-			playableDigits, outbound.InitialDigits))
+		return phone.Dialed{}, stack.Wrap(phone.Invalid(fmt.Errorf("telnyx: TeXML plays only %q, not %q",
+			playableDigits, outbound.InitialDigits)))
 	}
 
 	// The person is called from one of this service's numbers, and once they answer the
@@ -400,7 +400,7 @@ func (p *Provider) priceOf(ctx context.Context, e164 string) (int64, error) {
 			return dollarsToMicros(number.CostInformation.MonthlyCost), nil
 		}
 	}
-	return 0, stack.Wrap(fmt.Errorf("telnyx: %s is not for sale", e164))
+	return 0, stack.Wrap(phone.Invalid(fmt.Errorf("telnyx: %s is not for sale", e164)))
 }
 
 // idFor finds Telnyx's own identifier for a number this account owns, which is what

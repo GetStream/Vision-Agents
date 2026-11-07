@@ -107,6 +107,7 @@ def sync_detailed(
     is the same as applying it once.
     Changes are only recorded for an app that has exported, and only for as long as the deployment's
     retention window. A cursor older than what is still kept is answered 410, which means export again.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:
@@ -147,6 +148,7 @@ def sync(
     is the same as applying it once.
     Changes are only recorded for an app that has exported, and only for as long as the deployment's
     retention window. A cursor older than what is still kept is answered 410, which means export again.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:
@@ -182,6 +184,7 @@ async def asyncio_detailed(
     is the same as applying it once.
     Changes are only recorded for an app that has exported, and only for as long as the deployment's
     retention window. A cursor older than what is still kept is answered 410, which means export again.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:
@@ -220,6 +223,7 @@ async def asyncio(
     is the same as applying it once.
     Changes are only recorded for an app that has exported, and only for as long as the deployment's
     retention window. A cursor older than what is still kept is answered 410, which means export again.
+    A router with shards cannot be the source of a move and answers 400 `not_configured`.
     Server-side only, and refused when the router runs with ROUTER_AUTH_MODE=noauth.
 
     Args:

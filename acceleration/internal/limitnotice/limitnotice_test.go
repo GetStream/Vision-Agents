@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -82,7 +83,7 @@ func (p *posts) all() []string {
 
 func TestTheFirstHitOfEachKindIsPostedOnce(t *testing.T) {
 	db, slack := newMemory(), &posts{}
-	notifier := New(db, slack, "test", slog.New(slog.DiscardHandler))
+	notifier := New(db, slack, "test", Links{}, slog.New(slog.DiscardHandler))
 	defer notifier.Close()
 
 	hit := policy.LimitHit{OrganizationID: "org-1", AppID: "app-1", Kind: store.LimitNoCredit, Enforced: true, Message: "no credit"}
@@ -98,7 +99,7 @@ func TestTheFirstHitOfEachKindIsPostedOnce(t *testing.T) {
 	}, 2*time.Second, 5*time.Millisecond)
 	require.Len(t, slack.all(), 2, "once per kind, however many refusals")
 
-	again := New(db, slack, "test", slog.New(slog.DiscardHandler))
+	again := New(db, slack, "test", Links{}, slog.New(slog.DiscardHandler))
 	defer again.Close()
 	again.Hit(hit)
 	time.Sleep(50 * time.Millisecond)
@@ -108,7 +109,7 @@ func TestTheFirstHitOfEachKindIsPostedOnce(t *testing.T) {
 func TestAHitThatCouldNotBeWrittenIsNotPosted(t *testing.T) {
 	db, slack := newMemory(), &posts{}
 	db.fail = errors.New("postgres is down")
-	notifier := New(db, slack, "test", slog.New(slog.DiscardHandler))
+	notifier := New(db, slack, "test", Links{}, slog.New(slog.DiscardHandler))
 	defer notifier.Close()
 
 	notifier.Hit(policy.LimitHit{OrganizationID: "org-1", Kind: store.LimitNoCredit, Enforced: true})
@@ -122,12 +123,38 @@ func TestTheMessageSaysWhetherTheWorkWasRefused(t *testing.T) {
 		OrganizationID: "org-1", Kind: store.LimitSpendHardLimit, AppID: "app-1", Tier: "free",
 		Enforced: true, Message: "the organization's day spend hard limit of $5.00 is reached",
 	}
-	require.Equal(t, ":no_entry: [production] Organization `org-1` was refused for the first time at Stream's spend hard limit."+
-		"\nTier: free\nApp: `app-1`\n> the organization's day spend hard limit of $5.00 is reached", Message("production", notice))
+	require.Equal(t, ":no_entry: Organization `org-1` was refused for the first time at Stream's spend hard limit."+
+		"\nTier: free\nApp: `app-1`\n> the organization's day spend hard limit of $5.00 is reached", Message("prod", Links{}, notice))
 
 	notice.Enforced = false
-	require.Contains(t, Message("staging", notice), "[staging]")
-	require.Contains(t, Message("staging", notice), "limits are in shadow, so the work was admitted")
+	require.True(t, strings.HasPrefix(Message("staging", Links{}, notice), "[STAGING] :eyes: Organization `org-1`"))
+	require.Contains(t, Message("staging", Links{}, notice), "limits are in shadow, so the work was admitted")
+}
+
+func TestTheMessageLinksTheAppAndTheStaffPage(t *testing.T) {
+	links := Links{App: "https://dash.example/organization/{organization}/{app}/agents/",
+		Staff: "https://dash.example/internal/organizations/{organization}"}
+	notice := store.LimitNotice{OrganizationID: "5380", Kind: store.LimitNoCredit, AppID: "1733675", Message: "no credit"}
+
+	require.Contains(t, Message("staging", links, notice), "\nApp: `1733675`\n"+
+		"<https://dash.example/organization/5380/1733675/agents/|App> · <https://dash.example/internal/organizations/5380|Staff page>\n> no credit")
+
+	notice.AppID = ""
+	require.Contains(t, Message("staging", links, notice), "\n<https://dash.example/internal/organizations/5380|Staff page>\n> no credit",
+		"with no app, only what names none")
+	require.NotContains(t, Message("staging", Links{}, notice), "<", "no templates, no links")
+
+	notice.AppID = "a|b>c"
+	require.Contains(t, Message("staging", links, notice), "/organization/5380/a%7Cb%3Ec/agents/|App>", "an id cannot break the link")
+}
+
+func TestOnlyProductionIsNotTagged(t *testing.T) {
+	for environment, tag := range map[string]string{
+		"prod": "", "production": "", "Production": "",
+		"staging": "[STAGING] ", "benchmark": "[BENCHMARK] ", "": "[DEVELOPMENT] ",
+	} {
+		require.Equal(t, tag, EnvironmentTag(environment), environment)
+	}
 }
 
 func TestSlackPostsToTheChannel(t *testing.T) {

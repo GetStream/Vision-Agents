@@ -45,7 +45,7 @@ class RollupResult:
         d = dict(src_dict)
         buckets_written = d.pop("buckets_written")
 
-        granularity = Granularity(d.pop("granularity"))
+        granularity = Granularity._decode(d.pop("granularity"))
 
         rollup_result = cls(
             buckets_written=buckets_written,

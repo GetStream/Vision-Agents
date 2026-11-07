@@ -17,10 +17,13 @@ import (
 	"github.com/uptrace/bun"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/dispatch"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/llm"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/omnichannel"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/session"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/store"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 )
 
 // ChatEpisodesSuite is the app chat's episode card: a person's message in an agent channel,
@@ -110,6 +113,22 @@ func (s *ChatEpisodesSuite) TestAChatMessageTheWebhookBringsWritesACard() {
 	config := s.config(true, "llm-flow")
 
 	s.Require().Equal(http.StatusOK, s.hooked(&s.RouterSuite, "/v1/chat/hooks/stream", s.written(config.ID, "where is my order?"), suiteStreamSecret))
+
+	s.True(s.reachesWorker(worker), "the message is answered")
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+}
+
+// record writes the chat's card as on does (AI-2856). The worker is handed the message, so the
+// spec is the config's (chatEpisodeUnopened, session.FromConfig). Catches record taken as off
+// there, or left out of the spec a config makes.
+func (s *ChatEpisodesSuite) TestAChatMessageUnderRecordWritesACard() {
+	worker := s.worker()
+	config := store.AgentConfig{CustomerID: s.customerID(), Name: "chat-" + s.utils.uuid(), Mode: store.AgentModeText,
+		LLM: "llm-flow", DispatchText: true, EpisodeCardsRecord: true}
+	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
 
 	s.True(s.reachesWorker(worker), "the message is answered")
 	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
@@ -269,6 +288,33 @@ func (s *ChatEpisodesSuite) TestAConfigWithoutCardsWritesAndReadsNothingNew() {
 	s.Equal(int64(1), s.configReads.reads.Load(), "the config's row is read as many times as at base")
 }
 
+// Defect: a config without episode_cards asking Stream whether the app checks tokens, as a
+// cards-on one does (checksTokens before the config's gate): with Stream slow to answer, every
+// message of such a config would wait up to omnichannel.ReadTimeout and pay a request for
+// nothing. It is handed on at once and /api/v2/app is never requested.
+func (s *ChatEpisodesSuite) TestAConfigWithoutCardsNeverAsksStreamWhetherTheAppChecksTokens() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	asked, release := s.chat.Hold("/api/v2/app")
+	defer release()
+	worker := s.worker()
+	config := s.config(false, "llm-flow")
+
+	status := make(chan int, 1)
+	go func() { status <- s.writes(config.ID, "where is my order?") }()
+
+	select {
+	case <-worker:
+	case <-time.After(omnichannel.ReadTimeout / 2):
+		s.FailNow("the message was held for Stream's answer about the app")
+	}
+	s.Equal(http.StatusOK, <-status)
+	select {
+	case <-asked:
+		s.Fail("Stream was asked whether the app checks tokens")
+	case <-time.After(dropped):
+	}
+}
+
 // The control in a channel a session answered before, whose calls row ownerOf finds first: a
 // config without episode_cards writes nothing, and its row is read once at most. At base
 // c9a61fc90 the probe of each delivery read it: naming the row's config, none; naming none or
@@ -343,6 +389,93 @@ func (s *ChatEpisodesSuite) TestAChatASessionAnsweredGoesOnWritingCards() {
 	s.Equal(2, s.episodeCount(), "the message after the close opens the next episode")
 }
 
+// Defect: with auth checks off, a client may write in the app chat as anybody, so Bob's client
+// writing as Anya puts a card in her omni-channel, which her sessions then read. The message is
+// answered all the same, and opens no contact, no episode and no card.
+func (s *ChatEpisodesSuite) TestAMessageInAnAppThatChecksNoTokensWritesNoCard() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}, DisableAuthChecks: true})
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.handedTo(worker)
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
+// Defect: an app Stream refuses to describe taken as one that checks tokens, which writes the
+// card of whoever a message says wrote it. The message is answered, and opens nothing.
+func (s *ChatEpisodesSuite) TestAMessageInAnAppStreamCannotBeAskedAboutWritesNoCard() {
+	s.inApp(chattest.App{ID: suiteStreamApp, Refuses: true})
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.handedTo(worker)
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
+}
+
+// Defect: a Stream slow to say whether the app checks tokens holds the message for as long as
+// a request to Stream may take (streamapp's requestTimeout, 30 s), twice. It is handed on once
+// omnichannel.ReadTimeout has passed, with no card.
+func (s *ChatEpisodesSuite) TestAStreamSlowToSayWhetherTheAppChecksTokensHoldsTheMessageNoLongerThanTheReadTimeout() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	asked, release := s.chat.Hold("/api/v2/app")
+	defer release()
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	status := make(chan int, 1)
+	go func() { status <- s.writes(config.ID, "where is my order?") }()
+
+	select {
+	case <-asked:
+	case <-time.After(settleFor):
+		s.FailNow("Stream was not asked whether the app checks tokens")
+	}
+	select {
+	case <-worker:
+	case <-time.After(omnichannel.ReadTimeout + settleFor):
+		s.FailNow("the message was not handed on once the read timeout passed")
+	}
+	s.Equal(http.StatusOK, <-status)
+	s.Zero(s.contacts())
+	s.Zero(s.episodeCount())
+}
+
+// Defect: a message from an app the customer does not act in taken as one from an app that
+// checks tokens, though Stream was never asked about it: it opens nothing.
+func (s *ChatEpisodesSuite) TestAMessageFromAnAppTheCustomerDoesNotActInWritesNoCard() {
+	config := s.config(true, "llm-flow")
+	var event messageEvent
+	event.ChannelType, event.ChannelID = "agent", s.channelID
+	event.Message.ID, event.Message.Text, event.Message.User.ID = "message-"+s.utils.uuid(), "where is my order?", s.user
+	event.Channel = []byte(fmt.Sprintf(`{"members": [{"user_id": %q}]}`, s.user))
+
+	s.router.chatEpisode(context.Background(), hookOrigin{app: suiteStreamApp + 1, queued: true}, event, session.FromConfig(config))
+
+	s.Zero(s.contacts())
+	s.Zero(s.episodeCount())
+}
+
+// The control for the two above: the same app under a key of its own, which checks tokens,
+// writes the card as at base 668d15d5c, where the probe of this delivery wrote one. Catches the
+// rule read the wrong way round, and the key of its own, rather than the auth checks, keeping
+// the card out.
+func (s *ChatEpisodesSuite) TestAMessageInAnAppThatChecksTokensWritesACard() {
+	s.inApp(chattest.App{ID: suiteStreamApp, CallTypes: []string{"agent"}})
+	worker := s.worker()
+	config := s.config(true, "llm-flow")
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.handedTo(worker)
+	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
+	s.Equal(store.EpisodeChat, custom["source"])
+	s.Equal(1, s.episodeCount())
+}
+
 // Catches an omni-channel taken for a channel a person writes in: it is where cards are
 // written, so a message in it, which a config of its own names, opens no episode of its own.
 func (s *ChatEpisodesSuite) TestAMessageInAnOmniChannelOpensNoChatEpisode() {
@@ -363,6 +496,8 @@ func (s *ChatEpisodesSuite) TestOneUserIDInTwoStreamAppsIsTwoPeople() {
 	ctx := context.Background()
 	config := s.config(true, "llm-flow")
 	for _, app := range []int64{111, 222} {
+		// The customer acts in that app: a hook from an app it does not is acted on by nobody.
+		s.giveApp(s.customerID(), app, fmt.Sprintf("key-%d-%s", app, s.utils.uuid()))
 		var event messageEvent
 		event.ChannelType, event.ChannelID = "agent", fmt.Sprintf("chat-%d-%s", app, s.utils.uuid())
 		event.Message.ID, event.Message.Text, event.Message.User.ID = "message-"+s.utils.uuid(), "where is my order?", s.user
@@ -458,6 +593,21 @@ func (s *ChatEpisodesSuite) TestAMessageToARunningSessionWritesACard() {
 
 	custom, _ := s.cards(s.omniChannel(), 1)[0]["custom"].(map[string]any)
 	s.Equal(store.EpisodeChat, custom["source"])
+}
+
+// Defect: a message of a customer whose work in the deployment's app may only be read, as app
+// mode leaves it once the fallback is off, opening a contact and an episode: a session that
+// started before still answers, and the message opens nothing. The card itself is refused
+// either way (Cards.Write, ErrReadOnly).
+func (s *ChatEpisodesSuite) TestAMessageToARunningSessionOfACustomerReadOnlyInTheAppWritesNoCard() {
+	s.worker()
+	config := s.config(true, "en-low-latency")
+	s.serverClient.createSession(CreateSessionRequest{AgentId: &s.channelID, ConfigId: &config.ID})
+	s.setApps(s.customerID(), func(apps *suiteApps) { apps.readOnly[s.customerID()] = true })
+
+	s.Require().Equal(http.StatusOK, s.writes(config.ID, "where is my order?"))
+
+	s.Never(func() bool { return s.contacts() > 0 || s.episodeCount() > 0 }, dropped, 20*time.Millisecond, "a contact or an episode")
 }
 
 // Catches an incognito session's message being kept: it records nothing of the person.
@@ -843,6 +993,21 @@ func (s *ChatEpisodesSuite) config(cards bool, llm string) store.AgentConfig {
 		LLM: llm, DispatchText: true, EpisodeCards: cards}
 	s.Require().NoError(s.store.CreateAgentConfig(context.Background(), &config))
 	return config
+}
+
+// inApp has the test's customer act in the suite's Stream app under a key of its own, which
+// Stream describes as app: what it said of the suite's own key, kept a minute
+// (streamapp.Clients.Readiness), is not what is read here.
+func (s *ChatEpisodesSuite) inApp(app chattest.App) {
+	key := "key-" + s.utils.uuid()
+	s.chat.SetAppFor(key, app)
+	s.apps.mu.Lock()
+	s.apps.own[s.customerID()] = streamapp.Identity{
+		CustomerID: s.customerID(), StreamApp: suiteStreamApp, APIKey: key,
+		Secret: streamapp.NewSecret(key + "-secret"), BaseURL: s.chat.URL,
+	}
+	s.apps.mu.Unlock()
+	s.stream.Invalidate(s.customerID())
 }
 
 // worker connects a dispatch worker for the test's customer and returns what it is handed.

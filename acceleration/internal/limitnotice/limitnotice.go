@@ -9,6 +9,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -45,11 +46,22 @@ type Poster interface {
 	Post(ctx context.Context, text string) error
 }
 
+// Links are the pages a notice links to, as URL templates in which {organization} and {app}
+// stand for the notice's ids. An empty template, or one naming {app} for a notice with no
+// app, links nothing.
+type Links struct {
+	// App is the app's own page, such as https://dashboard.example/{organization}/{app}.
+	App string
+	// Staff is the operator's page for the organization or the app.
+	Staff string
+}
+
 // Notifier takes policy.Settings.LimitHit's hits and posts the first of each.
 type Notifier struct {
 	store       Store
 	poster      Poster
 	environment string
+	links       Links
 	logger      *slog.Logger
 
 	hits chan policy.LimitHit
@@ -62,11 +74,11 @@ type Notifier struct {
 }
 
 // New starts a Notifier that writes to db and posts to poster, naming environment in every
-// message. Close stops it.
-func New(db Store, poster Poster, environment string, logger *slog.Logger) *Notifier {
+// message and linking links. Close stops it.
+func New(db Store, poster Poster, environment string, links Links, logger *slog.Logger) *Notifier {
 	ctx, stop := context.WithCancel(context.Background())
 	n := &Notifier{
-		store: db, poster: poster, environment: environment, logger: logger,
+		store: db, poster: poster, environment: environment, links: links, logger: logger,
 		hits: make(chan policy.LimitHit, queued), stop: stop, done: make(chan struct{}),
 	}
 	go n.run(ctx)
@@ -145,7 +157,7 @@ func (n *Notifier) sweep(ctx context.Context) {
 }
 
 func (n *Notifier) post(ctx context.Context, notice store.LimitNotice) {
-	if err := n.poster.Post(ctx, Message(n.environment, notice)); err != nil {
+	if err := n.poster.Post(ctx, Message(n.environment, n.links, notice)); err != nil {
 		n.logger.Error("could not post that an organization reached a money limit; it is retried",
 			"organization", notice.OrganizationID, "kind", notice.Kind, "error", err)
 		return
@@ -166,16 +178,18 @@ var limits = map[string]string{
 	store.LimitSpendLimit:     "one of its own spend limits",
 }
 
-// Message is the notice as it is posted, in Slack's mrkdwn.
-func Message(environment string, notice store.LimitNotice) string {
+// Message is the notice as it is posted, in Slack's mrkdwn. A notice from anywhere but
+// production starts with its environment, such as [STAGING], so the channel can tell them apart.
+func Message(environment string, links Links, notice store.LimitNotice) string {
 	limit := cmp.Or(limits[notice.Kind], notice.Kind)
 	var b strings.Builder
+	b.WriteString(EnvironmentTag(environment))
 	if notice.Enforced {
-		fmt.Fprintf(&b, ":no_entry: [%s] Organization `%s` was refused for the first time at %s.",
-			environment, notice.OrganizationID, limit)
+		fmt.Fprintf(&b, ":no_entry: Organization `%s` was refused for the first time at %s.",
+			notice.OrganizationID, limit)
 	} else {
-		fmt.Fprintf(&b, ":eyes: [%s] Organization `%s` reached %s for the first time; limits are in shadow, so the work was admitted.",
-			environment, notice.OrganizationID, limit)
+		fmt.Fprintf(&b, ":eyes: Organization `%s` reached %s for the first time; limits are in shadow, so the work was admitted.",
+			notice.OrganizationID, limit)
 	}
 	if notice.Tier != "" {
 		fmt.Fprintf(&b, "\nTier: %s", notice.Tier)
@@ -183,8 +197,44 @@ func Message(environment string, notice store.LimitNotice) string {
 	if notice.AppID != "" {
 		fmt.Fprintf(&b, "\nApp: `%s`", notice.AppID)
 	}
+	var pages []string
+	if app := link(links.App, notice); app != "" {
+		pages = append(pages, "<"+app+"|App>")
+	}
+	if staff := link(links.Staff, notice); staff != "" {
+		pages = append(pages, "<"+staff+"|Staff page>")
+	}
+	if len(pages) > 0 {
+		b.WriteString("\n" + strings.Join(pages, " · "))
+	}
 	if notice.Message != "" {
 		fmt.Fprintf(&b, "\n> %s", strings.ReplaceAll(notice.Message, "\n", "\n> "))
 	}
 	return b.String()
+}
+
+// link fills template with the notice's ids, path-escaped so none can break out of a Slack
+// <url|text> link, or is empty when the template is or names an id the notice lacks.
+func link(template string, notice store.LimitNotice) string {
+	template = strings.TrimSpace(template)
+	if template == "" || (notice.OrganizationID == "" && strings.Contains(template, "{organization}")) ||
+		(notice.AppID == "" && strings.Contains(template, "{app}")) {
+		return ""
+	}
+	return strings.NewReplacer(
+		"{organization}", url.PathEscape(notice.OrganizationID),
+		"{app}", url.PathEscape(notice.AppID),
+	).Replace(template)
+}
+
+// EnvironmentTag is what a message from environment starts with: nothing in production
+// (prod or production), and the environment's name in capitals otherwise, such as "[STAGING] ".
+func EnvironmentTag(environment string) string {
+	switch environment = strings.ToLower(strings.TrimSpace(environment)); environment {
+	case "prod", "production":
+		return ""
+	case "":
+		environment = "development"
+	}
+	return "[" + strings.ToUpper(environment) + "] "
 }

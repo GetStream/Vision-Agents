@@ -139,7 +139,7 @@ class SubjectUsage:
 
         grants = _parse_grants(d.pop("grants"))
 
-        subject = LimitSubject(d.pop("subject"))
+        subject = LimitSubject._decode(d.pop("subject"))
 
         def _parse_windows(data: object) -> list[LimitWindow] | None:
             if data is None:

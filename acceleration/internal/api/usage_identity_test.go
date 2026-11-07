@@ -183,29 +183,54 @@ func (s *UsageIdentitySuite) TestSpendIsNarrowedToAKeyAUserATeamAndACategory() {
 	s.Equal(int64(1), s.spentCount("team=finance"))
 	s.Equal(int64(1), s.spentCount("category=project:onboarding"))
 	s.Equal(int64(1), s.spentCount("user_id="+url.QueryEscape(sales.userID)))
-	s.Equal(int64(2), s.spentCount("api_key_id="+url.QueryEscape(s.app.key)))
-	s.Equal(int64(0), s.spentCount("api_key_id=hook:chat"))
+	s.Equal(int64(2), s.spentCount("origin="+url.QueryEscape(s.app.key)))
+	s.Equal(int64(0), s.spentCount("origin=hook:chat"))
 }
 
 // Stream's proxy forwards the app's key as api_key in every call's query: spend read through it
-// counts every key's and origin's work, and api_key_id narrows it (AI-2684).
+// counts every key's and origin's work, and origin narrows it (AI-2684).
 func (s *UsageIdentitySuite) TestSpendWithTheCallersKeyInTheQueryCountsEveryKey() {
 	s.searched(s.client)
 	s.hookRow()
 	proxied := "api_key=" + url.QueryEscape(s.app.key)
 
 	s.Equal(int64(2), s.spentCount(proxied))
-	s.Equal(int64(1), s.spentCount(proxied+"&api_key_id=hook%3Achat"))
-	s.Equal(int64(1), s.spentCount(proxied+"&api_key_id="+url.QueryEscape(s.app.key)))
+	s.Equal(int64(1), s.spentCount(proxied+"&origin=hook%3Achat"))
+	s.Equal(int64(1), s.spentCount(proxied+"&origin="+url.QueryEscape(s.app.key)))
 }
 
-// Spend read with no key in the query counts every key's and origin's work, as before
-// api_key_id (AI-2684).
+// Spend read with no key in the query counts every key's and origin's work (AI-2684).
 func (s *UsageIdentitySuite) TestSpendWithNoKeyInTheQueryCountsEveryKey() {
 	s.searched(s.client)
 	s.hookRow()
 
 	s.Equal(int64(2), s.spentCount(""))
+}
+
+// origin narrows spend to a key or to an origin no key started; empty, it narrows nothing
+// (AI-2811).
+func (s *UsageIdentitySuite) TestSpendIsNarrowedToAnOrigin() {
+	s.searched(s.client)
+	s.hookRow()
+
+	s.Equal(int64(1), s.spentCount("origin=hook%3Achat"))
+	s.Equal(int64(2), s.spentCount("origin="), "an empty origin narrows nothing")
+}
+
+// api_key_id was origin's name until AI-2851. Ignored, it would count every key's spend for a
+// caller that asked for one key's, so it is refused, even naming what origin names.
+func (s *UsageIdentitySuite) TestSpendRefusesTheOldNameAPIKeyID() {
+	s.searched(s.client)
+	s.hookRow()
+	key := url.QueryEscape(s.app.key)
+
+	for _, query := range []string{"api_key_id=hook%3Achat", "api_key_id=" + key + "&origin=" + key,
+		"api_key=" + key + "&api_key_id=hook%3Achat"} {
+		status, message := s.serverClient.failure(http.MethodGet, s.spendPath(query), nil)
+		s.Equal(http.StatusBadRequest, status, "%s: %s", query, message)
+		s.Contains(message, "api_key_id is now named origin", query)
+	}
+	s.Equal(int64(2), s.spentCount("api_key_id="), "an empty api_key_id names nothing")
 }
 
 func (s *UsageIdentitySuite) TestASpendFilterNamingTwoTeamsIsRefused() {

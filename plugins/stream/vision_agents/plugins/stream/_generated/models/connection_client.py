@@ -52,7 +52,7 @@ class ConnectionClient:
         d = dict(src_dict)
         client_id = d.pop("client_id")
 
-        registration = ConnectorClientRegistrationMethod(d.pop("registration"))
+        registration = ConnectorClientRegistrationMethod._decode(d.pop("registration"))
 
         connection_client = cls(
             client_id=client_id,

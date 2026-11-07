@@ -117,7 +117,7 @@ class ModelOverwrites:
         if isinstance(_thinking, Unset):
             thinking = UNSET
         else:
-            thinking = ModelOverwritesThinking(_thinking)
+            thinking = ModelOverwritesThinking._decode(_thinking)
 
         tts = d.pop("tts", UNSET)
 
@@ -126,7 +126,7 @@ class ModelOverwrites:
         if isinstance(_verbosity, Unset):
             verbosity = UNSET
         else:
-            verbosity = ModelOverwritesVerbosity(_verbosity)
+            verbosity = ModelOverwritesVerbosity._decode(_verbosity)
 
         model_overwrites = cls(
             llm=llm,

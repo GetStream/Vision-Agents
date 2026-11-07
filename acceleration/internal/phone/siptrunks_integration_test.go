@@ -164,6 +164,7 @@ func (s *SIPTrunkSuite) TestADialRefusesATrunkWithoutAPassword() {
 
 	_, _, err = s.service.dialVendor(s.ctx, held)
 	s.EqualError(err, "phone: sip trunk "+trunk.ID+" has no password; set one before calling through it")
+	s.ErrorIs(err, ErrInvalid)
 }
 
 func (s *SIPTrunkSuite) TestADialRefusesAPasswordSealedAtNoKey() {
@@ -216,6 +217,17 @@ func (s *SIPTrunkSuite) TestReleasingATrunkNumberAsksNoVendor() {
 	// trunkProvider does not override ReleaseNumber, so reaching it would panic.
 	s.Require().NoError(s.service.Release(s.ctx, "acme", "+15550000207"))
 	s.NoError(s.service.DeleteSIPTrunk(s.ctx, "acme", trunk.ID), "a released number no longer holds its trunk")
+}
+
+// A deployment without Stream is ErrNoStream, which the router answers 400, not 500.
+func (s *SIPTrunkSuite) TestAttachingWithoutStreamSaysSo() {
+	number := store.PhoneNumber{E164: "+15550000212", Vendor: "telnyx", CustomerID: "acme"}
+	s.Require().NoError(s.store.RecordNumber(s.ctx, &number))
+
+	_, err := s.service.Attach(s.ctx, Attachment{CustomerID: "acme", E164: number.E164})
+
+	s.EqualError(err, "phone: attaching a number needs stream credentials")
+	s.ErrorIs(err, ErrNoStream)
 }
 
 func (s *SIPTrunkSuite) TestAttachingATrunkNumberIsRefused() {

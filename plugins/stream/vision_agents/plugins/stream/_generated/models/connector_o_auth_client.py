@@ -90,7 +90,7 @@ class ConnectorOAuthClient:
 
         created_at = datetime.datetime.fromisoformat(d.pop("created_at"))
 
-        registration = ConnectorClientRegistrationMethod(d.pop("registration"))
+        registration = ConnectorClientRegistrationMethod._decode(d.pop("registration"))
 
         updated_at = datetime.datetime.fromisoformat(d.pop("updated_at"))
 
@@ -99,7 +99,7 @@ class ConnectorOAuthClient:
         if isinstance(_auth_method, Unset):
             auth_method = UNSET
         else:
-            auth_method = ConnectorOAuthClientAuthMethod(_auth_method)
+            auth_method = ConnectorOAuthClientAuthMethod._decode(_auth_method)
 
         provider_app_id = d.pop("provider_app_id", UNSET)
 

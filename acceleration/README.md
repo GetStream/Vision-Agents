@@ -71,8 +71,11 @@ the session frame is spelled; Gemini Live is its own package under `internal/sts
 
 ## Build prerequisites
 
-Everything builds without cgo. `cmd/say` needs `ffplay` at runtime (part of ffmpeg)
-to play audio, or `-out` to write a file instead.
+Everything builds without cgo. Build with Go's SIMD experiment, `GOEXPERIMENT=simd`, as
+`Dockerfile` and CI do: it compiles the vector kernels of the Opus codec every call's audio
+passes through, on amd64 and arm64, and other platforms build the same code without them.
+The commands below assume `export GOEXPERIMENT=simd`. `cmd/say` needs `ffplay` at runtime
+(part of ffmpeg) to play audio, or `-out` to write a file instead.
 
 ## Configuration
 
@@ -108,7 +111,7 @@ the other commands that read them there.
 | `ROUTER_KNOWLEDGE_BUCKET_URL` | Bucket a file uploaded to a knowledge base waits in until it is read, e.g. `gs://knowledge`; each file is deleted once read. Each shard needs its own, in its own region, as the files are read by its workers alone. Without it, `POST /v1/agents/knowledge/files` answers 503 |
 | `ROUTER_CONFIG`         | Path to a capability config; defaults to the built-in one  |
 | `ROUTER_PHONE_CONFIG`   | Path to a vendor list; defaults to the built-in one        |
-| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.2 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
+| `ROUTER_PRICES_FILE`    | Path to a price file of the deployment's own (`router prices check --file` checks one), laid over the built-in `prices/vendor.json`: the router prices from both, the file's entry winning for an item, region, BYOK state and `when`, and loads both into its database. Every entry should name its `region`, such as `us`; for now an entry that names none is read as `us`, with a warning, because a router built before regions refuses the field. An entry may set its `prices`, `price_tiers` and `sku`. One without a price is priced at its rates times 1.08 when it is first loaded. Reading the file also adds a BYOK twin of each `llm`, `knowledge` and `sandbox` entry, priced at its rates times 0.2; a BYOK entry the file writes itself (`"byok": true`) wins over the twin. A top-level `markup_bps` is ignored, with a warning. Unset prices from and loads `vendor.json` alone. See [Prices](#prices) |
 | `ROUTER_AUTH_MODE`      | `api_key` (default), `proxy`, `noauth` or `custom`. See [Authentication](#authentication) |
 | `ROUTER_AUTH_KEK`       | Unseals the stored key secrets. Required by `api_key`, and held outside the database on purpose. Also version 1 of the connector keyring, and what a node's peers prove they are this deployment's with, so a deployment of more than one node needs it |
 | `ROUTER_AUTH_KEK_V<n>`  | Version `n` of the keyring that seals connector credentials, e.g. `ROUTER_AUTH_KEK_V1`. Keep an old version until every row sealed under it is rewrapped |
@@ -129,6 +132,7 @@ the other commands that read them there.
 | `<ENV>_MCP_CLIENT_ID`, `<ENV>_MCP_CLIENT_SECRET` | This deployment's own OAuth client for a connector whose manifest has `client.env: <ENV>` and lists `operator` in `client.registration`, such as `SLACK_MCP_CLIENT_ID` for `slack`. Read at each consent and refresh. An app's own client is put through `PUT /v1/agents/connectors/{id}/oauth-client` instead |
 | `ROUTER_LIMITS_MODE` | `enforce` (default), `shadow` or `off`: how much of credit, the spend hard limit and the customer's spend limits the router enforces. `shadow` works every refusal out, logs it as `would refuse` and admits the request; `off` refuses nothing for money, and work is still priced, recorded and shipped. Both log a warning at start. With limits on, the router refuses to start without `ROUTER_POSTGRES_DSN`, and in `proxy` mode without `ROUTER_USAGE_URL`. See [Admission](#admission) |
 | `ROUTER_LIMITS_SLACK_TOKEN`, `ROUTER_LIMITS_SLACK_CHANNEL` | A Slack bot token holding `chat:write`, and the id of a channel the bot is a member of, where the operator is told the first time each organization is refused at its credit, Stream's spend hard limit or one of its own spend limits, or would have been in `shadow`. Once per organization and kind of limit, across every router: the first to write its `limit_notices` row posts it, and a post that failed is retried by the next sweep. Either unset, or `ROUTER_LIMITS_MODE=off`: nobody is told |
+| `ROUTER_LIMITS_APP_URL`, `ROUTER_LIMITS_STAFF_URL` | The pages each of those Slack notices links to: the app's own, and the operator's for the organization or app. `{organization}` and `{app}` in either stand for the notice's ids, such as `https://dashboard.example/{organization}/{app}`. A URL naming `{app}` is left out of a notice with no app. Unset: no link |
 | `ROUTER_USAGE_REDIS_URL` | The Redis the usage service mirrors every subject's spend to (its `USAGE_REDIS_URL`), which the customer's spend limits are read from every second. Needs `ROUTER_USAGE_URL`. Unset, they are read from the usage service itself every 5 s. See [Spend limits](#spend-limits) |
 | `ROUTER_USAGE_MANAGE_KEY` | The usage service's manage key (its `USAGE_MANAGE_KEY`), for `router usage forget-user` alone; the router never sends it. Unset, that command refuses to run. See [The usage service](#the-usage-service) |
 | `ROUTER_RATE_LIMIT_MESSAGES_PER_DAY` | Model responses one end user's devices may ask for in a UTC day, defaults to `200`. `0` turns it off. It is the default: an organization's, an app's or a user's policy sets its own (`quota`). See [Daily limits](#daily-limits) |
@@ -137,6 +141,9 @@ the other commands that read them there.
 | `ROUTER_CHAT_TIMINGS` | For development: each voice reply in the session's chat channel gets a line after its text with how long its turn took, and the same figures as a `timings` field on the message. See [Transcripts](#transcripts-memory-and-phone). Anything that reads the conversation back leaves the line out. Off by default; `cmd/agent` takes it as `-chat-timings` |
 | `ROUTER_REPLY_HEDGE` | How long a reply may say nothing, neither text nor a tool call, before the same request is also asked of another candidate of its target, and whichever says something first is kept. The other candidate is on a different model when the target has one, and on a different provider when it has one, and is never one the router has found unavailable. The one that loses is cancelled the moment it does and still read out, so both calls are reported as model calls and recorded, the cancelled one as any cancelled call is. A reply is hedged once, and a hedge that fails leaves the first request going. Only replies and the flow controller's decisions (`ROUTER_FLOW_HEDGE`) are hedged, not the guardrails or background work, nor a reply that continues from a response the provider holds. A target with no other candidate is asked once. Defaults to `1200ms`; `0` turns it off. `cmd/agent` takes it as `-reply-hedge` |
 | `ROUTER_FLOW_HEDGE` | `ROUTER_REPLY_HEDGE` for the flow controller's decisions, which the caller waits on in silence before the reply is asked for. A decision is a few tokens, so one that has said nothing by then has stalled rather than thought, and the same request is asked of another candidate of `llm-flow` as well; whichever says something first rules on the turn. Without it a stalled decision waits out the controller's 3 s deadline and the turn is answered unruled. Defaults to `400ms`; `0` turns it off. `cmd/agent` takes it as `-flow-hedge` |
+| `ROUTER_CHORUS_ASR_URL` | A chorus-asr server, such as `http://floor:8080` ([deploy/chorus-asr](deploy/chorus-asr/README.md)). Makes chorus-asr available: the `stream/chorus-asr` transcriber, and floor control for an agent that opts in with `floor_control: {model: stream/chorus-asr}`, which is refused on a router without it. It rules no agent's floor of its own accord. `ROUTER_CHORUS_ASR_MODE`, which once did, is no longer read, and a router started with it warns once naming `floor_control` |
+| `ROUTER_CHORUS_ASR_API_KEY` | Optional. Sent as a bearer token on every request to a chorus-asr server behind a gateway that asks for a key |
+| `ROUTER_CHORUS_ASR_AUDIO` | How the chorus-asr model's audio is sent: `opus` (default), encoded once as it arrives, or `pcm`, for debugging. `cmd/agent` reads the `ROUTER_CHORUS_ASR_*` variables too, and its agent opts in with `-floor-control stream/chorus-asr` |
 | `ROUTER_MOCK_PROVIDERS` | `true` adds `mock/mock-stt`, `mock/mock-tts` and `mock/mock-llm`, which answer from nothing, reach no vendor and bill nothing, for load testing the router itself (see `performance_benchmark/`). No capability alias routes to one, so a session only gets a mock by naming it. Off by default |
 | `ROUTER_TRUSTED_PROXIES` | CIDR ranges your own proxies sit in, comma separated, e.g. `10.0.0.0/8`. Decides how much of `X-Forwarded-For` is believed. Unset means none of it is, and the connection's address is used |
 | `ROUTER_DATA_MOVE_RETENTION` | How long recorded changes are kept while a customer moves between deployments, defaults to `168h`. See [Moving a customer](#moving-a-customer) |
@@ -565,23 +572,27 @@ What an organization's own dashboard reads about its money, server-side only:
 | `getAccount` | `GET /v1/account` | Status, tier, balance (less what work in flight holds, as `X-Stream-Balance-Micros` says), granted and spent, the warning threshold with `balance_warning_source` (`tier`, `account` or `organization_policy`, which wins) and `balance_state`, what the operator allows (`limits`, `own_limits`) and its spend hard limit with this window's spend and room |
 | `listCredits` | `GET /v1/account/credits` | Credit entries, newest first, a page of up to 100; no actor or note, and a reference only on what the payment processor wrote (actor `stripe`) |
 | `listTeams` | `GET /v1/teams` | Every team a limit names or this month's work carried: its apps, its spend in each current window and its limits; `app_id` narrows it to one app |
-| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `api_key_id`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
+| `listUsageEvents` | `GET /v1/usage/events` | The usage events (`UsageEventPage` of `UsageEvent`), newest first by `occurred_at` then `usage_id`, a page of up to 200 (50 by default) continued by `cursor`: the calling app's, or with `scope=organization` every app's of the organization (`app_id` narrows it to one); filtered by `from` (inclusive), `to` (exclusive), `meter`, `origin`, `user_id` (with `scope=organization` it needs `app_id`), and `team` or `category`; each with its cost to the customer, never the vendor's, the tier, the price version or the producer |
 
 The first two and `listUsageEvents` read the usage service's customer view with the ingest
 token, and answer 404 `billing_not_enabled` with no usage service or for an app in no
-organization. A server-side caller's `api_key_id` and `user_id` query parameters are filters there,
-as they are on `getSpend`. A key is named `api_key_id` in the query on these reads and on the limits
-and grants lists and usage. `api_key` in the query is the caller's credential, which Stream's proxy
-requires on every call. `user_id` in the query only names who a backend acts for, which no account
-read looks at. `listTeams`
-sums the request rows this month when there is no usage service. Staff read the teams of any
+organization. A server-side caller's `origin` and `user_id` query parameters are filters there,
+as they are on `getSpend`. `origin` is who started the work: a public API key, or the origin of
+work no key started (`hook:chat`, `phone:inbound`, `job:<name>`); each `UsageEvent` names it as
+`origin`. Its old name `api_key_id` is refused with a 400 that names `origin`, so a caller
+still sending it never reads every key's events as one key's. A key that is only ever a key is
+named `api_key_id` in the query on the limits and grants lists and usage. `api_key` in the
+query is the caller's credential, which Stream's proxy requires on every call. `user_id` in the
+query only names who a backend acts for, which no account read looks at. `listTeams` sums the
+request rows this month when there is no usage service. Staff read the teams of any
 organization with `GET /v1/manage/teams?organization_id=` (`manageListTeams`).
 
-`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:api_key`,
-`who:user`, `who:team` (work with no team under the empty value) or `who:category` (the team
-left out, and a request counted once in each of its categories). A cost label key holds no
-`:`, so a label named `app` is still `group_by=app`. `scope=organization` counts every app of
-the caller's organization, and there a user is `<app_id>/<user_id>`.
+`getSpend` (`GET /v1/stats/spend`) also groups by who asked: `group_by=who:app`, `who:origin`
+(its old name `who:api_key` is refused), `who:user`, `who:team` (work with no
+team under the empty value) or `who:category` (the team left out, and a request counted once in each
+of its categories). A cost label key holds no `:`, so a label named `app` is still `group_by=app`.
+`scope=organization` counts every app of the caller's organization, and there a user is
+`<app_id>/<user_id>`.
 
 ### Admission
 
@@ -669,10 +680,10 @@ organization's numbers is refused: on Telnyx it is rejected before it is answere
 not billed. Over Stream SIP the bridge has already answered the caller when the router hears
 of the call, so no agent is dispatched and the call is ended through Stream at once; the few
 seconds it was up are billed by the vendor. The same holds for a telephony suspension.
-Releasing a number is never refused. A campaign is refused at start, and one refused midway
-pauses with the refusal's code as `paused_reason`, giving the contact it was about to ring
-back to be rung once it is started again. A scheduled task that could not be delivered for
-money records the refusal's code.
+Releasing a number is never refused. A campaign is refused at launch, and one refused midway
+pauses with the refusal's code as `paused_reason`. The contact it was about to ring goes back
+to waiting without using up an attempt, and is rung once the campaign is resumed. A scheduled
+task that could not be delivered for money records the refusal's code.
 
 Holds are bounded in memory: an account keeps at most 10,000 apart and folds the oldest,
 remembering up to 100,000 folded usage ids (about 15 MB per account at most), and the process
@@ -1572,9 +1583,10 @@ still one session. Migrations run on every database. A socket for a session held
 another shard is proxied to the node holding it, since that shard's relay is not this
 one's. Empty shard settings fall back to the global ones, which is the single-node setup.
 
-Two things are approximate across shards: percentiles merged from several shards' rollups
-are weighted by request count rather than recomputed, and a data move replicates the
-changes of the global tables only, so a customer's calls and sessions are moved by export.
+Percentiles merged from several shards' rollups are approximate: they are weighted by request
+count rather than recomputed. A router with shards cannot be a move's source: its shards'
+tables record no changes after an export, so `GET /v1/data/export` and `GET /v1/data/changes`
+answer 400 `not_configured` there (see [Moving a customer](#moving-a-customer)). It can be a move's target.
 
 ## Agents that are configured rather than spelled out
 
@@ -1593,7 +1605,7 @@ inline in the request overrides it, so a config can be reused and one call still
 | `GET /v1/agents/calls/{id}/events`          | What the conversation decided, and why       |
 | `POST /v1/agents/knowledge`                 | Fill a knowledge base from documents         |
 | `/v1/agents/knowledge/urls`                 | Pages a knowledge base is kept filled from   |
-| `/v1/agents/campaigns`                      | Lists of people to ring, and how far they got |
+| `/v1/agents/campaigns`                      | Outbound calls: an agent rings a list of contacts within calling hours, and what each call ended as |
 | `/v1/agents/scheduled-tasks`                 | Things the agent does later for a user, once or on a repeat, and what came of each occurrence |
 
 **Skills are named rather than spelled out.** A config carries skill names, and they are
@@ -1721,12 +1733,42 @@ by agent, and the timings are kept in Redis for an hour. The timeline endpoint i
 joined, so it shows a call's turns only while they are that recent. When the call ends, a short model pass over the conversation writes a summary and
 a score from one to five onto the row, billed through the LLM router like anything else.
 
-**Campaigns are the outbound half.** A campaign is one agent, one of the customer's
-numbers and a list of people, each with instructions of their own that are added to the
-config's. Starting one runs a loop that holds a semaphore sized to `concurrency`, places
-each call at the vendor and creates a session for it; contacts are claimed in Postgres, so
-a process that stopped mid-campaign resumes rather than starting again. Pausing stops
-ringing new people and leaves the conversations already happening alone.
+**Campaigns are the outbound half.** A campaign is one agent config ringing a list of
+contacts from one of the customer's numbers. Each contact's variables (`{{first_name}}`)
+reach the agent. Launching takes `consent: true` and an optional `start_at`, and from then on
+the contacts, the sequence and the calling hours are fixed. The sequence says how many
+attempts each contact gets, how far apart, and whether to ring again at once when nobody
+answered. Nobody is rung outside calling hours, judged in the contact's own time zone.
+
+Each call is told the step's `goal`, with the contact's variables filled in, right after the
+config's instructions, and opens with why it is calling. Last comes the closing rule: the
+step's outcomes are listed, and once the call reaches one the agent says goodbye and hangs up.
+After an answered call, one model call reads the transcript and picks one of the step's
+outcomes, or none, which counts as `other`. `do_not_call` also opts the number out of every
+call the app makes.
+
+A step's `voicemail` says what happens when an answering machine picks up. `off` (the
+default, and what a step with no `voicemail` does) does nothing special: nobody is asked who
+answered, and the agent talks to a machine as to a person. `hang_up` ends the call saying
+nothing, and `leave_message` says the step's message, variables
+filled in, once the greeting ends, then hangs up. Telnyx and Twilio are asked who answered. A
+verdict they cannot make counts as a machine while nobody has spoken to the agent, and with no
+verdict at all, so does a call where nobody speaks for 40 seconds after answering. Such a dial
+ends as `voicemail`: it uses the attempt like one nobody answered, gets no outcome, and is not
+dialed again at once.
+
+Each dial keeps the phone's own outcome of its call as `call_outcome`, and what follows is read
+from it. `completed` has its transcript read. `no_answer` and `unknown` ring again at once when
+the sequence double dials. `busy`, `failed` and `canceled` wait for the next attempt's delay. A
+dial that placed no call says why in `result` instead.
+
+Every router runs the dialer, and its state is all in Postgres. A router claims a contact
+that is due under a lease, and the claim counts the campaign's calls in progress in the same
+transaction, so several routers together never go past `concurrency` or ring one person
+twice. When a router dies its leases run out, and another router reads how each call ended
+instead of ringing again. Pausing stops new calls within seconds and leaves the calls already
+happening alone. A router with no Postgres, no sessions or no LLM dials nothing, and says so
+when it starts.
 
 ## Voices a customer brought with them
 
@@ -1773,7 +1815,7 @@ offered custom voices and the router routes around it for calls that want one.
 | `call_legs`                              | Leg of a phone call, from when it connected to when the call ended |
 | `agent_configs`, `skills`                | Named agent, and a kind of work worth delegating    |
 | `calls`                                  | Conversation that happened, with its summary and score |
-| `campaigns`, `campaign_contacts`         | List of people to ring, and what became of each     |
+| `campaigns`, `campaign_contacts`, `campaign_attempts` | Outbound campaign, each person on it, and each call placed to them |
 | `scheduled_tasks`, `scheduled_task_runs` | Thing a user is to be reminded of or done for later, and each occurrence of it |
 | `audit_log`                              | Change somebody made to the app's configuration     |
 
@@ -2075,7 +2117,7 @@ outright, such as a number's month, is its price, and is not logged as unpriced.
 
 Work done with the customer's own key is billed to the customer by the vendor, so its price is
 a fee: 20% of what the work costs at the vendor's rates (`pricing.BYOKFeeBps`, 2000). A million
-tokens that cost the vendor $1 are $1.20 on the operator's key and $0.20 on the customer's. A
+tokens that cost the vendor $1 are $1.08 on the operator's key and $0.20 on the customer's. A
 BYOK quote's `base_cost_micros` is 0, since the work costs the operator nothing, and its
 `cost_micros` is the fee. An instance is BYOK when it was built with the customer's key
 (`routing.ProviderConfig.BYOK`, never read from a file; see "Customers' own provider keys"). No price file writes BYOK entries:
@@ -2105,7 +2147,7 @@ it that names none is read as `us`, with a warning naming the entries: every rou
 deployment reads the same file at its start, and a router built before regions refuses a
 `region` field, so the file can name regions only once none of its routers is that old. An
 entry may set `prices`, `price_tiers` and `sku`. One with no price
-is priced at its rates times `pricing.PriceFactorBps` (12000, so 1.2), or a BYOK one at
+is priced at its rates times `pricing.PriceFactorBps` (10800, so 1.08), or a BYOK one at
 `pricing.BYOKFeeBps`, each rate kept to 12 significant digits. A file's top-level `markup_bps`,
 which older files have, is ignored with a warning.
 
@@ -2385,39 +2427,74 @@ the copy, which is what makes the switchover free of a window where writes are l
 An export starts recording the app's changes, then waits until every write transaction open in
 the source's shared database when recording started has ended, and only then reads its snapshot.
 So every write of the app to a table the export carries is in the export or in the changes after its cursor,
-including one that was in progress when the export started. A shard's tables record no changes:
-their rows come across as the export read them. A transaction still open after 30 seconds makes the
-export answer 503: run it again.
+including one that was in progress when the export started. A transaction still open after 30 seconds makes the
+export answer 503: run it again. A repeatable read or serializable transaction whose snapshot is older than the
+start of recording is refused with a serialization failure when it next writes, so its retry is recorded.
+
+The source must be a router without shards. A shard's tables (calls, call bridges, recordings,
+sessions, responses, requests and their stats) record no changes, so a router with a shard database
+of its own, or with other shards' databases listed in `postgres.shards`, answers the export and the
+changes 400 `not_configured` before it records anything: moving off it is not supported yet. Any router can be the
+target.
 
 ```bash
 go run ./cmd/router replicate --from https://old.example.com \
-  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once]
+  --api-key vak_live_… --api-secret vas_live_… [--as <app id>] [--once] [--full]
 ```
+
+A run saves on this deployment the cursor of the source's changes it has applied, after the
+export and after each page of changes. A later run for the same app and source, `--once` or
+`--follow`, carries on from that cursor: it applies only what changed at the source since,
+and writes no row of the export over what was done here. Pass `--as <app id>` on a repeat run:
+with it the run does not ask for the export. Without it the run opens the export to learn the
+app, which starts a capture at the source and can answer 503 while a write there is open, then
+reads its first line and drops it. A run that stopped before the export ended saved no cursor,
+and the next run copies the export again.
+
+A run refuses, before it writes anything, an app this deployment already holds that no run
+saved a cursor for, such as one copied before runs saved them. It counts an app as held when a
+table in the shared database holds a row of it; a table kept in the shards does not count. It also refuses a cursor read
+longer ago than this deployment's `ROUTER_DATA_MOVE_RETENTION`, and a cursor the source answers
+410 for. The source records an app's changes only for its own retention after a read, and answers
+410 for a cursor from before its recording started again; the check here also covers a source
+older than that, and assumes the source's retention is this deployment's, so set the two alike.
+Writes since may be missing. `--full` copies the whole export again, writing the source's rows over the ones here,
+and then saves the cursor.
+
+`POST /v1/data/import` refuses an export the same way: an app this deployment already holds gets a 409 before
+any of the export's rows is written, unless the request asks `?full=true`; a batch of changes is always applied. An import that stopped partway is run again with `full=true`, since the app then holds its first rows.
 
 The default `--source-auth jwt` is for a source behind Stream's gateway, such as the hosted router.
 `--source-auth server` is for a source router reached directly.
 
-A scheduled task active on the source is imported paused, and so is a campaign running there,
-since the source goes on delivering them until the move is cut over. Each is marked as paused by
+A scheduled task active on the source is imported paused, and so is a campaign running or
+scheduled there, since the source goes on delivering them until the move is cut over. Each is
+marked as paused by
 the move; a change carried later sets the mark again from the source's state, so one the user
 paused there is not marked. A pause or a resume here, by the user or the agent, clears the mark;
-any other edit keeps it.
+any other edit keeps it. A contact in the middle of a call on the source is settled here from that
+call once the mark is cleared, as one whose router died is: its next attempt waits its delay. One
+whose answered call still awaits its outcome has the transcript read here then. On a campaign the
+user had paused on the source there is no mark, so such a contact is settled as soon as it
+arrives.
 
 Until the last `--once`, the source is the truth: each change carried writes the row as the source
 has it, over whatever was done to that row here, a delete included. A config deleted here comes
-back if the source edits it afterwards. The exception is a connector connection the owner
-authorized again here: it keeps its state and credentials, so a rename, a disconnect or a soft
-delete at the source does not reach it. A hard delete at the source still does. So once SDKs
+back if the source edits it afterwards. There are two exceptions. A connector connection the owner
+authorized again here keeps its state and credentials, so a rename, a disconnect or a soft
+delete at the source does not reach it. A phone number on a trunk here, attached or given a line,
+keeps its trunk, route, app, call, bridge and agent config, while its other columns follow the source. A hard delete at the
+source still reaches both. So once SDKs
 point here, stop writing at the source.
 
 Cut over once SDKs point here:
 
-1. Pause each running campaign at the source (`POST /v1/agents/campaigns/{id}/pause`). Wait
-   until none of its contacts is `calling` there (`GET /v1/agents/campaigns/{id}/contacts`).
-   A pause stops every replica from taking its next contact. It ends the call in progress only
-   on the replica the request reaches: a call on another replica goes on until it ends, for
-   at most 15 minutes. A call that ends after the last `--once` is not carried, so with more
-   than one replica at the source, wait until no contact is `calling`.
+1. Pause each running or scheduled campaign at the source
+   (`POST /v1/agents/campaigns/{id}/pause`). Wait until none of its contacts is `in_progress`
+   there (`GET /v1/agents/campaigns/{id}/contacts?stage=in_progress`). A pause stops every
+   replica from taking its next contact, and a call in progress goes on until it ends, for at
+   most 15 minutes. A call that ends after the last `--once` is not carried: its contact
+   settles here with an `unknown` outcome.
 2. Run `replicate --from … --once` one last time, to pick up the last writes. The copy now
    holds every call the source made.
 3. Stop the source delivering. Do not pause the scheduled tasks there before that last
@@ -2445,16 +2522,16 @@ made here before the cut-over leave less room than the move brought tasks, the o
 and the rest stay paused and marked. The command prints how many; run it again once the user
 has made room.
 
-A campaign rings only from the router that started it, and `--resume` starts none. A campaign
-paused at the source in step 1 stays paused here and is not named. Start it here with
-`POST /v1/agents/campaigns/{id}/start` when it is to ring again. A campaign still running at the
-source at the last `--once` stays paused here, and `--resume` names it: a contact the source rang
-after that is still `pending` here, and a start here rings that contact again. Read its contacts
-at the source before you start it here. A campaign paused at the source that still holds contacts
-`calling` is named too, with how many: a start here rings them again.
+`--resume` resumes no campaign. A campaign paused at the source in step 1 stays paused here and
+is not named: resume it here with `POST /v1/agents/campaigns/{id}/resume` when it is to ring
+again. Every router here dials a running campaign, so a resumed one rings from here at once; one
+whose `start_at` has not come yet goes back to scheduled. A campaign still running or scheduled
+at the source at the last `--once` stays paused here, and `--resume` names it: a contact the
+source rang after that is still `enrolled` here, and a resume here rings that contact again.
+Read its contacts at the source before you resume it here.
 
 Do not run `--once` again after `--resume`. Every run reads the source and makes it the truth
-again: it overwrites what the cut-over resumed and started here with what the source has.
+again: it overwrites what was resumed here with what the source has.
 
 The customer is always the authenticated caller, never anything in the body or the query,
 so an export is the caller's own data and an import lands under the caller's own app
@@ -2478,7 +2555,9 @@ Changes are captured by a trigger per table writing into `data_changes`, gated o
 `data_change_capture`: with nobody moving, the hot path costs one index probe. Exporting
 starts the capture and reading a page refreshes it, so an abandoned move stops recording by
 itself after `ROUTER_DATA_MOVE_RETENTION`, and a cursor older than that is answered 410
-rather than silently missing writes. A change is numbered when it is written and seen when
+rather than silently missing writes. A start after the capture expired takes a change number of
+its own, kept in `data_change_capture.recorded_since`, which pruning keeps: a cursor below it is
+answered 410, and the export after it carries on from it. A change is numbered when it is written and seen when
 its transaction commits, so a transaction that commits late can hold a lower number than
 one already seen. Each transaction that records a change holds a shared advisory lock
 naming the highest number handed out before its first one, until it ends, and the cursor
@@ -2552,7 +2631,8 @@ which no SDK is generated from. Render it from the service's binary, whose error
 describes: `go run ./cmd/usage openapi`.
 
 The Swift client is generated from a filter rather than from the whole spec, and
-`generate.py --check` fails if anything in that filter is not marked `x-client-accessible`.
+`generate.py --check` fails if anything in that filter is not marked `x-client-accessible`,
+or if the committed client was generated from another version of the spec's client part.
 Dropping that mark is therefore the whole of removing an operation from the iOS SDK.
 
 The JavaScript client generates types and no runtime, because one package has to work in a

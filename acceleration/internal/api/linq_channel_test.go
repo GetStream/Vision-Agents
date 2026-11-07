@@ -301,6 +301,9 @@ func photoURLs(message map[string]any) []string {
 // A chat is one thread, so its messages are one thread channel and one episode card, in the
 // omni-channel the contact map gives the sender's number (T41).
 func (s *LinqChannelSuite) TestAChatIsOneThreadChannelAndOneIMessageCardInTheSendersOmniChannel() {
+	// record writes the card as on does (AI-2856).
+	s.config.EpisodeCardsRecord = true
+	s.Require().NoError(s.store.UpdateAgentConfig(context.Background(), &s.config))
 	chat := s.utils.uuid()
 	s.deliver(s.received(chat, s.line, "+12025550199", "first"), time.Now())
 	s.deliver(s.received(chat, s.line, "+12025550199", "second"), time.Now())

@@ -106,7 +106,9 @@ func (s *ResumeHistorySuite) TestASessionAskingForNothingReadsHistoryAsItAlwaysH
 	m := &Manager{}
 	ctx := s.T().Context()
 
-	s.Equal(ctx, m.restoring(ctx, Spec{}))
+	restoring, err := m.restoring(ctx, Spec{})
+	s.Require().NoError(err)
+	s.Equal(ctx, restoring)
 }
 
 // The levels a session's resume_history is read from, most specific first, each winning

@@ -68,6 +68,8 @@ type Server struct {
 	files map[string]map[string][]byte
 	// writes is what every code run leaves in its sandbox's file system, by path.
 	writes map[string][]byte
+	// answer, when set, writes the body every code run answers with.
+	answer func(w io.Writer)
 	// refuseDeletes answers every delete with a 500.
 	refuseDeletes bool
 	// looseLabels has a list ignore the labels it asks for.
@@ -121,6 +123,15 @@ func (s *Server) Writes(path string, data []byte) {
 		s.writes = map[string][]byte{}
 	}
 	s.writes[path] = data
+}
+
+// Answers has every code run from now on answer with the JSON body that answer writes, as
+// Daytona's toolbox answers with what the code printed, so an answer may be far larger than
+// anything held in memory. Nil is the toolbox's own answer, "ran\n" and exit code 0.
+func (s *Server) Answers(answer func(w io.Writer)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.answer = answer
 }
 
 // Stop stops a sandbox, as Daytona's auto-stop does.
@@ -399,6 +410,11 @@ func (s *Server) toolbox(w http.ResponseWriter, r *http.Request, id, rest string
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		s.ran = append(s.ran, id+": "+body.Code)
 		maps.Copy(s.files[id], s.writes)
+		if s.answer != nil {
+			w.Header().Set("Content-Type", "application/json")
+			s.answer(w)
+			return
+		}
 		answer(w, http.StatusOK, map[string]any{"result": "ran\n", "exitCode": 0})
 	case "process/execute":
 		answer(w, http.StatusOK, map[string]any{"result": "", "exitCode": 0})

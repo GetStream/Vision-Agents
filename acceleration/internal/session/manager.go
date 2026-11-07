@@ -18,6 +18,7 @@ import (
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/appconfig"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/audiofloor"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/auth"
 	persistent "github.com/GetStream/Vision-Agents/acceleration/internal/conversation"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/decisionrouter"
@@ -101,6 +102,10 @@ type ManagerOptions struct {
 	// FlowJudge is the Classifier target every agent's flow controller asks in place of a
 	// language model. Empty keeps the language model.
 	FlowJudge string
+	// AudioFloor is optional, and is the chorus-asr model an agent's flow controller asks as
+	// its own floor control says (Spec.FloorControl). An agent that chose none asks it
+	// nothing about turns.
+	AudioFloor *audiofloor.Client
 	// Phone is optional, and is what a session with a number transfers through.
 	Phone *phone.Service
 	// SpeculativeReplies has every agent start its reply before the flow controller has
@@ -285,7 +290,7 @@ func NewManager(options ManagerOptions) (*Manager, error) {
 		}
 	}
 	manager.titles = newTitler(options.LLM, written, options.Logger)
-	manager.cards = newCallCards(options.Store, options.Stream, options.Logger)
+	manager.cards = newCallCards(options.Store, manager.outcomes, options.Stream, options.Logger)
 	switch {
 	case options.Writer != nil:
 		manager.runtime = routing.NewRecorderOn(routing.Runtime, options.Writer, options.Pricer, options.Logger)
@@ -349,6 +354,7 @@ func (m *Manager) newSession(spec Spec, conv *persistent.Conversation, skills ha
 		// Postgres keeps microseconds. The live session sorts by the same instant as its
 		// row, or a cursor taken from one would hand the other back on the next page.
 		created:       opening.Truncate(time.Microsecond),
+		began:         time.Now(),
 		logger:        m.logger,
 		watchers:      map[uint64]*watcher{},
 		detachedGrace: m.options.DetachedGrace,
@@ -488,7 +494,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	if m.options.ResumeHistories != nil {
 		spec.ResumeHistory = spec.ResumeHistory.Over(m.options.ResumeHistories.ResumeHistory(ctx, spec.CustomerID))
 	}
-	reading := m.restoring(ctx, spec)
+	reading, err := m.restoring(ctx, spec)
+	if err != nil {
+		return nil, err
+	}
 	if spec.PersistConversation {
 		service, err := m.Conversations()
 		if err != nil {
@@ -780,6 +789,9 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 			ControllerTarget:   spec.ControllerTarget,
 			Judge:              m.options.Classifier,
 			JudgeTarget:        m.options.FlowJudge,
+			AudioFloor:         m.options.AudioFloor,
+			AudioFloorMode:     m.floorMode(created.id, spec),
+			EndOfTurn:          EndOfTurnOf(spec.FloorControl),
 			Skills:             skills,
 			Telephony:          line,
 			Destinations:       spec.destinations(),
@@ -948,7 +960,7 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (*Session, error) {
 	// The turns held until now, the greeting's among them, are written after it.
 	if created.records != nil {
 		created.closers = append(created.closers, func() {
-			m.records.Closed(created.id, time.Now().UTC(), created.endReason())
+			m.records.Closed(created.id, time.Now().UTC(), created.EndReason())
 		})
 		m.records.Opened(sessionRow(created), toolRows(created))
 		created.startRecording()
