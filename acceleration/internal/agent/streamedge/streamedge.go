@@ -213,8 +213,8 @@ func (e *Edge) Join(ctx context.Context) error {
 	return nil
 }
 
-// joinCall signals the join of call. A refusal for a server that runs no video is also
-// agent.ErrNoVideo.
+// joinCall signals the join of call. A refusal for an account or a server that runs no video
+// is also agent.ErrNoVideo.
 func (e *Edge) joinCall(ctx context.Context, call *rtc.Call) (*sfu_events.JoinResponse, error) {
 	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
 		e.listen(remote)
@@ -228,22 +228,27 @@ func (e *Edge) joinCall(ctx context.Context, call *rtc.Call) (*sfu_events.JoinRe
 	return joined, nil
 }
 
-// Stream's answer to a JoinCall on a server that runs no video: code 17, Not Allowed
-// (https://getstream.io/docs/platform/api-error-codes/), with this text in its message. The
-// code alone is not enough: Stream answers 17 to a join a call type's permissions refuse, or
-// to a single-use call that has ended, as well.
-const (
-	codeNotAllowed = 17
-	noVideoMessage = "video is not enabled on this server"
-)
+// codeNotAllowed is the code Stream refuses a video request with when the customer's account
+// has Video off or the server its app is on runs none: 17, Not Allowed
+// (https://getstream.io/docs/platform/api-error-codes/). The code alone is not enough: Stream
+// answers 17 to a join a call type's permissions refuse, or to a single-use call that has
+// ended, as well.
+const codeNotAllowed = 17
 
-// videoOff reports whether err is Stream refusing a join because the server runs no video.
+// noVideoMessages are the words Stream's message says either refusal in, after the name of
+// the request it refused.
+var noVideoMessages = []string{"video is not enabled for your account", "video is not enabled on this server"}
+
+// videoOff reports whether err is Stream refusing a join because the customer's account or
+// its app's server runs no video.
 func videoOff(err error) bool {
 	refused, ok := errors.AsType[*coordinator.Error](err)
-	return ok && refused.Code == codeNotAllowed && strings.Contains(refused.Message, noVideoMessage)
+	return ok && refused.Code == codeNotAllowed && slices.ContainsFunc(noVideoMessages, func(words string) bool {
+		return strings.Contains(refused.Message, words)
+	})
 }
 
-// noVideo is a join refused for a server that runs no video. It reads as the refusal it wraps,
+// noVideo is a join refused for an account or a server that runs no video. It reads as the refusal it wraps,
 // so the answer a caller gets keeps Stream's words, and it is agent.ErrNoVideo.
 type noVideo struct{ error }
 

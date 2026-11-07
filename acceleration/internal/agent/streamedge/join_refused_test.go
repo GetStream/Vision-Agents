@@ -64,6 +64,16 @@ func (s *StreamEdgeSuite) TestAJoinRefusedForAServerWithNoVideoIsNoVideoInStream
 		`"video is not enabled on this server"`, err.Error())
 }
 
+func (s *StreamEdgeSuite) TestAJoinRefusedForAnAccountWithVideoOffIsNoVideo() {
+	// Catches an account with Video off, the same refusal at the account rather than the
+	// server, counted as the router failing.
+	err := s.joinAnswered(http.StatusForbidden,
+		`{"code":17,"message":"JoinCall failed with error: \"video is not enabled for your account\"","StatusCode":403}`)
+
+	s.ErrorIs(err, agent.ErrNoVideo)
+	s.ErrorContains(err, `message: JoinCall failed with error: "video is not enabled for your account"`)
+}
+
 func (s *StreamEdgeSuite) TestAJoinThePermissionsRefuseIsNotNoVideo() {
 	// Catches every Not Allowed answer taken for a server with no video: a call type's grants
 	// refuse a join under the same code.

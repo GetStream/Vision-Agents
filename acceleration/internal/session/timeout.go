@@ -41,7 +41,7 @@ const (
 	// limits refused the work.
 	EndCreateNoCredit EndReason = "create_no_credit"
 	// EndCreateNoVideo is a session Create gave up on because its call refused the agent: the
-	// Stream server the customer's app is on runs no video (agent.ErrNoVideo).
+	// customer's Stream account has Video off, or their app's server runs none (agent.ErrNoVideo).
 	EndCreateNoVideo EndReason = "create_no_video"
 	// EndAgentFailed is a session whose agent left the call by itself, or answered no turn, for
 	// a failure of the router's own, such as its playback queue filling.
@@ -120,8 +120,8 @@ var EndReasons = []EndInfo{
 	{EndCreateConfigRefused, "a setting of the session was refused, or no model it names is allowed",
 		FaultCustomerConfig, StageStarting, true},
 	{EndCreateNoCredit, "the credit or spend limits refused the session's work", FaultCustomerCredit, StageStarting, true},
-	{EndCreateNoVideo, "the call refused the agent: the app's Stream server runs no video", FaultCustomerConfig,
-		StageStarting, true},
+	{EndCreateNoVideo, "the call refused the agent: the app's Stream account or server has no video",
+		FaultCustomerConfig, StageStarting, true},
 	{EndAgentFailed, "the agent left the call or answered no turn for a failure of the router's own",
 		FaultRouter, StageConversation, true},
 	{EndModelFailed, "a model vendor failed: the agent left the call or answered no turn", FaultVendor, StageConversation, true},
