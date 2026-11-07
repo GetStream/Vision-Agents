@@ -122,8 +122,8 @@ func TestKnowledgeURLsAreNotServedWithoutRedis(t *testing.T) {
 func TestTheRoutersLogKeepsAProvidersReasonAndNotTheKeyItEchoed(t *testing.T) {
 	key := rand.Text()
 	var out bytes.Buffer
-	logger := newLogger(&out, slog.LevelInfo)
-	logger.Debug("below the level")
+	logger := newLogger(&out, slog.LevelWarn)
+	logger.Info("below the level")
 	logger.Error("agent failure", "error", errors.New("502 Bad Gateway: upstream error: failed to connect to local service\n"+
 		"request headers: Authorization: Bearer sk-test-"+key))
 

@@ -263,6 +263,18 @@ func TestRedactLogAttrKeepsTheStackOfAnErrorItRedacts(t *testing.T) {
 	}
 }
 
+// A log line has no cap: a long error is logged whole, as it was before, with only its key
+// taken out.
+func TestRedactLogAttrKeepsALongErrorWhole(t *testing.T) {
+	err, key := echoedKey()
+	long := fmt.Errorf("%s: %w", strings.Repeat("upstream said no. ", 600), err)
+	line := logged(t, true, "agent failure", "error", long)
+	if strings.Contains(line, key) || strings.Count(line, "upstream said no.") != 600 ||
+		!strings.Contains(line, "request headers: [redacted]") {
+		t.Fatalf("the long error kept the key or lost its text: %d bytes", len(line))
+	}
+}
+
 // The control is the line a text handler with no ReplaceAttr prints, which is the line the
 // router printed before RedactLogAttr: with nothing to redact, it is the same byte for byte.
 func TestRedactLogAttrLeavesALineWithNoKeyAsItWas(t *testing.T) {
