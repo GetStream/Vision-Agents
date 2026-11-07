@@ -739,10 +739,6 @@ type transcribing struct {
 	wordsAlone bool
 	interims   bool
 	languages  []string
-	// rulesAlone opens each as a floor that rules alone (NewFloor), whose words another
-	// transcriber writes, asking it for its final with finalize.
-	rulesAlone bool
-	finalize   func() (bool, error)
 	// phase and at keep the voice going from one frame to the next, and noise the line's
 	// noise, floor loud.
 	phase float64
@@ -784,16 +780,12 @@ func (s *transcribing) reopen(now func() time.Time) {
 }
 
 func (s *transcribing) openReading(now func() time.Time) {
-	if s.rulesAlone {
-		s.transcriber = NewFloor(s.client, s.languages, s.finalize, slog.New(slog.DiscardHandler))
-	} else {
-		s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
-		s.transcriber.interims = s.interims
-	}
+	s.transcriber = NewTranscriber(s.client, "", s.languages, slog.New(slog.DiscardHandler))
 	s.transcriber.now = now
 	if s.wordsAlone {
 		s.transcriber.AskOnPauses(nil)
 	}
+	s.transcriber.interims = s.interims
 	s.Require().NoError(s.transcriber.Start(context.Background()))
 	transcriber := s.transcriber
 	s.T().Cleanup(func() { s.Require().NoError(transcriber.Close()) })

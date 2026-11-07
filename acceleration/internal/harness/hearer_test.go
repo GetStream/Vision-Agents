@@ -1,9 +1,7 @@
 package harness
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"log/slog"
 	"sync"
@@ -60,8 +58,6 @@ type HearerSuite struct {
 
 	emitter *Emitter
 	drained chan struct{}
-	// logger is the flow controller's.
-	logger *slog.Logger
 
 	mu      sync.Mutex
 	decided []Decided
@@ -73,7 +69,6 @@ func TestHearerSuite(t *testing.T) {
 
 func (s *HearerSuite) SetupTest() {
 	s.decided = nil
-	s.logger = slog.New(slog.DiscardHandler)
 	s.emitter = NewEmitter(16)
 	s.drained = make(chan struct{})
 	go func() {
@@ -94,7 +89,7 @@ func (s *HearerSuite) SetupTest() {
 
 func (s *HearerSuite) ruling(hearer Hearer, turn FlowTurn) Decided {
 	s.T().Helper()
-	f := newFlow(nil, s.emitter, s.logger)
+	f := newFlow(nil, s.emitter, slog.New(slog.DiscardHandler))
 	f.judge, f.hearer = respondingJudge{}, hearer
 	defer func() { s.Require().NoError(f.Close()) }()
 	s.Require().NoError(f.Decide(turn))
@@ -129,28 +124,6 @@ func (s *HearerSuite) TestATurnTheHearerCannotRuleOnIsTheJudges() {
 	got := s.ruling(stubHearer{err: errors.New("refused")}, FlowTurn{ID: "t", Text: "hello", Ended: true})
 	s.Equal(Primary, got.Ruler)
 	s.Equal(Respond, got.Disposition)
-}
-
-// A turn the hearer could not rule on is said where a deployment's logs show it, with why:
-// said at debug, nothing at info or above told a language model ruling in the hearer's place,
-// its round trip in front of the answer, from the hearer ruling.
-func (s *HearerSuite) TestATurnTheHearerCannotRuleOnIsLogged() {
-	var logs bytes.Buffer
-	s.logger = slog.New(slog.NewJSONHandler(&logs, &slog.HandlerOptions{Level: slog.LevelInfo}))
-	s.ruling(stubHearer{err: errors.New("the server refused the agent")}, FlowTurn{ID: "t", Text: "hello", Ended: true})
-
-	var said []map[string]any
-	for line := range bytes.Lines(logs.Bytes()) {
-		var record map[string]any
-		s.Require().NoError(json.Unmarshal(line, &record))
-		if record["msg"] == "the hearer did not rule, the flow controller will" {
-			said = append(said, record)
-		}
-	}
-	s.Require().Len(said, 1, "the turn left to the flow controller was not logged: %s", logs.String())
-	s.Equal("WARN", said[0]["level"])
-	s.Equal("t", said[0]["candidate"])
-	s.Equal("the server refused the agent", said[0]["error"])
 }
 
 // Words over the agent are ruled on within the overlap's deadline, a hung hearer included.

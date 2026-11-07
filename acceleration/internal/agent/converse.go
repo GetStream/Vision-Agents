@@ -251,8 +251,6 @@ type converse struct {
 	// stops is, for each participant, the utterance a check over the agent stopped it on
 	// while they talked on, and the words it was ruled on (Overheard): spent on the stop.
 	stops map[string]stoppedOn
-	// words is told of every turn set aside, and why (wordLedger). Nil tells nobody.
-	words *wordLedger
 }
 
 // stoppedOn is an utterance a stop over the agent was ruled on, and the words so far it was
@@ -517,7 +515,6 @@ func (c *converse) stopSpent(ready candidate) (Action, bool) {
 		return Action{}, false
 	}
 	c.cadence.Resolve(ready.ID, false)
-	c.words.spent(ready.Participant.ID, ready.Utterance, ready.Text)
 	shown, line := c.closeLine(ready.Participant.ID, ready.Text, true)
 	sendHeard(c.emitter, c.onHeard, Heard{Participant: ready.Participant, Text: shown, Language: ready.Language, LineID: line})
 	return c.decide(Action{
@@ -854,7 +851,6 @@ func (c *converse) Ruled(ruling harness.Decided, state floor) (actions []Action)
 		// The transcript lets go of the words it was writing, and so does the line. What is
 		// let go of is this line, not the one heard before it.
 		shown, line := c.closeLine(ready.Participant.ID, ready.Text, false)
-		c.words.setAside(ready.Participant.ID, ready.Text, ignoredAs(ready.Text, !state.Quiet && overlapNoise(ready.Text)), ignore)
 		return []Action{c.decide(Action{
 			Kind:        ActIgnore,
 			Reason:      ignore,
@@ -1440,8 +1436,6 @@ func (c *converse) forgetQueuedAnsweredOver(ready candidate) string {
 		})
 	}
 	staleQueuedTurns.Inc()
-	// Its words go to the reply model with the newer turn's: in it, or in its note.
-	c.words.answered(held.candidate.Participant.ID, held.candidate.Text)
 	c.logger.Info("dropped a queued turn the caller has said more after",
 		"turn", held.candidate.ID, "participant", held.candidate.Participant.ID,
 		"age_ms", time.Since(held.candidate.ReadyAt).Milliseconds())
@@ -1614,23 +1608,17 @@ func joinOverlapping(held, more string) string {
 func (c *converse) hold(held queuedCandidate) {
 	c.mu.Lock()
 	released := ""
-	var replaced candidate
 	if c.queued != nil {
 		c.logger.Debug("dropping a turn that never got answered",
 			"candidate", c.queued.candidate.ID, "text", c.queued.candidate.Text)
 		if c.queued.candidate.ID != held.candidate.ID {
 			released = c.queued.candidate.ID
-			replaced = c.queued.candidate
 		}
 	}
 	c.queued = &held
 	c.mu.Unlock()
 	if released != "" {
 		c.cadence.ReleaseHeld(released)
-		// The same run of speech grown or restated is the turn kept, and says its words.
-		if replaced.Participant.ID != held.candidate.Participant.ID || !revisesQueued(replaced, held.candidate) {
-			c.words.setAside(replaced.Participant.ID, replaced.Text, fateReplaced, "a turn queued behind the reply, which a later one took the place of")
-		}
 	}
 }
 

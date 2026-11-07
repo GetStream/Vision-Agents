@@ -26,11 +26,7 @@ const (
 
 // waitsOnATool has the caller ask for an order, the model reach for a tool without a word, a
 // hold line said while the tool runs, and the answer once it is released.
-func (s *AgentSuite) waitsOnATool() { s.waitsOnAToolAsked(nil) }
-
-// waitsOnAToolAsked is waitsOnATool with the caller's question asked by ask, a settled turn
-// the transcriber reports when it is nil.
-func (s *AgentSuite) waitsOnAToolAsked(ask func(stt.Participant, string)) {
+func (s *AgentSuite) waitsOnATool() {
 	s.ownsTools("")
 	s.join(false)
 	runner := &holdingTool{began: make(chan struct{}), release: make(chan struct{})}
@@ -42,12 +38,9 @@ func (s *AgentSuite) waitsOnAToolAsked(ask func(stt.Participant, string)) {
 	s.model.composes = []string{"Pulling up order twelve now."}
 	s.asksFor("lookup_order", `{"order":"12"}`)
 	participant := stt.Participant{ID: "alice"}
-	if ask == nil {
-		s.speak(participant)
-		ask = s.says
-	}
+	s.speak(participant)
 
-	ask(participant, "where is my order")
+	s.says(participant, "where is my order")
 
 	s.eventually(func() bool { return s.spokenText("Pulling up order twelve now.") }, "the hold line was never said")
 	release()
@@ -126,13 +119,13 @@ func (s *AgentSuite) TestWhatIsSaidAroundAToolIsSaidAsBefore() {
 	s.Equal([]string{"back|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
 }
 
-// Acting on chorus-asr while another transcriber writes the callers' words, the line said while
-// the tool runs is the agent's own turn, as acting with chorus-asr's.
-func (s *AgentSuite) TestWhatIsSaidAroundAToolActingWithAnotherTranscriberIsTheAgentsOwnTurn() {
-	s.floorRules(endsAtOnce)
-	s.waitsOnAToolAsked(s.asksOverTheFloor)
+// Acting on chorus-asr while another transcriber hears the callers, the line said while the
+// tool runs is said as before, as a murmur.
+func (s *AgentSuite) TestWhatIsSaidAroundAToolActingWithAnotherTranscriberIsSaidAsBefore() {
+	s.actsWithAnotherTranscriber()
+	s.waitsOnATool()
 
-	s.Equal([]string{"own|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
+	s.Equal([]string{"back|Pulling up order twelve now.|true", "tool|It ships tomorrow.|true"}, s.voiceRequests())
 }
 
 // Acting on chorus-asr, the line said while the tool runs is the agent's own turn, which a

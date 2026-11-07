@@ -274,10 +274,6 @@ func (t *Transcriber) standsOver(heard int64, cap time.Duration) bool {
 		ended.Ended, ended.Paused = true, t.quiet
 		p.ended, p.endedAt, p.standing = &ended, heard, nil
 		epoch := p.epoch
-		if t.words != nil {
-			t.cutLocked(pauseCheck{epoch: epoch, utterance: p.utterance, participant: p.participant,
-				length: time.Duration(heard-t.start) * frame, asked: time.Now()}, time.Now().Add(-t.quiet))
-		}
 		t.mu.Unlock()
 		t.running.Add(1)
 		go func() {
@@ -465,13 +461,12 @@ func (t *Transcriber) checkOver(asker Asker, c overCheck) {
 		}
 		agent := Agent{Instructions: turn.Instructions, Tools: turn.Tools, Languages: t.languages}
 		var answer Answer
-		answer, said, err = t.decideWords(ctx, agent, turnOf(turn), turn.Audio)
+		answer, said, err = t.client.DecideWords(ctx, agent, turnOf(turn), turn.Audio)
 		if err != nil {
 			return Check{}, err
 		}
 		return asker.Hearer().rule(policy, turn, answer)
 	}()
-	t.checked(err)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(c.asked).Seconds())
@@ -567,11 +562,9 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		}
 		agent := Agent{Instructions: turn.Instructions, Tools: turn.Tools, Languages: t.languages}
 		var answer Answer
-		if c.first && t.words == nil {
+		if c.first {
 			answer, said, err = t.client.DecideWords(ctx, agent, turnOf(turn), turn.Audio)
 		} else {
-			// The others' words are written already, and a floor that rules alone has the
-			// other transcriber's.
 			answer, err = t.client.Decide(ctx, agent, turnOf(turn), turn.Audio)
 		}
 		if err != nil {
@@ -579,7 +572,6 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		}
 		return asker.Hearer().rule(policy, turn, answer)
 	}()
-	t.checked(err)
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err == nil {
 		checkSeconds.Observe(time.Since(c.asked).Seconds())
@@ -666,23 +658,16 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		p.counted = true
 	}
 	// A stop is handed over with the pause's words, which the agent tells its own echo by:
-	// the first check's, now if they are written, and otherwise once they are (await). A floor
-	// that rules alone has the other transcriber's so far.
+	// the first check's, now if they are written, and otherwise once they are (await).
 	if stopping != nil {
-		switch {
-		case t.words != nil:
-			stopping.Words, stopping.AudioMs, stopping.WordsMs = t.words.soFar().Text, milliseconds(c.length), milliseconds(time.Since(c.asked))
-		case p.words == nil:
+		if p.words == nil {
 			p.stopping, stopping = stopping, nil
-		default:
+		} else {
 			stopping.Words, stopping.AudioMs, stopping.WordsMs = *p.words, p.audioMs, p.wordsMs
 		}
 	}
 	if checked.Ended && p.ended == nil {
 		p.ended, p.endedAt = &Ruled{Check: checked, Speaking: turn.Speaking, Paused: c.paused, Utterance: c.utterance}, c.at
-		if t.words != nil {
-			t.cutLocked(c, c.asked.Add(-c.paused))
-		}
 	} else if !checked.Ended && p.resumed {
 		// Speech came while the check was out, and it did not end the turn: the pause is
 		// over. Its words, if asked for, are still the utterance's so far (await).
@@ -763,7 +748,6 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 		asker.Overheard(c.participant, *stopping)
 	}
 	if text == "" {
-		t.noted(c.utterance, words.Noise)
 		t.finish(c.epoch)
 		return
 	}
@@ -822,18 +806,16 @@ func (t *Transcriber) finish(epoch int64) {
 			"participant", participant.ID, "utterance", utterance, "speaking", ruled.Speaking, "paused_ms", ruled.Paused.Milliseconds(),
 			"disposition", ruled.Ruling.Disposition, "floor", ruled.Ruling.Floor, "noise", noise)
 		t.sent.ended(utterance)
-		t.unwritten(participant, utterance, "")
 		return
 	}
 	asker.Ruled(participant, ruled)
-	provider, model := t.writer()
 	t.send(stt.Transcript{
 		Participant:      participant,
 		Mode:             stt.ModeFinal,
 		Utterance:        utterance,
 		Text:             ruled.Words,
-		Provider:         provider,
-		Model:            model,
+		Provider:         ProviderName,
+		Model:            t.model,
 		ProcessingTimeMs: ruled.WordsMs,
 		AudioDurationMs:  ruled.AudioMs,
 	})
