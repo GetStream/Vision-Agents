@@ -9,7 +9,7 @@ The per-language half of [sdk](../sdk/SKILL.md), server side only. It records th
 [`sdks/rust`](../../../sdks/rust) already follows, so a change lands consistently rather than
 re-litigating them.
 
-Edition 2024, MSRV 1.88 (async closures and let chains are used). One crate, `vision-agents`,
+Edition 2024, MSRV 1.88 (async closures and let chains are used). One crate, `stream-agents`,
 plus the `generate` binary in the same workspace, which is not published.
 
 ## Dependencies
@@ -68,7 +68,7 @@ hand-edit the generated files.
 
 ## Errors
 
-One `thiserror` enum, `vision_agents::Error`: `Router(Box<RouterFailure>)`,
+One `thiserror` enum, `stream_agents::Error`: `Router(Box<RouterFailure>)`,
 `Transport`, `Decode`, `Socket`, `Failed{operation, message}` (a job or socket that reported
 failure), `Closed`, `Configuration` (refused before any request), `Folder`, `Io`.
 `Error::status()` answers the HTTP status when there is one. A 503 from `/health` is an error

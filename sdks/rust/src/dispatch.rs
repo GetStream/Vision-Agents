@@ -202,8 +202,8 @@ impl Hosting {
 /// Server side only: a worker is offered other people's callers.
 ///
 /// ```no_run
-/// # async fn example(client: vision_agents::Client) -> vision_agents::Result<()> {
-/// use vision_agents::{Agent, Dispatch};
+/// # async fn example(client: stream_agents::Client) -> stream_agents::Result<()> {
+/// use stream_agents::{Agent, Dispatch};
 ///
 /// let dispatch = Dispatch::new(client);
 /// dispatch.wait_for_call(|call| async move {
@@ -302,8 +302,8 @@ impl Dispatch {
     /// takes the router's default of 30 seconds. Call before [`Dispatch::run`].
     ///
     /// ```no_run
-    /// # async fn example(client: vision_agents::Client) -> vision_agents::Result<()> {
-    /// use vision_agents::Dispatch;
+    /// # async fn example(client: stream_agents::Client) -> stream_agents::Result<()> {
+    /// use stream_agents::Dispatch;
     ///
     /// let agent = client.agent("my-agent");
     /// agent.tools.register(

@@ -17,8 +17,8 @@ use axum::extract::ws::{Message, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, HeaderName, HeaderValue, Method, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use serde_json::{Value, json};
+use stream_agents::{Client, ClientOptions, StreamApp};
 use tokio::sync::mpsc;
-use vision_agents::{Client, ClientOptions, StreamApp};
 
 /// One request as it arrived.
 #[derive(Debug, Clone)]

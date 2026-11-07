@@ -7,7 +7,7 @@ use crate::types;
 /// each. Server side only.
 ///
 /// ```no_run
-/// # async fn example(client: vision_agents::Client, request: vision_agents::types::SimulationRequest) -> vision_agents::Result<()> {
+/// # async fn example(client: stream_agents::Client, request: stream_agents::types::SimulationRequest) -> stream_agents::Result<()> {
 /// let simulation = client.simulations().create(&request).await?;
 /// let run = client.simulations().run(&simulation.id).await?;
 /// let run = client.simulations().runs.get(&run.id).await?;

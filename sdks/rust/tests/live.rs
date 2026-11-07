@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use vision_agents::{Agent, Ask, Client, ClientOptions, StreamApp, WatchOptions, types};
+use stream_agents::{Agent, Ask, Client, ClientOptions, StreamApp, WatchOptions, types};
 
 fn client() -> Option<Client> {
     let url = std::env::var("VISION_AGENTS_URL")

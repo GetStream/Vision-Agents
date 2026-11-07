@@ -4,8 +4,8 @@ use std::time::Duration;
 
 use axum::http::Method;
 use serde_json::json;
+use stream_agents::{Error, Session, ToolCall, Tools, WatchOptions, types};
 use support::{Server, item, response, session};
-use vision_agents::{Error, Session, ToolCall, Tools, WatchOptions, types};
 
 fn weather() -> Tools {
     let tools = Tools::new();
@@ -290,7 +290,7 @@ async fn a_conversation_and_its_memories_are_deleted_apart_from_stopping_it() {
     );
     assert!(matches!(
         client.memories().truncate("").await,
-        Err(vision_agents::Error::Configuration(_))
+        Err(stream_agents::Error::Configuration(_))
     ));
 }
 
@@ -466,7 +466,7 @@ async fn a_rewind_to_nothing_is_refused_before_it_is_sent() {
 
     assert!(matches!(
         refused,
-        Err(vision_agents::Error::Configuration(_))
+        Err(stream_agents::Error::Configuration(_))
     ));
     assert!(server.seen().is_empty());
 }
@@ -565,7 +565,7 @@ async fn an_agents_conversations_are_listed_searched_and_opened_by_name() {
 
     let page = agent
         .sessions
-        .query(vision_agents::Query {
+        .query(stream_agents::Query {
             project_id: Some("p".into()),
             state: Some("live".into()),
             cursor: Some("c1".into()),

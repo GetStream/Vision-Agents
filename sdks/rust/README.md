@@ -1,4 +1,4 @@
-# vision-agents
+# stream-agents
 
 The Rust client for the Stream acceleration backend, for a server that runs agents.
 
@@ -8,7 +8,7 @@ function calling, because the functions are here.
 
 ```toml
 [dependencies]
-vision-agents = { path = "sdks/rust" }
+stream-agents = { path = "sdks/rust" }
 tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
 ```
 
@@ -18,7 +18,7 @@ Rust 1.88 or newer, on tokio. TLS is rustls; there is no OpenSSL and no media st
 
 ```rust
 use serde_json::json;
-use vision_agents::{Agent, Tools, types};
+use stream_agents::{Agent, Tools, types};
 
 let tools = Tools::new();
 tools.register(
@@ -63,7 +63,7 @@ A tool declared with `register_with_tool_call_context` says how the backend trea
 and is handed the call it runs for:
 
 ```rust
-use vision_agents::{Error, ToolCall, types};
+use stream_agents::{Error, ToolCall, types};
 
 tools.register_with_tool_call_context(
     types::SessionTool {
@@ -117,7 +117,7 @@ agent.join().await?.within(async |session| {
 ## Who is calling
 
 ```rust
-use vision_agents::{Client, ClientOptions};
+use stream_agents::{Client, ClientOptions};
 
 // On your own server: STREAM_API_KEY and STREAM_API_SECRET.
 let api = Client::from_env()?;
@@ -152,7 +152,7 @@ router's envelope, such as a proxy's error page, is the message, and `kind`, `co
 `doc_url` are left empty.
 
 ```rust
-if let Err(vision_agents::Error::Router(failure)) = api.get_session("s1").await {
+if let Err(stream_agents::Error::Router(failure)) = api.get_session("s1").await {
     eprintln!("{}: {} (request {})", failure.code, failure.message, failure.request_id);
 }
 ```
@@ -164,7 +164,7 @@ out and the router pushes the work down the connection, so nothing you run has t
 reachable.
 
 ```rust
-use vision_agents::{Agent, Client, Dispatch, types};
+use stream_agents::{Agent, Client, Dispatch, types};
 
 let dispatch = Dispatch::with_capacity(Client::from_env()?, 4);
 
@@ -294,7 +294,7 @@ api.agent("jean").update_config(&types::AgentConfigPatch {
 ## Skills and a sandbox
 
 ```rust
-use vision_agents::{Harness, Skill, daytona};
+use stream_agents::{Harness, Skill, daytona};
 
 let agent = Agent::new("jean").harness(Harness {
     vm: Some(daytona()),
@@ -309,7 +309,7 @@ session opened from the config runs it.
 ## Reading conversations back
 
 ```rust
-use vision_agents::Query;
+use stream_agents::Query;
 
 let sessions = &api.agent("support").sessions;
 let page = sessions.query(Query { state: Some("live".into()), ..Default::default() }).await?;

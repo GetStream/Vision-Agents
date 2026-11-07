@@ -27,8 +27,8 @@ pub const USER_KEY: &str = "user_id";
 /// arrives here are the events saying so.
 ///
 /// ```no_run
-/// # async fn example() -> vision_agents::Result<()> {
-/// use vision_agents::Agent;
+/// # async fn example() -> stream_agents::Result<()> {
+/// use stream_agents::Agent;
 ///
 /// let agent = Agent::new("simple_voice_ai")
 ///     .cost_tracking([("env", "production")])

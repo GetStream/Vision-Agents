@@ -2,8 +2,8 @@ mod support;
 
 use axum::http::Method;
 use serde_json::json;
+use stream_agents::{Ask, Error, Recording, Router, types};
 use support::Server;
-use vision_agents::{Ask, Error, Recording, Router, types};
 
 fn router(server: &Server) -> Router {
     server.client().router("fast").tags([("env", "test")])

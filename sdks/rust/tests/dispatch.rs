@@ -6,12 +6,12 @@ use std::time::Duration;
 
 use axum::http::Method;
 use serde_json::json;
-use support::{Server, claims, response, session};
-use tokio::sync::mpsc;
-use vision_agents::{
+use stream_agents::{
     Agent, AgentRef, Client, Dispatch, Error, InboundCall, InboundImage, InboundMessage, ToolCall,
     types,
 };
+use support::{Server, claims, response, session};
+use tokio::sync::mpsc;
 
 fn stream_support(client: &Client) -> AgentRef {
     let agent = client.agent("stream-support");
@@ -591,7 +591,7 @@ async fn hosting_payments(
     server: &Server,
 ) -> (
     Dispatch,
-    tokio::task::JoinHandle<vision_agents::Result<()>>,
+    tokio::task::JoinHandle<stream_agents::Result<()>>,
     support::Accepted,
     serde_json::Value,
 ) {

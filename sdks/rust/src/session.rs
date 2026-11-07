@@ -356,7 +356,7 @@ impl Session {
     /// `async with` of the other SDKs.
     ///
     /// ```no_run
-    /// # async fn example(agent: vision_agents::Agent) -> vision_agents::Result<()> {
+    /// # async fn example(agent: stream_agents::Agent) -> stream_agents::Result<()> {
     /// agent.join().await?.within(async |session| {
     ///     session.responses.create("greet the user in one short sentence").await?;
     ///     Ok(())

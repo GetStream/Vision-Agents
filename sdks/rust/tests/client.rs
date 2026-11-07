@@ -2,8 +2,8 @@ mod support;
 
 use axum::http::Method;
 use serde_json::json;
+use stream_agents::{Client, ClientOptions, Error, ListResponsesQuery, RouterFailure, types};
 use support::{SECRET, Server, claims, refusal};
-use vision_agents::{Client, ClientOptions, Error, ListResponsesQuery, RouterFailure, types};
 
 #[tokio::test]
 async fn a_router_with_nothing_in_front_is_told_the_customer() {
@@ -119,8 +119,8 @@ async fn the_proxy_is_given_the_credential_its_own_way() {
 
 #[test]
 fn a_client_that_names_no_router_goes_to_the_hosted_one() {
-    if std::env::var(vision_agents::URL_ENV).is_ok()
-        || std::env::var(vision_agents::REGION_ENV).is_ok()
+    if std::env::var(stream_agents::URL_ENV).is_ok()
+        || std::env::var(stream_agents::REGION_ENV).is_ok()
     {
         return;
     }
@@ -132,7 +132,7 @@ fn a_client_that_names_no_router_goes_to_the_hosted_one() {
     })
     .unwrap();
 
-    assert_eq!(api.url(), vision_agents::DEFAULT_URL);
+    assert_eq!(api.url(), stream_agents::DEFAULT_URL);
 }
 
 #[test]
@@ -699,7 +699,7 @@ async fn a_monitoring_link_carries_a_token_for_a_listener() {
     let server = Server::start().await;
     let link = server
         .stream()
-        .monitor_url(&vision_agents::Call::new("demo"), "monitor-s1", "Monitor")
+        .monitor_url(&stream_agents::Call::new("demo"), "monitor-s1", "Monitor")
         .unwrap();
 
     let parsed = url::Url::parse(&link).unwrap();

@@ -5,8 +5,8 @@ use std::time::Duration;
 
 use axum::http::Method;
 use serde_json::{Value, json};
+use stream_agents::{Agent, Harness, InboundCall, InboundMessage, Session, Skill, folder, types};
 use support::{Server, config, connection, connections, refusal, session};
-use vision_agents::{Agent, Harness, InboundCall, InboundMessage, Session, Skill, folder, types};
 
 fn agent(server: &Server, name: &str) -> Agent {
     Agent::new(name)
@@ -17,7 +17,7 @@ fn agent(server: &Server, name: &str) -> Agent {
 /// Runs `open` while playing the router's side of the socket it opens.
 async fn opened<F>(server: &Server, open: F) -> (Session, support::Accepted)
 where
-    F: Future<Output = vision_agents::Result<Session>> + Send + 'static,
+    F: Future<Output = stream_agents::Result<Session>> + Send + 'static,
 {
     let opening = tokio::spawn(open);
     let socket = server.accept().await;
@@ -66,7 +66,7 @@ async fn joining_starts_voice_on_the_sessions_own_call_and_carries_the_agents_co
     assert!(session.voice_started());
     assert_eq!(
         session.call(),
-        vision_agents::Call {
+        stream_agents::Call {
             id: "s1".into(),
             kind: "agent".into()
         }
@@ -79,7 +79,7 @@ fn subagent_and_sandbox() -> Harness {
     harness
         .subagents
         .insert("default".into(), "openai/gpt-5.6".into());
-    harness.vm = Some(vision_agents::daytona());
+    harness.vm = Some(stream_agents::daytona());
     harness
 }
 
@@ -227,7 +227,7 @@ async fn an_agents_config_is_patched_with_only_what_was_set() {
     );
     assert!(matches!(
         missing.update_config(&Default::default()).await,
-        Err(vision_agents::Error::Configuration(_))
+        Err(stream_agents::Error::Configuration(_))
     ));
 }
 
@@ -313,7 +313,7 @@ async fn an_inbound_call_naming_no_session_is_refused() {
         .await
         .unwrap_err();
 
-    assert!(matches!(refused, vision_agents::Error::Configuration(_)));
+    assert!(matches!(refused, stream_agents::Error::Configuration(_)));
     assert!(server.seen().is_empty());
 }
 
@@ -426,7 +426,7 @@ async fn an_outbound_call_needs_both_numbers() {
         .await
         .unwrap_err();
 
-    assert!(matches!(refused, vision_agents::Error::Configuration(_)));
+    assert!(matches!(refused, stream_agents::Error::Configuration(_)));
     assert!(server.seen().is_empty());
 }
 
@@ -478,7 +478,7 @@ async fn a_conversation_held_in_writing_has_no_call_to_monitor() {
     assert!(!session.voice_started());
     assert!(matches!(
         jean.monitor_url(&session),
-        Err(vision_agents::Error::Configuration(_))
+        Err(stream_agents::Error::Configuration(_))
     ));
 }
 
@@ -879,11 +879,11 @@ fn a_knowledge_base_belongs_to_a_stored_config() {
 
 #[test]
 fn a_name_becomes_something_a_call_can_be_joined_under() {
-    assert_eq!(vision_agents::user_id_of("Jean Luc!"), "jean-luc");
-    assert_eq!(vision_agents::user_id_of("¡!"), "vision-agent");
+    assert_eq!(stream_agents::user_id_of("Jean Luc!"), "jean-luc");
+    assert_eq!(stream_agents::user_id_of("¡!"), "vision-agent");
 }
 
-async fn synced_connectors(server: &Server, declaration: &str) -> vision_agents::Result<Value> {
+async fn synced_connectors(server: &Server, declaration: &str) -> stream_agents::Result<Value> {
     synced(server);
     let root = tempfile::tempdir().unwrap();
     write(root.path(), "agent.yaml", declaration);

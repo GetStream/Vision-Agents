@@ -1,7 +1,7 @@
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use vision_agents::{Folder, types};
+use stream_agents::{Folder, types};
 
 fn write(root: &Path, name: &str, content: impl AsRef<[u8]>) {
     let path = root.join(name);
@@ -756,10 +756,10 @@ fn an_agent_directory_is_found_from_anywhere_below_the_repository() {
 fn a_stamp_records_what_was_synced() {
     let temporary = tempfile::tempdir().unwrap();
 
-    assert_eq!(vision_agents::folder::read_stamp(temporary.path()), "");
-    vision_agents::folder::write_stamp(temporary.path(), "abc").unwrap();
+    assert_eq!(stream_agents::folder::read_stamp(temporary.path()), "");
+    stream_agents::folder::write_stamp(temporary.path(), "abc").unwrap();
 
-    assert_eq!(vision_agents::folder::read_stamp(temporary.path()), "abc");
+    assert_eq!(stream_agents::folder::read_stamp(temporary.path()), "abc");
     let written = std::fs::read_to_string(temporary.path().join(".agent_sync")).unwrap();
     assert!(written.ends_with('\n'));
     let stamp: serde_json::Value = serde_json::from_str(&written).unwrap();
@@ -771,7 +771,7 @@ fn a_stamp_records_what_was_synced() {
     );
 }
 
-fn connectors(declaration: &str) -> Result<Vec<vision_agents::folder::ConnectorSettings>, String> {
+fn connectors(declaration: &str) -> Result<Vec<stream_agents::folder::ConnectorSettings>, String> {
     let (_temporary, root) = directory("jean");
     write(&root, "agent.yaml", declaration);
     Folder::load(&root)
@@ -803,18 +803,18 @@ fn a_connector_is_the_alias_alone_or_a_mapping() {
     assert_eq!(
         declared,
         vec![
-            vision_agents::folder::ConnectorSettings {
+            stream_agents::folder::ConnectorSettings {
                 name: "github".into(),
                 ..Default::default()
             },
-            vision_agents::folder::ConnectorSettings {
+            stream_agents::folder::ConnectorSettings {
                 name: "issues".into(),
                 connector: "linear".into(),
                 tools: Some(vec!["search".into(), "create_*".into()]),
                 connection: Some("work".into()),
                 required: Some(true),
             },
-            vision_agents::folder::ConnectorSettings {
+            stream_agents::folder::ConnectorSettings {
                 name: "slack".into(),
                 ..Default::default()
             },

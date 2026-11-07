@@ -1,4 +1,4 @@
-//! The Rust server-side SDK for the Vision Agents acceleration backend.
+//! The Rust server-side SDK for the Stream Agents acceleration backend.
 //!
 //! The backend joins the call, hears the caller, answers and speaks. What runs here is the
 //! configuration of an agent, the caller's own functions, and whatever watches or steers
