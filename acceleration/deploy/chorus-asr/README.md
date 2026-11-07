@@ -355,10 +355,11 @@ last frame, and a pause costs one request:
   whose words, not none, are the same as they have been for 1.1 s, or the agent's point's
   `max_wait_ms` if longer, with the gate voiced for at least half of that time, ends the turn
   on its own ruling, as `cap_ms` ends one: the model's disposition and floor, whatever p_eot
-  says. It is logged on the `chorus-asr checked` line with `held=true` and `still_ms`, and
-  counted in `router_chorus_asr_still_ends_total`. A quiet line is as it was: after the
-  caller the gate is quiet and the pause's checks rule; a held check is asked there only in a
-  voiced stretch with no pause and no interim for 1.1 s, and words that change end nothing.
+  says. It is logged on the `chorus-asr checked` line with `held=true`, `still_ms` and, when
+  it ended nothing, `why_not`, and counted in `router_chorus_asr_still_ends_total`. A quiet
+  line is as it was: after the caller the gate is quiet and the pause's checks rule; a held
+  check is asked there only in a voiced stretch with no pause and no interim for 1.1 s, and
+  words that change end nothing.
   Nothing is held over the agent, nor for a transcriber of its own
   ([Transcription alone](#transcription-alone)). Words a room's voice is written as (a TV
   read as the caller) keep the clock going, as they keep any transcriber's words changing.

@@ -44,9 +44,11 @@ import (
 // preset's wait, the most a finished caller waits at p90 on a quiet line, where turns end 0.78 s
 // after the caller at the median and 1.09 s at p90: a caller in a noisy room is given as long to go
 // on as a quiet one, counted from their last new word rather than their voice's last frame. The
-// words are written about once a second of speech, so the turn ends 1.1 to 2.4 s after the caller
-// has finished; a caller who has stopped and hears nothing for 5 s asks whether anybody is there,
-// and the reply takes 1.9 s at the median and 2.5 s at p90 from the turn's end to its first sound.
+// words are written about once a second of speech, so on the regular rooms' timelines the turn
+// would end 2.2 s after the caller had finished at the median and under 3 s at p90, where 112 of
+// 386 such ends never came before the caller spoke again: a caller who has stopped and hears
+// nothing for 5 s asks whether anybody is there, and the reply takes 1.9 s at the median and
+// 2.5 s at p90 from the turn's end to its first sound.
 const stillFor = 1100 * time.Millisecond
 
 // heldEvery is the speech, voiced frames of the utterance, after which a held check writes the
@@ -133,13 +135,22 @@ func (t *Transcriber) wrote(utterance, at, talked int64, text string) {
 	t.wroteLocked(utterance, at, talked, text)
 }
 
-// stillLocked says the words have held still long enough, at frame at with talked voiced frames,
-// for the turn to end on them: written and not none, the same since at least stillBound before,
-// and the gate voiced for at least half of that time. The caller holds t.mu.
-func (t *Transcriber) stillLocked(at, talked int64) bool {
+// stillLocked says why the words have not held still long enough, at frame at with talked voiced
+// frames, for the turn to end on them, and nothing when they have: written and not none, the same
+// since at least stillBound before, and the gate voiced for at least half of that time. The caller
+// holds t.mu.
+func (t *Transcriber) stillLocked(at, talked int64) string {
 	s := &t.still
 	held := at - s.since
-	return s.written && s.words != "" && time.Duration(held)*frame >= t.stillBound && 2*(talked-s.sinceTalked) >= held
+	switch {
+	case !s.written || s.words == "":
+		return "no words"
+	case time.Duration(held)*frame < t.stillBound:
+		return "not still long enough"
+	case 2*(talked-s.sinceTalked) < held:
+		return "voiced under half"
+	}
+	return ""
 }
 
 // checksHeld asks a held check, with the floor free and the gate holding the line voiced, an
@@ -164,7 +175,7 @@ func (t *Transcriber) checksHeld(participant stt.Participant, heard int64) {
 		return
 	}
 	track := time.Duration(t.talked-max(s.atTalked, s.askedTalked))*frame >= time.Duration(float64(heldEvery)*scale)
-	end := s.confirmed && time.Duration(heard-s.asked)*frame >= every && t.stillLocked(heard, t.talked)
+	end := s.confirmed && time.Duration(heard-s.asked)*frame >= every && t.stillLocked(heard, t.talked) == ""
 	if !track && !end {
 		t.mu.Unlock()
 		return
@@ -237,7 +248,7 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 	}()
 	checks.WithLabelValues(outcome(err)).Inc()
 	if err != nil {
-		t.logHeld(c, checked, 0, false, err)
+		t.logHeld(c, checked, 0, "", err)
 		return
 	}
 	checkSeconds.Observe(time.Since(c.asked).Seconds())
@@ -249,23 +260,32 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 	}
 	if words.Err != nil {
 		transcribeFailures.WithLabelValues(failure(words.Err)).Inc()
-		t.logHeld(c, checked, 0, false, words.Err)
+		t.logHeld(c, checked, 0, "", words.Err)
 		return
 	}
 	text := strings.TrimSpace(words.Text)
 	t.mu.Lock()
 	t.stillBound = stillBound(checked.Ending)
 	s, p := &t.still, &t.pause
-	if s.utterance != c.utterance {
-		t.mu.Unlock()
-		return
+	var why string
+	switch {
+	case s.utterance != c.utterance:
+		why = "utterance over"
+	case words.Noise != "":
+		why = "words blanked"
 	}
-	if words.Noise == "" {
+	if why == "" {
 		t.wroteLocked(c.utterance, c.at, c.talked, text)
+		why = t.stillLocked(c.at, c.talked)
+		switch {
+		case s.since >= c.at:
+			why = "words changed"
+		case why == "" && (p.checks > 0 || p.inFlight || p.ended != nil || p.standing != nil || p.done):
+			why = "a pause's check rules"
+		}
 	}
 	held := time.Duration(c.at-s.since) * frame
-	ends := words.Noise == "" && s.since < c.at && t.stillLocked(c.at, c.talked) &&
-		p.checks == 0 && !p.inFlight && p.ended == nil && p.standing == nil && !p.done
+	ends := why == ""
 	epoch := p.epoch
 	if ends {
 		p.ended = &Ruled{Check: checked, Paused: c.paused, Utterance: c.utterance}
@@ -274,7 +294,7 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 		p.audioMs, p.wordsMs = float64(c.audio.Duration.Microseconds())/1000, float64(time.Since(c.asked).Microseconds())/1000
 	}
 	t.mu.Unlock()
-	t.logHeld(c, checked, held, ends, nil)
+	t.logHeld(c, checked, held, why, nil)
 	if ends {
 		stillEnds.Inc()
 		t.finish(epoch)
@@ -283,8 +303,8 @@ func (t *Transcriber) checkHeld(asker Asker, c heldCheck) {
 
 // logHeld says what a held check asked and what came of it, as logCheck does a pause's, on the
 // same line with held set: still_ms is how long the words had held still, and ended whether the
-// turn ended on them, which is known once the words are in.
-func (t *Transcriber) logHeld(c heldCheck, checked Check, held time.Duration, ended bool, err error) {
+// turn ended on them, which is known once the words are in, or why_not why it did not.
+func (t *Transcriber) logHeld(c heldCheck, checked Check, held time.Duration, why string, err error) {
 	attributes := []any{"participant", c.participant.ID, "speaking", false, "held", true, "paused_ms", c.paused.Milliseconds(),
 		"voiced_ms", c.voiced.Milliseconds(), "utterance_ms", c.length.Milliseconds(), "took_ms", time.Since(c.asked).Milliseconds()}
 	if err != nil {
@@ -296,5 +316,5 @@ func (t *Transcriber) logHeld(c heldCheck, checked Check, held time.Duration, en
 		pEOT = *checked.Answer.PEOT
 	}
 	t.logger.Debug("chorus-asr checked", append(attributes, "answer", checked.Answer.Answer, "p_eot", pEOT, "still_ms", held.Milliseconds(),
-		"ended", ended, "disposition", checked.Ruling.Disposition, "floor", checked.Ruling.Floor)...)
+		"ended", why == "", "why_not", why, "disposition", checked.Ruling.Disposition, "floor", checked.Ruling.Floor)...)
 }
