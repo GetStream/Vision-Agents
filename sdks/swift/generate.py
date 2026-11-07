@@ -16,11 +16,13 @@ endpoint the spec does not mark ``x-client-accessible`` is server-side only, and
 SDK that had a method for one would only be offering callers a 403.
 
 ``--check`` runs without the generator, which CI does not have: it fails if the filter names an
-operation the spec does not open to a client, or if the committed client was generated from a
-different copy of the spec. Each run writes ``core/generated.json``: the sha256 of the copy it
-handed the generator, the options it ran with and, to reproduce the run, the generator's ``chat``
-commit. ``--check`` builds the copy again and compares. A spec change that reaches no client
-operation leaves the copy as it was, and the check passes.
+operation the spec does not open to a client, or if the committed client is not the one generated
+from the current spec. Each run writes ``core/generated.json``: the sha256 of the copy it handed
+the generator (less ``info`` and ``servers``, which the generated Swift does not depend on), the
+sha256 of the ``Generated`` files it wrote, the options it ran with and, to reproduce the run,
+the generator's ``chat`` commit. ``--check`` builds the copy again, hashes the committed files
+and compares. A spec change that reaches no client operation leaves the copy as it was, and the
+check passes; a hand edit of a generated file fails it.
 
 The generator is handed a copy of the spec holding those operations, their successes and the
 schemas they reach, and nothing else: ``FailureMiddleware`` throws every other status before the
@@ -108,6 +110,10 @@ OPTIONS = [
     "raw_representable_over_enum=true",
     "string_coding_keys=true",
 ]
+
+# Top-level keys of the spec copy that no generated file reads (a regeneration with any of
+# them changed wrote the same Swift), so an edit to one does not make the client stale.
+IGNORED = ["info", "servers"]
 
 
 def audit(spec: dict) -> list[str]:
@@ -220,10 +226,30 @@ def trimmed(spec: dict) -> str:
     return json.dumps(renamed(client(readable(spec, spec["components"]["schemas"]))))
 
 
+def spec_hash(text: str) -> str:
+    """The sha256 of the copy handed the generator, without ``info`` and ``servers``: a
+    regeneration with either changed writes the same Swift."""
+    copy = json.loads(text)
+    for key in IGNORED:
+        copy.pop(key, None)
+    return hashlib.sha256(json.dumps(copy).encode()).hexdigest()
+
+
+def client_hash() -> str:
+    """The sha256 of the committed ``Generated`` files, by relative path and bytes."""
+    digest = hashlib.sha256()
+    for path in sorted(GENERATED.rglob("*")):
+        if path.is_file():
+            digest.update(path.relative_to(GENERATED).as_posix().encode() + b"\0")
+            digest.update(path.read_bytes() + b"\0")
+    return digest.hexdigest()
+
+
 def fingerprint(text: str) -> dict:
-    """What the client generated from ``text`` is checked against."""
+    """What the committed client is checked against."""
     return {
-        "spec_sha256": hashlib.sha256(text.encode()).hexdigest(),
+        "spec_sha256": spec_hash(text),
+        "client_sha256": client_hash(),
         "options": OPTIONS,
     }
 
