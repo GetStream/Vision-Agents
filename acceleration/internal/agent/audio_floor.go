@@ -37,6 +37,11 @@ type audioFloor struct {
 	// flow controller asks about its words, and settled the candidates they were found for.
 	checked []ruledWords
 	settled map[string]harness.Decided
+	// wanted is the tool a ruling with the floor free heard the caller ask for, by
+	// candidate, until the turn is answered (wantedFor), and intent what the agent said
+	// about it.
+	wanted map[string]wantedTool
+	intent toolIntent
 }
 
 // ruledWords is a ruling a pause check made, on a participant's words.
@@ -63,6 +68,7 @@ func newAudioFloor(client *audiofloor.Client, mode audiofloor.Mode, endOfTurn au
 		streams: map[string]*audiofloor.Stream{},
 		floors:  map[string]*audiofloor.Transcriber{},
 		settled: map[string]harness.Decided{},
+		wanted:  map[string]wantedTool{},
 	}
 }
 
@@ -86,7 +92,13 @@ func (r ruledFirst) Hear(ctx context.Context, turn harness.FlowTurn) (harness.De
 	if ok {
 		return ruled, nil
 	}
-	return r.v.hearer.Hear(ctx, turn)
+	check, err := r.v.hearer.Check(ctx, turn)
+	if err == nil && check.Ended {
+		r.v.mu.Lock()
+		r.v.keepWantedLocked(turn.ID, check.Answer, "")
+		r.v.mu.Unlock()
+	}
+	return check.Ruling, err
 }
 
 // HearDeadline is how long the model has to rule on turn, as its client says
@@ -128,8 +140,39 @@ func (v *audioFloor) findRuled(said, participant string, speaking bool, turnID s
 			clear(v.settled)
 		}
 		v.settled[turnID] = r.ruled.Ruling
+		v.keepWantedLocked(turnID, r.ruled.Answer, r.ruled.Language)
 		return
 	}
+}
+
+// keepWantedLocked keeps the tool answer's ruling heard the caller ask for in turnID, if it
+// names one, heard in language. The caller holds the lock.
+func (v *audioFloor) keepWantedLocked(turnID string, answer audiofloor.Answer, language string) {
+	tool, p := answer.Wanted()
+	if tool == "" {
+		return
+	}
+	if len(v.wanted) >= audioFloorPending {
+		clear(v.wanted)
+	}
+	wanted := wantedTool{tool: tool, p: p, language: language}
+	if answer.PEOT != nil {
+		wanted.pEOT = *answer.PEOT
+	}
+	v.wanted[turnID] = wanted
+}
+
+// wantedFor takes the tool chorus-asr heard the caller ask for in the turn the candidate is,
+// if it heard one. Nil has none.
+func (v *audioFloor) wantedFor(candidateID string) (wantedTool, bool) {
+	if v == nil {
+		return wantedTool{}, false
+	}
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	wanted, ok := v.wanted[candidateID]
+	delete(v.wanted, candidateID)
+	return wanted, ok
 }
 
 // heard keeps a frame of a participant's audio, and has their floor hear it, if another
