@@ -17,13 +17,13 @@ Stream calls and tokens, and on YamlDotNet for `agent.yaml`.
 using GetStream.Agents;
 
 // A router with nothing in front of it, which is a laptop.
-using var api = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://localhost:8080", CustomerId = "examples" });
+using var api = new StreamAgents(new StreamAgentsOptions { Url = "http://localhost:8080", CustomerId = "examples" });
 
 // Stream's hosted router, through its authenticating proxy. The default when no Url is set.
-using var hosted = new VisionAgentsClient(new VisionAgentsOptions { ApiKey = key, ApiSecret = secret });
+using var hosted = new StreamAgents(new StreamAgentsOptions { ApiKey = key, ApiSecret = secret });
 
 // From IHttpClientFactory, which owns the handler.
-var pooled = new VisionAgentsClient(factory.CreateClient("vision-agents"));
+var pooled = new StreamAgents(factory.CreateClient("stream-agents"));
 ```
 
 Every option left null falls back to the environment the other SDKs read:
@@ -165,7 +165,7 @@ A worker can also host an agent's tools for every session opened under that agen
 sessions opened from a browser. The router sends each call here. Handlers are optional:
 
 ```csharp
-using var client = new VisionAgentsClient();
+using var client = new StreamAgents();
 var agent = client.Agent("my-agent");
 agent.Tools.Register<Weather, string>("get_weather", "Get the current weather for a city",
     (weather, cancellationToken) => WeatherAsync(weather.City, cancellationToken));

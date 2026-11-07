@@ -27,7 +27,7 @@ public sealed class ClientTests
     {
         await using var router = await TestRouter.StartAsync();
         router.On("GET", "/v1/agents/configs", 200, Array.Empty<object>());
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
 
         await client.GetAsync<List<AgentConfig>>("/v1/agents/configs", cancellationToken: TestContext.Current.CancellationToken);
 
@@ -45,7 +45,7 @@ public sealed class ClientTests
     {
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sessions/query", 200, Page());
-        using var server = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
+        using var server = new StreamAgents(new StreamAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
 
         var user = server.AsUser("ada", "user-token");
         await user.Sessions.QueryAsync(cancellationToken: TestContext.Current.CancellationToken);
@@ -61,7 +61,7 @@ public sealed class ClientTests
     {
         await using var router = await TestRouter.StartAsync();
         router.On("GET", "/v1/agents/configs", 200, Array.Empty<object>());
-        using var client = new VisionAgentsClient(new VisionAgentsOptions
+        using var client = new StreamAgents(new StreamAgentsOptions
         {
             Url = router.Url,
             ApiKey = "key",
@@ -87,7 +87,7 @@ public sealed class ClientTests
             return;
         }
 
-        var backend = new Backend(new VisionAgentsOptions { ApiKey = "key", Token = "tok", UserId = "ada" });
+        var backend = new Backend(new StreamAgentsOptions { ApiKey = "key", Token = "tok", UserId = "ada" });
 
         Assert.Equal(Backend.DefaultUrl, backend.Url);
         Assert.True(backend.Authenticate);
@@ -96,7 +96,7 @@ public sealed class ClientTests
     [Fact]
     public void ARouterNamedByUrlLeavesTheProxyOff()
     {
-        var backend = new Backend(new VisionAgentsOptions { Url = "http://router", CustomerId = "examples" });
+        var backend = new Backend(new StreamAgentsOptions { Url = "http://router", CustomerId = "examples" });
 
         Assert.False(backend.Authenticate);
     }
@@ -104,7 +104,7 @@ public sealed class ClientTests
     [Fact]
     public void ARegionIsTheHostedRouterThere()
     {
-        var backend = new Backend(new VisionAgentsOptions { Region = "us-east4" }, Env(Credential));
+        var backend = new Backend(new StreamAgentsOptions { Region = "us-east4" }, Env(Credential));
 
         Assert.Equal("https://accelerate-us-east4.gcp.stream-io-api.com", backend.Url);
         Assert.True(backend.Authenticate);
@@ -113,13 +113,13 @@ public sealed class ClientTests
     [Fact]
     public void ARegionInTheEnvironmentGivesWayToAUrlThere()
     {
-        var local = new Backend(new VisionAgentsOptions(), Env(new()
+        var local = new Backend(new StreamAgentsOptions(), Env(new()
         {
             [Backend.CustomerEnv] = "acme",
             [Backend.RegionEnv] = "us-east4",
             [Backend.UrlEnv] = "http://localhost:8080",
         }));
-        var regional = new Backend(new VisionAgentsOptions(), Env(new(Credential) { [Backend.RegionEnv] = "us-east4" }));
+        var regional = new Backend(new StreamAgentsOptions(), Env(new(Credential) { [Backend.RegionEnv] = "us-east4" }));
 
         Assert.Equal("http://localhost:8080", local.Url);
         Assert.Equal("https://accelerate-us-east4.gcp.stream-io-api.com", regional.Url);
@@ -129,7 +129,7 @@ public sealed class ClientTests
     [Fact]
     public void ARegionPassedInBeatsAUrlInTheEnvironment()
     {
-        var backend = new Backend(new VisionAgentsOptions { Region = "europe-west4" },
+        var backend = new Backend(new StreamAgentsOptions { Region = "europe-west4" },
             Env(new(Credential) { [Backend.UrlEnv] = "http://localhost:8080" }));
 
         Assert.Equal("https://accelerate-europe-west4.gcp.stream-io-api.com", backend.Url);
@@ -139,7 +139,7 @@ public sealed class ClientTests
     public void AUrlAndARegionTogetherAreRefused()
     {
         Assert.Throws<ConfigurationException>(() => new Backend(
-            new VisionAgentsOptions { Url = "https://acceleration.example.com", Region = "us-east4", CustomerId = "acme" },
+            new StreamAgentsOptions { Url = "https://acceleration.example.com", Region = "us-east4", CustomerId = "acme" },
             Env(new())));
     }
 
@@ -153,7 +153,7 @@ public sealed class ClientTests
     public void AnythingButARegionNameIsRefused(string name)
     {
         var refused = Assert.Throws<ConfigurationException>(() =>
-            new Backend(new VisionAgentsOptions { Region = name, CustomerId = "acme" }, Env(new())));
+            new Backend(new StreamAgentsOptions { Region = name, CustomerId = "acme" }, Env(new())));
 
         Assert.Contains(name, refused.Message);
     }
@@ -161,7 +161,7 @@ public sealed class ClientTests
     [Fact]
     public void AKeyWithNothingToProveItIsRefused()
     {
-        Assert.Throws<ConfigurationException>(() => new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", ApiKey = "key" }));
+        Assert.Throws<ConfigurationException>(() => new StreamAgents(new StreamAgentsOptions { Url = "http://x", ApiKey = "key" }));
     }
 
     [Fact]
@@ -224,7 +224,7 @@ public sealed class ClientTests
         listener.Start();
         var port = ((IPEndPoint)listener.LocalEndpoint).Port;
         listener.Stop();
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = $"http://127.0.0.1:{port}", CustomerId = "examples" });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = $"http://127.0.0.1:{port}", CustomerId = "examples" });
 
         var refused = await Assert.ThrowsAsync<RouterException>(() =>
             client.GetAsync<List<AgentConfig>>("/v1/agents/configs", cancellationToken: TestContext.Current.CancellationToken));
@@ -239,7 +239,7 @@ public sealed class ClientTests
         router.On("POST", "/v1/agents/guests", 200, new { id = "guest-1", token = "guest-token", name = "Visitor" });
         router.On("POST", "/v1/agents/guests/claim", 200, new { guest_id = "guest-1", user_id = "ada", sessions = 2 });
         router.On("POST", "/v1/agents/sessions/query", 200, Page());
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
         var cancel = TestContext.Current.CancellationToken;
 
         var guest = await client.GuestUserAsync(new GuestOptions { Name = "Visitor" }, cancel);
@@ -256,7 +256,7 @@ public sealed class ClientTests
     public async Task ADeviceCannotClaimAGuest()
     {
         await using var router = await TestRouter.StartAsync();
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
 
         await Assert.ThrowsAsync<ConfigurationException>(() =>
             client.AsUser("guest-1", "guest-token").ClaimGuestUserAsync("guest-1", "ada", TestContext.Current.CancellationToken));

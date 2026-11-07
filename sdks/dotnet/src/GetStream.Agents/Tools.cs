@@ -114,7 +114,7 @@ public sealed class Tools
         CheckApproval(name, approval, parameters);
         lock (_lock)
         {
-            _registered[name] = new Registered(description, parameters, function, VisionAgentsClient.Blank(displayTitle),
+            _registered[name] = new Registered(description, parameters, function, StreamAgents.Blank(displayTitle),
                 interruptible, timeout, approval?.Trim());
         }
         return this;

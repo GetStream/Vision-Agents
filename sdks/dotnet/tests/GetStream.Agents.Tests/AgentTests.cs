@@ -20,7 +20,7 @@ public sealed class AgentTests : IDisposable
     [Fact]
     public void TheAgentsConfigurationIsRenderedIntoTheSession()
     {
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" });
         var agent = new Agent(new AgentOptions
         {
             Config = "support",
@@ -89,7 +89,7 @@ public sealed class AgentTests : IDisposable
         {
             Name = "jean",
             Harness = new Harness { Name = "fancy" },
-            Client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" }),
+            Client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" }),
         }));
     }
 
@@ -137,7 +137,7 @@ public sealed class AgentTests : IDisposable
     [Fact]
     public void AnIncognitoConversationAsksForNoTranscript()
     {
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" });
         var agent = new Agent(new AgentOptions { Name = "jean", Client = client });
 
         var request = agent.Request(null, false, new SessionOptions { Incognito = true }, null, false);
@@ -148,7 +148,7 @@ public sealed class AgentTests : IDisposable
     [Fact]
     public void AConfigIsNamedOrGivenByIdButNotBoth()
     {
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" });
 
         var request = new Agent(new AgentOptions { ConfigId = "cfg-1", Client = client }).Request(null, false, null, null, false);
 
@@ -163,7 +163,7 @@ public sealed class AgentTests : IDisposable
         {
             Name = "jean",
             Harness = new Harness { Subagents = new Dictionary<string, string> { ["a"] = "x", ["b"] = "y" } },
-            Client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" }),
+            Client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" }),
         }));
     }
 
@@ -173,7 +173,7 @@ public sealed class AgentTests : IDisposable
         await using var agent = new Agent(new AgentOptions
         {
             Name = "jean",
-            Client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" }),
+            Client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" }),
         });
 
         Assert.Throws<InvalidOperationException>(() => agent.Responses);

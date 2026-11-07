@@ -17,9 +17,9 @@ public sealed class Simulations
 {
     private const string Path = "/v1/agents/simulations";
 
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
 
-    internal Simulations(VisionAgentsClient client)
+    internal Simulations(StreamAgents client)
     {
         _client = client;
         Runs = new SimulationRuns(client);
@@ -34,7 +34,7 @@ public sealed class Simulations
 
     /// <summary>One simulation.</summary>
     public Task<Simulation> GetAsync(string id, CancellationToken cancellationToken = default) =>
-        _client.GetAsync<Simulation>($"{Path}/{VisionAgentsClient.Escape(id)}", cancellationToken: cancellationToken);
+        _client.GetAsync<Simulation>($"{Path}/{StreamAgents.Escape(id)}", cancellationToken: cancellationToken);
 
     /// <summary>The customer's simulations, newest first.</summary>
     public Task<List<Simulation>> ListAsync(CancellationToken cancellationToken = default) =>
@@ -45,18 +45,18 @@ public sealed class Simulations
     /// changed. The runs it already has keep their own copy of what they tested.
     /// </summary>
     public Task<Simulation> UpdateAsync(string id, SimulationRequest simulation, CancellationToken cancellationToken = default) =>
-        _client.PutAsync<Simulation>($"{Path}/{VisionAgentsClient.Escape(id)}", simulation, cancellationToken);
+        _client.PutAsync<Simulation>($"{Path}/{StreamAgents.Escape(id)}", simulation, cancellationToken);
 
     /// <summary>Deletes a simulation. The runs that named it are kept.</summary>
     public Task DeleteAsync(string id, CancellationToken cancellationToken = default) =>
-        _client.DeleteAsync($"{Path}/{VisionAgentsClient.Escape(id)}", cancellationToken);
+        _client.DeleteAsync($"{Path}/{StreamAgents.Escape(id)}", cancellationToken);
 
     /// <summary>
     /// Starts a run. It answers once the run is written rather than once it is over, so read
     /// it again with <see cref="SimulationRuns.GetAsync"/> until its state is no longer <c>running</c>.
     /// </summary>
     public Task<SimulationRun> RunAsync(string id, CancellationToken cancellationToken = default) =>
-        _client.PostAsync<SimulationRun>($"{Path}/{VisionAgentsClient.Escape(id)}/run", null, cancellationToken);
+        _client.PostAsync<SimulationRun>($"{Path}/{StreamAgents.Escape(id)}/run", null, cancellationToken);
 }
 
 /// <summary>Which runs to list. Every field narrows.</summary>
@@ -77,24 +77,24 @@ public sealed class SimulationRuns
 {
     private const string Path = "/v1/agents/simulation-runs";
 
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
 
-    internal SimulationRuns(VisionAgentsClient client) => _client = client;
+    internal SimulationRuns(StreamAgents client) => _client = client;
 
     /// <summary>One run, with the conversations it had.</summary>
     public Task<SimulationRun> GetAsync(string id, CancellationToken cancellationToken = default) =>
-        _client.GetAsync<SimulationRun>($"{Path}/{VisionAgentsClient.Escape(id)}", cancellationToken: cancellationToken);
+        _client.GetAsync<SimulationRun>($"{Path}/{StreamAgents.Escape(id)}", cancellationToken: cancellationToken);
 
     /// <summary>What the simulations have come to, newest first.</summary>
     public Task<List<SimulationRun>> ListAsync(SimulationRunQuery? query = null, CancellationToken cancellationToken = default) =>
         _client.GetAsync<List<SimulationRun>>(Path, new Dictionary<string, string?>
         {
-            ["simulation_id"] = VisionAgentsClient.Blank(query?.SimulationId),
-            ["state"] = VisionAgentsClient.Blank(query?.State),
-            ["limit"] = VisionAgentsClient.Number(query?.Limit),
+            ["simulation_id"] = StreamAgents.Blank(query?.SimulationId),
+            ["state"] = StreamAgents.Blank(query?.State),
+            ["limit"] = StreamAgents.Number(query?.Limit),
         }, cancellationToken);
 
     /// <summary>Stops a run in progress, ending the conversations still in flight.</summary>
     public Task<SimulationRun> CancelAsync(string id, CancellationToken cancellationToken = default) =>
-        _client.PostAsync<SimulationRun>($"{Path}/{VisionAgentsClient.Escape(id)}/cancel", null, cancellationToken);
+        _client.PostAsync<SimulationRun>($"{Path}/{StreamAgents.Escape(id)}/cancel", null, cancellationToken);
 }

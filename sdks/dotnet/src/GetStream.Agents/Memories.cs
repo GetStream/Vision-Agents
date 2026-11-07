@@ -3,9 +3,9 @@ namespace GetStream.Agents;
 /// <summary>What agents remember about the app's users between conversations.</summary>
 public sealed class Memories
 {
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
 
-    internal Memories(VisionAgentsClient client) => _client = client;
+    internal Memories(StreamAgents client) => _client = client;
 
     /// <summary>
     /// Deletes everything remembered about one user: every session's and every agent's,
@@ -16,5 +16,5 @@ public sealed class Memories
     public Task TruncateAsync(string userId, CancellationToken cancellationToken = default) =>
         string.IsNullOrEmpty(userId)
             ? throw new ConfigurationException("truncating memories needs a user id")
-            : _client.DeleteAsync($"/v1/agents/users/{VisionAgentsClient.Escape(userId)}/memories", cancellationToken);
+            : _client.DeleteAsync($"/v1/agents/users/{StreamAgents.Escape(userId)}/memories", cancellationToken);
 }

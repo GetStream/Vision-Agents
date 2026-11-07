@@ -75,7 +75,7 @@ public class RouterException(int status, string operation, string message, Excep
         {
             if (name.Equals("X-Request-Id", StringComparison.OrdinalIgnoreCase))
             {
-                requestId = VisionAgentsClient.Blank(values.FirstOrDefault());
+                requestId = StreamAgents.Blank(values.FirstOrDefault());
             }
             else if (name.Equals("Retry-After", StringComparison.OrdinalIgnoreCase)
                 && RetryConditionHeaderValue.TryParse(values.FirstOrDefault(), out var retry))
@@ -97,8 +97,8 @@ public class RouterException(int status, string operation, string message, Excep
         {
             return new RouterException(status, operation, detail.Message, inner)
             {
-                Type = VisionAgentsClient.Blank(detail.Type),
-                Code = VisionAgentsClient.Blank(detail.Code),
+                Type = StreamAgents.Blank(detail.Type),
+                Code = StreamAgents.Blank(detail.Code),
                 DocUrl = detail.DocUrl,
                 RequestId = requestId,
                 RetryAfter = retryAfter,

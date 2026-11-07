@@ -80,7 +80,7 @@ public sealed class Session : IAsyncDisposable
     // The model can ask for many things at once; more than this in flight is a runaway.
     private const int MaxRunningTools = 16;
 
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
     private readonly Tools? _tools;
     private readonly string _agentUserId;
     private readonly Socket? _socket;
@@ -96,7 +96,7 @@ public sealed class Session : IAsyncDisposable
     private int _reading;
     private int _closed;
 
-    private Session(VisionAgentsClient client, Models.Session created, Tools? tools, string agentUserId, Socket? socket)
+    private Session(StreamAgents client, Models.Session created, Tools? tools, string agentUserId, Socket? socket)
     {
         _client = client;
         _tools = tools;
@@ -206,18 +206,18 @@ public sealed class Session : IAsyncDisposable
         options ??= new ForkOptions();
         var request = new ForkSessionRequest
         {
-            Agent = VisionAgentsClient.Blank(options.Agent),
-            Title = VisionAgentsClient.Blank(options.Title),
-            Description = VisionAgentsClient.Blank(options.Description),
-            ProjectId = VisionAgentsClient.Blank(options.ProjectId),
+            Agent = StreamAgents.Blank(options.Agent),
+            Title = StreamAgents.Blank(options.Title),
+            Description = StreamAgents.Blank(options.Description),
+            ProjectId = StreamAgents.Blank(options.ProjectId),
             Custom = options.Custom?.ToDictionary(pair => pair.Key, pair => pair.Value!),
             ModelOverwrites = options.ModelOverwrites,
             Incognito = options.Incognito,
             Messages = options.Messages,
-            ResponseId = VisionAgentsClient.Blank(options.ResponseId),
+            ResponseId = StreamAgents.Blank(options.ResponseId),
         };
         var forked = await _client.PostAsync<Models.Session>(
-            $"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/fork", request, cancellationToken).ConfigureAwait(false);
+            $"/v1/agents/sessions/{StreamAgents.Escape(Id)}/fork", request, cancellationToken).ConfigureAwait(false);
         return _socket is null
             ? Read(_client, forked)
             : await OpenAsync(_client, forked, _tools, _agentUserId, new Watch(), cancellationToken).ConfigureAwait(false);
@@ -257,7 +257,7 @@ public sealed class Session : IAsyncDisposable
         {
             try
             {
-                await _client.PostAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(Id)}/stop", null, cancellationToken).ConfigureAwait(false);
+                await _client.PostAsync($"/v1/agents/sessions/{StreamAgents.Escape(Id)}/stop", null, cancellationToken).ConfigureAwait(false);
             }
             catch (RouterException failure) when (failure.Status == 404)
             {
@@ -279,7 +279,7 @@ public sealed class Session : IAsyncDisposable
     }
 
     /// <summary>A session read from the router, which nothing watches.</summary>
-    internal static Session Read(VisionAgentsClient client, Models.Session created) => new(client, created, null, "", null);
+    internal static Session Read(StreamAgents client, Models.Session created) => new(client, created, null, "", null);
 
     /// <summary>
     /// Opens a created session's socket and starts watching it. A socket that cannot be
@@ -287,7 +287,7 @@ public sealed class Session : IAsyncDisposable
     /// its tools.
     /// </summary>
     internal static async Task<Session> OpenAsync(
-        VisionAgentsClient client,
+        StreamAgents client,
         Models.Session created,
         Tools? tools,
         string agentUserId,
@@ -303,14 +303,14 @@ public sealed class Session : IAsyncDisposable
         try
         {
             socket = await Socket.ConnectAsync(client.Backend,
-                client.Backend.SocketUrl($"/v1/agents/sessions/{VisionAgentsClient.Escape(created.Id)}/events", query),
+                client.Backend.SocketUrl($"/v1/agents/sessions/{StreamAgents.Escape(created.Id)}/events", query),
                 cancellationToken).ConfigureAwait(false);
         }
         catch
         {
             try
             {
-                await client.PostAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(created.Id)}/stop", null, CancellationToken.None).ConfigureAwait(false);
+                await client.PostAsync($"/v1/agents/sessions/{StreamAgents.Escape(created.Id)}/stop", null, CancellationToken.None).ConfigureAwait(false);
             }
             catch (RouterException)
             {
@@ -517,11 +517,11 @@ public sealed record ForkOptions
 /// </summary>
 public sealed class SessionVoice
 {
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
     private readonly string _sessionId;
     private int _on;
 
-    internal SessionVoice(VisionAgentsClient client, string sessionId, bool on)
+    internal SessionVoice(StreamAgents client, string sessionId, bool on)
     {
         _client = client;
         _sessionId = sessionId;
@@ -553,5 +553,5 @@ public sealed class SessionVoice
         return stopped;
     }
 
-    private string Path => $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/voice";
+    private string Path => $"/v1/agents/sessions/{StreamAgents.Escape(_sessionId)}/voice";
 }

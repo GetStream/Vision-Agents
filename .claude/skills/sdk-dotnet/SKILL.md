@@ -36,7 +36,7 @@ Stream's .NET packages are `getstream-net` (the current generated server SDK, na
 `GetStream`), `stream-chat-net` and `stream-feed-net`. This one is Stream Agents, so the package id is
 **`stream-agents`** and the namespace **`GetStream.Agents`**, with the
 generated DTOs under `GetStream.Agents.Models`. Not `GetStream.StreamAgents`: the main class
-will be `StreamAgents`, and a namespace must not share the name of a type inside it (the .NET
+is `StreamAgents`, and a namespace must not share the name of a type inside it (the .NET
 design guidelines rule it out). Do not rename to `StreamIO.*`; nothing Stream ships to NuGet is
 called that.
 
@@ -55,7 +55,7 @@ Why NSwag, and why DTOs only:
 - **The request layer has to be ours.** A token is minted per request, a local router takes
   `X-Customer-Id`, a hosted one wants `api_key` and `stream-auth-type`, and sockets carry the
   same credential. A generated client brings a runtime that decides those things, and it
-  decides them differently. So the generator emits POCOs and `VisionAgentsClient` has one
+  decides them differently. So the generator emits POCOs and `StreamAgents` has one
   method per HTTP verb (`GetAsync<T>`, `PostAsync<T>`, ...), the way sdk-js does.
 - **Kiota** was the other serious option. It generates request builders over its own
   abstractions (`Microsoft.Kiota.*` packages at runtime), its models are not plain
@@ -92,7 +92,7 @@ Never hand-edit `Generated/Models.cs`. Never re-declare a schema by hand; use th
 
 ## HttpClient
 
-`new VisionAgentsClient(options)` owns its `HttpClient`; `new VisionAgentsClient(httpClient,
+`new StreamAgents(options)` owns its `HttpClient`; `new StreamAgents(httpClient,
 options)` borrows one, which is how `IHttpClientFactory` plugs in, and never disposes it.
 `Agent` disposes a client only if it made it. Do not add a DI extension package.
 

@@ -204,7 +204,7 @@ public sealed record AgentOptions
     public Tools? Tools { get; init; }
 
     /// <summary>The router. Defaults to one read from the environment.</summary>
-    public VisionAgentsClient? Client { get; init; }
+    public StreamAgents? Client { get; init; }
 
     /// <summary>What creates Stream calls. Defaults to one read from the environment when a call is first needed.</summary>
     public Edge? Edge { get; init; }
@@ -309,9 +309,9 @@ public sealed class Knowledge
     internal static readonly TimeSpan ReadTimeout = TimeSpan.FromSeconds(180);
     internal static readonly TimeSpan PollInterval = TimeSpan.FromMilliseconds(250);
 
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
 
-    internal Knowledge(VisionAgentsClient client, string @namespace)
+    internal Knowledge(StreamAgents client, string @namespace)
     {
         _client = client;
         Namespace = @namespace;
@@ -344,8 +344,8 @@ public sealed class Knowledge
         {
             Namespace = Namespace,
             Url = url,
-            Title = VisionAgentsClient.Blank(title),
-            Description = VisionAgentsClient.Blank(description),
+            Title = StreamAgents.Blank(title),
+            Description = StreamAgents.Blank(description),
             RefreshHours = refreshHours,
         }, cancellationToken).ConfigureAwait(false);
 
@@ -354,7 +354,7 @@ public sealed class Knowledge
         {
             await Task.Delay(PollInterval, cancellationToken).ConfigureAwait(false);
             page = await _client.GetAsync<KnowledgeUrl>(
-                $"/v1/agents/knowledge/urls/{VisionAgentsClient.Escape(page.Id)}", cancellationToken: cancellationToken).ConfigureAwait(false);
+                $"/v1/agents/knowledge/urls/{StreamAgents.Escape(page.Id)}", cancellationToken: cancellationToken).ConfigureAwait(false);
         }
         return page;
     }
@@ -421,7 +421,7 @@ public sealed class Agent : IAsyncDisposable
         UserId = options.UserId is { Length: > 0 } userId ? userId : UserIdOf(Name);
         Tools = options.Tools ?? new Tools();
         _ownsClient = options.Client is null;
-        Client = options.Client ?? new VisionAgentsClient();
+        Client = options.Client ?? new StreamAgents();
         _edge = options.Edge;
         Knowledge = new Knowledge(Client, Name);
     }
@@ -442,7 +442,7 @@ public sealed class Agent : IAsyncDisposable
     public Tools Tools { get; }
 
     /// <summary>The router this agent talks to.</summary>
-    public VisionAgentsClient Client { get; }
+    public StreamAgents Client { get; }
 
     /// <summary>The agent's knowledge base.</summary>
     public Knowledge Knowledge { get; }
@@ -493,8 +493,8 @@ public sealed class Agent : IAsyncDisposable
         {
             Name = Name,
             Hash = hash,
-            Instructions = VisionAgentsClient.Blank(Instructions),
-            Guardrail = VisionAgentsClient.Blank(_options.Guardrail),
+            Instructions = StreamAgents.Blank(Instructions),
+            Guardrail = StreamAgents.Blank(_options.Guardrail),
             Skills = skills.Count > 0 ? [.. skills.Select(SkillRequestOf)] : null,
         };
         if (Folder is not null)
@@ -502,9 +502,9 @@ public sealed class Agent : IAsyncDisposable
             Declare(request, Folder);
             request.Connectors = await BindingsAsync(Folder.Declaration.Connectors, cancellationToken).ConfigureAwait(false);
         }
-        request.Harness = VisionAgentsClient.Blank(harness) ?? request.Harness;
-        request.Subagent = VisionAgentsClient.Blank(subagent) ?? request.Subagent;
-        request.Sandbox = VisionAgentsClient.Blank(sandbox) ?? request.Sandbox;
+        request.Harness = StreamAgents.Blank(harness) ?? request.Harness;
+        request.Subagent = StreamAgents.Blank(subagent) ?? request.Subagent;
+        request.Sandbox = StreamAgents.Blank(sandbox) ?? request.Sandbox;
         if (_options.CostTracking is { Count: > 0 } costs)
         {
             request.Tags ??= [];
@@ -531,7 +531,7 @@ public sealed class Agent : IAsyncDisposable
         var id = _configId != "" ? _configId
             : (await StoredAsync(cancellationToken).ConfigureAwait(false))?.Id
                 ?? throw new ConfigurationException($"there is no agent called {Name} to update");
-        return await Client.PatchAsync<AgentConfig>($"/v1/agents/configs/{VisionAgentsClient.Escape(id)}", patch, cancellationToken)
+        return await Client.PatchAsync<AgentConfig>($"/v1/agents/configs/{StreamAgents.Escape(id)}", patch, cancellationToken)
             .ConfigureAwait(false);
     }
 
@@ -570,7 +570,7 @@ public sealed class Agent : IAsyncDisposable
     public async Task<Session> ResumeAsync(string id, CancellationToken cancellationToken = default)
     {
         var got = await Client.GetAsync<Models.Session>(
-            $"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", cancellationToken: cancellationToken).ConfigureAwait(false);
+            $"/v1/agents/sessions/{StreamAgents.Escape(id)}", cancellationToken: cancellationToken).ConfigureAwait(false);
         var session = await Session.OpenAsync(Client, got, Tools, UserId, new Session.Watch(), cancellationToken).ConfigureAwait(false);
         Volatile.Write(ref _session, session);
         return session;
@@ -620,7 +620,7 @@ public sealed class Agent : IAsyncDisposable
         {
             throw new ConfigurationException("there is no number to answer on");
         }
-        await Client.PostAsync<PhoneNumber>($"/v1/phone/numbers/{VisionAgentsClient.Escape(number)}/attach",
+        await Client.PostAsync<PhoneNumber>($"/v1/phone/numbers/{StreamAgents.Escape(number)}/attach",
             new AttachNumberRequest(), cancellationToken).ConfigureAwait(false);
 
         var arrived = new TaskCompletionSource<InboundCall>(TaskCreationOptions.RunContinuationsAsynchronously);
@@ -687,25 +687,25 @@ public sealed class Agent : IAsyncDisposable
         options ??= new SessionOptions();
         return new CreateSessionRequest
         {
-            Id = VisionAgentsClient.Blank(sessionId) ?? VisionAgentsClient.Blank(options.Id),
+            Id = StreamAgents.Blank(sessionId) ?? StreamAgents.Blank(options.Id),
             StartVoice = voice ? true : null,
-            Agent = _configId == "" ? VisionAgentsClient.Blank(_config) : null,
-            ConfigId = VisionAgentsClient.Blank(_configId),
+            Agent = _configId == "" ? StreamAgents.Blank(_config) : null,
+            ConfigId = StreamAgents.Blank(_configId),
             UserId = UserId,
             UserName = Name,
-            AgentId = VisionAgentsClient.Blank(options.AgentId) ?? UserId,
+            AgentId = StreamAgents.Blank(options.AgentId) ?? UserId,
             Incognito = options.Incognito ? true : null,
-            Title = VisionAgentsClient.Blank(options.Title),
-            Description = VisionAgentsClient.Blank(options.Description),
-            ProjectId = VisionAgentsClient.Blank(options.ProjectId),
+            Title = StreamAgents.Blank(options.Title),
+            Description = StreamAgents.Blank(options.Description),
+            ProjectId = StreamAgents.Blank(options.ProjectId),
             Custom = options.Custom is { Count: > 0 } custom ? custom.ToDictionary(pair => pair.Key, pair => pair.Value!) : null,
             ModelOverwrites = options.ModelOverwrites,
-            Llm = VisionAgentsClient.Blank(pipeline.Llm),
-            Stt = VisionAgentsClient.Blank(pipeline.Stt),
-            Tts = VisionAgentsClient.Blank(pipeline.Tts),
-            Voice = VisionAgentsClient.Blank(pipeline.Voice),
+            Llm = StreamAgents.Blank(pipeline.Llm),
+            Stt = StreamAgents.Blank(pipeline.Stt),
+            Tts = StreamAgents.Blank(pipeline.Tts),
+            Voice = StreamAgents.Blank(pipeline.Voice),
             Greeting = pipeline.Greeting is { Length: > 0 } greeting
-                ? new Greeting { Text = greeting, Mode = VisionAgentsClient.Blank(pipeline.GreetingMode) }
+                ? new Greeting { Text = greeting, Mode = StreamAgents.Blank(pipeline.GreetingMode) }
                 : null,
             Languages = pipeline.Language is { Length: > 0 } language ? [language] : null,
             Backchannel = pipeline.Backchannel,
@@ -789,8 +789,8 @@ public sealed class Agent : IAsyncDisposable
             ? [.. folder.KnowledgeUrls.Select(page => new KnowledgeUrlDeclaration
             {
                 Url = page.Url,
-                Title = VisionAgentsClient.Blank(page.Title),
-                Description = VisionAgentsClient.Blank(page.Description),
+                Title = StreamAgents.Blank(page.Title),
+                Description = StreamAgents.Blank(page.Description),
                 RefreshHours = page.RefreshHours > 0 ? page.RefreshHours : null,
             })]
             : null;
@@ -798,19 +798,19 @@ public sealed class Agent : IAsyncDisposable
         // is the whole of the agent's simulations, and leaving it out leaves the stored ones.
         request.Simulations = folder.Simulations is { } simulations ? [.. simulations] : null;
         // Only what the file names is sent, so the router leaves whatever is stored for the rest.
-        request.Mode = VisionAgentsClient.Blank(declared.Mode);
-        request.Stt = VisionAgentsClient.Blank(declared.Stt);
-        request.Tts = VisionAgentsClient.Blank(declared.Tts);
+        request.Mode = StreamAgents.Blank(declared.Mode);
+        request.Stt = StreamAgents.Blank(declared.Stt);
+        request.Tts = StreamAgents.Blank(declared.Tts);
         request.Sts = declared.Sts;
-        request.Voice = VisionAgentsClient.Blank(declared.Voice);
-        request.Llm = VisionAgentsClient.Blank(declared.Llm);
-        request.Harness = VisionAgentsClient.Blank(declared.Harness);
-        request.Subagent = VisionAgentsClient.Blank(declared.Subagent);
-        request.Search = VisionAgentsClient.Blank(declared.Search);
+        request.Voice = StreamAgents.Blank(declared.Voice);
+        request.Llm = StreamAgents.Blank(declared.Llm);
+        request.Harness = StreamAgents.Blank(declared.Harness);
+        request.Subagent = StreamAgents.Blank(declared.Subagent);
+        request.Search = StreamAgents.Blank(declared.Search);
         request.Greeting = declared.Greeting is { } greeting
-            ? new Greeting { Text = greeting.Text, Mode = VisionAgentsClient.Blank(greeting.Mode) }
+            ? new Greeting { Text = greeting.Text, Mode = StreamAgents.Blank(greeting.Mode) }
             : null;
-        request.Sandbox = VisionAgentsClient.Blank(declared.Sandbox);
+        request.Sandbox = StreamAgents.Blank(declared.Sandbox);
         request.SandboxOptions = declared.SandboxOptions is { } options
             ? new SandboxOptions
             {
@@ -828,10 +828,10 @@ public sealed class Agent : IAsyncDisposable
         request.Keyterms = declared.Keyterms.Count > 0 ? [.. declared.Keyterms] : null;
         request.Tags = declared.Tags.Count > 0 ? new Dictionary<string, string>(declared.Tags) : null;
         request.Video = declared.Video is { } video
-            ? new SessionVideo { Source = VisionAgentsClient.Blank(video.Source), MaxFrames = video.MaxFrames }
+            ? new SessionVideo { Source = StreamAgents.Blank(video.Source), MaxFrames = video.MaxFrames }
             : null;
         request.Dispatch = declared.Dispatch is { } dispatch
-            ? new AgentDispatch { IncomingCall = VisionAgentsClient.Blank(dispatch.IncomingCall), Text = VisionAgentsClient.Blank(dispatch.Text) }
+            ? new AgentDispatch { IncomingCall = StreamAgents.Blank(dispatch.IncomingCall), Text = StreamAgents.Blank(dispatch.Text) }
             : null;
         // As written, an empty one ({}) included: that is the default flow controller again.
         // Which models there are is the router's to say.

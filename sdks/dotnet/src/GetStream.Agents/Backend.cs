@@ -12,7 +12,7 @@ namespace GetStream.Agents;
 /// Every field left null falls back to the environment the Go, Python and JavaScript SDKs
 /// read, so a process deployed next to a router needs none of them.
 /// </remarks>
-public sealed record VisionAgentsOptions
+public sealed record StreamAgentsOptions
 {
     /// <summary>
     /// The router's base URL. Falls back to <see cref="Region"/>, then
@@ -90,7 +90,7 @@ internal sealed class Backend
     // release of this SDK. \z rather than $, which would let a trailing newline through.
     private static readonly Regex RegionName = new(@"^[a-z]+-[a-z]+[0-9]+\z", RegexOptions.CultureInvariant);
 
-    public Backend(VisionAgentsOptions options) : this(options, Env)
+    public Backend(StreamAgentsOptions options) : this(options, Env)
     {
     }
 
@@ -98,7 +98,7 @@ internal sealed class Backend
     /// Reads the environment through <paramref name="env"/>, so a test can say what is in it
     /// without changing the process's own.
     /// </summary>
-    internal Backend(VisionAgentsOptions options, Func<string, string?> env)
+    internal Backend(StreamAgentsOptions options, Func<string, string?> env)
     {
         if (options.Url is not null && options.Region is not null)
         {
@@ -169,7 +169,7 @@ internal sealed class Backend
 
     public Backend Acting(string userId) => new(this) { UserId = "", ActingFor = userId };
 
-    public Backend As(string userId, string token) => new(new VisionAgentsOptions
+    public Backend As(string userId, string token) => new(new StreamAgentsOptions
     {
         Url = Url,
         CustomerId = ApiKey == "" ? CustomerId : null,

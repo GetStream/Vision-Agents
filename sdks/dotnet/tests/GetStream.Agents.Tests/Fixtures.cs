@@ -46,8 +46,8 @@ internal static class Fixtures
         error = new { message, type, code, doc_url = $"https://getstream.io/agents/docs/api/errors/#{code}" },
     };
 
-    public static VisionAgentsClient Client(TestRouter router) =>
-        new(new VisionAgentsOptions { Url = router.Url, CustomerId = "examples" });
+    public static StreamAgents Client(TestRouter router) =>
+        new(new StreamAgentsOptions { Url = router.Url, CustomerId = "examples" });
 
     public static Edge Edge(TestRouter router) =>
         new(new EdgeOptions { ApiKey = "key", ApiSecret = Secret, BaseUrl = router.Url, MonitorUrl = "https://demo.test" });

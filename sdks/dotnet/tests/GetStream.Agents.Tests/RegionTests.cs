@@ -51,7 +51,7 @@ public sealed class RegionTests : IDisposable
     [Fact]
     public async Task TheDefaultClientReadsFromTheRegionalHost()
     {
-        using var client = new VisionAgentsClient(_http);
+        using var client = new StreamAgents(_http);
 
         await ReadConfigs(client);
     }
@@ -59,7 +59,7 @@ public sealed class RegionTests : IDisposable
     [Fact]
     public async Task AnExplicitRegionReadsFromTheRegionalHost()
     {
-        using var client = new VisionAgentsClient(_http, new VisionAgentsOptions { Region = "us-east4" });
+        using var client = new StreamAgents(_http, new StreamAgentsOptions { Region = "us-east4" });
 
         await ReadConfigs(client);
     }
@@ -68,7 +68,7 @@ public sealed class RegionTests : IDisposable
     public async Task ARegionFromTheEnvironmentReadsFromTheRegionalHost()
     {
         Environment.SetEnvironmentVariable(Backend.RegionEnv, "us-east4");
-        using var client = new VisionAgentsClient(_http);
+        using var client = new StreamAgents(_http);
 
         await ReadConfigs(client);
     }
@@ -77,20 +77,20 @@ public sealed class RegionTests : IDisposable
     public void AConflictingUrlAndRegionAreRefused()
     {
         Assert.Throws<ConfigurationException>(() =>
-            new VisionAgentsClient(_http, new VisionAgentsOptions { Region = "europe-west4", Url = Backend.DefaultUrl }));
+            new StreamAgents(_http, new StreamAgentsOptions { Region = "europe-west4", Url = Backend.DefaultUrl }));
     }
 
     [Fact]
     public void AnInvalidRegionWithAUrlIsRefused()
     {
         Assert.Throws<ConfigurationException>(() =>
-            new VisionAgentsClient(_http, new VisionAgentsOptions { Region = "us-east4.evil.com/x", Url = Backend.DefaultUrl }));
+            new StreamAgents(_http, new StreamAgentsOptions { Region = "us-east4.evil.com/x", Url = Backend.DefaultUrl }));
     }
 
     [Fact]
     public async Task ARegionalClientCanActForAUser()
     {
-        using var client = new VisionAgentsClient(_http, new VisionAgentsOptions { Region = "us-east4" });
+        using var client = new StreamAgents(_http, new StreamAgentsOptions { Region = "us-east4" });
 
         var user = client.AsUser("jean", "user-token");
 
@@ -101,7 +101,7 @@ public sealed class RegionTests : IDisposable
         Assert.Equal("Bearer user-token", _recorder.Seen.Single().Headers.GetValues("Authorization").Single());
     }
 
-    private async Task ReadConfigs(VisionAgentsClient client)
+    private async Task ReadConfigs(StreamAgents client)
     {
         await client.GetAsync<List<AgentConfig>>("/v1/agents/configs", cancellationToken: TestContext.Current.CancellationToken);
 

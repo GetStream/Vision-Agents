@@ -11,7 +11,7 @@ namespace GetStream.Agents;
 public sealed record DispatchOptions
 {
     /// <summary>The router. Defaults to one read from the environment.</summary>
-    public VisionAgentsClient? Client { get; init; }
+    public StreamAgents? Client { get; init; }
 
     /// <summary>
     /// How many calls to hold at once. The router passes over a worker that is full rather
@@ -87,11 +87,11 @@ public sealed class Dispatch
         }
         Capacity = options.Capacity;
         _reportEvery = options.ReportEvery;
-        Client = options.Client ?? new VisionAgentsClient();
+        Client = options.Client ?? new StreamAgents();
     }
 
     /// <summary>The router this waits on.</summary>
-    public VisionAgentsClient Client { get; }
+    public StreamAgents Client { get; }
 
     /// <summary>How many calls this holds at once.</summary>
     public int Capacity { get; }
@@ -150,7 +150,7 @@ public sealed class Dispatch
     /// them to each session whose agent id or config name is the agent's
     /// <see cref="Agent.Name"/>, and sends every call here. Call before <see cref="RunAsync"/>.
     /// </remarks>
-    /// <param name="agent">The agent, usually <see cref="VisionAgentsClient.Agent"/>, whose tools are hosted.</param>
+    /// <param name="agent">The agent, usually <see cref="StreamAgents.Agent"/>, whose tools are hosted.</param>
     /// <param name="toolTimeout">
     /// How long the router waits for one tool call to be answered before telling the model it
     /// failed, not how long the worker runs; null takes the router's default of 30 seconds.

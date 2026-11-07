@@ -17,13 +17,13 @@ public sealed class LiveTests : IAsyncLifetime
     private static readonly string Customer = Environment.GetEnvironmentVariable("VISION_AGENTS_LIVE_CUSTOMER") ?? "examples";
 
     private readonly List<string> _opened = [];
-    private VisionAgentsClient _client = null!;
+    private StreamAgents _client = null!;
     private string _model = "";
 
     public async ValueTask InitializeAsync()
     {
         Assert.SkipWhen(Url is null, "VISION_AGENTS_LIVE_URL names no router");
-        _client = new VisionAgentsClient(new VisionAgentsOptions { Url = Url, CustomerId = Customer });
+        _client = new StreamAgents(new StreamAgentsOptions { Url = Url, CustomerId = Customer });
         _model = await ConversationModelAsync();
     }
 

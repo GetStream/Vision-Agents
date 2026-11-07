@@ -18,7 +18,7 @@ public sealed class Router
 {
     internal static readonly TimeSpan Poll = TimeSpan.FromSeconds(1);
 
-    internal Router(VisionAgentsClient client, string? config, IReadOnlyDictionary<string, string>? tags)
+    internal Router(StreamAgents client, string? config, IReadOnlyDictionary<string, string>? tags)
     {
         Client = client;
         Config = config ?? "";
@@ -40,7 +40,7 @@ public sealed class Router
     /// <summary>The model that answers.</summary>
     public Answering Llm { get; }
 
-    internal VisionAgentsClient Client { get; }
+    internal StreamAgents Client { get; }
 
     internal Dictionary<string, string>? Tags { get; }
 
@@ -50,7 +50,7 @@ public sealed class Router
         {
             Query = query,
             Options = options,
-            ConfigId = VisionAgentsClient.Blank(Config),
+            ConfigId = StreamAgents.Blank(Config),
             Tags = Tags,
         }, cancellationToken);
 
@@ -67,7 +67,7 @@ public sealed class Router
         {
             // An empty block is a socket that takes everything from its config. The router
             // refuses a frame whose target is only inside the block, so it is sent beside it too.
-            await socket.SendAsync(Frames.Of("start", ("config_id", Config), ("target", VisionAgentsClient.Blank(target)), ("tags", Tags),
+            await socket.SendAsync(Frames.Of("start", ("config_id", Config), ("target", StreamAgents.Blank(target)), ("tags", Tags),
                 (modality, options ?? new JsonObject())),
                 cancellationToken).ConfigureAwait(false);
         }
@@ -135,16 +135,16 @@ public sealed class Transcribing
         }
         var job = await _router.Client.PostAsync<Transcription>("/v1/stt/recordings", new TranscriptionRequest
         {
-            Source = new RecordingSource { Url = VisionAgentsClient.Blank(recording.Url), Audio = recording.Audio is { Length: > 0 } ? recording.Audio : null },
+            Source = new RecordingSource { Url = StreamAgents.Blank(recording.Url), Audio = recording.Audio is { Length: > 0 } ? recording.Audio : null },
             Options = options,
             Inline = recording.Inline ? true : null,
-            Callback = VisionAgentsClient.Blank(recording.Callback),
-            ConfigId = VisionAgentsClient.Blank(_router.Config),
+            Callback = StreamAgents.Blank(recording.Callback),
+            ConfigId = StreamAgents.Blank(_router.Config),
             Tags = _router.Tags,
         }, cancellationToken).ConfigureAwait(false);
         return recording.Callback is { Length: > 0 }
             ? job
-            : await _router.SettleAsync(job, done => done.Status, $"/v1/stt/recordings/{VisionAgentsClient.Escape(job.Id)}", cancellationToken)
+            : await _router.SettleAsync(job, done => done.Status, $"/v1/stt/recordings/{StreamAgents.Escape(job.Id)}", cancellationToken)
                 .ConfigureAwait(false);
     }
 }
@@ -175,10 +175,10 @@ public sealed class Speaking
             Text = text,
             Options = options,
             Inline = inline ? true : null,
-            ConfigId = VisionAgentsClient.Blank(_router.Config),
+            ConfigId = StreamAgents.Blank(_router.Config),
             Tags = _router.Tags,
         }, cancellationToken).ConfigureAwait(false);
-        return await _router.SettleAsync(job, done => done.Status, $"/v1/tts/recordings/{VisionAgentsClient.Escape(job.Id)}", cancellationToken)
+        return await _router.SettleAsync(job, done => done.Status, $"/v1/tts/recordings/{StreamAgents.Escape(job.Id)}", cancellationToken)
             .ConfigureAwait(false);
     }
 }
@@ -395,16 +395,16 @@ public sealed class LanguageModel : Realtime<Answer>
     public Task AskAsync(Question question, CancellationToken cancellationToken = default) =>
         Socket.SendAsync(Frames.Of("respond",
             ("messages", question.Messages.Select(said => new JsonObject { ["role"] = said.Role, ["content"] = said.Content }).ToList()),
-            ("instructions", VisionAgentsClient.Blank(question.Instructions)),
+            ("instructions", StreamAgents.Blank(question.Instructions)),
             ("tools", question.Tools is { Count: > 0 } ? question.Tools : null),
-            ("tool_choice", VisionAgentsClient.Blank(question.ToolChoice)),
+            ("tool_choice", StreamAgents.Blank(question.ToolChoice)),
             ("max_output_tokens", question.MaxOutputTokens is > 0 ? question.MaxOutputTokens : null),
             ("temperature", question.Temperature),
-            ("reasoning_effort", VisionAgentsClient.Blank(question.ReasoningEffort)),
-            ("format", VisionAgentsClient.Blank(question.Format)),
-            ("verbosity", VisionAgentsClient.Blank(question.Verbosity)),
-            ("previous_response_id", VisionAgentsClient.Blank(question.PreviousResponseId)),
-            ("prompt_cache_key", VisionAgentsClient.Blank(question.PromptCacheKey)),
+            ("reasoning_effort", StreamAgents.Blank(question.ReasoningEffort)),
+            ("format", StreamAgents.Blank(question.Format)),
+            ("verbosity", StreamAgents.Blank(question.Verbosity)),
+            ("previous_response_id", StreamAgents.Blank(question.PreviousResponseId)),
+            ("prompt_cache_key", StreamAgents.Blank(question.PromptCacheKey)),
             ("metadata", question.Metadata is { Count: > 0 } ? question.Metadata : null)), cancellationToken);
 
     /// <summary>Abandons the answer in flight.</summary>

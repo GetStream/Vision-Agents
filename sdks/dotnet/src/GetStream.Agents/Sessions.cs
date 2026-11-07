@@ -37,7 +37,7 @@ public sealed record SessionQuery
 /// What these return are records. Opening a conversation somebody talks in is an agent's
 /// job, since it is the agent that runs the tools.
 /// </remarks>
-public sealed class Sessions(VisionAgentsClient client, string? agent = null)
+public sealed class Sessions(StreamAgents client, string? agent = null)
 {
     /// <summary>
     /// A page of sessions, most recently updated first, the ones that ended included. Pass
@@ -53,7 +53,7 @@ public sealed class Sessions(VisionAgentsClient client, string? agent = null)
     /// <summary>One session.</summary>
     public async Task<Session> GetAsync(string id, CancellationToken cancellationToken = default) =>
         Session.Read(client, await client.GetAsync<Models.Session>(
-            $"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", cancellationToken: cancellationToken).ConfigureAwait(false));
+            $"/v1/agents/sessions/{StreamAgents.Escape(id)}", cancellationToken: cancellationToken).ConfigureAwait(false));
 
     /// <summary>
     /// Changes one session, whether or not it is still being held, and returns it as it now is.
@@ -63,18 +63,18 @@ public sealed class Sessions(VisionAgentsClient client, string? agent = null)
     /// One that ended can still be renamed and relabelled; models and voice need it running, and take over from its next turn. Only a backend may ask.
     /// </remarks>
     public Task<Models.Session> UpdateAsync(string id, UpdateSessionRequest update, CancellationToken cancellationToken = default) =>
-        client.PatchAsync<Models.Session>($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", update, cancellationToken);
+        client.PatchAsync<Models.Session>($"/v1/agents/sessions/{StreamAgents.Escape(id)}", update, cancellationToken);
 
     /// <summary>
     /// Deletes a session, running or ended: it is stopped, and its turns and what it
     /// remembered are deleted with it. The user's other memories are kept.
     /// </summary>
     public Task DeleteAsync(string id, CancellationToken cancellationToken = default) =>
-        client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}", cancellationToken);
+        client.DeleteAsync($"/v1/agents/sessions/{StreamAgents.Escape(id)}", cancellationToken);
 
     /// <summary>Deletes what one session remembered, running or ended, and leaves the rest of the user's memories alone. Only a backend may ask.</summary>
     public Task DeleteMemoriesAsync(string id, CancellationToken cancellationToken = default) =>
-        client.DeleteAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(id)}/memories", cancellationToken);
+        client.DeleteAsync($"/v1/agents/sessions/{StreamAgents.Escape(id)}/memories", cancellationToken);
 
     /// <summary>A session's turns, by its id, without reading the session first.</summary>
     public Responses Responses(string id) => new(client, id);
@@ -87,15 +87,15 @@ public sealed class Sessions(VisionAgentsClient client, string? agent = null)
     {
         Filter = new SessionFilter
         {
-            Agent = VisionAgentsClient.Blank(query.Agent) ?? VisionAgentsClient.Blank(agent),
-            AgentId = VisionAgentsClient.Blank(query.AgentId),
-            UserId = VisionAgentsClient.Blank(query.UserId),
-            ProjectId = VisionAgentsClient.Blank(query.ProjectId),
-            Modality = VisionAgentsClient.Blank(query.Modality),
-            State = VisionAgentsClient.Blank(query.State),
+            Agent = StreamAgents.Blank(query.Agent) ?? StreamAgents.Blank(agent),
+            AgentId = StreamAgents.Blank(query.AgentId),
+            UserId = StreamAgents.Blank(query.UserId),
+            ProjectId = StreamAgents.Blank(query.ProjectId),
+            Modality = StreamAgents.Blank(query.Modality),
+            State = StreamAgents.Blank(query.State),
             Text = text is { Length: > 0 } ? new TextMatch { Q = text } : null,
         },
         Limit = query.Limit is > 0 ? query.Limit : null,
-        Cursor = VisionAgentsClient.Blank(query.Cursor),
+        Cursor = StreamAgents.Blank(query.Cursor),
     };
 }

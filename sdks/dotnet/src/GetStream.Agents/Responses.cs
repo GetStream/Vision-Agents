@@ -15,7 +15,7 @@ namespace GetStream.Agents;
 /// </remarks>
 public sealed class Response
 {
-    internal Response(VisionAgentsClient client, AgentResponse created)
+    internal Response(StreamAgents client, AgentResponse created)
     {
         Created = created;
         Items = new Items(client, created.SessionId, created.Id);
@@ -53,11 +53,11 @@ public sealed class Items
     // As many as the router hands over at once.
     private const int Ceiling = 1000;
 
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
     private readonly string _sessionId;
     private readonly string _responseId;
 
-    internal Items(VisionAgentsClient client, string sessionId, string responseId = "")
+    internal Items(StreamAgents client, string sessionId, string responseId = "")
     {
         _client = client;
         _sessionId = sessionId;
@@ -92,12 +92,12 @@ public sealed class Items
     /// </summary>
     public Task<AgentResponseItemPage> ListAsync(int? limit = null, string? cursor = null, CancellationToken cancellationToken = default) =>
         _client.GetAsync<AgentResponseItemPage>(
-            $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses/items",
+            $"/v1/agents/sessions/{StreamAgents.Escape(_sessionId)}/responses/items",
             new Dictionary<string, string?>
             {
-                ["response_id"] = VisionAgentsClient.Blank(_responseId),
-                ["limit"] = VisionAgentsClient.Number(limit),
-                ["cursor"] = VisionAgentsClient.Blank(cursor),
+                ["response_id"] = StreamAgents.Blank(_responseId),
+                ["limit"] = StreamAgents.Number(limit),
+                ["cursor"] = StreamAgents.Blank(cursor),
             },
             cancellationToken);
 
@@ -123,10 +123,10 @@ public sealed class Items
 /// </remarks>
 public sealed class Responses
 {
-    private readonly VisionAgentsClient _client;
+    private readonly StreamAgents _client;
     private readonly string _sessionId;
 
-    internal Responses(VisionAgentsClient client, string sessionId)
+    internal Responses(StreamAgents client, string sessionId)
     {
         _client = client;
         _sessionId = sessionId;
@@ -164,10 +164,10 @@ public sealed class Responses
         {
             Text = text,
             Images = media ? [.. images!] : null,
-            RequestId = VisionAgentsClient.Blank(requestId) ?? (media ? null : Guid.NewGuid().ToString("N")),
+            RequestId = StreamAgents.Blank(requestId) ?? (media ? null : Guid.NewGuid().ToString("N")),
         };
         var created = await _client.PostAsync<AgentResponse>(
-            $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses", request, cancellationToken).ConfigureAwait(false);
+            $"/v1/agents/sessions/{StreamAgents.Escape(_sessionId)}/responses", request, cancellationToken).ConfigureAwait(false);
         return new Response(_client, created);
     }
 
@@ -177,11 +177,11 @@ public sealed class Responses
     /// </summary>
     public Task<AgentResponsePage> ListAsync(int? limit = null, string? cursor = null, CancellationToken cancellationToken = default) =>
         _client.GetAsync<AgentResponsePage>(
-            $"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/responses",
+            $"/v1/agents/sessions/{StreamAgents.Escape(_sessionId)}/responses",
             new Dictionary<string, string?>
             {
-                ["limit"] = VisionAgentsClient.Number(limit),
-                ["cursor"] = VisionAgentsClient.Blank(cursor),
+                ["limit"] = StreamAgents.Number(limit),
+                ["cursor"] = StreamAgents.Blank(cursor),
             },
             cancellationToken);
 
@@ -209,7 +209,7 @@ public sealed class Responses
             throw new ConfigurationException(
                 "that response has no id, which is what a session that records nothing hands back; there is nothing to rewind to");
         }
-        return _client.PostAsync($"/v1/agents/sessions/{VisionAgentsClient.Escape(_sessionId)}/rewind",
+        return _client.PostAsync($"/v1/agents/sessions/{StreamAgents.Escape(_sessionId)}/rewind",
             new RewindSessionRequest { ResponseId = responseId }, cancellationToken);
     }
 }

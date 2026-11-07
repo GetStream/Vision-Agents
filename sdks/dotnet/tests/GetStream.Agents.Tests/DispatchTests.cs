@@ -112,7 +112,7 @@ public sealed class DispatchTests
     {
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret });
         var dispatch = new Dispatch(new DispatchOptions { Client = client });
 
         var response = await dispatch.AnswerAsync(
@@ -234,7 +234,7 @@ public sealed class DispatchTests
     {
         await using var router = await TestRouter.StartAsync();
         router.On("POST", "/v1/agents/sessions/s1/responses", 202, new { id = "r1", session_id = "s1", status = "running" });
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, Authenticate = true });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = router.Url, ApiKey = "key", ApiSecret = Fixtures.Secret, Authenticate = true });
         var dispatch = new Dispatch(new DispatchOptions { Client = client });
 
         await dispatch.AnswerAsync(new InboundMessage { ChannelId = "", SessionId = "s1", UserId = "ada", Text = "hi" },
@@ -251,7 +251,7 @@ public sealed class DispatchTests
     [Fact]
     public async Task AMessageASessionIsHoldingIsAnsweredThereRatherThanByANewAgent()
     {
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" });
         var dispatch = new Dispatch(new DispatchOptions { Client = client });
 
         var refused = await Assert.ThrowsAsync<InvalidOperationException>(() => dispatch.GetOrCreateAgentAsync(
@@ -519,7 +519,7 @@ public sealed class DispatchTests
     [Fact]
     public async Task AWorkerThatCanHoldNothingOrDoesNothingIsRefused()
     {
-        using var client = new VisionAgentsClient(new VisionAgentsOptions { Url = "http://x", CustomerId = "examples" });
+        using var client = new StreamAgents(new StreamAgentsOptions { Url = "http://x", CustomerId = "examples" });
 
         Assert.Throws<ConfigurationException>(() => new Dispatch(new DispatchOptions { Client = client, Capacity = 0 }));
         await Assert.ThrowsAsync<InvalidOperationException>(() => new Dispatch(new DispatchOptions { Client = client }).RunAsync(TestContext.Current.CancellationToken));
