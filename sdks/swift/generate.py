@@ -236,9 +236,9 @@ def spec_hash(text: str) -> str:
 
 
 def client_hash() -> str:
-    """The sha256 of the committed ``Generated`` files, by relative path and bytes."""
+    """The sha256 of the committed Swift in ``Generated``, by relative path and bytes."""
     digest = hashlib.sha256()
-    for path in sorted(GENERATED.rglob("*")):
+    for path in sorted(GENERATED.rglob("*.swift")):
         if path.is_file():
             digest.update(path.relative_to(GENERATED).as_posix().encode() + b"\0")
             digest.update(path.read_bytes() + b"\0")

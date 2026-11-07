@@ -144,6 +144,10 @@ class TestCheck:
         (checkout.root / SESSION_MODEL).write_text("// older run\n")
         assert checkout.check().returncode == 1
 
+    def test_untracked_finder_metadata_is_up_to_date(self, checkout: Checkout) -> None:
+        (checkout.root / GENERATED / ".DS_Store").write_bytes(b"\x00finder")
+        assert checkout.check().returncode == 0
+
     def test_removed_generated_file_is_stale(self, checkout: Checkout) -> None:
         (checkout.root / SESSION_MODEL).unlink()
         assert checkout.check().returncode == 1
