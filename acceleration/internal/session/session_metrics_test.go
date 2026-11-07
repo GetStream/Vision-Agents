@@ -27,22 +27,25 @@ import (
 // Written out rather than read from EndReasons, so a reason added, dropped or reclassed there
 // fails here.
 var documentedEnds = map[EndReason][3]string{
-	"agent_hangup":          {"false", "none", "conversation"},
-	"transferred":           {"false", "none", "conversation"},
-	"hangup":                {"false", "caller", "conversation"},
-	"start":                 {"true", "carrier", "ringing"},
-	"unanswered":            {"false", "caller", "ringing"},
-	"voicemail":             {"false", "none", "ringing"},
-	"closed":                {"false", "none", "conversation"},
-	"shutdown":              {"false", "router", "conversation"},
-	"create_failed":         {"true", "router", "starting"},
-	"create_vendor_failed":  {"true", "vendor", "starting"},
-	"create_config_refused": {"true", "customer_config", "starting"},
-	"create_no_credit":      {"true", "customer_credit", "starting"},
-	"agent_failed":          {"true", "router", "conversation"},
-	"model_failed":          {"true", "vendor", "conversation"},
-	"model_config_refused":  {"true", "customer_config", "conversation"},
-	"model_no_credit":       {"true", "customer_credit", "conversation"},
+	"agent_hangup":           {"false", "none", "conversation"},
+	"transferred":            {"false", "none", "conversation"},
+	"hangup":                 {"false", "caller", "conversation"},
+	"start":                  {"true", "carrier", "ringing"},
+	"unanswered":             {"false", "caller", "ringing"},
+	"voicemail":              {"false", "none", "ringing"},
+	"closed":                 {"false", "none", "conversation"},
+	"shutdown":               {"false", "router", "conversation"},
+	"create_failed":          {"true", "router", "starting"},
+	"create_vendor_failed":   {"true", "vendor", "starting"},
+	"create_config_refused":  {"true", "customer_config", "starting"},
+	"create_no_credit":       {"true", "customer_credit", "starting"},
+	"create_no_video":        {"true", "customer_config", "starting"},
+	"create_no_call_type":    {"true", "customer_config", "starting"},
+	"create_no_channel_type": {"true", "customer_config", "starting"},
+	"agent_failed":           {"true", "router", "conversation"},
+	"model_failed":           {"true", "vendor", "conversation"},
+	"model_config_refused":   {"true", "customer_config", "conversation"},
+	"model_no_credit":        {"true", "customer_credit", "conversation"},
 }
 
 // series is the value of the default registry's series name with labels, and whether it
@@ -249,6 +252,22 @@ func (s *SessionSuite) TestASessionWhoseCallRefusedTheAgentEndsOnceAsAFailedCrea
 
 	s.Equal(active, s.active(), "a session never held is counted")
 	s.endedOnce(before, "create_failed")
+}
+
+func (s *SessionSuite) TestASessionWhoseCallRefusedTheAgentForNoVideoEndsAsACreateWithNoVideo() {
+	// Catches a call the customer's app cannot hold, its server running no video, counted as a
+	// failure of the router's own.
+	s.manages()
+	active, before := s.active(), s.allEnds()
+
+	_, err := s.manager.Create(s.ctx, Spec{
+		CallID: "call-1", CustomerID: "acme", Edge: noVideoEdge{newQuietEdge()},
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
+	})
+	s.Require().ErrorIs(err, agent.ErrNoVideo)
+
+	s.Equal(active, s.active(), "a session never held is counted")
+	s.endedOnce(before, EndCreateNoVideo)
 }
 
 func (s *SessionSuite) TestARefusedSpecIsNoSessionEnd() {
@@ -830,6 +849,13 @@ func (s *SessionSuite) refusedTo(created *Session, text string) {
 type refusedEdge struct{ *quietEdge }
 
 func (refusedEdge) Join(context.Context) error { return errors.New("the call refused the agent") }
+
+// noVideoEdge is a call on a Stream server that runs no video.
+type noVideoEdge struct{ *quietEdge }
+
+func (noVideoEdge) Join(context.Context) error {
+	return fmt.Errorf("streamedge: join agent:call-1: %w", agent.ErrNoVideo)
+}
 
 // droppingSpeech is a speech-to-speech model that fails once told to (fail), after which it
 // cannot be opened again, so the agent leaves the call.

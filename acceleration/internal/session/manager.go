@@ -454,10 +454,10 @@ func (m *Manager) Create(ctx context.Context, spec Spec) (_ *Session, failure er
 	}
 	spec.StreamApp = stream.Identity.StreamApp
 	if err := m.keepable(ctx, spec, stream); err != nil {
-		return nil, err
+		return nil, refusedAtStart(spec, began, err)
 	}
 	if err := m.callable(ctx, spec, stream); err != nil {
-		return nil, stack.Wrap(err)
+		return nil, stack.Wrap(refusedAtStart(spec, began, err))
 	}
 	// In app mode a session with no Stream app at all is pinned to none, rather than left
 	// unpinned, which reads as the deployment's own app and would let that app's hooks and
@@ -2206,13 +2206,22 @@ func (m *Manager) keepable(ctx context.Context, spec Spec, stream streamapp.Boun
 	}
 	switch readiness.ChannelType {
 	case streamapp.TypeMissing:
-		return fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in", streamapp.AgentChannelType)
+		return ErrNoAgentChannelType
 	case streamapp.TypeUnsafe:
-		return fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
-			"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
+		return ErrUnsafeAgentChannelType
 	}
 	return nil
 }
+
+// ErrNoAgentChannelType is a conversation to keep in a Stream app of the customer's own that
+// has no agent channel type.
+var ErrNoAgentChannelType = fmt.Errorf("session: this app's Stream app has no %s channel type to keep the conversation in",
+	streamapp.AgentChannelType)
+
+// ErrUnsafeAgentChannelType is a conversation to keep in a Stream app of the customer's own
+// whose agent channel type lets clients make, change or join channels.
+var ErrUnsafeAgentChannelType = fmt.Errorf("session: this app's Stream app lets clients make, change or join %s channels, "+
+	"so a conversation kept there could be rewritten by anybody: restrict the channel type's grants", streamapp.AgentChannelType)
 
 // ErrNoAgentCallType is a session that would join an agent call in a Stream app of the
 // customer's own that has no agent call type, which Stream refuses the call for.

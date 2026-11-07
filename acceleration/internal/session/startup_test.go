@@ -8,6 +8,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/agent"
+	"github.com/GetStream/Vision-Agents/acceleration/internal/conversation/chattest"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/streamapp"
 	"github.com/GetStream/Vision-Agents/acceleration/internal/sts"
 )
@@ -141,6 +142,27 @@ func (s *SessionSuite) TestASessionWhoseModelWouldNotOpenFailsInTheCreate() {
 
 	s.startedUp(before, "web", nil, "create/web/error")
 	s.endedOnce(ends, EndCreateVendorFailed)
+}
+
+func (s *SessionSuite) TestACreateRefusedForAnAppWithNoAgentCallTypeIsOneFailedStartUpAndOneEnd() {
+	// Catches a refused create whose start-up failure is dropped, or counted twice, beside its
+	// one end under create_no_call_type; the api suite only sees a floor of one for it.
+	server := chattest.NewServer(s.T())
+	server.SetApp(chattest.App{ID: 1, ChannelTypes: map[string]map[string][]string{"agent": {}}})
+	s.apps = streamapp.NewClients(streamapp.NewStatic(map[string]streamapp.Identity{
+		"acme": {CustomerID: "acme", StreamApp: 1, APIKey: "acme-key", Secret: streamapp.NewSecret("acme-secret"), BaseURL: server.URL, Registered: true},
+	}, streamapp.NewDeployment(streamapp.DeploymentOptions{APIKey: "deploy-key", Secret: "deploy-secret"})), streamapp.ClientsOptions{})
+	s.manages()
+	before, ends := s.startups(), s.allEnds()
+
+	_, err := s.manager.Create(s.ctx, Spec{
+		CallID: "call-1", CustomerID: "acme", CallType: streamapp.AgentCallType,
+		LLMTarget: "en-low-latency", STTTarget: "en-low-latency", TTSTarget: "en-low-latency",
+	})
+	s.Require().ErrorIs(err, ErrNoAgentCallType)
+
+	s.startedUp(before, "web", nil, "create/web/error")
+	s.endedOnce(ends, EndCreateNoCallType)
 }
 
 func (s *SessionSuite) TestAPhoneSessionsStartUpIsCountedAsPhone() {

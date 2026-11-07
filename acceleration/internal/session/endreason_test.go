@@ -20,7 +20,9 @@ func (s *EndReasonSuite) TestTheReasonsThatEndACallAreTheOnesTheOutcomeCounterKn
 	endsTheCall := map[EndReason]bool{
 		EndAgentHangup: true, EndTransferred: true, EndVoicemail: true, TimeoutHangup: true,
 		TimeoutStart: false, TimeoutUnanswered: false, EndClosed: false, EndShutdown: false,
-		EndCreateFailed: false, EndCreateVendorFailed: false, EndCreateConfigRefused: false, EndCreateNoCredit: false,
+		EndCreateFailed: false, EndCreateVendorFailed: false, EndCreateConfigRefused: false,
+		EndCreateNoCredit: false, EndCreateNoVideo: false,
+		EndCreateNoCallType: false, EndCreateNoChannelType: false,
 		EndAgentFailed: false, EndModelFailed: false, EndModelConfigRefused: false, EndModelNoCredit: false,
 	}
 	for _, info := range EndReasons {
