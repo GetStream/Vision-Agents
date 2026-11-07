@@ -2,7 +2,7 @@ import Foundation
 import Network
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 @MainActor
 @Suite struct AgentSessionTests {

@@ -1,5 +1,5 @@
 import SwiftUI
-import VisionAgentsCore
+import StreamAgents
 
 /// Talks to the agent, in writing or out loud.
 ///

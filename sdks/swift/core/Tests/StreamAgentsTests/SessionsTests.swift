@@ -2,7 +2,7 @@ import Foundation
 import Network
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 @Suite struct SessionsTests {
     @Test func anUpdateSendsOnlyWhatChangedAndReturnsTheSession() async throws {

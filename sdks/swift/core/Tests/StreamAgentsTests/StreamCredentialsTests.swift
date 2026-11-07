@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 @Suite struct StreamCredentialsTests {
     @Test func theTokenIsAskedForOnceAndAgainOnlyOnARefresh() async throws {

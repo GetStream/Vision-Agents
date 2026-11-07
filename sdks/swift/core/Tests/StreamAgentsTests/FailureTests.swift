@@ -1,7 +1,7 @@
 import Foundation
 import Testing
 
-@testable import VisionAgentsCore
+@testable import StreamAgents
 
 /// What a refusal says, read off a real HTTP peer: the router's envelope, or whatever else was in
 /// front of it.

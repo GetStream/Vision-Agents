@@ -1,5 +1,5 @@
 import Foundation
-import VisionAgentsCore
+import StreamAgents
 
 /// Where the router is, where this app's own backend is, and the tools it answers itself.
 ///
