@@ -4,6 +4,8 @@ import (
 	"math"
 	"net/http"
 	"net/http/httptest"
+	"slices"
+	"sync/atomic"
 	"time"
 
 	"github.com/GetStream/Vision-Agents/acceleration/internal/audio"
@@ -15,9 +17,20 @@ import (
 const endsAtOnce = `{"answer":"respond","answer_probability":0.99,"p_eot":0.999,"options":[],"decide_ms":1,"ruling":{"disposition":"respond","floor":"continue"}}`
 
 // floorRules has the agent joined next act on chorus-asr at a server ruling every check as
-// decision, while the stub transcriber, another than chorus-asr's, writes its callers' words.
-func (s *AgentSuite) floorRules(decision string) {
-	s.floor, s.floorMode = audiofloor.New(floorServer(s.T(), decision).URL, audiofloor.Opus, nil), audiofloor.Act
+// decision, while the stub transcriber, another than chorus-asr's, writes its callers' words. It
+// says how many decisions the server has answered.
+func (s *AgentSuite) floorRules(decision string) *atomic.Int64 {
+	var decided atomic.Int64
+	ruling := floorServer(s.T(), decision)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		ruling.Config.Handler.ServeHTTP(w, r)
+		if r.URL.Path == "/v1/decide" {
+			decided.Add(1)
+		}
+	}))
+	s.T().Cleanup(srv.Close)
+	s.floor, s.floorMode = audiofloor.New(srv.URL, audiofloor.Opus, nil), audiofloor.Act
+	return &decided
 }
 
 // callerLine is a caller's line as the edge hears it: a voice the speech detector takes for
@@ -72,6 +85,17 @@ func (s *AgentSuite) asksOverTheFloor(participant stt.Participant, text string) 
 	line.say(600, false)
 }
 
+// heardOnly waits for the conversation to have heard lines, and only them, then closes the agent
+// and requires that it heard nothing more and answered each once.
+func (s *AgentSuite) heardOnly(lines ...string) {
+	s.T().Helper()
+	s.eventually(func() bool { return slices.Equal(s.heardLines(), lines) }, "the lines heard were not "+`"`+lines[0]+`"`)
+	s.eventually(func() bool { return len(s.model.turns()) == len(lines) }, "the lines heard were never answered")
+	s.Require().NoError(s.agent.Close())
+	s.Equal(lines, s.heardLines(), "heard more")
+	s.Len(s.model.turns(), len(lines), "answered more than once")
+}
+
 // heardLines are the lines the conversation heard, in order.
 func (s *AgentSuite) heardLines() []string {
 	var lines []string
@@ -88,7 +112,7 @@ func (s *AgentSuite) heardLines() []string {
 // no turn, and the turn's words are all it wrote of the utterance, its final of the last run
 // waited for.
 func (s *AgentSuite) TestActingWithAnotherTranscriberARunItEndsMidSentenceIsNoTurn() {
-	s.floorRules(endsAtOnce)
+	decided := s.floorRules(endsAtOnce)
 	s.join(true)
 	s.model.reply = []string{"Booked."}
 	caller := stt.Participant{ID: "alice"}
@@ -101,14 +125,12 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberARunItEndsMidSentenceIsNoTu
 	s.Empty(s.model.turns(), "answered while the caller was talking")
 	s.transcriberWrites(caller, 2, stt.ModeReplacement, "peanut allergy")
 	line.say(600, false)
+	s.eventually(func() bool { return decided.Load() > 0 }, "chorus-asr was never asked about the pause")
 	s.Empty(s.model.turns(), "answered before the transcriber settled the words")
+	s.True(s.agent.actsOnChorusASR(), "the loop's contract is kept")
 	s.transcriberWrites(caller, 2, stt.ModeFinal, "Peanut allergy.")
 
-	s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the turn was never answered")
-	s.Equal([]string{"A table for two at 7:30, patio. Peanut allergy."}, s.heardLines())
-	time.Sleep(300 * time.Millisecond)
-	s.Len(s.model.turns(), 1, "one turn, answered once")
-	s.True(s.agent.actsOnChorusASR(), "the loop's contract is kept")
+	s.heardOnly("A table for two at 7:30, patio. Peanut allergy.")
 }
 
 // The transcriber's words holding still while the caller talks on are no pause: the turn is
@@ -126,14 +148,13 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberWordsHoldingStillAreNoPause
 	s.Empty(s.model.turns(), "answered while the caller was talking")
 	line.say(600, false)
 
-	s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the turn was never answered")
-	s.Equal([]string{"I'd like to book a table"}, s.heardLines())
+	s.heardOnly("I'd like to book a table")
 }
 
 // A final that comes after chorus-asr ruled the turn over, correcting what the transcriber had
 // written of it, is waited for: the turn is answered on the final.
 func (s *AgentSuite) TestActingWithAnotherTranscriberALateFinalIsWaitedFor() {
-	s.floorRules(endsAtOnce)
+	decided := s.floorRules(endsAtOnce)
 	s.join(true)
 	caller := stt.Participant{ID: "alice"}
 	line := &callerLine{s: s, participant: caller}
@@ -141,12 +162,11 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberALateFinalIsWaitedFor() {
 	line.say(1200, true)
 	s.transcriberWrites(caller, 1, stt.ModeReplacement, "a table at seven thirty")
 	line.say(600, false)
-	time.Sleep(300 * time.Millisecond)
+	s.eventually(func() bool { return decided.Load() > 0 }, "chorus-asr was never asked about the pause")
 	s.Empty(s.model.turns(), "answered before the transcriber's final")
 	s.transcriberWrites(caller, 1, stt.ModeFinal, "A table at 7:13.")
 
-	s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the turn was never answered")
-	s.Equal([]string{"A table at 7:13."}, s.heardLines())
+	s.heardOnly("A table at 7:13.")
 }
 
 // A chorus-asr server that can't rule has its floor step aside: the transcriber writing the
@@ -168,8 +188,7 @@ func (s *AgentSuite) TestActingWithAnotherTranscriberAServerThatCantRuleLeavesTh
 	s.eventually(func() bool { return !s.agent.actsOnChorusASR() }, "the contract was kept with no floor to keep it")
 
 	s.transcriberWrites(caller, 2, stt.ModeFinal, "What time do you open?")
-	s.eventually(func() bool { return len(s.model.turns()) == 1 }, "the transcriber's turn was never answered")
-	s.Equal([]string{"What time do you open?"}, s.heardLines())
+	s.heardOnly("What time do you open?")
 }
 
 // Non-chorus agents hear the transcriber as they always have: no floor of chorus-asr's, and its
