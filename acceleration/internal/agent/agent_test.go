@@ -7053,6 +7053,54 @@ func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsNotSaidOverACallerWhoStart
 	}, "a held check-in was said over a caller who started talking")
 }
 
+func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidWhenTheCallerWasLastHeardBeforeTheLoss() {
+	// A check-in follows a silence of the caller's: heard before its voice went, they did not
+	// start talking over it.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.model.composes = []string{"Is there anything else I can help with?"}
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	checkIn, _ := firstOf[Responded](s.reported())
+	s.Require().True(strings.HasPrefix(checkIn.TurnID, backchannelPrefix), "the check-in is not the case under test")
+	s.agent.mu.Lock()
+	s.agent.lastHeardAt = time.Now()
+	s.agent.mu.Unlock()
+
+	s.refusesVoice()
+
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == checkIn.TurnID
+	}, "a check-in the caller was heard before was not said in the next voice")
+	s.False(s.cutOff(checkIn.TurnID), "a check-in the next voice says was reported cut off")
+}
+
+func (s *AgentSuite) TestAReplyHeldForTheNextVoiceIsSaidAfterAMurmurOfTheCallers() {
+	// A murmur of the caller's while the next voice opens is them listening: the reply they
+	// are waiting for is still said.
+	s.replacement = newStubTTS(true)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	turn := s.writtenToSilentVoice()
+	sent := said(s.voice.spoken())
+
+	s.refusesVoice()
+	<-started
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	s.mutters(alice, "mm")
+	s.eventually(func() bool { return !s.agent.floor().LastHeardAt.IsZero() }, "the caller was never heard")
+	opened()
+
+	s.eventually(func() bool { return said(s.replacement.spoken()) == sent },
+		"a reply the caller murmured over while the next voice opened was not said")
+	s.False(s.cutOff(turn), "a reply the next voice says was reported cut off")
+}
+
 func (s *AgentSuite) TestALineTheVoiceWouldNotTakeIsReportedCutOff() {
 	// Reported before its sound, so a watcher has it in time: a line never said is then
 	// closed, not left as still coming.
