@@ -777,6 +777,87 @@ func (s *PausesSuite) TestANoiseBegunBeforeTheReplyEndsAtItsPausesFirstCheck() {
 	s.Equal("Two tickets to Bilbao, please.", end.Text)
 }
 
+// Words begun before the reply that the server heard and wrote none of on purpose, as it ruled
+// them a murmur, are a caller saying words, and the ruling at their pause over the agent
+// stands though none of them has been written. On the TPU "Last four 9821," was begun before
+// the reply could be heard, every check over the agent came back blanked, and the check at the
+// comma ended the utterance on it, the pause's words blanked as ignored: the digits were never
+// heard, and no tool was called.
+func (s *PausesSuite) TestWordsBegunBeforeTheReplyThatTheServerBlankedStandAtTheirPause() {
+	nothing := ""
+	s.server.mu.Lock()
+	s.server.speakingDecision, s.server.speakingWords = continuing, &nothing
+	s.server.unfinishedDecision, s.server.unfinishedWords = continuing, &nothing
+	s.server.blanked = "ignored"
+	s.server.words = "Last four 9821, 14 Cedar Lane."
+	s.server.mu.Unlock()
+	s.agent.speaks(true)
+	s.say(800, true)
+	s.pausing(200)
+	s.say(800, true)
+	s.agent.speaks(false)
+	s.pausing(200)
+	end := s.final()
+	s.Equal(int64(1), end.Utterance, "one utterance, through the pause at the comma")
+	s.Equal("Last four 9821, 14 Cedar Lane.", end.Text)
+	s.Len(s.agent.rulings(), 1)
+}
+
+// A noise's words that come after it went on, the agent talking still, end it at the check
+// that ruled on it all the same: what came after, the caller's line with it, is the next
+// utterance.
+func (s *PausesSuite) TestANoiseWhoseWordsComeAfterItWentOnEndsAtItsCheck() {
+	nothing := ""
+	s.server.mu.Lock()
+	s.server.speakingDecision, s.server.speakingWords = continuing, &nothing
+	s.server.unfinishedDecision, s.server.unfinishedWords = continuing, &nothing
+	s.server.wordsAfter = 300 * time.Millisecond
+	s.server.mu.Unlock()
+	s.say(280, true)
+	s.agent.speaks(true)
+	s.say(280, true)
+	s.pausing(200)
+	s.say(400, true)
+	s.Eventually(func() bool {
+		s.transcriber.mu.Lock()
+		defer s.transcriber.mu.Unlock()
+		return s.transcriber.pause.done
+	}, 5*time.Second, time.Millisecond, "the noise was never ended")
+	s.none()
+	s.agent.speaks(false)
+	s.say(800, true)
+	s.pausing(200)
+	end := s.final()
+	s.Equal(int64(2), end.Utterance, "the caller's line is an utterance of its own")
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+}
+
+// A voice in another language begun before the reply, its words written as none for that, is
+// the room's and not the caller's going on: it ends at its pause over the agent, and the
+// caller's line is an utterance of its own.
+func (s *PausesSuite) TestAVoiceInAnotherLanguageBegunBeforeTheReplyEndsAtItsPause() {
+	nothing := ""
+	s.server.mu.Lock()
+	s.server.speakingDecision, s.server.speakingWords = continuing, &nothing
+	s.server.unfinishedDecision, s.server.unfinishedWords = continuing, &nothing
+	s.server.blanked = "language"
+	s.server.mu.Unlock()
+	s.say(280, true)
+	s.agent.speaks(true)
+	s.say(280, true)
+	s.pausing(200)
+	s.none()
+	s.server.mu.Lock()
+	s.server.blanked = ""
+	s.server.mu.Unlock()
+	s.agent.speaks(false)
+	s.say(800, true)
+	s.pausing(200)
+	end := s.final()
+	s.Equal(int64(2), end.Utterance, "the caller's line is an utterance of its own")
+	s.Equal("Two tickets to Bilbao, please.", end.Text)
+}
+
 // A stop ruled at a pause over the agent is acted on at once, with the pause's words, as one
 // ruled while the caller talks on is (Overheard): a "stop" too short for a check over the agent
 // without a pause, voiced for less than overAfter, is ruled on at its pause alone. The turn
