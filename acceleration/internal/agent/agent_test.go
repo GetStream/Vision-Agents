@@ -7181,6 +7181,44 @@ func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsNotSaidOverACallerWhoStart
 	}, "a held check-in was said over a caller who started talking")
 }
 
+func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidWhenOnlyTheAgentsOwnEchoIsTranscribed() {
+	// The caller's line carries the agent's own voice back, which the transcriber writes down.
+	// That is not the caller talking: the stamp reads the words left once the echo is
+	// removed, so an echo alone does not drop the held check-in.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	started, release := make(chan struct{}), make(chan struct{})
+	s.replacement.startStarted, s.replacement.startRelease = started, release
+	opened := sync.OnceFunc(func() { close(release) })
+	defer opened()
+	s.model.composes = []string{"Is there anything else I can help with?"}
+	s.agent.checkIn(stt.Participant{}, idlePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the check-in was never said")
+	checkIn, _ := firstOf[Responded](s.reported())
+	s.Require().True(strings.HasPrefix(checkIn.TurnID, backchannelPrefix), "the check-in is not the case under test")
+	s.agent.mu.Lock()
+	s.agent.voiceOut = voiceOut{from: time.Now().Add(-3 * time.Second), to: time.Now()}
+	s.agent.mu.Unlock()
+
+	s.refusesVoice()
+	<-started
+	alice := stt.Participant{ID: "alice"}
+	s.speak(alice)
+	droppedBefore := testutil.ToFloat64(echoes.WithLabelValues("false"))
+	s.ears.emitter.Send(stt.Transcript{Participant: alice, Mode: stt.ModeReplacement, Provider: audiofloor.ProviderName,
+		Text: "Is there anything else I can help with", Language: "en", AudioDurationMs: 1500})
+	s.eventually(func() bool { return testutil.ToFloat64(echoes.WithLabelValues("false")) > droppedBefore },
+		"the agent's own words heard back were not taken for an echo")
+	opened()
+
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == checkIn.TurnID
+	}, "a check-in was dropped for the agent's own echo")
+	s.False(s.cutOff(checkIn.TurnID), "a check-in the next voice says was reported cut off")
+}
+
 func (s *AgentSuite) TestACheckInHeldForTheNextVoiceIsSaidAfterAMurmurOfTheCallers() {
 	// A murmur is the caller listening, as it is to a reply: the check-in is still said.
 	s.checkInSaidAfterTheCallerSays(func(alice stt.Participant) { s.mutters(alice, "mm-hm") })
