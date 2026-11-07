@@ -218,6 +218,8 @@ func (s *Store) FinishSimulationCase(ctx context.Context, kase SimulationCase) e
 	if kase.Transcript == nil {
 		kase.Transcript = []SimulationLine{}
 	}
+	// The error is the agent's when it stopped answering, which can be a provider's text.
+	kase.Error = SafeLogText(kase.Error)
 
 	now := time.Now().UTC()
 	kase.FinishedAt = &now

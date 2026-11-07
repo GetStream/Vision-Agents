@@ -1882,7 +1882,7 @@ func (s *Session) write(event Event) {
 	case agent.ToolRan:
 		payload := map[string]any{"call_id": typed.ID, "arguments": typed.Arguments}
 		if typed.Err != nil {
-			payload["error"] = typed.Err.Error()
+			payload["error"] = store.SafeLogText(typed.Err.Error())
 		}
 		s.item(typed.TurnID, store.ItemToolResult, typed.Result, typed.Tool, payload)
 	case agent.LookedUp:

@@ -1,6 +1,7 @@
 package store
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/base64"
@@ -250,8 +251,9 @@ func redactedAttr(attr slog.Attr, text string) slog.Attr {
 }
 
 // RedactSentryEvent is a sentry BeforeSend that puts an event's message, its exceptions'
-// values and its breadcrumbs' messages through RedactLogText: they are an error's text, which
-// can echo the key a provider was sent.
+// values, its breadcrumbs' messages, its tags and every string in its contexts through
+// RedactLogText: they are an error's text, which can echo the key a provider was sent, as a
+// usage alert's context does (internal/alerts).
 func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	event.Message = RedactLogText(event.Message)
 	for i := range event.Exception {
@@ -260,7 +262,53 @@ func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 	for _, breadcrumb := range event.Breadcrumbs {
 		breadcrumb.Message = RedactLogText(breadcrumb.Message)
 	}
+	for key, value := range event.Tags {
+		event.Tags[key] = RedactLogText(value)
+	}
+	for name, context := range event.Contexts {
+		event.Contexts[name] = redactedContext(context)
+	}
 	return event
+}
+
+// redactedContext is a copy of context with every string in it redacted. It is a copy, at
+// every depth, because the event shares its contexts' values with the scope it came from,
+// which the next event reads too.
+func redactedContext(context map[string]any) map[string]any {
+	out := make(map[string]any, len(context))
+	for key, value := range context {
+		out[key] = redactedValue(value)
+	}
+	return out
+}
+
+// redactedValue is value with every string in it redacted, in maps and slices at any depth. A
+// value of another type is read as the JSON Sentry sends of it and, when that JSON holds a
+// credential, replaced by it decoded and redacted.
+func redactedValue(value any) any {
+	switch value := value.(type) {
+	case string:
+		return RedactLogText(value)
+	case map[string]any:
+		return redactedContext(value)
+	case []any:
+		out := make([]any, len(value))
+		for i, inner := range value {
+			out[i] = redactedValue(inner)
+		}
+		return out
+	}
+	text, err := json.Marshal(value)
+	if err != nil || RedactLogText(string(text)) == string(text) {
+		return value
+	}
+	decoder := json.NewDecoder(bytes.NewReader(text))
+	decoder.UseNumber()
+	var decoded any
+	if err := decoder.Decode(&decoded); err != nil {
+		return value
+	}
+	return redactedValue(decoded)
 }
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}
