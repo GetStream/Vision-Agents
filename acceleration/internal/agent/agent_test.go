@@ -7101,6 +7101,58 @@ func (s *AgentSuite) TestAReplyHeldForTheNextVoiceIsSaidAfterAMurmurOfTheCallers
 	s.False(s.cutOff(turn), "a reply the next voice says was reported cut off")
 }
 
+func (s *AgentSuite) TestAnUpdateNoneOfWhichWasHeardIsSaidInTheVoiceThatReplacesTheLostOne() {
+	// An update goes out under a murmur's prefix like a check-in, and was dropped with the
+	// voice the same way.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.agent.mu.Lock()
+	if s.agent.toolsRunning == nil {
+		s.agent.toolsRunning = map[string]string{}
+	}
+	s.agent.toolsRunning["call-1"] = "lookup_order"
+	s.agent.mu.Unlock()
+	s.model.composes = []string{"Still looking up your order."}
+	s.agent.checkIn(stt.Participant{}, updatePurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the update was never said")
+	update, _ := firstOf[Responded](s.reported())
+	s.Require().Equal(PurposeUpdate, update.Purpose, "the update is not the case under test")
+	s.Require().True(strings.HasPrefix(update.TurnID, backchannelPrefix), "the update is not the case under test")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == update.TurnID
+	}, "the update was never reported spoken")
+	s.Equal("Still looking up your order.", said(s.replacement.spoken()))
+	s.Len(s.replacement.spoken(), 1, "the update was said twice in the next voice")
+	s.False(s.cutOff(update.TurnID), "an update the next voice says was reported cut off")
+}
+
+func (s *AgentSuite) TestAHoldLineNoneOfWhichWasHeardIsSaidInTheVoiceThatReplacesTheLostOne() {
+	// A hold line goes out under a murmur's prefix like a check-in, and was dropped with the
+	// voice the same way.
+	s.join(false)
+	s.voice.silent = true
+	s.replacement = newStubTTS(false)
+	s.model.composes = []string{"One moment while I check."}
+	s.agent.checkIn(stt.Participant{}, holdPurpose)
+	s.eventually(func() bool { return countOf[Responded](s.reported()) == 1 }, "the hold line was never said")
+	hold, _ := firstOf[Responded](s.reported())
+	s.Require().True(strings.HasPrefix(hold.TurnID, backchannelPrefix), "the hold line is not the case under test")
+
+	s.refusesVoice()
+
+	s.eventually(func() bool {
+		spoke, ok := firstOf[Spoke](s.reported())
+		return ok && spoke.TurnID == hold.TurnID
+	}, "the hold line was never reported spoken")
+	s.Equal("One moment while I check.", said(s.replacement.spoken()))
+	s.Len(s.replacement.spoken(), 1, "the hold line was said twice in the next voice")
+}
+
 func (s *AgentSuite) TestALineTheVoiceWouldNotTakeIsReportedCutOff() {
 	// Reported before its sound, so a watcher has it in time: a line never said is then
 	// closed, not left as still coming.
