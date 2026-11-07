@@ -456,6 +456,11 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 ### A caller turn answered through the subagent or a tool counts in the turn latency
 
 A caller turn whose reply said nothing and handed the work to the subagent or a tool is timed to the first audio of the first line said for it: a hold or update line while the work runs, or the answer it came back with. `router_agent_turn_latency_seconds` observes it once, and its `SpeechEndToAudioMs` in the session's turn events shows the same wait; before, both left the slowest turns out. A filler in the turn's own reply still ends the wait, so the answer after it adds nothing. A turn a scheduled task or a reminder fires into the call is no longer observed, since nobody in the call waited on it; its turn event keeps its timings (AI-2969).
+
+### A reply the voice lost before any of it was heard is said in the next voice
+
+When a voice fails before any of a finished reply's audio went out (staging: ElevenLabs refusing the agent's voice on its first word), the voice that replaces it says the reply, and the turn is not abandoned. Before, the reply was dropped (`cause=voice_lost`, `turn_abandoned=true`) and the caller heard nothing. A greeting or a check-in none of which was heard is said the same way, and so is what the lost voice had of a reply the model is still writing. What the model writes while the next voice opens is said by that voice after it; before, it went to the lost voice and was never heard. A reply or line partly heard, and one with no voice left to say it, are still cut off as before (AI-2970).
+
 ### A call refused because the app has no Stream Video is the customer's setup, not the router's fault
 
 A voice session whose call Stream refuses with `video is not enabled for your account` or `video is not enabled on this server` (code 17) now counts in `router_session_ends_total` as `create_no_video`, fault `customer_config`, stage `starting`, where it counted as `create_failed`, fault `router`. A create refused because the customer's own Stream app has no agent call type counts as `create_no_call_type`, and one refused because it has no agent channel type, or one clients may rewrite, as `create_no_channel_type`, both fault `customer_config`, stage `starting`; they were not counted at all. Every other join refusal still counts as `create_failed`, and the 400 answers are unchanged (AI-2949).
@@ -471,6 +476,7 @@ The requests table, agent logs and socket error frames now redact a key sent as 
 ### A session whose every reply was lost no longer counts as closed when the flow controller answered
 
 A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
+
 ### The Python and Rust clients read an enum value they do not list
 
 A session that a newer router ended for a reason this client was not built with, such as `closed`, made `sessions.get` and `query` raise in Python (`ValueError`) and fail in Rust (`Error::Decode`). This was true of every enum in an answer. The value now reads as it was sent and is written back the same way: in Python as a member of the enum that carries it (`str(session.end_reason) == "closed"`), in Rust as the new `Unlisted(String)` variant. A listed value reads as before, and a value a caller builds or parses is still checked. In Rust these enums are no longer `Copy`, and a `match` on one needs an `Unlisted` arm (AI-2951).
@@ -482,9 +488,11 @@ A call episode was dated by the router's clock while a number's link is dated by
 ### A phone operation that fails on the router's side is a 500
 
 A phone operation (search, buy, release, attach, detach, a call, a transfer, pressing digits) whose failure was the router's own, such as a database read of the 10DLC gate, answered 400 `invalid_request` with the database's words. It now answers 500 "something went wrong" and the log keeps the error with its stack. Work waiting on the deployment's own Stream app answers 503 with `Retry-After`. A request the client can change keeps its 400 `invalid_request` and its words: a search filter or a call term a vendor cannot take, a number that cannot be dialled, an unknown vendor, an app the customer cannot act in. A call or a transfer with an empty `from` says it needs one of the customer's numbers to dial from. A setting the deployment lacks is a 400 `not_configured`: a vendor's credentials or a setting it buys or calls with (such as a connection id, or the signalling addresses a trunk needs), a public url, sip trunks, and Stream credentials, which now answer "phone lines are not available: this deployment has no Stream app to make them in". A Bird, DIDWW, Plivo or Vonage request that failed is a vendor failure as for the other vendors: 503 `phone_vendor_failed` without the vendor's words, and a search skips that vendor with "The phone vendor could not complete the request." (AI-2056).
+
 ### A scheduled text the organization may not pay for is not tried again
 
 A task due on SMS, WhatsApp or iMessage, or in the thread it was made in, whose organization is suspended, out of credit or past a spend limit, was tried up to three more times. A thread task's run also said `channel_unreachable`. The run now fails at once, under the refusal's code (`account_suspended`, `insufficient_credits`, `system_limit_reached` or `spend_limit_reached`), and the router logs a warning that names the customer. A refusal because the router could not check the money is still tried again.
+
 ### Importing an export no longer writes over edits made on the target
 
 `POST /v1/data/import` wrote every row of an export, so a second import of an older export undid what had been done to those rows on the target since. An export for an app the target already holds is now refused with a 409 before any row is written, as `router replicate` refuses it; `?full=true` writes it anyway, and a batch of changes is applied as before (AI-2889).
@@ -496,6 +504,7 @@ The router read everything a Daytona code run printed into memory, however much,
 ### git lfs push in a sandbox says why it is refused
 
 Under the proxy broker, `git lfs push` in a sandbox is refused at its first request, `locks/verify`, and git-lfs showed «Authentication error … Check that you have proper access to the repository». The proxy now answers every refused request under a Git LFS API (`/info/lfs/`) with an LFS error, so git-lfs prints the proxy's hint: code in the sandbox only reads through a connector, and writes with the connector's tools. Uploads stay refused, and the log says why (AI-2876, #1801).
+
 ### A sandbox session cut while it opens leaves no Daytona secret
 
 When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).

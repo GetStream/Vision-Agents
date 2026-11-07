@@ -457,6 +457,9 @@ type Agent struct {
 	// what may be heard, because the agent starts a turn for itself while the turn before
 	// it is still being spoken.
 	speakingTurn string
+	// held is the reply a voice replacing a lost one is to say, and what of it that voice
+	// has still to be sent. Nil while no voice is replaced or it has been sent all of it.
+	held *heldReply
 	// saying is the reply as the caller has heard it so far, so a controller ruling on
 	// words that overlap it can tell a correction from the line echoing back. It is the
 	// spoken text as it streams, or the whole phrase for a greeting or a murmur.
@@ -3334,6 +3337,10 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	// lost is set once the voice has gone, which a provider may say twice: as a fatal error
 	// and as the socket dropping.
 	lost := false
+	// handedOver is the turn the voice that replaced this one says again, whose audio and
+	// completions from this voice are no longer the turn's.
+	handedOver := ""
+	handed := func(synthesisID string) bool { return handedOver != "" && turnOf(synthesisID) == handedOver }
 	// An expressive voice can read a phrase 20 to 30 dB below the one before it, which a
 	// caller hears as the agent trailing off and their phone hears as it having finished.
 	leveller := audio.NewLeveller()
@@ -3348,6 +3355,11 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 	for event := range voice.Events() {
 		switch typed := event.(type) {
 		case tts.AudioChunk:
+			if handed(typed.SynthesisID) {
+				// Paid for and never published, as audio of an abandoned turn is.
+				a.turns.dropped(handedOver, typed.Audio.DurationMs())
+				continue
+			}
 			// Audio from an abandoned turn is dropped here rather than published, so
 			// barge-in silences the agent even while the provider is still sending.
 			//
@@ -3413,6 +3425,12 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"caller_talking", a.converse.Listening())
 
 		case tts.SynthesisComplete:
+			if handed(typed.SynthesisID) {
+				// Taken, it would settle the turn before the next voice has said it.
+				a.logger.Debug("the lost voice finished an utterance the next one says",
+					"synthesis", typed.SynthesisID, "synthesis_cut", typed.Interrupted)
+				continue
+			}
 			done := a.takeUtterance(typed.SynthesisID)
 			if !typed.Interrupted && typed.Characters > 0 && typed.AudioDurationMs > 0 {
 				// Cut short, a synthesis was billed all of its text and made only part of its
@@ -3472,14 +3490,14 @@ func (a *Agent) consumeTTS(p *pipeline, voice *ttsrouter.Session) {
 				"provider", typed.Provider, "model", typed.Model, "reason", typed.Reason)
 			if !lost {
 				lost = true
-				a.loseVoice(p, voice)
+				handedOver = a.loseVoice(p, voice)
 			}
 
 		case tts.Error:
 			if typed.Fatal {
 				if !lost {
 					lost = true
-					a.loseVoice(p, voice)
+					handedOver = a.loseVoice(p, voice)
 				}
 			} else if typed.SynthesisID == "" {
 				// A failure naming an utterance still settles it, since the router turns
@@ -3792,14 +3810,24 @@ func (a *Agent) speakSentence(turnID, text string, message MessageSpan) error {
 		id := fmt.Sprintf("%s%s%d", turnID, sentenceSuffix, a.sentences)
 		a.sentences++
 		a.begin()
-		return a.synthesize(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message)
+		return a.sendSentence(voice, turnID, tts.Request{ID: id, Text: text, Final: true}, message, true)
 	}
 
-	if a.openTurn != turnID {
+	opens := a.openTurn != turnID
+	if opens {
 		a.openTurn = turnID
 		a.begin()
 	}
-	return a.synthesize(voice, turnID, tts.Request{ID: turnID, Text: text}, message)
+	return a.sendSentence(voice, turnID, tts.Request{ID: turnID, Text: text}, message, opens)
+}
+
+// sendSentence sends a request of a reply to the voice, unless it is held for the voice
+// replacing a lost one. counted is whether it was counted as being said.
+func (a *Agent) sendSentence(voice *ttsrouter.Session, turnID string, request tts.Request, message MessageSpan, counted bool) error {
+	if a.hold(turnID, request, message, counted) {
+		return nil
+	}
+	return a.synthesize(voice, turnID, request, message)
 }
 
 // speakWhole says a piece of text that is already complete, as one utterance. Its message,
@@ -3827,7 +3855,11 @@ func (a *Agent) closeUtterance(turnID string) error {
 	if voice == nil || !voice.Streaming() || a.openTurn != turnID {
 		return nil
 	}
-	return voice.Synthesize(tts.Request{ID: turnID, Final: true})
+	request := tts.Request{ID: turnID, Final: true}
+	if a.hold(turnID, request, MessageSpan{}, false) {
+		return nil
+	}
+	return voice.Synthesize(request)
 }
 
 // expectedSyntheses is how many syntheses a finished reply will produce in total. A
@@ -3965,7 +3997,9 @@ func (a *Agent) abandonReply(participant stt.Participant, still func(turnID stri
 	now := time.Now()
 	voiced, played := a.voiced, now.Sub(a.voicedAt)
 	cut := a.cutShortLocked(turnID, now)
-	outstanding := a.generating || a.audioOutstandingLocked(turnID)
+	// A reply held for the voice replacing a lost one has none of its speech in flight, and
+	// none of it was heard.
+	outstanding := a.generating || a.audioOutstandingLocked(turnID) || a.heldLocked(turnID)
 	a.abandoned[turnID] = struct{}{}
 	// Acting on chorus-asr, giving the caller the floor silences everything the agent is
 	// saying (README, "The loop's contract"), and the turn it is on may not be all of it: it
