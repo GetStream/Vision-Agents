@@ -121,6 +121,9 @@ func (s *Session) fault() Fault {
 
 // createFailure is the reason a session Create gave up on, by whose fault err is.
 func createFailure(err error) EndReason {
+	if errors.Is(err, agent.ErrNoVideo) {
+		return EndCreateNoVideo
+	}
 	fault, _ := faultOf(err)
 	switch fault {
 	case FaultCustomerCredit:

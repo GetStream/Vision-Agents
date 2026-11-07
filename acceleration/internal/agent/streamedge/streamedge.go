@@ -13,12 +13,14 @@ import (
 	"log/slog"
 	"net/http"
 	"slices"
+	"strings"
 	"sync"
 	"time"
 
 	rtc "github.com/GetStream/getstream-go-webrtc"
 	"github.com/GetStream/getstream-go-webrtc/audio/opus"
 	audiortc "github.com/GetStream/getstream-go-webrtc/audio/rtc"
+	"github.com/GetStream/getstream-go-webrtc/coordinator"
 	"github.com/GetStream/getstream-go-webrtc/pc"
 	"github.com/GetStream/getstream-go-webrtc/track"
 	getstream "github.com/GetStream/getstream-go/v5"
@@ -165,11 +167,9 @@ func (e *Edge) Join(ctx context.Context) error {
 	// in the SDK, which has no signaling client yet to report its stats through.
 	call := client.Call(e.options.CallType, e.options.CallID)
 	signalingStarted := time.Now()
-	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
-		e.listen(remote)
-	})), rtc.WithPublisherPeerConfiguration(publisherPeer))
+	joined, err := e.joinCall(ctx, call)
 	if err != nil {
-		return stack.Wrap(fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err))
+		return err
 	}
 	e.call = call
 	signalingMs := float64(time.Since(signalingStarted).Microseconds()) / 1000
@@ -212,6 +212,44 @@ func (e *Edge) Join(ctx context.Context) error {
 	})
 	return nil
 }
+
+// joinCall signals the join of call. A refusal for a server that runs no video is also
+// agent.ErrNoVideo.
+func (e *Edge) joinCall(ctx context.Context, call *rtc.Call) (*sfu_events.JoinResponse, error) {
+	joined, err := call.Join(ctx, rtc.WithOnTrack(rtc.SubscriberFunc(func(remote rtc.OnTrackReceived) {
+		e.listen(remote)
+	})), rtc.WithPublisherPeerConfiguration(publisherPeer))
+	if err != nil {
+		if videoOff(err) {
+			err = noVideo{err}
+		}
+		return nil, stack.Wrap(fmt.Errorf("streamedge: join %s:%s: %w", e.options.CallType, e.options.CallID, err))
+	}
+	return joined, nil
+}
+
+// Stream's answer to a JoinCall on a server that runs no video: code 17, Not Allowed
+// (https://getstream.io/docs/platform/api-error-codes/), with this text in its message. The
+// code alone is not enough: Stream answers 17 to a join a call type's permissions refuse, or
+// to a single-use call that has ended, as well.
+const (
+	codeNotAllowed = 17
+	noVideoMessage = "video is not enabled on this server"
+)
+
+// videoOff reports whether err is Stream refusing a join because the server runs no video.
+func videoOff(err error) bool {
+	refused, ok := errors.AsType[*coordinator.Error](err)
+	return ok && refused.Code == codeNotAllowed && strings.Contains(refused.Message, noVideoMessage)
+}
+
+// noVideo is a join refused for a server that runs no video. It reads as the refusal it wraps,
+// so the answer a caller gets keeps Stream's words, and it is agent.ErrNoVideo.
+type noVideo struct{ error }
+
+func (noVideo) Is(target error) bool { return target == agent.ErrNoVideo }
+
+func (n noVideo) Unwrap() error { return n.error }
 
 // SFU is the SFU the call is on now, satisfying agent.SFUReporter. It is zero before the join.
 func (e *Edge) SFU() agent.SFU {
