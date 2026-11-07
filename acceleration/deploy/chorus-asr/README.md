@@ -302,7 +302,12 @@ last frame, and a pause costs one request:
     before the policy's `cap_ms`, where the turn has ended whatever the model says, and its
     ruling stands while the agent talks on, with nothing more asked. Ended at once, a 200 ms
     pause at the comma of "Last four 9821, 14 Cedar Lane", begun 2 s before the reply could
-    be heard, ended the utterance on its first half, its words written as nothing.
+    be heard, ended the utterance on its first half, its words written as nothing. Of an
+    utterance none of which has been written by that check, the pause's own words say whose
+    it is: words, or a murmur the server heard and wrote none of (`noise: ignored`), are the
+    caller's, and the ruling stands; none with no reason, or a voice in another language
+    (`noise: language`), is a noise the speech gate opened on before the reply, a room's
+    babble, and the utterance ends at that check, with nothing sent.
   - *Begun over the agent*, while they could hear it, a ruling that it may talk on ends the
     utterance at that check, as the model let the agent talk through it: a murmur, a cough,
     its own voice heard back. What the caller says next is an utterance of its own; run on,
