@@ -1,9 +1,9 @@
 {
-    "name": "getstream/vision-agents",
-    "description": "Server-side PHP SDK for Stream Vision Agents: agents, sessions, dispatch, folder sync and the model router.",
+    "name": "getstream/stream-agents",
+    "description": "Server-side PHP SDK for Stream Agents: agents, sessions, dispatch, folder sync and the model router.",
     "type": "library",
     "license": "Apache-2.0",
-    "keywords": ["stream", "getstream", "vision-agents", "voice", "ai", "agents"],
+    "keywords": ["stream", "getstream", "stream-agents", "voice", "ai", "agents"],
     "homepage": "https://getstream.io/video/voice-agents/",
     "require": {
         "php": "^8.4",

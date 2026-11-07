@@ -9,7 +9,7 @@ The per-language half of [sdk](../sdk/SKILL.md), for the server side only. It re
 decisions [`sdks/php`](../../../sdks/php) already follows, so a change lands consistently
 rather than re-litigating them.
 
-One Composer package, `getstream/vision-agents`, namespace `GetStream\VisionAgents`. PHP ^8.4,
+One Composer package, `getstream/stream-agents`, namespace `GetStream\VisionAgents`. PHP ^8.4,
 tested on 8.4 and 8.5. Strict types everywhere, `final readonly` classes, backed enums.
 
 ## Layout
@@ -31,7 +31,7 @@ tests/Unit tests/Live tests/Support tests/server/router.php
 
 ## Why these choices
 
-- **Name.** `getstream/vision-agents` sits beside `getstream/getstream-php` on Packagist.
+- **Name.** `getstream/stream-agents` sits beside `getstream/getstream-php` on Packagist.
   Packagist needs `composer.json` at a repository root, so publishing is a splitsh/lite
   subtree split of `sdks/php` into its own repo from CI. Do not publish from the monorepo.
 - **PHP 8.4.** 8.3 left active support at the end of 2025; 8.4 gives `new Foo()->bar()`, property

@@ -1,4 +1,4 @@
-# getstream/vision-agents
+# getstream/stream-agents
 
 The PHP client for the Stream acceleration backend, for the server side of a PHP app: open
 conversations, run agents from a directory, place and answer calls, and route speech, text
@@ -8,7 +8,7 @@ Nothing here does inference or touches media. The backend joins the call, hears 
 answers and speaks. What stays here is configuration and function calling.
 
 ```bash
-composer require getstream/vision-agents
+composer require getstream/stream-agents
 ```
 
 PHP 8.4 or newer. Any PSR-18 client works; Guzzle arrives with Stream's own PHP SDK, which
