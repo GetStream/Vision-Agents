@@ -422,9 +422,10 @@ def pytest_make_collect_report(
 ) -> Generator[None, pytest.CollectReport, pytest.CollectReport]:
     """Fail the collection of a test file whose module was loaded from another file.
 
-    Under ``--import-mode=importlib`` two test files with the same package-relative name (``tests/test_tts.py`` in two
-    plugins whose ``tests/`` has an ``__init__.py``) get the same module name, and pytest hands the second file the
-    first file's module from ``sys.modules``: the second file's own tests never run.
+    Under ``--import-mode=importlib`` two files with the same package-relative name get the same module name:
+    ``tests/test_tts.py`` in two plugins whose ``tests/`` has an ``__init__.py``, or ``tests/test_utils.py`` beside a
+    ``tests/test_utils/`` package. pytest then hands the second file the first one's module from ``sys.modules``, and
+    the second file's own tests never run.
     """
     report = yield
     if report.passed and isinstance(collector, pytest.Module):
@@ -433,6 +434,6 @@ def pytest_make_collect_report(
             report.outcome = "failed"
             report.longrepr = (
                 f"{collector.path} collected the tests of {loaded}: both import as module "
-                f"{collector.obj.__name__!r}. Remove the tests/__init__.py that makes them share a package."
+                f"{collector.obj.__name__!r}. Rename one, or drop the __init__.py that puts both in one package."
             )
     return report
