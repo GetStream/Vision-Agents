@@ -169,6 +169,11 @@ func (a *Agent) synthesize(voice *ttsrouter.Session, turnID string, request tts.
 func (a *Agent) sending(turnID, synthesisID, text string, message MessageSpan) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	a.sendingLocked(turnID, synthesisID, text, message)
+}
+
+// sendingLocked is sending with Agent.mu held.
+func (a *Agent) sendingLocked(turnID, synthesisID, text string, message MessageSpan) {
 	heard := a.heard[synthesisID]
 	if heard == nil {
 		if _, done := a.finished[synthesisID]; done {

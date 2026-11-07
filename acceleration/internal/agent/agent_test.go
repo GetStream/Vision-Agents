@@ -6723,6 +6723,58 @@ func (s *AgentSuite) TestASentenceTheLostVoiceSendsForAReplyTheNextSaysIsNotTheT
 		"the lost voice's audio of the reply was heard")
 }
 
+// holdsFirstSynthesis has a voice wait on the first synthesis it is sent until the returned
+// function is called, once it has been taken.
+func holdsFirstSynthesis(voice *stubTTS) (taken <-chan struct{}, release func()) {
+	synthesizing, released := make(chan struct{}), make(chan struct{})
+	voice.mu.Lock()
+	voice.synthesizing, voice.synthesisRelease = synthesizing, released
+	voice.mu.Unlock()
+	return synthesizing, sync.OnceFunc(func() { close(released) })
+}
+
+func (s *AgentSuite) TestAReplyTheCallerTalksOverWhileTheNextVoiceSaysItIsSentNoMoreOf() {
+	// Each sentence sent after they took the floor is billed and never heard.
+	s.replacement = newStubTTS(false)
+	s.sentencesToSilentVoice(3)
+	taken, release := holdsFirstSynthesis(s.replacement)
+	defer release()
+
+	s.refusesVoice()
+	<-taken
+	s.agent.Interrupt()
+	release()
+
+	s.never(func() bool { return len(s.replacement.spoken()) > 1 }, "the reply was sent on after the caller took the floor")
+	s.eventually(func() bool { return !s.agent.Busy() }, "what was never sent was left counted as being said")
+}
+
+func (s *AgentSuite) TestWhatOfAReplyANextVoiceLostTooWasNotSentIsSaidByTheVoiceAfterIt() {
+	// Sent to the lost one, it is billed and never heard; left out, the reply would end
+	// without it.
+	second := newStubTTS(false)
+	s.replacement = second
+	s.sentencesToSilentVoice(3)
+	sent := s.voice.spoken()
+	taken, release := holdsFirstSynthesis(second)
+	defer release()
+
+	s.refusesVoice()
+	<-taken
+	third := newStubTTS(false)
+	s.replacement = third
+	second.emitter.Send(tts.Error{Provider: "stub", Model: "stub-tts", Fatal: true, Err: errors.New("socket closed")})
+	s.eventually(func() bool { return len(third.spoken()) == 3 }, "the reply was not said by the voice after the next")
+	release()
+
+	s.never(func() bool { return len(second.spoken()) > 1 }, "the reply was sent on to a voice that was lost")
+	for i, request := range third.spoken() {
+		s.Equal(sent[i].ID, request.ID, "said out of order")
+		s.Equal(sent[i].Text, request.Text)
+	}
+	s.eventually(func() bool { return !s.agent.Busy() }, "the reply never finished")
+}
+
 func (s *AgentSuite) TestADirectionTheNextVoiceCannotActIsTakenOutOfTheReplyItSaysAgain() {
 	// Left in, the caller would hear the word "laughs" read out.
 	s.performing = "Act the directions in brackets."
