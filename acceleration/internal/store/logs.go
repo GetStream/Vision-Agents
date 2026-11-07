@@ -266,18 +266,24 @@ func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 		event.Tags[key] = RedactLogText(value)
 	}
 	for name, context := range event.Contexts {
-		event.Contexts[name] = redactedContext(context)
+		event.Contexts[name] = redactedContext(context, 0)
 	}
 	return event
 }
 
+// maxContextDepth is how deep redactedValue goes into maps and slices. A value that holds
+// itself is a cycle that would otherwise overflow the stack and end the process, where
+// Sentry's own encoding of it only fails; no context nests anywhere near this far, and what
+// lies deeper is left as it is.
+const maxContextDepth = 64
+
 // redactedContext is a copy of context with every string in it redacted. It is a copy, at
 // every depth, because the event shares its contexts' values with the scope it came from,
-// which the next event reads too.
-func redactedContext(context map[string]any) map[string]any {
+// which the next event reads too. depth is how many maps and slices lie above it.
+func redactedContext(context map[string]any, depth int) map[string]any {
 	out := make(map[string]any, len(context))
 	for key, value := range context {
-		out[key] = redactedValue(value)
+		out[key] = redactedValue(value, depth+1)
 	}
 	return out
 }
@@ -286,16 +292,19 @@ func redactedContext(context map[string]any) map[string]any {
 // value of another type is read as the JSON Sentry sends of it and, when that JSON holds a
 // credential, replaced by it decoded and redacted. Decoded, it holds only maps, slices, strings
 // and numbers, booleans and nulls, whose JSON no rule matches, so none is read as JSON again.
-func redactedValue(value any) any {
+func redactedValue(value any, depth int) any {
+	if depth > maxContextDepth {
+		return value
+	}
 	switch value := value.(type) {
 	case string:
 		return RedactLogText(value)
 	case map[string]any:
-		return redactedContext(value)
+		return redactedContext(value, depth)
 	case []any:
 		out := make([]any, len(value))
 		for i, inner := range value {
-			out[i] = redactedValue(inner)
+			out[i] = redactedValue(inner, depth+1)
 		}
 		return out
 	}
@@ -309,7 +318,7 @@ func redactedValue(value any) any {
 	if err := decoder.Decode(&decoded); err != nil {
 		return value
 	}
-	return redactedValue(decoded)
+	return redactedValue(decoded, depth+1)
 }
 func safeLogDetails(details map[string]any) map[string]any {
 	out := map[string]any{}

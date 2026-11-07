@@ -547,6 +547,34 @@ func TestRedactSentryEventLeavesTheScopesContextsAlone(t *testing.T) {
 	}
 }
 
+// A context that holds itself would overflow the stack, which ends the process where Sentry's
+// own encoding of it only fails: the walk stops at a depth, and what it reached above that is
+// redacted as before.
+func TestRedactSentryEventReturnsFromAContextThatHoldsItself(t *testing.T) {
+	err, key := echoedKey()
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	loop := map[string]any{"error": err.Error()}
+	loop["self"] = loop
+	listing := []any{err.Error()}
+	listing = append(listing, listing)
+	listing[1] = listing
+
+	event := RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{
+		"usage_alert": {"loop": loop, "listing": listing},
+	}}, nil)
+
+	context := event.Contexts["usage_alert"]
+	if got := context["loop"].(map[string]any)["error"]; got != reason {
+		t.Fatalf("a context that holds itself kept the key or lost the reason: %v", got)
+	}
+	if got := context["listing"].([]any)[0]; got != reason {
+		t.Fatalf("a slice that holds itself kept the key or lost the reason: %v", got)
+	}
+	if strings.Contains(fmt.Sprint(context["loop"].(map[string]any)["error"]), key) {
+		t.Fatal("the key is kept")
+	}
+}
+
 // What an event says with no key in it reaches Sentry as it did before: the same text and
 // the same values, of the same types. A typed value is the very value, not a copy of it.
 func TestRedactSentryEventLeavesAnEventWithNoKeyAsItWas(t *testing.T) {
