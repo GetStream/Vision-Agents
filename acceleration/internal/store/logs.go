@@ -278,7 +278,8 @@ func RedactSentryEvent(event *sentry.Event, _ *sentry.EventHint) *sentry.Event {
 // Sentry's own encoding of it only fails. 1,000 is some fifty times what any context holds
 // (a usage alert's has a dozen values), and each node of a cycle redacts the strings beside it
 // (about 0.1 ms each under -race), so a cycle ends in tens of milliseconds, not seconds. Past
-// it a container is left as it is; a string is still redacted, being a leaf that costs no budget.
+// it a container is left as it is, so a string inside it is not reached and not redacted. Every
+// string the walk does reach is redacted, and a string costs no budget, being a leaf.
 const maxContextNodes = 1000
 
 // contextWalk redacts the maps and slices of an event's contexts, spending one budget of nodes
