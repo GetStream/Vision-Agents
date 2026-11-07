@@ -156,6 +156,17 @@ func (s *Session) SetKeyterms(terms []string) error {
 	return retuner.SetKeyterms(terms)
 }
 
+// Finalize has the provider serving the session write its final of the run of speech in
+// progress now (stt.Finalizer), and says whether it can be told to: one that cannot settles
+// the run when it hears it end.
+func (s *Session) Finalize() (bool, error) {
+	finalizer, ok := s.current().(stt.Finalizer)
+	if !ok {
+		return false, nil
+	}
+	return true, finalizer.Finalize()
+}
+
 // Serving is the provider serving the session now, for what a caller can tell one provider
 // that the session has no word for. A failover replaces it, and the next knows nothing of it.
 func (s *Session) Serving() stt.STT { return s.current() }

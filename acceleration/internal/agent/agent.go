@@ -608,8 +608,9 @@ type Agent struct {
 	// keptReply is the turn whose line the agent last kept in the history as its own: what it
 	// goes on saying once the turn's text is no longer held (replyLocked).
 	keptReply string
-	// pausesAsked says chorus-asr transcribes the callers of this agent and asks the model
-	// about their pauses for it (actsOnChorusASR), as the last transcriber opened for one does.
+	// pausesAsked says chorus-asr asks the model about the pauses of this agent's callers for it
+	// (actsOnChorusASR), whatever transcriber writes their words, as the last listener opened
+	// for one does.
 	pausesAsked atomic.Bool
 	// replying is the turn whose text the chunker and the harness are holding, so a
 	// completion arriving late for an abandoned turn cannot clear the one after it.
@@ -1666,20 +1667,28 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	// A new transcriber numbers the participant's utterances from one again: a stop ruled
 	// in one of the last one's is spent, and is forgotten before this one can rule another.
 	a.converse.forgetStop(participant.ID)
-	// Acting on chorus-asr, which transcribes as well, the transcriber times the caller's
-	// pauses from the audio and asks about each, the decision and its words in one pass. The
-	// contract is kept while it does (actsOnChorusASR): every participant is heard on the
-	// session's one target, and a target changed mid-call to another transcriber leaves it.
+	// Acting on chorus-asr, it times the caller's pauses from the audio and asks about each,
+	// and about the caller talking over the agent, whatever transcriber writes the words. As
+	// chorus-asr's transcriber, it writes the words of each pause in the same pass. With
+	// another, a floor of its own hears the participant beside it (audioFloor.rules), and the
+	// words are that transcriber's, settled as each utterance the floor ended. The contract is
+	// kept while it does (actsOnChorusASR).
 	asks := false
-	if pauses, ok := session.Serving().(audiofloor.Pauses); ok && a.audioFloor.asksOnPauses() {
-		pauses.AskOnPauses(pauseAsker{a})
-		asks = true
+	var floor *audiofloor.Transcriber
+	if a.audioFloor.asksOnPauses() {
+		if pauses, ok := session.Serving().(audiofloor.Pauses); ok {
+			pauses.AskOnPauses(pauseAsker{a})
+			asks = true
+		} else if floor = a.audioFloor.rules(participant, session, a.options.LanguageHints, pauseAsker{a}); floor != nil {
+			asks = true
+		}
 	}
 	a.pausesAsked.Store(asks)
 
 	a.mu.Lock()
 	if a.closed {
 		a.mu.Unlock()
+		a.audioFloor.drop(participant.ID, floor)
 		_ = session.Close()
 		return nil, errors.New("agent: closed")
 	}
@@ -1688,6 +1697,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	if _, gone := a.departed[participant.ID]; gone {
 		a.running.Add(1)
 		a.mu.Unlock()
+		a.audioFloor.drop(participant.ID, floor)
 		go func() {
 			defer a.running.Done()
 			a.closeListener(session)
@@ -1698,7 +1708,7 @@ func (a *Agent) listen(participant stt.Participant) (*sttrouter.Session, error) 
 	a.mu.Unlock()
 
 	a.running.Add(1)
-	go a.consumeSTT(participant.ID, session)
+	go a.consumeSTT(participant.ID, session, floor)
 	return session, nil
 }
 
@@ -1737,14 +1747,22 @@ func (a *Agent) closeListener(session *sttrouter.Session) {
 	}
 }
 
-// consumeSTT feeds transcript revisions to the cadence controller.
-func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
+// consumeSTT feeds transcript revisions to the cadence controller, or, where a floor of
+// chorus-asr's own rules on the participant's turns (audioFloor.rules), to that floor, whose
+// utterances the cadence controller is fed instead (consumeFloor).
+func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session, floor *audiofloor.Transcriber) {
 	defer a.running.Done()
 	defer a.dropListener(participantID, session)
+	if floor != nil {
+		defer a.audioFloor.drop(participantID, floor)
+		a.running.Add(1)
+		go a.consumeFloor(participantID, floor)
+	}
 
 	tally := a.heardFrom(participantID)
 	partials := sttPartials.WithLabelValues(session.Provider())
 	finals := sttFinals.WithLabelValues(session.Provider())
+	count := func(heard stt.Transcript) { tally.heardWords(heard, partials, finals) }
 	for event := range session.Events() {
 		switch typed := event.(type) {
 		case stt.Transcript:
@@ -1753,35 +1771,33 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 					"provider", typed.Provider, "participant", typed.Participant.ID, "mode", typed.Mode)
 				continue
 			}
-			left, ok := a.droppingEcho(typed, "the transcriber")
-			if !ok {
+			if floor != nil && floor.Heard(typed) {
+				// The floor's to settle into its utterances: the words, not when the turn ends.
+				count(typed)
+				a.logger.Debug("transcribed, for the floor",
+					"provider", typed.Provider, "model", typed.Model,
+					"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
+					"utterance", typed.Utterance, "latency_ms", typed.ProcessingTimeMs)
+				a.mu.Lock()
+				a.lastHeardAt = time.Now()
+				a.lastParticipant = typed.Participant
+				a.mu.Unlock()
 				continue
 			}
-			typed.Text = left
-			tally.heardWords(typed, partials, finals)
-			a.logger.Debug("transcribed",
-				"provider", typed.Provider, "model", typed.Model,
-				"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
-				"confidence", typed.Confidence, "latency_ms", typed.ProcessingTimeMs)
-			a.mu.Lock()
-			a.lastHeardAt = time.Now()
-			a.lastParticipant = typed.Participant
-			a.mu.Unlock()
-			if typed.Interim {
-				// Words of a turn still going on, from a transcriber that will say when it
-				// has ended: shown, and acted on when the final comes.
-				a.converse.Glimpsed(typed)
-				continue
-			}
-			a.act(a.converse.Observe(typed, a.floor()))
+			a.transcribed(typed, count)
 
 		case stt.Connected:
 			a.logger.Info("listening", "provider", typed.Provider, "model", typed.Model)
 
 		case stt.Failover:
 			// What the participant said as the vendor refused is lost; what they say next
-			// is heard by the next model, which numbers their utterances afresh.
-			a.converse.forgetStop(participantID)
+			// is heard by the next model, which numbers their utterances afresh. A floor's
+			// utterances are its own, numbered on.
+			if floor != nil {
+				floor.FailedOver()
+			} else {
+				a.converse.forgetStop(participantID)
+			}
 			a.logger.Warn("the transcriber refused the session, the next model took it over",
 				"from", typed.From, "provider", typed.Provider, "model", typed.Model, "error", typed.Err)
 			partials = sttPartials.WithLabelValues(typed.Provider)
@@ -1806,6 +1822,59 @@ func (a *Agent) consumeSTT(participantID string, session *sttrouter.Session) {
 			if typed.Fatal {
 				return
 			}
+		}
+	}
+}
+
+// transcribed hands the conversation a transcript of a participant's words, without the
+// agent's own voice heard back in them, counting it by count.
+func (a *Agent) transcribed(typed stt.Transcript, count func(stt.Transcript)) {
+	left, ok := a.droppingEcho(typed, "the transcriber")
+	if !ok {
+		return
+	}
+	typed.Text = left
+	if count != nil {
+		count(typed)
+	}
+	a.logger.Debug("transcribed",
+		"provider", typed.Provider, "model", typed.Model,
+		"participant", typed.Participant.ID, "mode", typed.Mode, "text", typed.Text,
+		"confidence", typed.Confidence, "latency_ms", typed.ProcessingTimeMs)
+	a.mu.Lock()
+	a.lastHeardAt = time.Now()
+	a.lastParticipant = typed.Participant
+	a.mu.Unlock()
+	if typed.Interim {
+		// Words of a turn still going on, from a transcriber that will say when it
+		// has ended: shown, and acted on when the final comes.
+		a.converse.Glimpsed(typed)
+		return
+	}
+	a.act(a.converse.Observe(typed, a.floor()))
+}
+
+// consumeFloor feeds the utterances a floor of chorus-asr's own ended (audioFloor.rules) to
+// the cadence controller, as chorus-asr's transcriber's are fed it: the words so far as
+// interims, and each utterance's final once its words are settled, with the ruling that
+// ended it. A floor that steps aside, its server down for the call, leaves the turns to the
+// transcriber that writes the words, and the contract with them (actsOnChorusASR).
+func (a *Agent) consumeFloor(participantID string, floor *audiofloor.Transcriber) {
+	defer a.running.Done()
+	for event := range floor.Events() {
+		switch typed := event.(type) {
+		case stt.Transcript:
+			if strings.TrimSpace(typed.Text) == "" {
+				continue
+			}
+			a.transcribed(typed, nil)
+		case stt.Disconnected:
+			if typed.Clean {
+				continue
+			}
+			a.pausesAsked.Store(false)
+			a.logger.Warn("chorus-asr no longer rules on a participant's floor, the transcriber writing the words ends their turns",
+				"participant", participantID, "reason", typed.Reason)
 		}
 	}
 }
@@ -4100,11 +4169,12 @@ func (a *Agent) shorten(participant stt.Participant, turnID string, why interrup
 }
 
 // actsOnChorusASR says the agent keeps the loop's contract (README, "The loop's contract"): it
-// acts on chorus-asr's rulings, and chorus-asr transcribes its callers and asks about their
-// pauses. A line of its own is then a turn a caller talking over it stops, and a shortened
-// reply stops shortenTail after the ruling. Off, or with another transcriber, the
-// agent does as it did before chorus-asr: a transcriber that does not drop the agent's echo
-// has a check-in said over it stopped by its own voice.
+// acts on chorus-asr's rulings, and chorus-asr asks about its callers' pauses and about their
+// talking over it, from their audio, whatever transcriber writes their words. Its echo is
+// dropped from their words, a line of its own is then a turn a caller talking over it stops,
+// and a shortened reply stops shortenTail after the ruling. Off, or once chorus-asr's floor has
+// stepped aside, the agent does as it did before chorus-asr: a transcriber that does not drop
+// the agent's echo has a check-in said over it stopped by its own voice.
 func (a *Agent) actsOnChorusASR() bool { return a.pausesAsked.Load() }
 
 // closeReply stops the model from adding more to the reply being said while allowing speech
