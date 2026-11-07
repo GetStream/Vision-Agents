@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -492,6 +493,79 @@ func TestRedactSentryEventKeepsTheReasonAndNotTheKey(t *testing.T) {
 	}
 	if event.Exception[0].Type != "*errors.errorString" || strings.Contains(fmt.Sprint(event.Breadcrumbs[0]), key) {
 		t.Fatalf("the event changed what it should keep: %+v", event)
+	}
+}
+
+// A usage alert carries a provider's error in a context (internal/alerts), and a tag can name
+// what failed: every string in them is redacted, at any depth and in a value of any type, and
+// the reason before the key is kept.
+func TestRedactSentryEventTakesTheKeyOutOfContextsAndTags(t *testing.T) {
+	err, key := echoedKey()
+	reason := "502 Bad Gateway: upstream error: failed to connect to local service\nrequest headers: [redacted]"
+	type reading struct{ Error string }
+	event := RedactSentryEvent(&sentry.Event{
+		Tags: map[string]string{"item": err.Error()},
+		Contexts: map[string]sentry.Context{"usage_alert": {
+			"reading": err.Error(),
+			"nested":  map[string]any{"error": err.Error()},
+			"listing": []any{err.Error()},
+			"typed":   map[string][]reading{"apps": {{Error: err.Error()}}},
+		}},
+	}, nil)
+	if sent, _ := json.Marshal(event); strings.Contains(string(sent), key) {
+		t.Fatalf("the event Sentry is sent keeps the key: %s", sent)
+	}
+	context := event.Contexts["usage_alert"]
+	if event.Tags["item"] != reason || context["reading"] != reason {
+		t.Fatalf("a tag or a context kept the key or lost the reason: %+v", event)
+	}
+	if context["nested"].(map[string]any)["error"] != reason || context["listing"].([]any)[0] != reason {
+		t.Fatalf("a nested map or slice kept the key or lost the reason: %+v", context)
+	}
+	typed, _ := json.Marshal(context["typed"])
+	if want := `{"apps":[{"Error":` + strconv.Quote(reason) + `}]}`; string(typed) != want {
+		t.Fatalf("a typed value kept the key or lost the reason:\n got %s\nwant %s", typed, want)
+	}
+}
+
+// The scope an event came from shares its contexts' nested values with the next event, so
+// redacting one event leaves them as they were.
+func TestRedactSentryEventLeavesTheScopesContextsAlone(t *testing.T) {
+	err, key := echoedKey()
+	shared := map[string]any{"error": err.Error()}
+	listed := []any{err.Error()}
+	context := sentry.Context{"nested": shared, "listing": listed}
+	RedactSentryEvent(&sentry.Event{Contexts: map[string]sentry.Context{"scope": context}}, nil)
+	if !strings.Contains(shared["error"].(string), key) || !strings.Contains(listed[0].(string), key) {
+		t.Fatalf("the scope's own context was changed: %+v %+v", shared, listed)
+	}
+	if context["nested"].(map[string]any)["error"] != err.Error() {
+		t.Fatalf("the context the event shares with its scope was changed: %+v", context)
+	}
+}
+
+// What an event says with no key in it reaches Sentry as it did before: the same text and
+// the same values, of the same types. A typed value is the very value, not a copy of it.
+func TestRedactSentryEventLeavesAnEventWithNoKeyAsItWas(t *testing.T) {
+	type reading struct{ Rows int }
+	typed := &reading{Rows: 3}
+	event := RedactSentryEvent(&sentry.Event{
+		Tags: map[string]string{"usage_alert": "sandbox_mismatch", "source": "router"},
+		Contexts: map[string]sentry.Context{"usage_alert": {
+			"day": "2026-11-06", "rows": 3, "increase": 1.5, "over": nil, "rerun": "router usage sandboxes --day 2026-11-06",
+			"nested": map[string]any{"value": int64(1) << 60}, "listing": []any{"apps", true}, "typed": typed,
+		}},
+	}, nil)
+	want := map[string]any{
+		"day": "2026-11-06", "rows": 3, "increase": 1.5, "over": nil, "rerun": "router usage sandboxes --day 2026-11-06",
+		"nested": map[string]any{"value": int64(1) << 60}, "listing": []any{"apps", true}, "typed": typed,
+	}
+	context := event.Contexts["usage_alert"]
+	if fmt.Sprintf("%#v", map[string]any(context)) != fmt.Sprintf("%#v", want) || context["typed"] != any(typed) {
+		t.Fatalf("the context changed:\n got %#v\nwant %#v", context, want)
+	}
+	if event.Tags["usage_alert"] != "sandbox_mismatch" || event.Tags["source"] != "router" || len(event.Tags) != 2 {
+		t.Fatalf("the tags changed: %+v", event.Tags)
 	}
 }
 

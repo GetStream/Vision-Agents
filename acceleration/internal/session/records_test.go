@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"sync"
@@ -173,6 +174,28 @@ func (s *RecordSuite) TestItemsKeepTheOrderTheyHappenedIn() {
 	for i, item := range s.held.items {
 		s.Equal(i, item.Ordinal, "the writer assigns the position, not the database")
 	}
+}
+
+// The tool_ran frame of a failed tool is redacted (sessionws errorText); the tool_result item
+// the client lists later says the same, not the key the tool's provider echoed.
+func (s *RecordSuite) TestAToolsErrorIsRecordedWithoutTheKeyItEchoed() {
+	key := "sk-test-" + rand.Text()
+	s.took(
+		agent.Responding{TurnID: "turn-1", Prompt: "What is in my cart?"},
+		agent.ToolStarted{TurnID: "turn-1", ID: "call-1", Tool: "cart"},
+		agent.ToolRan{TurnID: "turn-1", ID: "call-1", Tool: "cart",
+			Err: errors.New("cart: 401 Unauthorized\nAuthorization: Bearer " + key)},
+		agent.ToolRan{TurnID: "turn-1", ID: "call-2", Tool: "cart", Err: errors.New("cart: the service timed out")},
+		agent.Responded{TurnID: "turn-1", Text: "I could not read it."},
+	)
+
+	var failures []any
+	for _, item := range s.held.items {
+		if item.Kind == store.ItemToolResult {
+			failures = append(failures, item.Payload["error"])
+		}
+	}
+	s.Equal([]any{"cart: 401 Unauthorized\n[redacted]", "cart: the service timed out"}, failures)
 }
 
 func (s *RecordSuite) TestATurnThatDelegatesStaysOpenUntilItComesBack() {

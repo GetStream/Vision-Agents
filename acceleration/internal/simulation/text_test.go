@@ -2,6 +2,7 @@ package simulation
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -110,6 +111,8 @@ func (m *agentModel) says(answers ...answer) {
 type kitchen struct {
 	mu     sync.Mutex
 	orders []string
+	// refusal is the error every order fails with, when it is not empty.
+	refusal string
 }
 
 func (k *kitchen) serve(created *session.Session) {
@@ -125,7 +128,7 @@ func (k *kitchen) serve(created *session.Session) {
 			k.orders = append(k.orders, call.Arguments)
 			placed := len(k.orders)
 			k.mu.Unlock()
-			created.ResolveTool(call.ID, fmt.Sprintf("order %d placed", placed), "")
+			created.ResolveTool(call.ID, fmt.Sprintf("order %d placed", placed), k.refusal)
 		}
 	}()
 }
@@ -346,6 +349,34 @@ func (s *TextSuite) TestWhatTheAgentDidWithItsToolsIsKeptWithWhatItSaid() {
 		Name: "place_order", Arguments: `{"item":"pizza hawaii"}`, Result: "order 1 placed",
 	}}, reply.Tools)
 	s.Equal([]string{`{"item":"pizza hawaii"}`}, orders.placed())
+}
+
+// A run's transcript is read back by whoever runs simulations: a tool's error is kept there
+// without the key its provider echoed.
+func (s *TextSuite) TestAToolsErrorIsKeptWithoutTheKeyItEchoed() {
+	key := "sk-test-" + rand.Text()
+	used := s.failedOrder("kitchen: 401 Unauthorized\nAuthorization: Bearer " + key)
+	s.Equal("kitchen: 401 Unauthorized\n[redacted]", used.Error)
+}
+
+func (s *TextSuite) TestAToolsErrorWithNoKeyInItIsKeptAsItWas() {
+	used := s.failedOrder("kitchen: the oven is off")
+	s.Equal("kitchen: the oven is off", used.Error)
+}
+
+// failedOrder is the tool the transcript keeps when the model orders a pizza and the kitchen
+// refuses it with refusal.
+func (s *TextSuite) failedOrder(refusal string) store.SimulationTool {
+	held := s.talks("", placeOrder)
+	(&kitchen{refusal: refusal}).serve(held.Session())
+	s.model.says(answer{call: llm.ToolCall{ID: "call-1", Name: "place_order", Arguments: `{"item":"pizza"}`}})
+	s.model.says(answer{text: "The kitchen could not take it."})
+
+	reply, err := held.Say(s.ctx, "A pizza please.")
+
+	s.Require().NoError(err)
+	s.Require().Len(reply.Tools, 1)
+	return reply.Tools[0]
 }
 
 func (s *TextSuite) TestAToolFromAnEarlierTurnIsNotCreditedToTheNextOne() {
