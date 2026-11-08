@@ -19,6 +19,8 @@ final readonly class ModelCallTiming
         public ?float $durationMs = null,
         // Why the request did not run to its end, absent when success is true. cancelled is a request its caller clos...
         public ?string $errorCode = null,
+        // What the failure said, absent when success is true: for a provider that answered with an error, the start o...
+        public ?string $errorMessage = null,
         public ?int $inputTokens = null,
         // Response ID for this operation; retries can share an ID.
         public ?string $operationId = null,
@@ -42,6 +44,7 @@ final readonly class ModelCallTiming
             success: Json::bool($data, 'success'),
             durationMs: array_key_exists('duration_ms', $data) && $data['duration_ms'] !== null ? Json::float($data, 'duration_ms') : null,
             errorCode: array_key_exists('error_code', $data) && $data['error_code'] !== null ? Json::string($data, 'error_code') : null,
+            errorMessage: array_key_exists('error_message', $data) && $data['error_message'] !== null ? Json::string($data, 'error_message') : null,
             inputTokens: array_key_exists('input_tokens', $data) && $data['input_tokens'] !== null ? Json::int($data, 'input_tokens') : null,
             operationId: array_key_exists('operation_id', $data) && $data['operation_id'] !== null ? Json::string($data, 'operation_id') : null,
             outputTokens: array_key_exists('output_tokens', $data) && $data['output_tokens'] !== null ? Json::int($data, 'output_tokens') : null,
@@ -67,6 +70,9 @@ final readonly class ModelCallTiming
         }
         if ($this->errorCode !== null) {
             $out['error_code'] = $this->errorCode;
+        }
+        if ($this->errorMessage !== null) {
+            $out['error_message'] = $this->errorMessage;
         }
         if ($this->inputTokens !== null) {
             $out['input_tokens'] = $this->inputTokens;

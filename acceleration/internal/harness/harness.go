@@ -493,7 +493,7 @@ func (h *Harness) Respond(ctx context.Context, turn Turn) (*llm.Stream, error) {
 
 	params := llm.ResponseParams{
 		ID:                 turn.ID,
-		Purpose:            "reply",
+		Purpose:            llm.PurposeReply,
 		Reasoning:          reasoning,
 		TurnID:             turn.ID,
 		OnTiming:           h.options.OnModelCall,

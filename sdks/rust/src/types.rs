@@ -7631,6 +7631,9 @@ pub struct ModelCallTiming {
     ///Why the request did not run to its end, absent when success is true. cancelled is a request its caller closed first: a superseded flow decision, a barge-in or the losing attempt of a hedged request. It is no provider failure, and its tokens are still billed. A hedged request's first attempt that had said nothing when the other answered is timeout instead. key_refused is the vendor refusing the key the app keeps for it (BYOK), and the router's own instance of the model was asked next. refused is a response the prompt injection screen refused: the provider answered as asked, so it is no failure of the provider's either. Any other code, timeout included, is a failure and counts against the provider's health, unless it was on the app's own key.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub error_code: ::std::option::Option<::std::string::String>,
+    ///What the failure said, absent when success is true: for a provider that answered with an error, the start of its body. Bearer tokens, API keys, authorization headers and URL credentials in it are redacted, and a long one is cut short. Absent for a failure that said nothing, and for a request recorded before the router kept it.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub error_message: ::std::option::Option<::std::string::String>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub input_tokens: ::std::option::Option<i64>,
     pub model: ::std::string::String,
@@ -10192,9 +10195,15 @@ pub struct Session {
     pub custom: ::serde_json::Map<::std::string::String, ::serde_json::Value>,
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub description: ::std::option::Option<::std::string::String>,
-    ///Why the session ended. Absent while it is running, and for a session that ended before this was kept or by being stopped.
+    ///Whose doing end_reason was. Absent while the session is running.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_fault: ::std::option::Option<SessionEndFault>,
+    ///Why the session ended. Absent while it is running, and for a session that ended before this was kept.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub end_reason: ::std::option::Option<SessionEndReason>,
+    ///How far the session had got when it ended. Absent while it is running.
+    #[serde(skip_serializing_if = "::std::option::Option::is_none")]
+    pub end_stage: ::std::option::Option<SessionEndStage>,
     ///The session this one continued from, empty for one opened fresh.
     #[serde(skip_serializing_if = "::std::option::Option::is_none")]
     pub forked_from: ::std::option::Option<::std::string::String>,
@@ -10288,7 +10297,73 @@ pub struct SessionConnectorBinding {
     ///The binding's alias in the agent config.
     pub name: ::std::string::String,
 }
-///Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+///Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum SessionEndFault {
+    #[serde(rename = "none")]
+    None,
+    #[serde(rename = "caller")]
+    Caller,
+    #[serde(rename = "router")]
+    Router,
+    #[serde(rename = "vendor")]
+    Vendor,
+    #[serde(rename = "carrier")]
+    Carrier,
+    #[serde(rename = "customer_config")]
+    CustomerConfig,
+    #[serde(rename = "customer_credit")]
+    CustomerCredit,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for SessionEndFault {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::None => f.write_str("none"),
+            Self::Caller => f.write_str("caller"),
+            Self::Router => f.write_str("router"),
+            Self::Vendor => f.write_str("vendor"),
+            Self::Carrier => f.write_str("carrier"),
+            Self::CustomerConfig => f.write_str("customer_config"),
+            Self::CustomerCredit => f.write_str("customer_credit"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionEndFault {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "none" => Ok(Self::None),
+            "caller" => Ok(Self::Caller),
+            "router" => Ok(Self::Router),
+            "vendor" => Ok(Self::Vendor),
+            "carrier" => Ok(Self::Carrier),
+            "customer_config" => Ok(Self::CustomerConfig),
+            "customer_credit" => Ok(Self::CustomerCredit),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionEndFault {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionEndFault {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
 #[derive(
     ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
 )]
@@ -10305,6 +10380,18 @@ pub enum SessionEndReason {
     Unanswered,
     #[serde(rename = "voicemail")]
     Voicemail,
+    #[serde(rename = "closed")]
+    Closed,
+    #[serde(rename = "shutdown")]
+    Shutdown,
+    #[serde(rename = "agent_failed")]
+    AgentFailed,
+    #[serde(rename = "model_failed")]
+    ModelFailed,
+    #[serde(rename = "model_config_refused")]
+    ModelConfigRefused,
+    #[serde(rename = "model_no_credit")]
+    ModelNoCredit,
     /// A value this SDK's spec does not list, as the router sent it.
     #[serde(untagged)]
     Unlisted(::std::string::String),
@@ -10318,6 +10405,12 @@ impl ::std::fmt::Display for SessionEndReason {
             Self::Start => f.write_str("start"),
             Self::Unanswered => f.write_str("unanswered"),
             Self::Voicemail => f.write_str("voicemail"),
+            Self::Closed => f.write_str("closed"),
+            Self::Shutdown => f.write_str("shutdown"),
+            Self::AgentFailed => f.write_str("agent_failed"),
+            Self::ModelFailed => f.write_str("model_failed"),
+            Self::ModelConfigRefused => f.write_str("model_config_refused"),
+            Self::ModelNoCredit => f.write_str("model_no_credit"),
             Self::Unlisted(ref value) => f.write_str(value),
         }
     }
@@ -10332,6 +10425,12 @@ impl ::std::str::FromStr for SessionEndReason {
             "start" => Ok(Self::Start),
             "unanswered" => Ok(Self::Unanswered),
             "voicemail" => Ok(Self::Voicemail),
+            "closed" => Ok(Self::Closed),
+            "shutdown" => Ok(Self::Shutdown),
+            "agent_failed" => Ok(Self::AgentFailed),
+            "model_failed" => Ok(Self::ModelFailed),
+            "model_config_refused" => Ok(Self::ModelConfigRefused),
+            "model_no_credit" => Ok(Self::ModelNoCredit),
             _ => Err("invalid value".into()),
         }
     }
@@ -10343,6 +10442,52 @@ impl ::std::convert::TryFrom<&str> for SessionEndReason {
     }
 }
 impl ::std::convert::TryFrom<::std::string::String> for SessionEndReason {
+    type Error = self::error::ConversionError;
+    fn try_from(
+        value: ::std::string::String,
+    ) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+///How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+#[derive(
+    ::serde::Deserialize, ::serde::Serialize, Clone, Debug, Eq, Hash, Ord, PartialEq, PartialOrd,
+)]
+pub enum SessionEndStage {
+    #[serde(rename = "ringing")]
+    Ringing,
+    #[serde(rename = "conversation")]
+    Conversation,
+    /// A value this SDK's spec does not list, as the router sent it.
+    #[serde(untagged)]
+    Unlisted(::std::string::String),
+}
+impl ::std::fmt::Display for SessionEndStage {
+    fn fmt(&self, f: &mut ::std::fmt::Formatter<'_>) -> ::std::fmt::Result {
+        match *self {
+            Self::Ringing => f.write_str("ringing"),
+            Self::Conversation => f.write_str("conversation"),
+            Self::Unlisted(ref value) => f.write_str(value),
+        }
+    }
+}
+impl ::std::str::FromStr for SessionEndStage {
+    type Err = self::error::ConversionError;
+    fn from_str(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        match value {
+            "ringing" => Ok(Self::Ringing),
+            "conversation" => Ok(Self::Conversation),
+            _ => Err("invalid value".into()),
+        }
+    }
+}
+impl ::std::convert::TryFrom<&str> for SessionEndStage {
+    type Error = self::error::ConversionError;
+    fn try_from(value: &str) -> ::std::result::Result<Self, self::error::ConversionError> {
+        value.parse()
+    }
+}
+impl ::std::convert::TryFrom<::std::string::String> for SessionEndStage {
     type Error = self::error::ConversionError;
     fn try_from(
         value: ::std::string::String,

@@ -2,6 +2,47 @@
 
 ## Features
 
+### A failed model call says what the provider answered
+
+The session socket's `model_call` frame and a call timeline's `model_calls` carry `error_message` beside `error_code` for a call that did not succeed: the start of the provider's error body, such as a self-hosted model's `502 failed to connect to local service`, redacted and capped as the requests table stores it. A successful call's frame is unchanged. The flow controller's and the agent's failure log lines name the `provider` and `model` (AI-2954).
+
+### Voice start-up latency and failures per stage
+
+`router_agent_startup_seconds{stage, kind}` times each stage of a voice session's start-up once: `create` (from `Manager.Create` to the agent starting to join), `join` (the edge joining the call) and `media` (from the join to the agent's outgoing connection being up). The stages follow each other, so their sum is the wait until the agent can be heard. `kind` is `phone` or `web`. `router_agent_startup_failures_total{stage, kind, cause}` counts the stage a start-up stopped in: `error` where a session is counted under a `create_*` reason, `timeout` for an outgoing connection not up within 30 s. Only sessions on a Stream call the router joins are counted: not text sessions, audio sockets or simulations (AI-2832, #1794).
+
+### The router counts silent and one-way voice sessions
+
+`/metrics` serves `router_silent_sessions_total{case, kind}`: each voice session somebody besides the agent joined, once at its end under each case it is in. For the caller's side: `no_inbound_audio` (no audio frame came), `silent_inbound_audio` (frames came, none reached about -48 dBFS) or `no_words` (audible audio, but the transcriber wrote no word; not judged on a speech-to-speech model). For the agent's side: `no_audible_outbound` (the reply was queued at the call's track, which took no audible frame of it). `kind` is `phone` or `web`. A web caller whose microphone was off for the whole call counts as `no_inbound_audio` or `silent_inbound_audio`, like a broken media path. Calls are not ended or changed. The definition is in `acceleration/internal/agent/silence.go` (AI-2828, #1792).
+
+### The router counts how phone calls end
+
+`/metrics` serves `router_phone_call_outcomes_total{vendor, direction, outcome}`: each inbound and placed call once, when its leg first ends, under its stored outcome or as `dropped`, an answered call whose agent left it on the line (stopped, failed, or the router shut down) before the caller hung up. A network or vendor cut is not told apart from the caller hanging up. What a dropped call is, and what is not detected, is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2780, #1783).
+
+### The router counts carrier KPIs per phone vendor
+
+`/metrics` serves `router_phone_call_sip_responses_total{vendor, direction, code}`, each placed call's final SIP response where the vendor reports one (Twilio, Vonage, Bandwidth rejections, a customer's own SIP trunk), `router_phone_post_dial_delay_seconds{vendor, direction}` (Vonage's ringing event and the router's own SIP bridge), and `router_phone_short_calls_total{vendor, direction}`, answered calls under 6 s. A dial the vendor refuses is counted `refused` in `router_phone_call_outcomes_total`. What each vendor reports is in `acceleration/internal/phone/outcome/AGENTS.md` (AI-2830, AI-2905, #1793).
+
+### The router counts its sessions and how they end, whose fault it was and at which stage
+
+`/metrics` serves `router_sessions_active`, the sessions each router process holds, and `router_session_ends_total{reason, failed, fault, stage}`, each session end once, one series per reason. Every end reason is listed in `session.EndReasons` (`acceleration/internal/session/timeout.go`) with its fault (`none`, `caller`, `router`, `vendor`, `carrier`, `customer_config`, `customer_credit`) and stage (`starting`, `ringing`, `conversation`); `failed` is `true` for `start` and every `create_*`, `agent_failed` and `model_*` reason. A session's record gains `end_fault` and `end_stage`, and a session stopped through the API, ended by a shutdown or failed now keeps `closed`, `shutdown`, `agent_failed`, `model_failed`, `model_config_refused` or `model_no_credit` where it kept nothing; the six reasons kept before keep their values. A session that failed to open counts as `create_failed`, `create_vendor_failed`, `create_config_refused`, `create_no_credit`, `create_no_video`, `create_no_call_type` or `create_no_channel_type` (AI-2779, #1782; AI-2831, #1796; AI-2949).
+
+### Vendor rate limits per key: refusals and headroom
+
+`router_vendor_rate_limited_total{key_var,key}` counts every 429 a vendor answers on one of the router's own keys, on a request or a websocket handshake, by the variable the keys were read from and the key's place in the pool (never the key). Anthropic's 429 for a spent monthly cap is not counted. `router_vendor_ratelimit_remaining{key_var,key,limit}` holds the last headroom a vendor reported: OpenAI's `x-ratelimit-remaining-*` headers and its Realtime `rate_limits.updated` event, Anthropic's `anthropic-ratelimit-*-remaining` headers, and ElevenLabs' concurrency headers. A customer's own key is in neither. Headers are read from the responses the router already gets (AI-2833, #1781). Each key's 429 count is served at 0 from when its pool is built, and from start-up for OpenAI, Anthropic, ElevenLabs, Cerebras, xAI, Together, Fireworks, Deepgram, Google Gemini, Cartesia and OpenRouter, so an alert on it reads 0 before the first 429, not no data (AI-2930).
+
+A table variable the deployment leaves unset is served too, as one series at 0 under `key="none"` (AI-2940, #1810).
+
+### The router counts each vendor failover
+
+`router_failovers_total` counts each time the router moved work off a provider that failed, by `modality`, the `provider` that failed, `stage` (`start` and `use` at request start in the walk, `session` for an STT session, a voice or an LLM response another candidate took over mid-session) and `reason` (`vendor`, or `request`, `customer_key` (the customer's own key or `custom` model) and `cancelled` for failures that are not the vendor's). A failure nothing replaced is no failover (AI-2781, #1785).
+
+### Turn latency on /metrics
+
+`router_agent_turn_latency_seconds{leg,pipeline}` is a histogram of how long a caller waited for the agent's reply. `leg` is `roundtrip` (last transcript revision to first audio published), `speech_end_to_audio` (that plus the transcriber's endpointing) or `speech_end_to_audible` (to the first frame the call's track took); `pipeline` is `cascade` or `native`, the one the turn started on; under `native`, `roundtrip` runs from the model's speech-stopped signal and `speech_end_to_audio` equals it. Only caller turns are observed, and a leg a turn never reached, such as a reply interrupted before its audio, is left out rather than counted as zero. Buckets run 200 ms to 10 s with a line at 1.2 s. `turn_latency_hourly` is unchanged (AI-2826, #1780).
+
+### The router's metrics show its own API requests
+
+`/metrics` has `router_http_requests_total{method,route,status}`, every request the API answered by route template and status class, and `router_http_request_seconds`, how long request/response answers took to begin. Sockets and streams are counted but not timed (#1786).
 ### A server sends a person's photos on respond
 
 `POST /v1/agents/sessions/{id}/respond` takes `images`, as `createResponse` and the session socket's `respond` already did. With a `request_id` they are data URIs, at most 8, uploaded to the conversation's channel and shown on the person's message, and the model sees them with that question alone. A retry with the same id, text and photos is the same question. Unlike `createResponse`, the answer is still the command's receipt with the person's and the reply's message ids, and `client_id` still addresses the install's tools, so a server that sends what a person typed on their behalf can now send what they photographed too. Text and photos together are held to the same 1 MiB as on `createResponse` when no voice note is sent. In the PHP and Python SDKs, whose generated request classes take positional arguments, `images` comes after `request_id`: their generators now keep each parameter where it was released and add new ones after, so `new RespondRequest('question', null, 'device-1', 'request-1')` and `RespondRequest("question", UNSET, "device-1", "request-1")` still mean what they did.
@@ -415,6 +456,41 @@ A folder whose `agent.yaml` names a `plugins` list now fails to load with `plugi
 
 ## Bug Fixes
 
+### After a voice failover the kept reply no longer waits for the lost voice to close
+
+A reply or check-in kept for the voice that replaces a lost one goes to that voice as soon as it is open. Before, it waited for the lost voice to close first, up to 2 s for ElevenLabs. The agent still waits for that close when it stops (AI-2974).
+
+### A caller turn answered through the subagent or a tool counts in the turn latency
+
+A caller turn whose reply said nothing and handed the work to the subagent or a tool is timed to the first audio of the first line said for it: a hold or update line while the work runs, or the answer it came back with. `router_agent_turn_latency_seconds` observes it once, and its `SpeechEndToAudioMs` in the session's turn events shows the same wait; before, both left the slowest turns out. A filler in the turn's own reply still ends the wait, so the answer after it adds nothing. A turn a scheduled task or a reminder fires into the call is no longer observed, since nobody in the call waited on it; its turn event keeps its timings (AI-2969).
+
+### A reply the voice lost before any of it was heard is said in the next voice
+
+When a voice fails before any of a finished reply's audio went out (staging: ElevenLabs refusing the agent's voice on its first word), the voice that replaces it says the reply, and the turn is not abandoned. Before, the reply was dropped (`cause=voice_lost`, `turn_abandoned=true`) and the caller heard nothing. A greeting or a check-in none of which was heard is said the same way, and so is what the lost voice had of a reply the model is still writing. What the model writes while the next voice opens is said by that voice after it; before, it went to the lost voice and was never heard. A reply or line partly heard, and one with no voice left to say it, are still cut off as before (AI-2970).
+
+### A check-in the voice lost before any of it was heard is said in the next voice
+
+An agent not acting on chorus-asr says its check-ins, updates and hold lines as murmurs, and a lost voice let go of every murmur, so such a line refused on its first word was dropped and the caller heard nothing until the next check-in (staging: 2.8 s later). It is now said once in the voice that replaces the lost one, under its own id, as a greeting is; one partly heard, or one the caller starts talking over while that voice opens, is reported cut off and not said. A murmur ("mhm") is still never said again (AI-2973).
+
+### A call refused because the app has no Stream Video is the customer's setup, not the router's fault
+
+A voice session whose call Stream refuses with `video is not enabled for your account` or `video is not enabled on this server` (code 17) now counts in `router_session_ends_total` as `create_no_video`, fault `customer_config`, stage `starting`, where it counted as `create_failed`, fault `router`. A create refused because the customer's own Stream app has no agent call type counts as `create_no_call_type`, and one refused because it has no agent channel type, or one clients may rewrite, as `create_no_channel_type`, both fault `customer_config`, stage `starting`; they were not counted at all. Every other join refusal still counts as `create_failed`, and the 400 answers are unchanged (AI-2949).
+
+### A tool's error and a Sentry alert's details no longer keep a key a provider echoed
+
+A failed tool's error is now stored through the same redactor as its `tool_ran` frame: in the `tool_result` item that `GET /v1/agents/sessions/{id}/responses/items` lists, in a simulation transcript's tools, and in a device tool's step summary in Chat; a simulation case's `error` and each tool `result` in its transcript, a recording's `error` (stored, and in an inline answer) and a voice binding's `error` are redacted too. The router's and usage service's Sentry events now also redact their tags and every string in their contexts, such as the provider error a usage alert carries. Text with nothing to redact is unchanged, except that a tool or case error, a simulation transcript's tool result, a recording's error and a voice binding's error longer than 8192 bytes is cut to 2048 characters and `… [truncated]`, as the requests table cuts an error. Rows written before are not rewritten (AI-2975).
+
+### The router's log no longer prints a key a provider echoed in its error
+
+Every value the router, the usage service and the command-line tools log, the message included, goes through the redactor the requests table uses, uncapped, and so do the failures the tools print and the router's and usage service's Sentry events: a provider error that echoes `Authorization: Bearer <key>`, such as in the `agent failure` and `could not review the call` lines, keeps its text with the key shown as `[redacted]`. A line with nothing to redact is unchanged. The redactor now keeps a word after `bearer`, `secret` or `password`, as in "no bearer token" or a `Bearer error="insufficient_scope"` challenge, and takes a `key=` or `token=` that starts a quoted query (AI-2966, #1838).
+
+### A provider key in a URL is redacted from stored failures and stream socket errors
+
+The requests table, agent logs and socket error frames now redact a key sent as a `?key=` or `&token=` query parameter (Gemini Live, ipinfo), raw or percent-encoded, and a URL-encoded `Authorization` or `Cookie` header or bearer token. The stt, tts, sts and llm stream sockets now redact their error frames and close reasons the same way, as the session socket already did (AI-2958, AI-2959).
+
+### A session whose every reply was lost no longer counts as closed when the flow controller answered
+
+A flow controller or subagent request no longer stands in for a lost reply, so the session ends by whose fault the reply failed (AI-2939, #1811).
 ### Photos an agent cannot see are refused before they are uploaded
 
 A question with photos and a `request_id`, on `createResponse` or the session socket's `respond`, sent to an agent with neither a vision skill nor a conversation model that accepts images, was refused only after its photos were uploaded and the person's message written, leaving a message in the channel that nothing would answer. It is now refused first, with the same 400 `not_configured`, and nothing is uploaded or written. A retry of a photo question already taken is still answered with its receipt, also after the session's model changed to one that cannot see, since it starts no turn.
@@ -430,9 +506,11 @@ A call episode was dated by the router's clock while a number's link is dated by
 ### A phone operation that fails on the router's side is a 500
 
 A phone operation (search, buy, release, attach, detach, a call, a transfer, pressing digits) whose failure was the router's own, such as a database read of the 10DLC gate, answered 400 `invalid_request` with the database's words. It now answers 500 "something went wrong" and the log keeps the error with its stack. Work waiting on the deployment's own Stream app answers 503 with `Retry-After`. A request the client can change keeps its 400 `invalid_request` and its words: a search filter or a call term a vendor cannot take, a number that cannot be dialled, an unknown vendor, an app the customer cannot act in. A call or a transfer with an empty `from` says it needs one of the customer's numbers to dial from. A setting the deployment lacks is a 400 `not_configured`: a vendor's credentials or a setting it buys or calls with (such as a connection id, or the signalling addresses a trunk needs), a public url, sip trunks, and Stream credentials, which now answer "phone lines are not available: this deployment has no Stream app to make them in". A Bird, DIDWW, Plivo or Vonage request that failed is a vendor failure as for the other vendors: 503 `phone_vendor_failed` without the vendor's words, and a search skips that vendor with "The phone vendor could not complete the request." (AI-2056).
+
 ### A scheduled text the organization may not pay for is not tried again
 
 A task due on SMS, WhatsApp or iMessage, or in the thread it was made in, whose organization is suspended, out of credit or past a spend limit, was tried up to three more times. A thread task's run also said `channel_unreachable`. The run now fails at once, under the refusal's code (`account_suspended`, `insufficient_credits`, `system_limit_reached` or `spend_limit_reached`), and the router logs a warning that names the customer. A refusal because the router could not check the money is still tried again.
+
 ### Importing an export no longer writes over edits made on the target
 
 `POST /v1/data/import` wrote every row of an export, so a second import of an older export undid what had been done to those rows on the target since. An export for an app the target already holds is now refused with a 409 before any row is written, as `router replicate` refuses it; `?full=true` writes it anyway, and a batch of changes is applied as before (AI-2889).
@@ -444,6 +522,7 @@ The router read everything a Daytona code run printed into memory, however much,
 ### git lfs push in a sandbox says why it is refused
 
 Under the proxy broker, `git lfs push` in a sandbox is refused at its first request, `locks/verify`, and git-lfs showed «Authentication error … Check that you have proper access to the repository». The proxy now answers every refused request under a Git LFS API (`/info/lfs/`) with an LFS error, so git-lfs prints the proxy's hint: code in the sandbox only reads through a connector, and writes with the connector's tools. Uploads stay refused, and the log says why (AI-2876, #1801).
+
 ### A sandbox session cut while it opens leaves no Daytona secret
 
 When a session with sandbox grants was cut partway through opening, because its context was cancelled or past its deadline, the router deleted the secrets it had made on that same context, so every delete failed and the first grant's live token stayed at Daytona until the session closed. It now deletes them on a context that is not cancelled, bounded to 60 seconds (AI-2455, #1800).

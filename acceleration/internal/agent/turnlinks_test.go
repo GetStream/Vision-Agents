@@ -349,7 +349,7 @@ func (s *AgentSuite) TestASpeculativeCallerTurnIsRecordedAsTheCallerAndParentsTh
 	s.Equal(s.callerTurn(), callers[0]["turn"])
 	s.Equal(s.callerTurn(), tools[0]["parent"])
 	hold := s.originOfSpoken("Pulling up order twelve now.")
-	s.Equal(origin{kind: kindHold, parent: s.callerTurn()}, hold)
+	s.Equal(origin{kind: kindHold, parent: s.callerTurn(), pipeline: pipelineCascade}, hold)
 }
 
 func (s *AgentSuite) TestANativeCallerTurnIsRecordedAsTheCallerAndParentsTheTurnsAfterIt() {
@@ -399,7 +399,7 @@ func (s *AgentSuite) TestAnAnswerToDelegatedWorkIsRecordedAsAFollowUpToTheCaller
 	s.says(participant, "what is 15% of 84.20")
 
 	s.eventually(func() bool { return s.spokenText("That comes to 12.63.") }, "the answer was never said")
-	s.Equal(origin{kind: kindFollowUp, parent: s.callerTurn()}, s.originOfSpoken("That comes to 12.63."))
+	s.Equal(origin{kind: kindFollowUp, parent: s.callerTurn(), pipeline: pipelineCascade}, s.originOfSpoken("That comes to 12.63."))
 }
 
 func (s *AgentSuite) TestTheIntroductionOfAWarmTransferIsRecordedAsAHandoffToTheCallerTurn() {
@@ -416,7 +416,7 @@ func (s *AgentSuite) TestTheIntroductionOfAWarmTransferIsRecordedAsAHandoffToThe
 	s.speak(stt.Participant{ID: "human"})
 
 	s.eventually(func() bool { return s.spokenText("Alice needs a refund on order 12.") }, "the human was never introduced")
-	s.Equal(origin{kind: kindHandoff, parent: s.callerTurn()}, s.originOfSpoken("Alice needs a refund on order 12."))
+	s.Equal(origin{kind: kindHandoff, parent: s.callerTurn(), pipeline: pipelineCascade}, s.originOfSpoken("Alice needs a refund on order 12."))
 }
 
 func (s *AgentSuite) TestAQuestionAskedIntoSilenceIsLoggedAsACheckIn() {

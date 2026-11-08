@@ -1411,7 +1411,9 @@ final class Session {
     required this.createdAt,
     this.custom,
     this.description,
+    this.endFault,
     this.endReason,
+    this.endStage,
     this.forkedFrom,
     required this.id,
     this.incognito,
@@ -1477,9 +1479,17 @@ final class Session {
         null => null,
         final Object value => _string(value, 'Session.description'),
       },
+      endFault: switch (json['end_fault']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_fault'),
+      },
       endReason: switch (json['end_reason']) {
         null => null,
         final Object value => _string(value, 'Session.end_reason'),
+      },
+      endStage: switch (json['end_stage']) {
+        null => null,
+        final Object value => _string(value, 'Session.end_stage'),
       },
       forkedFrom: switch (json['forked_from']) {
         null => null,
@@ -1580,7 +1590,9 @@ final class Session {
   final DateTime createdAt;
   final Map<String, Object?>? custom;
   final String? description;
+  final String? endFault;
   final String? endReason;
+  final String? endStage;
   final String? forkedFrom;
   final String id;
   final bool? incognito;
@@ -1619,7 +1631,9 @@ final class Session {
     'created_at': createdAt.toUtc().toIso8601String(),
     'custom': ?custom,
     'description': ?description,
+    'end_fault': ?endFault,
     'end_reason': ?endReason,
+    'end_stage': ?endStage,
     'forked_from': ?forkedFrom,
     'id': id,
     'incognito': ?incognito,

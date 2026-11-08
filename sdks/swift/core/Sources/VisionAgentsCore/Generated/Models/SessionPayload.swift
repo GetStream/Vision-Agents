@@ -21,8 +21,12 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     let createdAt: Date
     let custom: [String: RawJSON]?
     let description: String?
-    /// Why the session ended: agent_hangup, the agent hung up; transferred, the agent handed the caller to a person; hangup, the caller left; start, nobody joined the call in time; unanswered, the call placed was never answered; voicemail, an answering machine picked up the call placed, and the agent left its message or hung up.
+    /// Whose doing a session's end was: none, the agent or the app ended it; caller, the person on the call; router, the router itself; vendor, a model vendor; carrier, the phone carrier; customer_config, the app's configuration or its own key; customer_credit, the organization's credit or spend limits.
+    let endFault: SessionEndFault?
+    /// Why the session ended, with whose fault it was and the stage it came at: agent_hangup, the agent hung up (fault none, stage conversation); transferred, the agent handed the caller to a person (fault none, stage conversation); hangup, the caller left (fault caller, stage conversation); start, nobody joined the phone call in time (fault carrier, stage ringing); unanswered, the call placed was never answered (fault caller, stage ringing); voicemail, an answering machine picked up the call placed, and the agent left its message or hung up (fault none, stage ringing); closed, the session was closed through the API, or replaced by a newer one (fault none, stage conversation); shutdown, the router ended the session as it shut down (fault router, stage conversation); agent_failed, the agent left the call or answered no turn for a failure of the router's own (fault router, stage conversation); model_failed, a model vendor failed: the agent left the call or answered no turn (fault vendor, stage conversation); model_config_refused, the model failed on the customer's own key or model, or refused a setting, and the agent answered no turn (fault customer_config, stage conversation); model_no_credit, the credit or spend limits refused the model's work, and the agent answered no turn (fault customer_credit, stage conversation).
     let endReason: SessionEndReason?
+    /// How far a session had got when it ended: ringing, before a person was on the line of a phone call; conversation, once the session was open.
+    let endStage: SessionEndStage?
     /// The session this one continued from, empty for one opened fresh.
     let forkedFrom: String?
     let id: String
@@ -69,7 +73,7 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
     /// The voice speaking, in the provider's own terms. It is the provider's default when the session asked for none.
     let voice: String?
 
-    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, endReason: SessionEndReason? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
+    init(agent: String? = nil, agentId: String, callId: String, callOutcome: SessionCallOutcome? = nil, callType: String, closedAt: Date? = nil, configId: String? = nil, contextTruncated: Bool? = nil, conversationId: String? = nil, createdAt: Date, custom: [String: RawJSON]? = nil, description: String? = nil, endFault: SessionEndFault? = nil, endReason: SessionEndReason? = nil, endStage: SessionEndStage? = nil, forkedFrom: String? = nil, id: String, incognito: Bool? = nil, instructions: String? = nil, lastResponseAt: Date? = nil, llm: String? = nil, modality: SessionModality, mode: SessionMode? = nil, modelOverwrites: ModelOverwritesPayload? = nil, projectId: String? = nil, reviewNotes: String? = nil, reviewScore: Int? = nil, state: SessionState, sts: String? = nil, stt: String? = nil, subagent: String? = nil, summary: String? = nil, text: Bool? = nil, title: String? = nil, tts: String? = nil, usage: CallUsage? = nil, userId: String, video: SessionVideo? = nil, voice: String? = nil) {
         self.agent = agent
         self.agentId = agentId
         self.callId = callId
@@ -82,7 +86,9 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.createdAt = createdAt
         self.custom = custom
         self.description = description
+        self.endFault = endFault
         self.endReason = endReason
+        self.endStage = endStage
         self.forkedFrom = forkedFrom
         self.id = id
         self.incognito = incognito
@@ -123,7 +129,9 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         self.createdAt = try container.decode(Date.self, forKey: .createdAt)
         self.custom = try container.decodeIfPresent([String: RawJSON].self, forKey: .custom)
         self.description = try container.decodeIfPresent(String.self, forKey: .description)
+        self.endFault = try container.decodeIfPresent(SessionEndFault.self, forKey: .endFault)
         self.endReason = try container.decodeIfPresent(SessionEndReason.self, forKey: .endReason)
+        self.endStage = try container.decodeIfPresent(SessionEndStage.self, forKey: .endStage)
         self.forkedFrom = try container.decodeIfPresent(String.self, forKey: .forkedFrom)
         self.id = try container.decode(String.self, forKey: .id)
         self.incognito = try container.decodeIfPresent(Bool.self, forKey: .incognito)
@@ -164,7 +172,9 @@ final class SessionPayload: Sendable, Codable, JSONEncodable {
         try container.encode(createdAt, forKey: .createdAt)
         try container.encodeIfPresent(custom, forKey: .custom)
         try container.encodeIfPresent(description, forKey: .description)
+        try container.encodeIfPresent(endFault, forKey: .endFault)
         try container.encodeIfPresent(endReason, forKey: .endReason)
+        try container.encodeIfPresent(endStage, forKey: .endStage)
         try container.encodeIfPresent(forkedFrom, forKey: .forkedFrom)
         try container.encode(id, forKey: .id)
         try container.encodeIfPresent(incognito, forKey: .incognito)
@@ -207,7 +217,9 @@ extension SessionPayload: Hashable {
         lhs.createdAt == rhs.createdAt &&
         lhs.custom == rhs.custom &&
         lhs.description == rhs.description &&
+        lhs.endFault == rhs.endFault &&
         lhs.endReason == rhs.endReason &&
+        lhs.endStage == rhs.endStage &&
         lhs.forkedFrom == rhs.forkedFrom &&
         lhs.id == rhs.id &&
         lhs.incognito == rhs.incognito &&
@@ -247,7 +259,9 @@ extension SessionPayload: Hashable {
         hasher.combine(createdAt)
         hasher.combine(custom)
         hasher.combine(description)
+        hasher.combine(endFault)
         hasher.combine(endReason)
+        hasher.combine(endStage)
         hasher.combine(forkedFrom)
         hasher.combine(id)
         hasher.combine(incognito)
