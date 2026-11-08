@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"encoding/xml"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
@@ -410,6 +411,19 @@ func (s *TelnyxSuite) TestACallWithAStatusURLAsksTelnyxToPostHowItEnded() {
 	s.Equal(http.MethodPost, s.seen.body["StatusCallbackMethod"])
 }
 
+// Telnyx's default event is completed alone, and it takes several events as one string
+// separated by a space.
+func (s *TelnyxSuite) TestACallWithAStatusURLAsksForTheRingingEventToo() {
+	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
+	placing := s.outbound()
+	placing.StatusURL = "https://router.example/v1/phone/status/token-1"
+
+	_, err := s.provider.Dial(s.ctx, placing)
+	s.Require().NoError(err)
+
+	s.Equal("ringing completed", s.seen.body["StatusCallbackEvent"])
+}
+
 func (s *TelnyxSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
 	s.answer(`{"call_sid":"v3:cc-1","status":"queued"}`)
 
@@ -418,6 +432,7 @@ func (s *TelnyxSuite) TestACallWithoutAStatusURLAsksForNoStatus() {
 
 	s.NotContains(s.seen.body, "StatusCallback")
 	s.NotContains(s.seen.body, "StatusCallbackMethod")
+	s.NotContains(s.seen.body, "StatusCallbackEvent")
 }
 
 func (s *TelnyxSuite) TestACallWithAMachineURLAsksTelnyxForAsyncMachineDetection() {
@@ -489,11 +504,56 @@ func (s *TelnyxSuite) TestEachFinalStatusIsAnOutcome() {
 	}
 }
 
-func (s *TelnyxSuite) TestARingingStatusDecidesNothing() {
-	status, err := s.provider.ReadStatus(formType, []byte("CallSid=v3:cc-1&CallStatus=ringing"))
+// ringingCallback is the body of Telnyx's "TeXML Call Ringing" callback, as its API reference
+// shows it (https://developers.telnyx.com/api-reference/callbacks/texml-call-ringing).
+const ringingCallback = "AccountSid=acct-1&CallDuration=10" +
+	"&CallInitiatedAt=2024-01-15T10%3A30%3A26.028Z&CallSid=v3%3Acc-1" +
+	"&CallStatus=ringing&CallbackSource=call-progress-events&ConnectionId=conn-1&From=%2B15125550100" +
+	"&SequenceNumber=1&Timestamp=2024-01-15T10%3A30%3A00Z&To=%2B15125550123"
+
+// completedCallback is the body of Telnyx's "TeXML Call Completed" callback, as its API
+// reference shows it (https://developers.telnyx.com/api-reference/callbacks/texml-call-completed),
+// with placeholder numbers and ids. The test replaces its CallStatus and SipHangupCause with %s.
+const completedCallback = "AnsweredTime=2024-01-15T10%%3A30%%3A15Z&CallDuration=45" +
+	"&CallInitiatedAt=2024-01-15T10%%3A30%%3A26.028Z&CallSid=v3%%3Acc-1" +
+	"&CallStatus=%s&CallbackSource=call-progress-events&From=%%2B15125550100&HangupCause=normal_clearing" +
+	"&HangupSource=caller&SequenceNumber=3&SipHangupCause=%s&Timestamp=2024-01-15T10%%3A30%%3A00Z&To=%%2B15125550123"
+
+func (s *TelnyxSuite) TestARingingCallbackIsARingingReportThatDecidesNothing() {
+	status, err := s.provider.ReadStatus(formType, []byte(ringingCallback))
 	s.Require().NoError(err)
 
-	s.Equal(phone.CallStatus{Word: "ringing"}, status)
+	s.Equal(phone.CallStatus{Word: "ringing", Ringing: true}, status)
+}
+
+func (s *TelnyxSuite) TestAReportThatIsNeitherFinalNorRingingIsNotARingingReport() {
+	for _, word := range []string{"initiated", "in-progress"} {
+		status, err := s.provider.ReadStatus(formType, []byte("CallSid=v3%3Acc-1&CallStatus="+word))
+		s.Require().NoError(err)
+		s.Equal(phone.CallStatus{Word: word}, status, word)
+	}
+}
+
+func (s *TelnyxSuite) TestACompletedCallbackCarriesItsSipHangupCauseAsTheSIPCode() {
+	for _, tc := range []struct {
+		name, word, cause string
+		want              int
+	}{
+		{"answered", "completed", "200", 200},
+		{"busy", "busy", "486", 486},
+		{"not answered", "no-answer", "480", 480},
+		{"caller gave up", "canceled", "487", 487},
+		{"declined", "failed", "603", 603},
+		{"no cause sent", "completed", "", 0},
+		{"a cause that is no number", "failed", "normal_clearing", 0},
+		{"a cause with a unit", "failed", "486%20Busy", 0},
+	} {
+		status, err := s.provider.ReadStatus(formType, fmt.Appendf(nil, completedCallback, tc.word, tc.cause))
+		s.Require().NoError(err, tc.name)
+		s.Equal(finalStatuses[tc.word], status.Result, tc.name)
+		s.Equal(tc.want, status.SIPCode, tc.name)
+		s.False(status.Ringing, tc.name)
+	}
 }
 
 func (s *TelnyxSuite) TestAStatusWithoutACallStatusIsRefused() {

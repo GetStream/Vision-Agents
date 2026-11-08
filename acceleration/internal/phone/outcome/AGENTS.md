@@ -99,7 +99,7 @@ inbound call. Series: at most 4 vendors × 50 codes, 2 × 14 for the histogram (
 | Vendor | SIP code | Post-dial delay | Source |
 | --- | --- | --- | --- |
 | `twilio` | `SipResponseCode` of the final StatusCallback | no: only `completed` is asked for | [call resource](https://www.twilio.com/docs/voice/api/call-resource) |
-| `telnyx` (TeXML) | no: its StatusCallback documents none | no: only `completed` is asked for | [outbound call](https://developers.telnyx.com/api-reference/texml-rest-commands/initiate-an-outbound-call) |
+| `telnyx` (TeXML) | `SipHangupCause` of the completed StatusCallback, documented as conditional; the ringing callback has none | the `ringing` callback (`StatusCallbackEvent` is `ringing completed`); no SIP code comes with it, so it is the dial to the callback, not RFC 6076's INVITE to 180/183 | [outbound call](https://developers.telnyx.com/api-reference/texml-rest-commands/initiate-an-outbound-call) (lists `StatusCallbackEvent` for the account-scoped endpoint, not the connection-scoped one the router dials; unverified on a live call), [ringing](https://developers.telnyx.com/api-reference/callbacks/texml-call-ringing), [completed](https://developers.telnyx.com/api-reference/callbacks/texml-call-completed) |
 | `bandwidth` | `sipResponseCode` of `disconnect`, for a SIP rejection only | no | [disconnect](https://dev.bandwidth.com/docs/voice/webhooks/disconnect) |
 | `plivo` | no: `hangup_url` carries none | no: `ring_url` is not set | [make a call](https://www.plivo.com/docs/voice/api/call/make-a-call) |
 | `vonage` | `sip_code` of busy, unanswered, rejected, failed, completed | the `ringing` event | [webhook reference](https://developer.vonage.com/en/voice/voice-api/webhook-reference) |
