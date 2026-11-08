@@ -25,7 +25,7 @@ func TestTheAgentsOwnWordsAreItsEcho(t *testing.T) {
 	}{
 		{"Will it rain in Porto this weekend? Tomorrow in Lisbon it will be sunny and warm.", "Will it rain in Porto this weekend?", 9},
 		{"Tomorrow in Lisbon, it will be sunny and warm, with a high of.", "", 13},
-		{"with a high of 24 degrees.", "", 6},
+		{"with a high of 24 degrees.", "", 7},
 		{"With a high of twenty-four degrees.", "", 7},
 		{"Uh huh. sunny and warm", "Uh huh.", 3},
 		{"Will it rain in Porto this weekend?", "Will it rain in Porto this weekend?", 0},
@@ -35,12 +35,59 @@ func TestTheAgentsOwnWordsAreItsEcho(t *testing.T) {
 		{"Tomorrow in Lisbon it will be sunny and warm, and in Porto.", "and in Porto.", 9},
 		{"Tomorrow in Lisbon, it will be sunny and warm. No, no, stop, that's not what I asked.", "No, no, stop, that's not what I asked.", 9},
 		{"Tomorrow in Lisbon, it will be sunny. No.", "No.", 7},
+		// A stop over the reply: "Wait a" lines up with the line's "with a" and "minute" with
+		// "high", two words that are not the agent's with one of its words between them, so
+		// all three are the caller's.
+		{"Tomorrow in Lisbon, it will be sunny and warm. Wait a minute.", "Wait a minute.", 9},
 		// One word of the caller's between two runs of the echo reads as a word of the
 		// agent's misheard: the checks over the agent see the words as they grow, so the
 		// caller's word is the last one when it counts, and two or more are theirs anywhere.
 		{"Tomorrow in Lisbon, it will be sunny. No. With a high of twenty four degrees.", "", 15},
 	} {
 		left, echo := echoed(c.heard, echoReply)
+		require.Equal(t, c.left, left, "%q", c.heard)
+		require.Equal(t, c.echo, echo, "%q", c.heard)
+	}
+}
+
+// replayReply is the stop probe's: the replay's reply, about 9 s of the agent's voice, which
+// a caller speaks over.
+const replayReply = "Tomorrow in Lisbon it will be sunny and warm, with a high of twenty four degrees, " +
+	"a light breeze from the north in the afternoon, and a clear and mild evening by the river."
+
+// The caller's words over the echo are theirs, and the agent's words misheard come one at a
+// time: two words that are not the agent's, in a row or with one of its words between them,
+// end a run of the echo, so a short word of the caller's that is also in the agent's line
+// does not carry the run over the words around it. A number the voice says and the model
+// writes in digits is the same words. The stop probe's echo line wrote the first eight, the
+// replay's S1b the ninth, and the last three are the echo misheard.
+func TestTheCallersWordsOverTheEchoAreTheirs(t *testing.T) {
+	for _, c := range []struct {
+		heard, left string
+		echo        int
+	}{
+		// "Oh, wait a minute" over the reply, as the checks over the agent saw it grow.
+		{"Tomorrow in Lisbon, it will be sunny and warm. Wait a minute.", "Wait a minute.", 9},
+		{"Tomorrow in Lisbon it will be sunny and warm. Wait a minute! A light breeze from the north in the afternoon.", "Wait a minute!", 18},
+		{"Tomorrow in Lisbon it will be sunny and warm. Wait a minute! Twenty-four degrees. A light breeze from.", "Wait a minute!", 16},
+		{"Tomorrow in Lisbon it will be sunny and warm. Wait a minute, 24 degrees.", "Wait a minute,", 12},
+		// The echo alone, its number in digits.
+		{"With a high of 24.", "", 6},
+		{"Tomorrow in Lisbon it will be sunny and warm, with a high of 20.", "", 14},
+		{"Tomorrow in Lisbon it will be sunny and warm, with a high of 24 degrees. The light breeze.", "", 19},
+		// Two words misheard in a row are the caller's, as they were.
+		{"Tomorrow in Lisbon, it will be sunny and warm, with a high of 24 degrees. Allow three.", "Allow three.", 16},
+		// The end of a caller's question, with the agent's "it will be" in it, said as the
+		// reply began (the replay's S1b): theirs, as the model wrote it.
+		{"Will it be raining?", "Will it be raining?", 0},
+		// A word misheard with only one of the agent's words before it where the transcript
+		// begins, or after it where the words end so far, the next not yet written; and one
+		// among the agent's words.
+		{"And uh clear and mild evening by the river.", "", 9},
+		{"Tomorrow in Lisbon it will be sunny and worm with", "", 10},
+		{"Tomorrow in Lisbon it will be sunny and warm, with a hi of twenty four degrees, a light breeze.", "", 19},
+	} {
+		left, echo := echoed(c.heard, replayReply)
 		require.Equal(t, c.left, left, "%q", c.heard)
 		require.Equal(t, c.echo, echo, "%q", c.heard)
 	}
