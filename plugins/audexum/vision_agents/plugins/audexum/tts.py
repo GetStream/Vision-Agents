@@ -36,7 +36,9 @@ class TTS(tts.TTS):
             api_key: Audexum API key. Falls back to the ``AUDEXUM_API_KEY`` env var.
             voice: Voice name, e.g. ``Nova``, ``Atlas``, ``F1`` or ``M1``
                 (list: ``GET https://audexum.com/v1/voices``).
-            speed: Speaking-rate multiplier, 0.25 to 4.0.
+            speed: Speaking-rate multiplier, 0.25 to 4.0. Applied to the
+                ``F1``-``F5`` / ``M1``-``M5`` voices; named voices keep their
+                natural pace.
             base_url: Override the API base URL.
             session: Optional pre-existing ``aiohttp.ClientSession``.
         """
@@ -54,8 +56,9 @@ class TTS(tts.TTS):
         self._base_url = (base_url or BASE_URL).rstrip("/")
         self._session = session
         self._own_session = session is None
-        self._current_task: Optional[asyncio.Task] = None
-        self._stopped: Optional[asyncio.Task] = None
+        # Every in-flight synthesis, so stop_audio() can cancel concurrent calls.
+        self._pending: set[asyncio.Task] = set()
+        self._stopped: set[asyncio.Task] = set()
 
     async def _get_session(self) -> aiohttp.ClientSession:
         if self._session is None or self._session.closed:
@@ -71,11 +74,14 @@ class TTS(tts.TTS):
         Returns an empty buffer if ``stop_audio()`` cancels the request.
         """
         task = asyncio.ensure_future(self._synthesize(text))
-        self._current_task = task
+        self._pending.add(task)
         try:
             return await task
         except asyncio.CancelledError:
-            if self._stopped is not task:
+            # Swallow only a cancel that stop_audio() requested; the caller being
+            # cancelled itself must still propagate (Task.cancelling: 3.11+).
+            cancelling = getattr(asyncio.current_task(), "cancelling", None)
+            if task not in self._stopped or (cancelling is not None and cancelling()):
                 raise
             return PcmData.from_numpy(
                 np.zeros(0, dtype=np.int16),
@@ -84,8 +90,8 @@ class TTS(tts.TTS):
                 format=AudioFormat.S16,
             )
         finally:
-            if self._current_task is task:
-                self._current_task = None
+            self._pending.discard(task)
+            self._stopped.discard(task)
 
     async def _synthesize(self, text: str) -> PcmData:
         session = await self._get_session()
@@ -119,16 +125,19 @@ class TTS(tts.TTS):
             )
 
     async def stop_audio(self) -> None:
-        """Cancel the in-flight synthesis request, if any; its output is discarded."""
-        task = self._current_task
-        if task and not task.done():
-            self._stopped = task
-            task.cancel()
+        """Cancel every in-flight synthesis request; their output is discarded."""
+        for task in list(self._pending):
+            if not task.done():
+                self._stopped.add(task)
+                task.cancel()
         logger.debug("Audexum TTS stop requested")
 
     async def close(self) -> None:
-        """Close the HTTP session if this instance created it."""
+        """Stop pending requests, then close the HTTP session if this instance created it."""
         try:
+            # Cancel in-flight requests first so their callers get empty audio
+            # instead of a connection error from the session teardown.
+            await self.stop_audio()
             if self._own_session and self._session and not self._session.closed:
                 await self._session.close()
         finally:

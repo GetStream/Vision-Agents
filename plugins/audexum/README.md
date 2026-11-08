@@ -28,7 +28,7 @@ Create an API key at [audexum.com](https://audexum.com) and export `AUDEXUM_API_
 |------------|-----------------|----------|-------------------------------------------------------------------------------------------------|
 | `api_key`  | `str` or `None` | `None`   | Your Audexum API key. Falls back to the `AUDEXUM_API_KEY` environment variable.                 |
 | `voice`    | `str`           | `"Nova"` | Voice name, e.g. `Nova`, `Atlas`, `Reid`, `F1`, `M1`. List: `GET https://audexum.com/v1/voices`. |
-| `speed`    | `float`         | `1.0`    | Speaking-rate multiplier, 0.25 to 4.0.                                                          |
+| `speed`    | `float`         | `1.0`    | Speaking-rate multiplier, 0.25 to 4.0. Applies to `F1`-`F5` / `M1`-`M5`; named voices ignore it. |
 | `base_url` | `str` or `None` | `None`   | Override the API base URL (default `https://audexum.com/v1`).                                   |
 
 ## Functionality

@@ -52,6 +52,127 @@ class TestAudexumTTS:
             await tts.close()
             await server.close()
 
+    async def test_stop_audio_cancels_every_concurrent_request(self) -> None:
+        release = asyncio.Event()
+        arrived = 0
+
+        async def handler(request: web.Request) -> web.Response:
+            nonlocal arrived
+            arrived += 1
+            await release.wait()
+            return web.Response(body=_wav(), content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="fake", base_url=str(server.make_url("/v1")))
+        try:
+            first = asyncio.ensure_future(tts.stream_audio("First"))
+            second = asyncio.ensure_future(tts.stream_audio("Second"))
+            for _ in range(50):
+                if arrived == 2:
+                    break
+                await asyncio.sleep(0.02)
+            assert arrived == 2
+            await tts.stop_audio()
+            results = await asyncio.gather(first, second)
+            assert [len(pcm.samples) for pcm in results] == [0, 0]
+            assert not tts._pending and not tts._stopped
+        finally:
+            release.set()
+            await tts.close()
+            await server.close()
+
+    async def test_request_after_stop_still_returns_audio(self) -> None:
+        async def handler(request: web.Request) -> web.Response:
+            return web.Response(body=_wav(), content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="fake", base_url=str(server.make_url("/v1")))
+        try:
+            await tts.stop_audio()  # nothing in flight: a no-op
+            pcm = await tts.stream_audio("Hello")
+            assert len(pcm.samples) == 2400
+        finally:
+            await tts.close()
+            await server.close()
+
+    async def test_external_cancellation_is_not_swallowed(self) -> None:
+        release = asyncio.Event()
+
+        async def handler(request: web.Request) -> web.Response:
+            await release.wait()
+            return web.Response(body=_wav(), content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="fake", base_url=str(server.make_url("/v1")))
+        try:
+            pending = asyncio.ensure_future(tts.stream_audio("Hello"))
+            await asyncio.sleep(0.1)
+            pending.cancel()  # a caller cancelling, not stop_audio()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        finally:
+            release.set()
+            await tts.close()
+            await server.close()
+
+    async def test_close_with_pending_requests_returns_empty_audio(self) -> None:
+        release = asyncio.Event()
+
+        async def handler(request: web.Request) -> web.Response:
+            await release.wait()
+            return web.Response(body=_wav(), content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="fake", base_url=str(server.make_url("/v1")))
+        try:
+            pending = [asyncio.ensure_future(tts.stream_audio(t)) for t in ("a", "b")]
+            await asyncio.sleep(0.1)
+            await tts.close()
+            results = await asyncio.gather(*pending)
+            assert [len(pcm.samples) for pcm in results] == [0, 0]
+        finally:
+            release.set()
+            await server.close()
+
+    @pytest.mark.skipif(
+        not hasattr(asyncio.Task, "cancelling"), reason="Task.cancelling() is 3.11+"
+    )
+    async def test_caller_cancel_in_same_tick_as_stop_propagates(self) -> None:
+        release = asyncio.Event()
+
+        async def handler(request: web.Request) -> web.Response:
+            await release.wait()
+            return web.Response(body=_wav(), content_type="audio/wav")
+
+        app = web.Application()
+        app.router.add_post("/v1/audio/speech", handler)
+        server = TestServer(app)
+        await server.start_server()
+        tts = audexum.TTS(api_key="fake", base_url=str(server.make_url("/v1")))
+        try:
+            pending = asyncio.ensure_future(tts.stream_audio("Hello"))
+            await asyncio.sleep(0.1)
+            await tts.stop_audio()
+            pending.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await pending
+        finally:
+            release.set()
+            await tts.close()
+            await server.close()
+
     def test_missing_api_key_raises(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("AUDEXUM_API_KEY", raising=False)
         with pytest.raises(ValueError):
