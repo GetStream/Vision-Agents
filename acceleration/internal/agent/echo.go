@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
@@ -92,8 +93,9 @@ func (a *Agent) droppingEcho(transcript stt.Transcript, who string) (string, boo
 // reference's words, in order and near enough, wherever it is in the text: what is before,
 // between and after the runs is the caller's. Near enough is a run with at most echoMiss of
 // its words misheard, one at a time, and no more than one of the agent's words dropped
-// between two heard: two words in a row that are not the agent's are the caller's, however
-// short, and end the run, which opens and closes on the agent's words.
+// between two heard: two words that are not the agent's, in a row or with one of its words
+// between them, are the caller's, however short, and end the run, which opens and closes on
+// the agent's words.
 func echoed(text, reference string) (string, int) {
 	fields := strings.Fields(text)
 	var heard []string
@@ -134,16 +136,56 @@ func echoed(text, reference string) (string, int) {
 }
 
 // echoTokens is text as the words an echo is compared by: lowercase, without punctuation,
-// and a hyphenated number as its words, which the voice says and the model writes either way.
+// and a number as its words, which the voice says and the model writes either way: a
+// hyphenated one, and one of one or two digits standing alone ("24 degrees" is the voice's
+// "twenty four degrees"). A longer number is left as written: the voice reads a year, a price
+// or a code each its own way.
 func echoTokens(text string) []string {
-	return strings.Fields(strings.ToLower(words(strings.ReplaceAll(text, "-", " "))))
+	var tokens []string
+	for _, field := range strings.Fields(strings.ReplaceAll(text, "-", " ")) {
+		if said, ok := numberSaid(strings.TrimFunc(field, notLetterOrDigit)); ok {
+			tokens = append(tokens, said...)
+			continue
+		}
+		tokens = append(tokens, strings.Fields(strings.ToLower(words(field)))...)
+	}
+	return tokens
+}
+
+func notLetterOrDigit(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }
+
+var (
+	numberOnes = [...]string{"zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine",
+		"ten", "eleven", "twelve", "thirteen", "fourteen", "fifteen", "sixteen", "seventeen", "eighteen", "nineteen"}
+	numberTens = [...]string{2: "twenty", "thirty", "forty", "fifty", "sixty", "seventy", "eighty", "ninety"}
+)
+
+// numberSaid is digits, a number of one or two of them, as its words, false for anything else.
+func numberSaid(digits string) ([]string, bool) {
+	if len(digits) == 0 || len(digits) > 2 {
+		return nil, false
+	}
+	n := 0
+	for _, d := range digits {
+		if d < '0' || d > '9' {
+			return nil, false
+		}
+		n = n*10 + int(d-'0')
+	}
+	switch {
+	case n < len(numberOnes):
+		return []string{numberOnes[n]}, true
+	case n%10 == 0:
+		return []string{numberTens[n/10]}, true
+	}
+	return []string{numberTens[n/10], numberOnes[n%10]}, true
 }
 
 // agentsRun is the end of the longest run of the agent's words from start in at, aligned's
 // word-by-word account of a transcript, or start when none begins there: the run opens and
 // closes on the agent's words, has at least echoWords in it and at most echoMiss of them
-// misheard, no two misheard in a row, and no more than one of the agent's words skipped
-// between two heard.
+// misheard, each one on its own among the agent's words (callersNear), and no more than one of
+// the agent's words skipped between two heard.
 func agentsRun(at []aligned, start int) int {
 	if !at[start].same {
 		return start
@@ -152,7 +194,7 @@ func agentsRun(at []aligned, start int) int {
 	for i := start; i < len(at); i++ {
 		w := at[i]
 		if !w.same {
-			if !at[i-1].same {
+			if callersNear(at, i) {
 				break
 			}
 			misses++
@@ -174,6 +216,23 @@ func agentsRun(at []aligned, start int) int {
 		return start
 	}
 	return end
+}
+
+// callersNear says at[i], a word that is not the agent's, has another that is not within two
+// words of it, either side: the caller's, not the agent's words misheard. The model mishears
+// the agent's voice a word at a time, among words it hears right. A caller over the agent
+// says words of their own together, and a short word of theirs that is also in the agent's
+// line lines up between them by chance: "Wait a minute" over "…and warm, with a high of…"
+// is the line's "with a high" with two words misheard, and taking it for the echo left
+// "minute", a murmur, of the caller's stop. One of the agent's words between two that are
+// not its own is no more its echo than none.
+func callersNear(at []aligned, i int) bool {
+	for _, j := range [...]int{i - 2, i - 1, i + 1, i + 2} {
+		if j >= 0 && j < len(at) && !at[j].same {
+			return true
+		}
+	}
+	return false
 }
 
 // aligned is one heard word's place in the agent's line: the index of the word of the line
