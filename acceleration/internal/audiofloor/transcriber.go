@@ -163,6 +163,12 @@ type Transcriber struct {
 	pauses  int
 	over    overChecks
 	running sync.WaitGroup
+	// stopping are the checks' rulings over the agent to stop or shorten that wait for the
+	// words of the pause they were ruled at, by its epoch, to be handed over with them once
+	// its first check has written them (await). They are not the pause's: speech that resumes
+	// before the words come ends the pause, and not what was ruled on it. The utterance ending
+	// forgets them.
+	stopping map[int64]Ruled
 	// still is the utterance's words as the requests that wrote them with the floor free last
 	// read them, which end a turn the speech gate held voiced (still.go), and stillBound how long
 	// they must hold still, under the agent's point as its last check resolved it.

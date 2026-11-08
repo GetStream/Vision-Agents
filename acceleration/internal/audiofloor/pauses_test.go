@@ -807,6 +807,115 @@ func (s *PausesSuite) TestAStopAtAPauseOverTheAgentIsActedOnAtOnce() {
 	s.False(s.agent.rulings()[0].Speaking, "the turn was ended by a check with the floor free")
 }
 
+// overEcho is a bare "no, no" said over the agent's forecast on a line that hears the agent
+// back, as the server writes a pause's words: the agent's own voice, then the caller's.
+const overEcho = "Tomorrow in Lisbon, it will be sunny. No, no."
+
+// stopAtAPause has the caller say words over the agent, voiced for less than a check over
+// the agent waits for, and pause: the server rules at the pause's first check that the agent
+// stop, with words written.
+func (s *PausesSuite) stopAtAPause(words string) {
+	s.T().Helper()
+	s.server.mu.Lock()
+	s.server.speakingDecision = stopping
+	s.server.words = words
+	s.server.mu.Unlock()
+	s.agent.speaks(true)
+	s.say(280, true)
+	s.say(240, false)
+	s.transcriber.mu.Lock()
+	asked := s.transcriber.pause.checks
+	s.transcriber.mu.Unlock()
+	s.Require().Equal(1, asked, "the pause was not asked about")
+}
+
+// handedOver says the stop ruled at the pause reached the agent once, with the pause's words.
+func (s *PausesSuite) handedOver() {
+	s.T().Helper()
+	s.Require().Eventually(func() bool { return len(s.agent.overheardSoFar()) > 0 }, 2*time.Second, time.Millisecond,
+		"the stop was thrown away with the pause")
+	s.Never(func() bool { return len(s.agent.overheardSoFar()) > 1 }, 100*time.Millisecond, time.Millisecond, "handed over twice")
+	ruled := s.agent.overheardSoFar()[0]
+	s.Equal(harness.Stop, ruled.Ruling.Floor)
+	s.Equal(overEcho, ruled.Words, "the pause's words, which the agent tells its own echo by")
+	s.True(ruled.Overheard)
+	s.InDelta(200, float64(ruled.Paused.Milliseconds()), 40, "ruled at the pause's first check")
+	s.Equal(int64(1), ruled.Utterance)
+	s.False(ruled.Began.IsZero(), "when the caller began the stop")
+	s.Empty(s.agent.rulings(), "a stop is no end of the turn")
+}
+
+// A stop ruled at a pause over the agent is handed over with the pause's words though the
+// caller is voiced again while its check is out: on a line that hears the agent back, or in a
+// noisy room, the speech gate opens again almost at once, which ends the pause and not what
+// was ruled on it. Thrown away with the pause, a bare "no, no" over the agent's forecast, ruled
+// a stop at its 200 ms pause, left the agent talking to the end of its reply.
+func (s *PausesSuite) TestAStopAtAPauseOverTheAgentIsHandedOverThoughSpeechResumesWhileItsCheckIsOut() {
+	s.server.mu.Lock()
+	s.server.decideAfter = 150 * time.Millisecond
+	s.server.mu.Unlock()
+	s.stopAtAPause(overEcho)
+	s.say(200, true)
+	s.handedOver()
+}
+
+// So is one whose check answered before speech resumed, its words still to come.
+func (s *PausesSuite) TestAStopAtAPauseOverTheAgentIsHandedOverThoughSpeechResumesBeforeItsWords() {
+	s.server.mu.Lock()
+	s.server.wordsAfter = 300 * time.Millisecond
+	s.server.mu.Unlock()
+	s.stopAtAPause(overEcho)
+	s.answered()
+	s.Empty(s.agent.overheardSoFar(), "not before its words")
+	s.say(200, true)
+	s.handedOver()
+}
+
+// A stop at a pause whose words come back empty is not handed over, the caller voiced again or
+// not: there is nothing to tell the agent's own echo from the caller by, and nothing heard is
+// no reason to stop.
+func (s *PausesSuite) TestAStopAtAPauseWithNoWordsIsNotHandedOver() {
+	s.server.mu.Lock()
+	s.server.wordsAfter = 300 * time.Millisecond
+	s.server.mu.Unlock()
+	s.stopAtAPause("")
+	s.answered()
+	s.say(200, true)
+	s.Never(func() bool { return len(s.agent.overheardSoFar()) > 0 }, 600*time.Millisecond, time.Millisecond,
+		"a stop with no words was handed over")
+}
+
+// A stop at a pause whose words come only once its utterance has ended, a later pause's check
+// having ended it with a ruling of its own, is about an utterance that is over: it is not
+// handed over, as a check over the agent answered that late is not (overtaken), and the
+// final's ruling is the one that stands.
+func (s *PausesSuite) TestAStopAtAPauseIsNotHandedOverOnceItsUtteranceHasEnded() {
+	gate := make(chan struct{})
+	release := sync.OnceFunc(func() { close(gate) })
+	s.T().Cleanup(release)
+	s.server.mu.Lock()
+	s.server.wordsGate = gate
+	s.server.mu.Unlock()
+	s.agent.heardIt()
+	s.stopAtAPause(overEcho)
+	s.answered()
+	// The caller goes on, and at their next pause the model lets the agent talk on, which ends
+	// the utterance, as they had heard the agent when they began it.
+	s.server.mu.Lock()
+	s.server.speakingDecision = continuing
+	s.server.words = "Tomorrow in Lisbon, it will be sunny with a high of 24."
+	s.server.mu.Unlock()
+	s.say(200, true)
+	s.say(240, false)
+	end := s.final()
+	s.Equal(int64(1), end.Utterance)
+	s.Require().Len(s.agent.rulings(), 1)
+	s.say(20, false)
+	release()
+	s.Never(func() bool { return len(s.agent.overheardSoFar()) > 0 }, 300*time.Millisecond, time.Millisecond,
+		"a stop about an utterance that has ended was handed over")
+}
+
 // The checks in a row a point asks for are counted from a pause's first check with the floor
 // free: one asked over the agent has no p_eot to count. Counted as the pause's first, it left
 // the run of an earlier pause going into this one, and a point of two checks in a row ended
