@@ -148,9 +148,6 @@ type pause struct {
 	// which the checks in a row are counted from (Hearer.rule). One asked over the agent is
 	// not: it has no p_eot.
 	counted bool
-	// stopping is a check's ruling over the agent to stop or shorten, to hand over once the
-	// pause's words are written (Overheard).
-	stopping *Ruled
 	// standing is a check's ruling over the agent that ended nothing, which stands for the
 	// pause while the agent talks on (standsOver), and polled how far into the pause the
 	// agent was last asked whether it still is. recheck says it is not any more: the pause
@@ -341,6 +338,7 @@ func (t *Transcriber) newUtteranceLocked() {
 	t.pause = pause{epoch: t.pause.epoch + 1}
 	t.pauses = 0
 	t.over = overChecks{}
+	clear(t.stopping)
 }
 
 // overAfter is how long the caller is voiced in an utterance before they are first asked
@@ -664,10 +662,17 @@ func (t *Transcriber) check(asker Asker, c pauseCheck) {
 		p.counted = true
 	}
 	// A stop is handed over with the pause's words, which the agent tells its own echo by:
-	// the first check's, now if they are written, and otherwise once they are (await).
+	// the first check's, now if they are written, and otherwise once they are (await), though
+	// the caller is voiced again before then. On a line that hears the agent back, or in a
+	// noisy room, the speech gate opens again almost at once, and a stop kept with the pause
+	// went with it: a bare "no, no" over the agent, ruled a stop at its 200 ms pause, left the
+	// agent talking to the end of its reply.
 	if stopping != nil {
 		if p.words == nil {
-			p.stopping, stopping = stopping, nil
+			if t.stopping == nil {
+				t.stopping = make(map[int64]Ruled)
+			}
+			t.stopping[c.epoch], stopping = *stopping, nil
 		} else {
 			stopping.Words, stopping.AudioMs, stopping.WordsMs = *p.words, p.audioMs, p.wordsMs
 		}
@@ -714,7 +719,9 @@ func (t *Transcriber) logCheck(turn harness.FlowTurn, c pauseCheck, checked Chec
 
 // await keeps the words of a pause's first check, once written, and shows them meanwhile
 // (Interim) when the check did not end the turn: they are the words so far, written anyway,
-// and the final is as it would be without them.
+// and the final is as it would be without them. A stop a check of the pause ruled over the
+// agent is handed over with them (Overheard), the pause over or not, while its utterance goes
+// on and no later pause has ended it.
 func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	defer t.running.Done()
 	var words Words
@@ -729,6 +736,12 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 	// The pause may be over, the caller having gone on: its words are still the utterance's
 	// so far, to show and to say what language it is in, though no final is made of them.
 	same := p.epoch == c.epoch && p.utterance == c.utterance
+	// A stop ruled at the pause waits for no other words. One ruled at a pause the caller went
+	// on from is handed over unless a later pause of the utterance has ended it with a ruling
+	// of its own, which is the one that stands, as for a check over the agent (overtaken).
+	stopping, stopped := t.stopping[c.epoch]
+	delete(t.stopping, c.epoch)
+	stopped = stopped && stopping.Utterance == c.utterance && (same || p.ended == nil)
 	if words.Err != nil {
 		if same {
 			p.failed = true
@@ -744,18 +757,15 @@ func (t *Transcriber) await(c pauseCheck, said <-chan Words) {
 		t.wroteLocked(c.utterance, c.at, c.talked, text)
 	}
 	waiting := true
-	var stopping *Ruled
 	asker := t.asker
 	if same {
 		p.words, p.audioMs, p.wordsMs, p.noise = &text, audioMs, wordsMs, words.Noise
 		waiting = p.ended == nil
-		if stopping, p.stopping = p.stopping, nil; stopping != nil {
-			stopping.Words, stopping.AudioMs, stopping.WordsMs = text, audioMs, wordsMs
-		}
 	}
 	t.mu.Unlock()
-	if stopping != nil && text != "" && asker != nil {
-		asker.Overheard(c.participant, *stopping)
+	if stopped && text != "" && asker != nil {
+		stopping.Words, stopping.AudioMs, stopping.WordsMs = text, audioMs, wordsMs
+		asker.Overheard(c.participant, stopping)
 	}
 	if text == "" {
 		t.finish(c.epoch)
