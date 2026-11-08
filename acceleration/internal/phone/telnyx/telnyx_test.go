@@ -527,7 +527,7 @@ func (s *TelnyxSuite) TestARingingCallbackIsARingingReportThatDecidesNothing() {
 }
 
 func (s *TelnyxSuite) TestAReportThatIsNeitherFinalNorRingingIsNotARingingReport() {
-	for _, word := range []string{"initiated", "in-progress"} {
+	for _, word := range []string{"initiated", "in-progress", "queued"} {
 		status, err := s.provider.ReadStatus(formType, []byte("CallSid=v3%3Acc-1&CallStatus="+word))
 		s.Require().NoError(err)
 		s.Equal(phone.CallStatus{Word: word}, status, word)
