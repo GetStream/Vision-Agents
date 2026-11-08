@@ -151,6 +151,8 @@ type Transcriber struct {
 	// toldAt is when the asker was last told the caller is in an utterance (Hearing), in
 	// frames.
 	toldAt int64
+	// stillOf is the utterance the clock of a pause the gate can't hear is of (still).
+	stillOf int64
 
 	// The checks of the pause going on, asked for asker, the agent's (AskOnPauses) or the
 	// transcriber's own, each run on a goroutine of its own, and how many of the utterance's
@@ -161,6 +163,17 @@ type Transcriber struct {
 	pauses  int
 	over    overChecks
 	running sync.WaitGroup
+	// stopping are the checks' rulings over the agent to stop or shorten that wait for the
+	// words of the pause they were ruled at, by its epoch, to be handed over with them once
+	// its first check has written them (await). They are not the pause's: speech that resumes
+	// before the words come ends the pause, and not what was ruled on it. The utterance ending
+	// forgets them.
+	stopping map[int64]Ruled
+	// still is the utterance's words as the requests that wrote them with the floor free last
+	// read them, which end a turn the speech gate held voiced (still.go), and stillBound how long
+	// they must hold still, under the agent's point as its last check resolved it.
+	still      stillWords
+	stillBound time.Duration
 }
 
 // request is an utterance's words to write, or its end. An end carries the whole
@@ -181,7 +194,7 @@ func NewTranscriber(client *Client, model string, languages []string, logger *sl
 	if model == "" {
 		model = DefaultModel
 	}
-	return &Transcriber{client: client, model: model, languages: languages, logger: logger, now: time.Now,
+	return &Transcriber{client: client, model: model, languages: languages, logger: logger, now: time.Now, stillBound: stillFor,
 		asker: neutralAgent{hearer: NewHearer(client, EndOfTurn{}, logger)}, interims: client.interims,
 		emitter: stt.NewEmitter(eventBuffer), requests: make(chan request, queued), done: make(chan struct{})}
 }
@@ -251,6 +264,9 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 		t.quiet += frame
 	}
 	heard := t.heard.Frames()
+	if t.voiced && t.stillOf != t.utterance+1 {
+		t.newStill()
+	}
 	utterance := func() harness.Audio { return t.heard.Last(time.Duration(heard-t.start) * frame) }
 	switch {
 	case !t.voiced:
@@ -269,6 +285,9 @@ func (t *Transcriber) step(speech bool, participant stt.Participant) {
 	case t.quiet >= writeAfter && t.fresh:
 		t.ask(request{participant: participant, utterance: t.utterance + 1, audio: utterance()})
 		t.fresh, t.spoken = false, 0
+	}
+	if t.voiced {
+		t.checksHeld(participant, heard)
 	}
 	if speech && !t.checksOver(participant, heard) {
 		t.interim(participant, heard)

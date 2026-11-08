@@ -8456,3 +8456,42 @@ func (s *AgentSuite) TestACheckOverTheAgentStopsItAtOnce() {
 	s.Equal(string(harness.Stop), overlap.Action)
 	s.Len(s.model.requests(), 1, "nothing answered: the caller's turn has not ended")
 }
+
+// A stop the chorus-asr transcriber ruled at a pause over the agent comes with the pause's
+// words, handed over though the caller was voiced again before they were written, and is held
+// to them as a check's while the caller talks on is: the agent's own voice heard back alone, on
+// a line without echo cancellation, stops nothing, and "no, no" said over it does.
+func (s *AgentSuite) TestAStopRuledAtAPauseOverTheAgentStopsItOnTheCallersWordsAlone() {
+	s.join(true)
+	participant := stt.Participant{ID: "alice"}
+	s.model.reply = nil
+	s.speak(participant)
+	s.says(participant, "what's the weather like in Lisbon tomorrow")
+	s.eventually(func() bool { return countOf[Responding](s.reported()) == 1 && len(s.model.requests()) == 1 }, "the reply never started")
+	s.heardSomeOf(s.model.requests()[0].ID)
+	s.replyWentOut()
+	s.agent.mu.Lock()
+	s.agent.history = append(s.agent.history, llm.Message{Role: llm.Assistant, Content: "Tomorrow in Lisbon it will be sunny and warm with a high of twenty four degrees"})
+	s.agent.mu.Unlock()
+	asker := pauseAsker{s.agent}
+	s.True(asker.Speaking())
+	stop := audiofloor.Ruled{Check: audiofloor.Check{Ruling: harness.Decided{Disposition: harness.Respond, Floor: harness.Stop}},
+		Speaking: true, Overheard: true, Paused: 200 * time.Millisecond, Began: time.Now(), Utterance: 2, AudioMs: 1200, WordsMs: 100}
+	// The reply's echo is in audio heard once the reply has gone out, and the check's audio
+	// ended its WordsMs before its words came.
+	time.Sleep(200 * time.Millisecond)
+
+	echo := stop
+	echo.Words = "Tomorrow in Lisbon, it will be sunny."
+	asker.Overheard(participant, echo)
+	time.Sleep(50 * time.Millisecond)
+	s.Zero(countOf[Interrupted](s.reported()), "the agent's own voice heard back stops nothing")
+	s.Zero(s.voice.interrupted())
+
+	words := stop
+	words.Words = "Tomorrow in Lisbon, it will be sunny. No, no."
+	asker.Overheard(participant, words)
+	s.eventually(func() bool { return countOf[Interrupted](s.reported()) == 1 }, "the stop was not acted on")
+	s.eventually(func() bool { return s.voice.interrupted() == 1 }, "the voice kept talking")
+	s.Len(s.model.requests(), 1, "nothing answered: the caller's turn has not ended")
+}
